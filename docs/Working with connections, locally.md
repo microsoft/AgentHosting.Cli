@@ -67,6 +67,8 @@ msagent deployment connection update -an "<agent-name>" -dn <deployment-name> --
 msagent deployment connection remove -an "<agent-name>" -dn <deployment-name>
 ```
 
+The full list of commands for connections can be found here: [MSAgent CLI connection command reference](../src/Microsoft.Agents.Hosting.Cli.Docs/Command_Deployment_Connection.md)
+
 ## Available connectors and reference material for all Microsoft published connectors
 
 For more information on available connectors, see the [complete connector reference](https://learn.microsoft.com/en-us/connectors/connector-reference/), which includes a dedicated page for [all Microsoft-published connectors](https://learn.microsoft.com/en-us/connectors/connector-reference/connector-reference-microsoft-connectors). Documentation for individual connectors is also available, such as [Excel Online (Business)](https://learn.microsoft.com/en-us/connectors/excelonlinebusiness/) and [Word Online (Business)](https://learn.microsoft.com/en-us/connectors/wordonlinebusiness/). Developers who want to explore connector definitions or contribute their own can visit the [Power Platform Connectors GitHub repository](https://github.com/microsoft/PowerPlatformConnectors), and the [Power Platform CLI connector commands](https://learn.microsoft.com/en-us/power-platform/developer/cli/reference/connector) reference covers how to manage connectors from the command line.
