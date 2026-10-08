@@ -4,12 +4,7 @@ This covers steps on how to get started quickly with the core features of the ms
 
 # Prerequisites
 
-- Access to download the CLI - [here](https://github.com/microsoft/AgentHosting.Cli)
-- Permissions to install applications to your laptop (the CLI)
-- Permissions & access to Copilot Studio through a work/school account (verified through copilotstudio.microsoft.com)
-- Access to create your own agents and run those agents
-- Authenticated Power Platform connections for any tools the agents uses
-- If your using AI, it is recommended to download the skills and agent.md file to assist your agent in working with the CLI 
+See the [Prerequisites](../README.md#prerequisites) section of the root README.
 
 # Authenticate & Select Environment
 

@@ -24,12 +24,12 @@ All docs live in the [AgentHosting.Cli repo](https://github.com/microsoft/AgentH
 ## Command reference
 
 - In the CLI: `msagent --help`, `msagent <command> --help`.
-- Repo and reference: https://github.com/microsoft/AgentHosting.Cli
+- Full reference: [MSAgent CLI command reference](../src/Microsoft.Agents.Hosting.Cli.Docs/ReadMe.md)
 
 ## msagent info
 
-- Install: `dotnet tool install -g Microsoft.Agents.Hosting.Cli`
+- Install: See the [Prerequisites](../README.md#prerequisites) section of the root README.
 - Never use `pac` during the bug bash, and never mix it with `msagent`.
 - `msagent test` is not yet implemented. Use the provided test client (a shim for how `msagent test` will behave).
 - Ignore anything CodeAgent-related (e.g. `codeagent` types) in the CLI. It is irrelevant to Copilot Studio and not supported.
-- Source and issues: https://github.com/microsoft/AgentHosting.Cli
+- Please file issues here: https://github.com/microsoft/AgentHosting.Cli

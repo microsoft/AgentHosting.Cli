@@ -150,4 +150,4 @@ Additional coding agent instructions have been provided [here](Additional%20codi
 
 # Command reference
 
-The full command reference is in this repository. See the [repository homepage](https://github.com/microsoft/AgentHosting.Cli) to find it.
+See the full [MSAgent CLI command reference](../src/Microsoft.Agents.Hosting.Cli.Docs/ReadMe.md).

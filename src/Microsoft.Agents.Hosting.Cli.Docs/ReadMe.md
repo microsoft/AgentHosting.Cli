@@ -1,0 +1,80 @@
+# MSAgent CLI command reference
+
+Last updated: 2026-10-07
+
+This document describes the MSAgent CLI command surface. The packaged executable is named
+`msagent`, and the CLI project is `Microsoft.Agents.Hosting.Cli`.
+
+```text
+msagent [command] [options]
+```
+
+The reference is derived from the command host in `Microsoft.Agents.Hosting.Cli`, command
+definitions in `Microsoft.Agents.Hosting.Cli.Commands`, and validation performed by
+`Microsoft.Agents.Hosting.Cli.Core` on `main`. It documents command-line arguments and options
+only; host configuration environment variables are documented in
+[README.md](../Microsoft.Agents.Hosting.Cli/README.md#configuration-host-environment).
+
+Commands or options labeled **MCS-specific** apply only to Microsoft Copilot Studio agents. Unlabeled
+commands either apply to all agent types or retain their existing CodeAgent behavior.
+
+## Global options
+
+The first four options are available recursively on every command. Help is available on every
+command; version is available only at the root.
+
+| Option | Value | Default | Description |
+| --- | --- | --- | --- |
+| `-j`, `--json` | Boolean flag | `false` | Emit machine-readable JSON output. |
+| `-dbg`, `--debug` | Boolean flag | `false` | Display debugging information, such as redacted API responses, on stderr. |
+| `-nc`, `--no-color` | Boolean flag | `false` | Disable colored output. Color is also disabled when `NO_COLOR` is set or both stdout and stderr are redirected. |
+| `-ni`, `--non-interactive` | Boolean flag | `false` | Do not open a browser or WAM sign-in; fail instead. Connection commands have command-specific non-interactive behavior; see their help for details. |
+| `-?`, `-h`, `--help` | Boolean flag | `false` | Show help and usage information for the current command. |
+| `-v`, `--version` | Boolean flag | `false` | Show version information. Available only at the root (`msagent --version`). |
+
+In non-interactive mode, `deployment connection add --connection-only` and
+`deployment connection update` can still create connections and print a consent link to open
+manually. Plain `deployment connection add` creates a connection only when there is no existing
+connection to choose from. The update command lists connectors and reads selections from stdin.
+
+Invoking `msagent` with no command, including when only global options are supplied, displays root
+help.
+
+## Command modules
+
+| Module | Subcommands | Description |
+| --- | --- | --- |
+| [`msagent auth`](Command_Auth.md) | `login`, `status`, `switch`, `logout` | Authenticate operators and manage stored accounts. |
+| [`msagent env`](Command_Env.md) | `list`, `select` | List and select Power Platform environments. |
+| [`msagent agent`](Command_Agent.md) | `create`, `init` (**MCS-specific**), `list` (**MCS-specific**), `show`, `pull` (**MCS-specific**), `delete` (**MCS-specific**), `deploy`, `share` (**MCS-specific**), `share show` (**MCS-specific**), `unshare` (**MCS-specific**), `package upload` (**Gated**), [`eval`](Command_Agent_Eval.md) {`run`, `list`, `show`, `cancel`, `delete`, `generate`, `testset`} (**MCS-specific**) | Create, list, inspect, and delete hosted agents; initialize or pull MCS source; deploy agents; manage MCS agent sharing; run MCS evaluations; and upload agent packages. |
+| [`msagent deployment`](Command_Deployment.md) | `create`, `list`, `show`, `update`, `delete`, [`connection`](Command_Deployment_Connection.md) {`list`, `add`, `update`, `remove`, `connectors`} (**MCS-specific**), [`oauth`](Command_Deployment_OAuth.md) {`create`, `delete`, `list`, `list-providers`, `show`, `update`} (**CodeAgent-specific**) | Create, list, inspect, update, and delete CodeAgent or MCS deployment records; manage MCS deployment connections; and manage CodeAgent OAuth connection settings. |
+| [`msagent abs`](Command_Abs.md) (**Gated**) | `preview`, `apply` | Preview and apply Azure Bot Service configuration. |
+| [`msagent identity`](Command_Identity.md) (**Gated**) | `create blueprint`, `create app` | Create and reconcile agent identities. |
+| `msagent telemetry` | `enable`, `disable`, `status` | Manage command telemetry collection preferences. |
+
+**Gated:** commands tagged (**Gated**) may or may not be available, depending on the feature gates
+enabled for a given run. Run `msagent --help` (or `--help` on any group) to see what is currently
+available.
+
+The intermediate groups `auth`, `env`, `agent`, `agent eval`, `agent eval testset`, `deployment`,
+`deployment connection`, `deployment oauth`, `agent package`, `abs`, `identity`, `identity create`,
+and `telemetry` are navigation commands. Invoking one without a leaf command returns a usage error
+and lists its valid subcommands.
+
+> [!IMPORTANT]
+> For Microsoft Copilot Studio (MCS) agent types, this CLI replaces the following PAC CLI commands:
+>
+> | PAC CLI command | `msagent` equivalent |
+> | --- | --- |
+> | `pac copilot list` | [`msagent agent list`](Command_Agent.md#msagent-agent-list---mcs-specific) |
+> | `pac copilot init` | [`msagent agent init`](Command_Agent.md#msagent-agent-init---mcs-specific) |
+> | `pac copilot status` | No direct equivalent. [`msagent agent show`](Command_Agent.md#msagent-agent-show) and [`msagent deployment show`](Command_Deployment.md#msagent-deployment-show) read local state only. |
+> | `pac copilot pack` | No standalone command. Does not apply to Agents created with msagent |
+> | `pac copilot create` | [`msagent agent create --agent-type MCSAgent`](Command_Agent.md#msagent-agent-create) |
+> | `pac copilot publish` | [`msagent agent deploy --publish`](Command_Agent.md#msagent-agent-deploy) |
+> | `pac copilot pull` | [`msagent agent pull`](Command_Agent.md#msagent-agent-pull---mcs-specific) |
+> | `pac copilot clone` | [`msagent agent create --agent-type MCSAgent --mcs-clone-agent-id <id>`](Command_Agent.md#msagent-agent-create) (or `--mcs-clone-agent-schemaname`) |
+> | `pac copilot push` | [`msagent agent deploy`](Command_Agent.md#msagent-agent-deploy) |
+> | `pac copilot delete` | [`msagent agent delete`](Command_Agent.md#msagent-agent-delete---mcs-specific) |
+>
+> Do not use the PAC CLI together with this CLI for these commands. Use `msagent` for them instead.
