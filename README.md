@@ -1,6 +1,6 @@
-# What is the CLI
+# What is the Microsoft.Agents.Hosting.CLI Tool (msagent)
 
-The `msagent` CLI connects local development workflows with the Microsoft Copilot Platform for Microsoft Copilot Studio agents and Code Agents. For Copilot Studio, it lets teams define agents and Agent workflows as code, create and update them while collaborating with developers using the Copilot Studio UI, and apply software development lifecycle (SDLC) and application lifecycle management (ALM) practices to manage connections, test and evaluate agents, and deploy changes. For Code Agents built with the Microsoft 365 Agents SDK or related SDKs, it supports creating or initializing projects, configuring identity, user authentication, and communication channels, and managing SDLC and ALM processes for deployment to the platform.
+The Microsoft.Agents.Hosting.CLI(`msagent`) is a CLI tool that connects local development workflows with the Microsoft Copilot Platform for Microsoft Copilot Studio agents and Code Agents. For Copilot Studio, it lets teams define agents and Agent workflows as code, create and update them while collaborating with developers using the Copilot Studio UI, and apply software development lifecycle (SDLC) and application lifecycle management (ALM) practices to manage connections, test and evaluate agents, and deploy changes. For Code Agents built with the Microsoft 365 Agents SDK or related SDKs, it supports creating or initializing projects, configuring identity, user authentication, and communication channels, and managing SDLC and ALM processes for deployment to the platform.
 
 ## Why is this important
 
@@ -14,7 +14,7 @@ The CLI creates a local definition of a Copilot Studio agent as a project that a
 - Access to create your own agents and run those agents
 - Authenticated Power Platform connections for any tools your agents use
 
-### CLI
+### MSAgent CLI
 - [.NET 10+ runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0/runtime) - only required if you do not currently have .NET installed; only the Runtime package is needed, not the full SDK.
 - (TEMP) Install the MSAgent Hosting CLI. This is a .NET tool and can be acquired using the following command:
 ```text
