@@ -17,11 +17,13 @@ The CLI creates a local definition of a Copilot Studio agent as a project that a
 ### MSAgent CLI
 - [.NET 10+ runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0/runtime) - only required if you do not currently have .NET installed; only the Runtime package is needed, not the full SDK.
 - (TEMP) Install the MSAgent Hosting CLI. This is a .NET tool and can be acquired using the following command:
-```text
-Initial install:
-dotnet tool install microsoft.agents.hosting.cli --prerelease -g --source https://pkgs.dev.azure.com/dynamicscrm/OneCRM/_packaging/DPX-Tools-Upstream/nuget/v3/index.json
 
+Initial install:
+```text
+dotnet tool install microsoft.agents.hosting.cli --prerelease -g --source https://pkgs.dev.azure.com/dynamicscrm/OneCRM/_packaging/DPX-Tools-Upstream/nuget/v3/index.json
+```
 Apply update (use this to pick up the current version after you have installed it):
+```text
 dotnet tool update microsoft.agents.hosting.cli --prerelease -g --source https://pkgs.dev.azure.com/dynamicscrm/OneCRM/_packaging/DPX-Tools-Upstream/nuget/v3/index.json
 ```
 ### Note:
