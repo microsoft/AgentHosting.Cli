@@ -28,20 +28,20 @@ The CLI creates a local definition of a copilot studio agent as a project that a
 
 # What to do next
 
-- Follow the [quickstart](2.%20Quickstart.md) guide to go through the full end to end lifecycle of a copilot studio agent
-- New Agents: Create, Clone or Initialize
-- Editing Agents
-- -- Using the VS Code Extension
-- -- Public Skills with Coding Agents
-- -- Learn more about working with connections locally
-- Source Control
-- Deploying your Agent
-- Testing your Agent
-- - using the agent playground
-- - using terminal
+- Follow the [quickstart](Quickstart.md) guide to go through the full end to end lifecycle of a copilot studio agent
+- [New Agents](New%20Agents.md): Create, Clone or Initialize
+- [Editing Agents](Editing%20Agents.md)
+  - [Using msagent CLI with GitHub Copilot](Using%20msagents%20CLI%20with%20GitHub%20Copilot.md)
+  - [Working with connections, locally](Working%20with%20connections%2C%20locally.md)
+- [Source Control](Source%20Control%20with%20msagent%20cli.md)
+- [Deploying your Agent](Deploying%20your%20Agent%20from%20your%20local%20machine.md)
+- [Testing your Agent](Testing%20your%20Agent%20from%20your%20local%20machine.md)
+  - using the agent playground
+  - using terminal
 - Additional Activities
+  - [Additional coding agent instructions](Additional%20coding%20agent%20instructions.md)
 - Review the command reference
-- File an issue or ask a question
+- [File an issue or ask a question](https://github.com/microsoft/AgentHosting.Cli/issues)
 
 ## Cost Management
 
