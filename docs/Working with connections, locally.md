@@ -15,11 +15,11 @@ The connection is not and will never be on your local machine. These are credent
 
 This means the connection must either be available on your power platform tenant before you begin work and wish to use a connector and define it locally by using it within connection references and tool definitions, or you can create it when the command below is used to trigger the binding and you will be prompted to create the credential which will then be available going forward, and bound.
 
-## Create your connections before you start
+## Option 1: Create your connections before you start
 
 You can ensure your connections are available before you want to use with your agent. Go to make.powerapps.com and click connections and create the connections for the tools/connectors you wish to use.
 
-## Create your connections when you deploy
+## Option 2: Create your connections when you deploy
 
 This is common and sometimes easier if you’re working in the terminal
 

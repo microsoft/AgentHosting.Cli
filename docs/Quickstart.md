@@ -6,8 +6,8 @@ This covers steps on how to get started quickly with the core features of the ms
 
 - Access to download the CLI - [here](https://github.com/microsoft/AgentHosting.Cli)
 - Permissions to install applications to your laptop (the CLI)
-- Permissions & access to Copilot Studio through a work/school account (verified through copilotstudio.microsoft.com
-- Access to create your own agents and run those agents)
+- Permissions & access to Copilot Studio through a work/school account (verified through copilotstudio.microsoft.com)
+- Access to create your own agents and run those agents
 - Authenticated Power Platform connections for any tools the agents uses
 - If your using AI, it is recommended to download the skills and agent.md file to assist your agent in working with the CLI 
 
@@ -68,7 +68,9 @@ Once you are ready with your agent definition from your local machine, you are r
 msagent agent deploy --agent-name "name" --deployment-name "dev" --publish --json
 ```
 
-# Testing your agent [notyetimplemented]
+# Testing your agent (coming soon)
+
+*Note, at the time of BUG BASH and initial PRIVATE PREVIEW, testing is not yet available as an `msagent` command. Locally testing your agent is still possible, with specific instructions which will be provided to you for triggering the test manually.
 
 Your agent must be published to be able to test the agent locally. 
 

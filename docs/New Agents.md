@@ -20,7 +20,7 @@ msagent agent create --mcs-clone-agent-id <agent-id> --mcs-clone-environment-id 
 
 ## Initialize
 
-This assumes an already working definition of a copilot studio agent in your working directory and completes the initialization step by creating the environment connection details and project, making it 'ready' to be used locally. This is best used if you have cloned from a remote repo, and you have not got the configuration files in your working directory for the agent definition.
+This assumes an already working definition of a copilot studio agent in your working directory and completes the initialization step by creating the environment connection details and project, making it 'ready' to be used locally. This command exists to establish the connection to your environment and the sync status for an agent definition you already have. Use it when you have cloned a definition from a remote repo, or otherwise have the agent definition files in your working directory but not the configuration files that connect them to your environment.
 
 ```
 msagent agent init -an "My Agent" -mas ./path/to/project
