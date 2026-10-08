@@ -8,16 +8,28 @@ From there, it is typical practice to connect to a remote source control system 
 
 There are many ways that remote repos like GitHub can be configured, and different ways a company works and collaborates within them. How companies work with branches, PRs, merge conflicts and others are up to the organization, and what is important that the definition of copilot studio can be managed this way.
 
-What is not managed in a repo is the environment configuration and sync details. These contain irrelevant data and data that should be ignored once it is within source control. Ensure the following files are adding to your gitignore:
+What is not managed in a repo is the environment configuration and local sync state. These files are specific to you and your environment, and they should be ignored once the agent is within source control. Ensure the following are added to your `.gitignore`:
 
 ```
 # Local agent/environment binding — tenant, environment, and agent IDs
 # specific to whoever ran `agent create`/`agent init` locally
 .config/agent.config.json
-```
-agent.config.json  ties the project to your specific tenant/environment/agent IDs. If a teammate clones the repo and runs agent init  (or  create ), they'll get their own binding — committing yours could cause confusion or accidental cross-environment deploys if someone reuses your IDs against the wrong tenan
 
-The files/folders that should be committed are the definition itself, and the project configuration files that tell the CLI which environment you’re working in, the latest sync files and more can be recreated when they do not exist using msagent agent init. This looks for the definition files and creates the missing project config files that must be available to deploy and use other commands.
+# Local sync state and caches (cloud snapshot, change token, connection details)
+.mcs/
+```
+
+- **`.config/agent.config.json`** ties the project to your specific tenant, environment and agent IDs, and holds your deployment records. If a teammate clones the repo and runs `agent init` (or `create`), they get their own binding. Committing yours could cause confusion or accidental cross-environment deploys if someone reuses your IDs against the wrong tenant.
+- **`.mcs/`** (inside the agent folder, for example `<agent-folder>/.mcs/`) holds local sync state and caches such as `botdefinition.json`, `changetoken.txt`, `conn.json`, `.connections-cache.json` and `workflow-state.json`. The CLI creates it with its own `.gitignore`, so it is ignored by default, but adding it to your repo's `.gitignore` as well keeps it explicit.
+
+The files and folders that should be committed are the agent definition itself, for example:
+
+- `settings.mcs.yml`
+- `agent.sync.yaml`
+- Topics, `capabilities/` (tools), `knowledge/` and `workflows/`, where present
+- `infrastructure/connections/*.sync.yaml` (the connection references, not the connections themselves)
+
+The ignored files can be recreated when they do not exist by running `msagent agent init`. This looks for the definition files and creates the missing project configuration files that must be available to deploy and use other commands.
 
 ## Create a new repo with your copilot studio agent definition
 
@@ -27,7 +39,7 @@ The files/folders that should be committed are the definition itself, and the pr
 4. The remote should only have your definition files, and not your config files
 5. You have now got your saved version of copilot studio definition
 
-## Pull down your copilot studio agent from an existing repo 
+## Clone your Copilot Studio agent from an existing repo
 
 1. Connect to your remote using GitHub desktop or similar too (or CLI)
 2. Clone your repo into a new working file directory on your local machine

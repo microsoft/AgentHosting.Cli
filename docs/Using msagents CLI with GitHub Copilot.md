@@ -22,15 +22,15 @@ You can ask your agent:
 "Create a Copilot Studio agent that can help users submit internal helpdesk tickets with SharePoint, and sends an automatic email once a new ticket is received to the person creating it"
 ```
 
-# lifecycle
+# Lifecycle
 
-The CLI's capabilities (verbs) are based around the lifecycle of a copilot studio agent
+The CLI's capabilities (verbs) are based around the lifecycle of a Copilot Studio agent
 
-- Create: Create, Clone and Initialize depending on where you’re starting from (see [New Agents](3.%20New%20Agents.md))
-- Edit: Humans and Agents modify the files in the project structure, CLI supports with managing Connections
-- Deploy: Deploy the agent as a draft and published agent
-- Test: Test the agent and can be used to run custom local evals 
-- Eval: Run configured test sets for copilot studio evaluations
+- Create: Create, Clone and Initialize depending on where you’re starting from (see [New Agents](New%20Agents.md))
+- Edit: Humans and Agents modify the files in the project structure, and the CLI helps with managing connections (see [Editing Agents](Editing%20Agents.md) and [Working with connections, locally](Working%20with%20connections%2C%20locally.md))
+- Deploy: Deploy the agent as a draft and published agent (see [Deploying your Agent](Deploying%20your%20Agent%20from%20your%20local%20machine.md))
+- Test: Test the agent and can be used to run custom local evals (see [Testing your Agent](Testing%20your%20Agent%20from%20your%20local%20machine.md))
+- Eval (just landed): Run configured test sets for Copilot Studio evaluations
 
 ## Golden path recipes
 
@@ -113,25 +113,32 @@ msagent agent delete  — deletes the entire MCS agent's cloud resources and all
 msagent deployment delete  — deletes just one deployment slot; add  --delete-deployed-mcs-agent  to also remove the Copilot Studio agent it targets
 ```
 
-# Setting your agent up i.e. skills and where to go, agent md. 
+# Setting up your coding agent: skills and agent.md
 
-Skills extend the msagent CLI with custom, repeatable instructions. Each skill is a folder containing a  SKILL.md  file (plus any optional supporting scripts/resources) and can live in one of two locations depending on scope:
+Skills extend the msagent CLI with custom, repeatable instructions. Each skill is a folder containing a `SKILL.md` file (plus any optional supporting scripts or resources). A skill can live in one of two locations, depending on scope:
 
-- Project skills —  .github/skills/<skill-name>/SKILL.md 
-Stored in the repository itself, so they're version-controlled and shared with everyone who clones the repo. Use this for team-wide or repo-specific workflows (e.g. standardized testing, deployment, or debugging steps).
+- **Project skills:** `.github/skills/<skill-name>/SKILL.md`
+  Stored in the repository itself, so they're version-controlled and shared with everyone who clones the repo. Use this for team-wide or repo-specific workflows (e.g. standardized testing, deployment, or debugging steps).
 
-- Global (personal) skills —  ~/.copilot/skills/<skill-name>/SKILL.md 
-Stored in your user home directory, so they're available across all your projects but not shared with others by default. Use this for personal, reusable workflows you want everywhere.
+- **Global (personal) skills:** `~/.copilot/skills/<skill-name>/SKILL.md`
+  Stored in your user home directory, so they're available across all your projects but not shared with others by default. Use this for personal, reusable workflows you want everywhere.
 
-Each  SKILL.md includes a a YAML frontmatter defining name and description , followed by markdown instructions describing what the skill does and when Copilot should trigger it:
+Each `SKILL.md` starts with YAML frontmatter that defines the skill's `name` and `description`, followed by markdown instructions describing what the skill does and when Copilot should trigger it:
 
+```markdown
 ---
 name: my-skill-name
 description: Short description of what this skill does and when to use it.
 ---
-Instructions for Copilot go here.
 
-You can get the skills from the repo [here](url) or you can run `mpx skills add [org/repo] to trigger an interactive picker of skills to add and install locally
+Instructions for Copilot go here.
+```
+
+You can get the skills from the repo [here](url), or run the following command to open an interactive picker and install skills locally:
+
+```
+npx skills add <org/repo>
+```
 
 ## Error recovery
 
@@ -139,8 +146,8 @@ You can get the skills from the repo [here](url) or you can run `mpx skills add 
 
 ## Additional coding agent instructions
 
-Additional coding agent instructions have been provided [here](/10.%20Additional%20coding%20agent%20instructions.md)
+Additional coding agent instructions have been provided [here](Additional%20coding%20agent%20instructions.md)
 
 # Command reference
 
-The full command reference can be found [here](https://microsoft.ghe.com/bic/agents-managed-hosting/blob/main/src/Microsoft.Agents.Hosting.Cli.Docs/Command_Agent.md)
+The full command reference is in this repository. See the [repository homepage](https://github.com/microsoft/AgentHosting.Cli) to find it.

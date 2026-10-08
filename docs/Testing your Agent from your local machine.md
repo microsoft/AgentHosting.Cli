@@ -16,7 +16,7 @@ Directline is the only method to support annon configuration in a Copilot Studio
 msagent test playground --an agentname -dn deploymentname to be added
 ```
 
-### Setup Agent Playground with direct
+### Setup Agent Playground using Entra ID (no setup required)
 
 ```
 msagent test playground --an agentname -dn deploymentname to be added
