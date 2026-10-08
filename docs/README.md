@@ -15,6 +15,8 @@ All docs live in the [AgentHosting.Cli repo](https://github.com/microsoft/AgentH
 
 ## Instructions
 
+> **Note:** The files below are provided separately as part of the bug bash and are not in this repo at the moment.
+
 - Agent instructions for GitHub Copilot or Claude: [agent.md](agent.md) (copy into your project as `AGENTS.md`, `CLAUDE.md` or `.github/copilot-instructions.md`).
 - Bug bash instructions: `MSAGENTS bug bash instructions 10-8.docx`.
 - Local testing: `Testing Package with Setup Instructions\TEST-CLIENT-ONBOARDING.md` in the Bug Bash folder.
