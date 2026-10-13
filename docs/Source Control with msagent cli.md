@@ -77,7 +77,5 @@ Your organization will have it's own process for managing PRs in a repo, interac
 ### Notes
 
 - The local  agentId  in  .config/agent.config.json  is a local tracking handle — it can differ after re-init and it's fine.
-- Agent init relinks via schema name, restoring the correct  mcsAgentId  pointing at the real cloud agent. No duplicate cloud agent gets created 
+- Agent init relinks via schema name, restoring the correct  mcsAgentId  pointing at the real cloud agent — but only if the agent was deployed at least once. If it was only ever  agent created (Saved, never deployed) , init  creates a fully disconnected new agent instead. No duplicate cloud agent gets created either way.
 - Deployment records (e.g.  dev1 ) are not restored by  init  -  so you have to manually  msagent deployment create -dn dev1 -dt dev  again. Deploying after that correctly targets/updates the same cloud agent though a new deployment id is generated server-side and "Last deployed" history resets.
-
-Important distinction found: this only works reliably if the agent was actually deployed at least once. If it was only ever  agent created (Saved, never deployed)  init  creates a fully disconnected new agent instead.
