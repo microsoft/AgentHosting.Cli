@@ -1,0 +1,75 @@
+{
+  "fixtureSchemaVersion": 1,
+  "id": "existing-bot-different-app-id",
+  "title": "Existing bot bound to a different app id",
+  "description": "abs apply --force where the existing bot already matches the desired endpoint/SKU but is bound to a DIFFERENT app id than the supplied one. Rebinding an existing bot is destructive, so the plan is a blocking conflict: apply refuses with a typed naming-conflict error (exit 2) and performs no mutation.",
+  "source": {
+    "repo": "bic/agents-managed-hosting",
+    "typescriptBranch": "ah-start",
+    "typescriptCommit": "5624d5459d09c67a584364d4bfd3b8496aeb9dc4",
+    "status": "provisional"
+  },
+  "argv": [
+    "abs",
+    "apply",
+    "--tenant",
+    "tenant-contoso",
+    "--subscription",
+    "sub-contoso",
+    "--resource-group",
+    "rg-agenthost",
+    "--location",
+    "westus",
+    "--bot-name",
+    "agenthost-bot",
+    "--endpoint",
+    "https://gateway.contoso.com/api/messages",
+    "--msa-app-id",
+    "11111111-1111-1111-1111-111111111111",
+    "--force"
+  ],
+  "azureState": {
+    "providerRegistration": "Registered",
+    "subscription": {
+      "exists": true,
+      "hasReadAccess": true
+    },
+    "resourceGroup": {
+      "exists": true,
+      "hasReadAccess": true
+    },
+    "existingBot": {
+      "botResourceId": "/subscriptions/sub-contoso/resourceGroups/rg-agenthost/providers/Microsoft.BotService/botServices/agenthost-bot",
+      "name": "agenthost-bot",
+      "endpoint": "https://gateway.contoso.com/api/messages",
+      "msaAppId": "22222222-2222-2222-2222-222222222222",
+      "msaAppType": "SingleTenant",
+      "sku": "F0"
+    },
+    "graphReadsMustNotHappen": true
+  },
+  "clock": "2025-01-01T00:00:00Z",
+  "assert": {
+    "outcome": "error",
+    "exitCode": 2,
+    "errorKind": "naming-conflict",
+    "mutationCalls": []
+  },
+  "volatileFields": [],
+  "golden": {
+    "json": {
+      "success": false,
+      "exitCode": 2,
+      "errorMessage": "Cannot apply: botService at /subscriptions/sub-contoso/resourceGroups/rg-agenthost/providers/Microsoft.BotService/botServices/agenthost-bot conflicts with the request. Existing bot is bound to app id 22222222-2222-2222-2222-222222222222, but this request targets app id 11111111-1111-1111-1111-111111111111. Rebinding an existing bot to a different app changes its identity and is destructive, so it is not done automatically; use a different bot name, or repoint the bot deliberately after confirming the change is intended.",
+      "errorKind": "naming-conflict",
+      "remediation": "Choose a different bot name, or supply an explicit app object id (--app-object-id) to disambiguate, then re-run preview to confirm the plan before applying."
+    },
+    "human": {
+      "stdout": [],
+      "stderr": [
+        "Cannot apply: botService at /subscriptions/sub-contoso/resourceGroups/rg-agenthost/providers/Microsoft.BotService/botServices/agenthost-bot conflicts with the request. Existing bot is bound to app id 22222222-2222-2222-2222-222222222222, but this request targets app id 11111111-1111-1111-1111-111111111111. Rebinding an existing bot to a different app changes its identity and is destructive, so it is not done automatically; use a different bot name, or repoint the bot deliberately after confirming the change is intended.",
+        "Choose a different bot name, or supply an explicit app object id (--app-object-id) to disambiguate, then re-run preview to confirm the plan before applying."
+      ]
+    }
+  }
+}

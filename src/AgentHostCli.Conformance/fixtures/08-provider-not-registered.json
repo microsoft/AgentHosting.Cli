@@ -1,0 +1,68 @@
+{
+  "fixtureSchemaVersion": 1,
+  "id": "provider-not-registered",
+  "title": "Provider not registered",
+  "description": "abs apply --force where the Microsoft.BotService resource provider is not registered on the subscription. The read-only preflight fails, so apply refuses with a typed provider-not-registered error (exit 1, environmental) and performs no mutation.",
+  "source": {
+    "repo": "bic/agents-managed-hosting",
+    "typescriptBranch": "ah-start",
+    "typescriptCommit": "5624d5459d09c67a584364d4bfd3b8496aeb9dc4",
+    "status": "provisional"
+  },
+  "argv": [
+    "abs",
+    "apply",
+    "--tenant",
+    "tenant-contoso",
+    "--subscription",
+    "sub-contoso",
+    "--resource-group",
+    "rg-agenthost",
+    "--location",
+    "westus",
+    "--bot-name",
+    "agenthost-bot",
+    "--endpoint",
+    "https://gateway.contoso.com/api/messages",
+    "--msa-app-id",
+    "11111111-1111-1111-1111-111111111111",
+    "--force"
+  ],
+  "azureState": {
+    "providerRegistration": "NotRegistered",
+    "subscription": {
+      "exists": true,
+      "hasReadAccess": true
+    },
+    "resourceGroup": {
+      "exists": true,
+      "hasReadAccess": true
+    },
+    "existingBot": null,
+    "graphReadsMustNotHappen": true
+  },
+  "clock": "2025-01-01T00:00:00Z",
+  "assert": {
+    "outcome": "error",
+    "exitCode": 1,
+    "errorKind": "provider-not-registered",
+    "mutationCalls": []
+  },
+  "volatileFields": [],
+  "golden": {
+    "json": {
+      "success": false,
+      "exitCode": 1,
+      "errorMessage": "Cannot apply: The Microsoft.BotService resource provider is not registered on the subscription. Register it before applying.",
+      "errorKind": "provider-not-registered",
+      "remediation": "Register the Microsoft.BotService resource provider on the subscription (`az provider register --namespace Microsoft.BotService`, or via the portal), then retry."
+    },
+    "human": {
+      "stdout": [],
+      "stderr": [
+        "Cannot apply: The Microsoft.BotService resource provider is not registered on the subscription. Register it before applying.",
+        "Register the Microsoft.BotService resource provider on the subscription (`az provider register --namespace Microsoft.BotService`, or via the portal), then retry."
+      ]
+    }
+  }
+}

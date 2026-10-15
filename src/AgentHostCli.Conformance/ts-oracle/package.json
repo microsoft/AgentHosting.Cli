@@ -1,0 +1,13 @@
+{
+  "name": "agenthost-abs-conformance-oracle",
+  "private": true,
+  "type": "module",
+  "description": "Offline TypeScript oracle runner that freezes the scoped shipped Azure Bot Service (ABS) behavior of the pinned AgentHostCli as a provisional, language-neutral conformance baseline. No dependencies: it uses Node built-ins and dynamically imports the pinned read-only worktree at runtime.",
+  "scripts": {
+    "oracle": "bun runOracle.ts",
+    "oracle:update": "bun runOracle.ts --update"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}

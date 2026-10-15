@@ -1,0 +1,59 @@
+{
+  "fixtureSchemaVersion": 1,
+  "id": "missing-required-context",
+  "title": "Missing required context",
+  "description": "abs preview with several required Azure-context flags omitted (--resource-group, --location, --bot-name, --endpoint). ABS scaffolding never guesses or silently switches context, so it fails fast with a typed missing-context error (exit 2) naming every absent flag, before touching any Azure dependency.",
+  "source": {
+    "repo": "bic/agents-managed-hosting",
+    "typescriptBranch": "ah-start",
+    "typescriptCommit": "5624d5459d09c67a584364d4bfd3b8496aeb9dc4",
+    "status": "provisional"
+  },
+  "argv": [
+    "abs",
+    "preview",
+    "--tenant",
+    "tenant-contoso",
+    "--subscription",
+    "sub-contoso",
+    "--msa-app-id",
+    "11111111-1111-1111-1111-111111111111"
+  ],
+  "azureState": {
+    "providerRegistration": "Registered",
+    "subscription": {
+      "exists": true,
+      "hasReadAccess": true
+    },
+    "resourceGroup": {
+      "exists": true,
+      "hasReadAccess": true
+    },
+    "existingBot": null,
+    "graphReadsMustNotHappen": true
+  },
+  "clock": "2025-01-01T00:00:00Z",
+  "assert": {
+    "outcome": "error",
+    "exitCode": 2,
+    "errorKind": "missing-context",
+    "mutationCalls": []
+  },
+  "volatileFields": [],
+  "golden": {
+    "json": {
+      "success": false,
+      "exitCode": 2,
+      "errorMessage": "Missing required argument(s): --resource-group, --location, --bot-name, --endpoint. ABS scaffolding never guesses or silently switches Azure context.",
+      "errorKind": "missing-context",
+      "remediation": "Provide --resource-group, --location, --bot-name, --endpoint explicitly, then re-run."
+    },
+    "human": {
+      "stdout": [],
+      "stderr": [
+        "Missing required argument(s): --resource-group, --location, --bot-name, --endpoint. ABS scaffolding never guesses or silently switches Azure context.",
+        "Provide --resource-group, --location, --bot-name, --endpoint explicitly, then re-run."
+      ]
+    }
+  }
+}

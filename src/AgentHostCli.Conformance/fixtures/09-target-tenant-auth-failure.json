@@ -1,0 +1,67 @@
+{
+  "fixtureSchemaVersion": 1,
+  "id": "target-tenant-auth-failure",
+  "title": "Target-tenant silent-auth failure",
+  "description": "abs preview where a silent ARM token for the requested --tenant cannot be obtained without interaction (for example a guest tenant that has not been redeemed, or an expired refresh token). The first ARM read fails with an interaction-required auth error, so preview exits 3 with a tenant-scoped sign-in remediation. Preview is read-only, so no mutation occurs. This replaces the former wrong-token-tenant fixture: both implementations already scope the operational ARM token to --tenant, so a mismatched-token-tenant guard was redundant and only reachable via a fake token — the evergreen behavior is that a target-tenant acquisition either succeeds or fails interaction-required.",
+  "source": {
+    "repo": "bic/agents-managed-hosting",
+    "typescriptBranch": "ah-start",
+    "typescriptCommit": "58292564cace1e72da21d2149b56d80302759220",
+    "status": "provisional"
+  },
+  "argv": [
+    "abs",
+    "preview",
+    "--non-interactive",
+    "--tenant",
+    "tenant-contoso",
+    "--subscription",
+    "sub-contoso",
+    "--resource-group",
+    "rg-agenthost",
+    "--location",
+    "westus",
+    "--bot-name",
+    "agenthost-bot",
+    "--endpoint",
+    "https://gateway.contoso.com/api/messages",
+    "--msa-app-id",
+    "11111111-1111-1111-1111-111111111111"
+  ],
+  "azureState": {
+    "providerRegistration": "Registered",
+    "subscription": {
+      "exists": true,
+      "hasReadAccess": true
+    },
+    "resourceGroup": {
+      "exists": true,
+      "hasReadAccess": true
+    },
+    "existingBot": null,
+    "targetTenantAuthFailure": true,
+    "graphReadsMustNotHappen": true
+  },
+  "clock": "2025-01-01T00:00:00Z",
+  "assert": {
+    "outcome": "error",
+    "exitCode": 3,
+    "mutationCalls": []
+  },
+  "volatileFields": [],
+  "golden": {
+    "json": {
+      "success": false,
+      "exitCode": 3,
+      "errorMessage": "Could not silently obtain an ARM token for tenant tenant-contoso.",
+      "remediation": "Run `ah auth login --tenant tenant-contoso` with an account that can access that tenant, or correct `--tenant`."
+    },
+    "human": {
+      "stdout": [],
+      "stderr": [
+        "Could not silently obtain an ARM token for tenant tenant-contoso.",
+        "Run `ah auth login --tenant tenant-contoso` with an account that can access that tenant, or correct `--tenant`."
+      ]
+    }
+  }
+}

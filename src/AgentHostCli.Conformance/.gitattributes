@@ -1,0 +1,4 @@
+# The oracle writes fixtures and transcripts with LF line endings. Pin LF here so
+# `runOracle.ts --update` stays byte-idempotent regardless of the checkout platform
+# or core.autocrlf setting; otherwise a CRLF checkout would churn against LF rewrites.
+* text eol=lf
