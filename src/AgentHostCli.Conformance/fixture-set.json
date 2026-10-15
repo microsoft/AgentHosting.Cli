@@ -1,0 +1,39 @@
+{
+  "fixtureSetSchemaVersion": 1,
+  "name": "AgentHost CLI ABS provisional conformance oracle",
+  "status": "provisional",
+  "description": "Language-neutral, provisional baseline that freezes the scoped shipped TypeScript Azure Bot Service (ABS) behavior BEFORE any C# ABS behavior is implemented. Each fixture is exercised by the TypeScript oracle runner against the pinned read-only worktree, and (from cN5 onward) by the C# contract runner. Exact JSON and exit codes are normative; human output is compared by ordered, color/newline-normalized lines.",
+  "provisional": {
+    "isProvisional": true,
+    "reconciliation": "cN7 closes cross-language parity against the PINNED TypeScript: all 10 neutral fixtures pass byte/line/exit/mutation parity in BOTH the TypeScript oracle runner and the C# contract runner, deterministically (both run twice, no diff; volatileFields is [] on every fixture, so no value is normalized away). See AgentHostCli.Conformance/README.md 'Cross-language conformance closure (cN7)' for the enumerated normalization rules and contract-change records. Reconciliation against the shared agenthost_cli_amh mN3 oracle remains pending and is completed in cN11; any unresolved difference is recorded explicitly in the evaluation rather than silently normalized away.",
+    "note": "The demonstrator does NOT block on the future mN3 artifacts."
+  },
+  "pinnedSource": {
+    "repo": "bic/agents-managed-hosting",
+    "branch": "ah-start",
+    "commit": "5624d5459d09c67a584364d4bfd3b8496aeb9dc4",
+    "package": "src/AgentHostCli",
+    "readOnlyWorktree": "C:/CliAffordances/amh/src/AgentHostCli",
+    "note": "The oracle imports the ABS command core and shared output helpers from this pinned, read-only worktree and injects fake Azure dependencies. It never modifies the pinned TypeScript, and it never contacts Azure or an identity provider."
+  },
+  "scope": {
+    "path": "existing-application-id ARM path (--msa-app-id)",
+    "description": "Every ABS fixture supplies --msa-app-id, so both implementations take the zero-Graph path: ARM reads/writes only, no Microsoft Graph read or mutation. TypeScript behavior outside this slice is recorded as broader scope, not reproduced here.",
+    "excluded": [
+      "Graph application/service-principal/credential provisioning",
+      "operator authentication behavior (judged against PAC, not this ABS oracle)"
+    ]
+  },
+  "fixtures": [
+    { "file": "fixtures/01-supplied-app-greenfield-preview.json", "title": "Supplied-app greenfield preview" },
+    { "file": "fixtures/02-supplied-app-confirmed-create.json", "title": "Supplied-app confirmed create" },
+    { "file": "fixtures/03-apply-without-force.json", "title": "Apply without --force" },
+    { "file": "fixtures/04-matching-state-noop.json", "title": "Matching-state no-op" },
+    { "file": "fixtures/05-endpoint-update.json", "title": "Endpoint update" },
+    { "file": "fixtures/06-existing-bot-different-app-id.json", "title": "Existing bot bound to a different app id" },
+    { "file": "fixtures/07-missing-required-context.json", "title": "Missing required context" },
+    { "file": "fixtures/08-provider-not-registered.json", "title": "Provider not registered" },
+    { "file": "fixtures/09-target-tenant-auth-failure.json", "title": "Target-tenant silent-auth failure" },
+    { "file": "fixtures/10-secret-shaped-output-rejection.json", "title": "Secret-shaped output rejection" }
+  ]
+}

@@ -1,0 +1,183 @@
+{
+  "fixtureSchemaVersion": 1,
+  "id": "matching-state-noop",
+  "title": "Matching-state no-op",
+  "description": "abs apply --force where the existing bot already matches the desired endpoint, SKU, and supplied app id. The plan is a no-op, so apply performs no ARM PUT and reports status unchanged. Exit 0, zero mutation calls.",
+  "source": {
+    "repo": "bic/agents-managed-hosting",
+    "typescriptBranch": "ah-start",
+    "typescriptCommit": "5624d5459d09c67a584364d4bfd3b8496aeb9dc4",
+    "status": "provisional"
+  },
+  "argv": [
+    "abs",
+    "apply",
+    "--tenant",
+    "tenant-contoso",
+    "--subscription",
+    "sub-contoso",
+    "--resource-group",
+    "rg-agenthost",
+    "--location",
+    "westus",
+    "--bot-name",
+    "agenthost-bot",
+    "--endpoint",
+    "https://gateway.contoso.com/api/messages",
+    "--msa-app-id",
+    "11111111-1111-1111-1111-111111111111",
+    "--force"
+  ],
+  "azureState": {
+    "providerRegistration": "Registered",
+    "subscription": {
+      "exists": true,
+      "hasReadAccess": true
+    },
+    "resourceGroup": {
+      "exists": true,
+      "hasReadAccess": true
+    },
+    "existingBot": {
+      "botResourceId": "/subscriptions/sub-contoso/resourceGroups/rg-agenthost/providers/Microsoft.BotService/botServices/agenthost-bot",
+      "name": "agenthost-bot",
+      "endpoint": "https://gateway.contoso.com/api/messages",
+      "msaAppId": "11111111-1111-1111-1111-111111111111",
+      "msaAppType": "SingleTenant",
+      "sku": "F0"
+    },
+    "graphReadsMustNotHappen": true
+  },
+  "clock": "2025-01-01T00:00:00Z",
+  "assert": {
+    "outcome": "success",
+    "exitCode": 0,
+    "mutationCalls": []
+  },
+  "volatileFields": [],
+  "golden": {
+    "json": {
+      "success": true,
+      "schemaVersion": 1,
+      "status": "unchanged",
+      "azureContext": {
+        "tenantId": "tenant-contoso",
+        "subscriptionId": "sub-contoso",
+        "resourceGroup": "rg-agenthost",
+        "location": "westus"
+      },
+      "abs": {
+        "botName": "agenthost-bot",
+        "botResourceId": "/subscriptions/sub-contoso/resourceGroups/rg-agenthost/providers/Microsoft.BotService/botServices/agenthost-bot",
+        "appId": "11111111-1111-1111-1111-111111111111",
+        "tenantId": "tenant-contoso",
+        "messagingEndpoint": "https://gateway.contoso.com/api/messages",
+        "sku": "F0",
+        "msaAppType": "SingleTenant"
+      },
+      "correlation": {
+        "arm": {
+          "mode": "resourceId",
+          "botResourceId": "/subscriptions/sub-contoso/resourceGroups/rg-agenthost/providers/Microsoft.BotService/botServices/agenthost-bot",
+          "name": "agenthost-bot"
+        },
+        "graph": {
+          "mode": "displayNameFilter",
+          "displayName": "agenthost-bot"
+        }
+      },
+      "identity": {
+        "mode": "ClientSecret",
+        "secretMaterialReturned": false,
+        "secretReference": null
+      },
+      "changes": [
+        {
+          "resource": "botService",
+          "action": "noop",
+          "target": "/subscriptions/sub-contoso/resourceGroups/rg-agenthost/providers/Microsoft.BotService/botServices/agenthost-bot",
+          "detail": "Existing bot already matches the desired endpoint and SKU; no ARM change is needed."
+        },
+        {
+          "resource": "entraApplication",
+          "action": "noop",
+          "target": "11111111-1111-1111-1111-111111111111",
+          "detail": "Operator supplied an explicit app id (msaAppId); zero-Graph — no Entra application or service principal is created or modified."
+        },
+        {
+          "resource": "servicePrincipal",
+          "action": "noop",
+          "target": "11111111-1111-1111-1111-111111111111",
+          "detail": "Operator supplied an explicit app id (msaAppId); zero-Graph — no Entra application or service principal is created or modified."
+        }
+      ],
+      "preflight": [
+        {
+          "id": "providerRegistration",
+          "status": "pass",
+          "detail": "The Microsoft.BotService resource provider is registered on the subscription."
+        },
+        {
+          "id": "subscriptionAccess",
+          "status": "pass",
+          "detail": "Subscription sub-contoso exists and is readable by the operator."
+        },
+        {
+          "id": "resourceGroupAccess",
+          "status": "pass",
+          "detail": "Resource group rg-agenthost exists and is readable by the operator."
+        },
+        {
+          "id": "existingBotConflict",
+          "status": "pass",
+          "detail": "Existing bot already matches the desired state."
+        },
+        {
+          "id": "existingAppConflict",
+          "status": "pass",
+          "detail": "Operator supplied an explicit app id; Entra app correlation is not used."
+        },
+        {
+          "id": "audienceReachability",
+          "status": "pass",
+          "detail": "ARM read calls succeeded, proving the provisioning audience is reachable with the operator token. The supplied-app path requires no Microsoft Graph call."
+        },
+        {
+          "id": "writeCapability",
+          "status": "unknown",
+          "detail": "ARM write capability cannot be confirmed without a mutating probe; it is validated at apply time and surfaces as a permission error if missing."
+        },
+        {
+          "id": "skuQuota",
+          "status": "unknown",
+          "detail": "No non-mutating quota check exists for SKU F0; if capacity is denied at apply, retry with S1."
+        },
+        {
+          "id": "azurePolicy",
+          "status": "unknown",
+          "detail": "Azure Policy denials have no read-only simulation for a single PUT; they surface as a governance error at apply."
+        }
+      ],
+      "nextActions": [
+        "No changes are required; the connection already matches the desired state."
+      ]
+    },
+    "human": {
+      "stdout": [
+        "ABS unchanged: bot \"agenthost-bot\" (SingleTenant) in sub-contoso/rg-agenthost.",
+        "  Planned changes",
+        "  RESOURCE          ACTION  DETAIL",
+        "  botService        noop    Existing bot already matches the desired endpoint and SKU; no ARM change is needed.",
+        "  entraApplication  noop    Operator supplied an explicit app id (msaAppId); zero-Graph — no Entra application or service principal is created or modified.",
+        "  servicePrincipal  noop    Operator supplied an explicit app id (msaAppId); zero-Graph — no Entra application or service principal is created or modified.",
+        "  Preflight",
+        "  CHECK            STATUS   DETAIL",
+        "  writeCapability  unknown  ARM write capability cannot be confirmed without a mutating probe; it is validated at apply time and surfaces as a permission error if missing.",
+        "  skuQuota         unknown  No non-mutating quota check exists for SKU F0; if capacity is denied at apply, retry with S1.",
+        "  azurePolicy      unknown  Azure Policy denials have no read-only simulation for a single PUT; they surface as a governance error at apply.",
+        "→ No changes are required; the connection already matches the desired state."
+      ],
+      "stderr": []
+    }
+  }
+}
