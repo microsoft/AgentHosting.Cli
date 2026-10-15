@@ -11,18 +11,20 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 /// </summary>
 public sealed class AgentDeployService
 {
-    private readonly AgentHostingServiceTargets _targets;
+    private readonly Uri _controlPlaneEndpoint;
     private readonly EnvironmentSelectionService _environments;
     private readonly IAmsAgentReadTransport _agents;
     private readonly IAmsDeploymentTransport _deployments;
 
     public AgentDeployService(
-        AgentHostingServiceTargets targets,
+        PowerPlatformApiTargetConfig target,
         EnvironmentSelectionService environments,
         IAmsAgentReadTransport agents,
         IAmsDeploymentTransport deployments)
     {
-        _targets = targets ?? throw new ArgumentNullException(nameof(targets));
+        ArgumentNullException.ThrowIfNull(target);
+        _controlPlaneEndpoint = PowerPlatformCloudMap.ForTarget(target)
+            .RequireTrusted(target.GlobalEndpoint, "Agent Management Service control plane");
         _environments = environments ?? throw new ArgumentNullException(nameof(environments));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
@@ -41,9 +43,6 @@ public sealed class AgentDeployService
         var deploymentType = ParseDeploymentType(request.DeploymentType);
         var entraId = RequireGuid(request.EntraId, "--entra-id");
         var entraIdType = ParseEntraIdType(request.EntraIdType);
-        var dataPlaneEndpoint = _targets.ResolveDataPlane();
-        var controlPlaneEndpoint = _targets.ResolveControlPlane();
-
         var homeEnvironment = await _environments
             .ResolveForCommandAsync(request.EnvironmentId, cancellationToken)
             .ConfigureAwait(false);
@@ -64,7 +63,7 @@ public sealed class AgentDeployService
             .GetAsync(
                 new AmsAgentReadTransportRequest
                 {
-                    Endpoint = dataPlaneEndpoint,
+                    Endpoint = homeEnvironment.ApiEndpoint,
                     Audience = homeEnvironment.ApiAudience,
                     TenantId = homeEnvironment.TenantId,
                     EnvironmentId = homeEnvironment.EnvironmentId,
@@ -78,7 +77,7 @@ public sealed class AgentDeployService
             .CreateAsync(
                 new AmsDeploymentCreateTransportRequest
                 {
-                    Endpoint = controlPlaneEndpoint,
+                    Endpoint = _controlPlaneEndpoint,
                     Audience = homeEnvironment.ApiAudience,
                     TenantId = homeEnvironment.TenantId,
                     HomeEnvironmentId = homeEnvironment.EnvironmentId,
@@ -122,13 +121,12 @@ public sealed class AgentDeployService
             request.PackageRevisionId,
             "--package-revision",
             "deployment update");
-        var controlPlaneEndpoint = _targets.ResolveControlPlane();
         var homeEnvironment = await _environments
             .ResolveForCommandAsync(request.EnvironmentId, cancellationToken)
             .ConfigureAwait(false);
         var reference = new AmsDeploymentReadTransportRequest
         {
-            Endpoint = controlPlaneEndpoint,
+            Endpoint = _controlPlaneEndpoint,
             Audience = homeEnvironment.ApiAudience,
             TenantId = homeEnvironment.TenantId,
             HomeEnvironmentId = homeEnvironment.EnvironmentId,

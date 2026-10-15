@@ -12,8 +12,8 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.Ams;
 /// <summary>Offline wire and authorization coverage for the Agent read and Deployment create ports.</summary>
 public sealed class AmsDeploymentAdapterTests
 {
-    private const string DataPlaneEndpoint = "https://amsdp-alias.example";
-    private const string ControlPlaneEndpoint = "https://amscmp-alias.example";
+    private const string DataPlaneEndpoint = "https://env-1.api.powerplatform.com";
+    private const string ControlPlaneEndpoint = "https://api.powerplatform.com";
     private const string Audience = "https://api.powerplatform.com/";
     private const string Tenant = "11111111-1111-1111-1111-111111111111";
     private const string Home = "22222222-2222-2222-2222-222222222222";
@@ -75,7 +75,7 @@ public sealed class AmsDeploymentAdapterTests
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Get, request.Method);
         Assert.Equal(
-            $"https://amsdp-alias.example/agenthosting/tenants/{Tenant}/environments/{Home}/agents/{Agent}?api-version=1",
+            $"https://env-1.api.powerplatform.com/agenthosting/agents/{Agent}?api-version=1",
             request.Uri.AbsoluteUri);
         Assert.True(request.HasAuthorization);
         Assert.True(Guid.TryParse(request.ClientRequestId, out _));
@@ -120,7 +120,7 @@ public sealed class AmsDeploymentAdapterTests
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal(
-            $"https://amscmp-alias.example/agenthosting/environments/{Home}/agents/{Agent}/deployments?api-version=1",
+            $"https://api.powerplatform.com/agenthosting/environments/{Home}/agents/{Agent}/deployments?api-version=1",
             request.Uri.AbsoluteUri);
         Assert.Equal("application/json", request.ContentType);
         Assert.True(request.HasAuthorization);
@@ -238,7 +238,7 @@ public sealed class AmsDeploymentAdapterTests
 
         Assert.Equal("redirect-rejected", exception.ErrorKind);
         var request = Assert.Single(handler.Requests);
-        Assert.Equal("amscmp-alias.example", request.Uri.Host);
+        Assert.Equal("api.powerplatform.com", request.Uri.Host);
         Assert.True(request.HasAuthorization);
         Assert.DoesNotContain("attacker.example", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -310,7 +310,7 @@ public sealed class AmsDeploymentAdapterTests
         var read = handler.Requests[0];
         Assert.Equal(HttpMethod.Get, read.Method);
         Assert.Equal(
-            $"https://amscmp-alias.example/agenthosting/environments/{Home}/agents/{Agent}/deployments/{Deployment}?api-version=1",
+            $"https://api.powerplatform.com/agenthosting/environments/{Home}/agents/{Agent}/deployments/{Deployment}?api-version=1",
             read.Uri.AbsoluteUri);
         Assert.Empty(read.Body);
         Assert.Null(read.ContentType);
@@ -490,7 +490,7 @@ public sealed class AmsDeploymentAdapterTests
                 : adapter.UpdateAsync(UpdateRequest(), default));
 
         var sent = Assert.Single(handler.Requests);
-        Assert.Equal("amscmp-alias.example", sent.Uri.Host);
+        Assert.Equal("api.powerplatform.com", sent.Uri.Host);
         Assert.Equal("redirect-rejected", exception.ErrorKind);
         Assert.Contains($"clientRequestId={sent.ClientRequestId}", exception.Message, StringComparison.Ordinal);
         Assert.Contains("serviceRequestId=service-redirect-id", exception.Message, StringComparison.Ordinal);

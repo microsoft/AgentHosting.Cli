@@ -31,8 +31,7 @@ public static class ServiceCollectionExtensions
     ///
     /// The caller must also register an <see cref="IEnvironmentClient"/>: the Power Platform API
     /// transport adapter is owned by the composition root, which decides the <see cref="HttpClient"/>
-    /// and its redirect policy. The same applies to the AMS transports and
-    /// <see cref="AgentHostingServiceTargets"/>, which the composition root reads from the process environment.
+    /// and its redirect policy. The same applies to the AMS transports.
     /// </summary>
     public static IServiceCollection AddAgentHostAuthentication(
         this IServiceCollection services,
@@ -170,7 +169,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<EnvironmentSelectionService>();
 
         // AMS operations. The application services are MSAL-free Core; the concrete HTTP transports
-        // and deployment-configured targets remain owned by the composition root.
+        // remain owned by the composition root.
         services.AddSingleton<AgentCreateService>();
         services.AddSingleton<AgentPackageUploadService>();
         services.AddSingleton<AgentDeployService>();
