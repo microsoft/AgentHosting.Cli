@@ -1,0 +1,222 @@
+using System.Text.RegularExpressions;
+using Microsoft.Agents.Hosting.Cli.E2E;
+using Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
+
+namespace Microsoft.Agents.Hosting.Cli.Tests.E2EHarness;
+
+public sealed partial class HarnessToolNameTests
+{
+    private static readonly string[] HarnessVariables = ["TENANT_ID", "MCS_DEV_ENV", "AZURE_BOT_PREFIX"];
+
+    [Fact]
+    public void TheHarnessLooksForTheToolCommandNameTheCliShips()
+    {
+        if (ToolCommandName() is not { } commandName)
+        {
+            return;
+        }
+
+        var expected = OperatingSystem.IsWindows() ? commandName + ".exe" : commandName;
+
+        Assert.Equal(expected, MsagentCliBuilder.ExecutableName);
+    }
+
+    [Fact]
+    public void TheCurrentNameIsPreferredOverTheLegacyOne()
+    {
+        Assert.Equal([MsagentCliBuilder.ExecutableName, MsagentCliBuilder.LegacyExecutableName], MsagentCliBuilder.ExecutableNames);
+    }
+
+    [Fact]
+    public void AnInstalledBinaryIsFoundUnderTheCurrentName()
+    {
+        using var directory = new TemporaryDirectory();
+        var expected = directory.Place(MsagentCliBuilder.ExecutableName);
+
+        Assert.Equal(expected, HarnessEnvironment.FindInstalledBinary(directory.Path));
+    }
+
+    [Fact]
+    public void ARunInstalledBeforeTheRenameIsStillFound()
+    {
+        using var directory = new TemporaryDirectory();
+        var expected = directory.Place(MsagentCliBuilder.LegacyExecutableName);
+
+        Assert.Equal(expected, HarnessEnvironment.FindInstalledBinary(directory.Path));
+    }
+
+    [Fact]
+    public void TheCurrentNameWinsWhenBothArePresent()
+    {
+        using var directory = new TemporaryDirectory();
+        var expected = directory.Place(MsagentCliBuilder.ExecutableName);
+        directory.Place(MsagentCliBuilder.LegacyExecutableName);
+
+        Assert.Equal(expected, HarnessEnvironment.FindInstalledBinary(directory.Path));
+    }
+
+    [Fact]
+    public void NoInstalledBinaryIsReportedWhenTheToolIsAbsent()
+    {
+        using var directory = new TemporaryDirectory();
+
+        Assert.Null(HarnessEnvironment.FindInstalledBinary(directory.Path));
+    }
+
+    [Fact]
+    public void LookingForAToolCreatesAndRemovesNothing()
+    {
+        using var directory = new TemporaryDirectory();
+
+        HarnessEnvironment.FindInstalledBinary(directory.Path);
+
+        Assert.True(Directory.Exists(directory.Path));
+        Assert.Empty(Directory.GetFileSystemEntries(directory.Path));
+    }
+
+    [Theory]
+    [InlineData("--msagent-path")]
+    [InlineData("--ah-path")]
+    public void BothTheCurrentAndLegacyBinaryOptionsAreAccepted(string option)
+    {
+        Assert.Equal("C:\\tools\\msagent.exe", CommandLine.Parse(["run", option, "C:\\tools\\msagent.exe"]).MsagentPath);
+    }
+
+    [Fact]
+    public void TheCurrentEnvironmentPrefixIsHonoured()
+    {
+        using var environment = new HarnessVariableScope();
+        HarnessVariableScope.Set(E2EConfig.EnvironmentPrefix + "TENANT_ID", "from-current");
+
+        Assert.Equal("from-current", Load().TenantId);
+    }
+
+    [Fact]
+    public void TheLegacyEnvironmentPrefixIsStillHonoured()
+    {
+        using var environment = new HarnessVariableScope();
+        HarnessVariableScope.Set(E2EConfig.LegacyEnvironmentPrefix + "TENANT_ID", "from-legacy");
+
+        Assert.Equal("from-legacy", Load().TenantId);
+    }
+
+    [Fact]
+    public void TheCurrentEnvironmentPrefixWinsOverTheLegacyOne()
+    {
+        using var environment = new HarnessVariableScope();
+        HarnessVariableScope.Set(E2EConfig.EnvironmentPrefix + "TENANT_ID", "wins");
+        HarnessVariableScope.Set(E2EConfig.LegacyEnvironmentPrefix + "TENANT_ID", "loses");
+
+        Assert.Equal("wins", Load().TenantId);
+    }
+
+    [Fact]
+    public void ANeighbouringCurrentValueDoesNotDecideTheLegacyFallback()
+    {
+        using var environment = new HarnessVariableScope();
+        HarnessVariableScope.Set(E2EConfig.EnvironmentPrefix + "MCS_DEV_ENV", "unrelated");
+        HarnessVariableScope.Set(E2EConfig.LegacyEnvironmentPrefix + "TENANT_ID", "from-legacy");
+
+        Assert.Equal("from-legacy", Load().TenantId);
+    }
+
+    [Fact]
+    public void ReadingConfigurationLeavesNoDirectoriesBehind()
+    {
+        var before = Directory.GetDirectories(Path.GetTempPath(), "msagent-e2e-cfg-*").Length;
+
+        using (var environment = new HarnessVariableScope())
+        {
+            HarnessVariableScope.Set(E2EConfig.EnvironmentPrefix + "TENANT_ID", "leak-check");
+            Load();
+        }
+
+        Assert.Equal(before, Directory.GetDirectories(Path.GetTempPath(), "msagent-e2e-cfg-*").Length);
+    }
+
+    private static E2EConfig Load()
+    {
+        using var directory = new TemporaryDirectory("msagent-e2e-cfg-");
+
+        return E2EConfig.Load(directory.Path);
+    }
+
+    private static string? ToolCommandName()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            var candidate = Path.Combine(
+                directory.FullName,
+                "src",
+                "Microsoft.Agents.Hosting.Cli",
+                "Microsoft.Agents.Hosting.Cli.csproj");
+
+            if (File.Exists(candidate))
+            {
+                return ToolCommandNameElement().Match(File.ReadAllText(candidate)) is { Success: true } match
+                    ? match.Groups[1].Value
+                    : null;
+            }
+        }
+
+        return null;
+    }
+
+    [GeneratedRegex(@"<ToolCommandName>([^<]+)</ToolCommandName>")]
+    private static partial Regex ToolCommandNameElement();
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public TemporaryDirectory(string prefix = "msagent-tool-")
+        {
+            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Path { get; }
+
+        public string Place(string fileName)
+        {
+            var file = System.IO.Path.Combine(Path, fileName);
+            File.WriteAllText(file, string.Empty);
+
+            return file;
+        }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Path))
+            {
+                Directory.Delete(Path, recursive: true);
+            }
+        }
+    }
+
+    private sealed class HarnessVariableScope : IDisposable
+    {
+        private readonly Dictionary<string, string?> _prior = [];
+
+        public HarnessVariableScope()
+        {
+            foreach (var prefix in new[] { E2EConfig.EnvironmentPrefix, E2EConfig.LegacyEnvironmentPrefix })
+            {
+                foreach (var suffix in HarnessVariables)
+                {
+                    var name = prefix + suffix;
+                    _prior[name] = Environment.GetEnvironmentVariable(name);
+                    Environment.SetEnvironmentVariable(name, null);
+                }
+            }
+        }
+
+        public static void Set(string name, string value) => Environment.SetEnvironmentVariable(name, value);
+
+        public void Dispose()
+        {
+            foreach (var entry in _prior)
+            {
+                Environment.SetEnvironmentVariable(entry.Key, entry.Value);
+            }
+        }
+    }
+}

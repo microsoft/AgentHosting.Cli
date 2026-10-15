@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Microsoft.Agents.Hosting.Cli.Auth</RootNamespace>
+    <AssemblyName>Microsoft.Agents.Hosting.Cli.Auth</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    The single home for Microsoft.Identity.Client (MSAL) usage. Isolating the real auth adapters here
+    keeps Microsoft.Agents.Hosting.Cli.Core MSAL-free and embeddable, and keeps the Microsoft.Agents.Hosting.Cli host
+    free of any direct MSAL/Azure type reference so its offline-guarantee test stays green — the host
+    only references this project to call the AddAgentHostAuthentication composition extension.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Identity.Client" />
+    <PackageReference Include="Microsoft.Identity.Client.Broker" />
+    <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.Core\Microsoft.Agents.Hosting.Cli.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -41,7 +41,7 @@ and fail when it does not exist. The agent is resolved in this order:
 
 1. `--agent-id`, when supplied. If the configuration holds exactly one agent and its ID differs, the
    command fails with an agent-ID conflict error; otherwise an unknown ID is "agent not found".
-2. `--agent-name` (`list`, `update`, `delete`, `show`; compared case-insensitively). Zero matches is "not found";
+2. `--agent-name` (`create`, `list`, `update`, `delete`, `show`; compared case-insensitively). Zero matches is "not found";
    several is "ambiguous".
 3. Otherwise the single agent in the configuration. No agent is "not found"; more than one is "ambiguous".
 
@@ -53,7 +53,7 @@ Creates a named deployment record. An MCS agent's record is stored in the local 
 Bot Service resource and is **Gated**. The route is chosen from the resolved agent type.
 
 ```text
-msagent deployment create [--agent-id <id>] --deployment-type <dev|test|prod> \
+msagent deployment create [--agent-id <id> | --agent-name <name>] --deployment-type <dev|test|prod> \
   --deployment-name <name> [--environment-id <id>] [--project <directory>]
 ```
 
@@ -61,6 +61,7 @@ msagent deployment create [--agent-id <id>] --deployment-type <dev|test|prod> \
 | --- | --- | --- | --- | --- | --- | --- |
 | `--project` | `-p` | Directory path | No | Current directory | MCS only until the stores converge | The project directory holding the agent. |
 | `--agent-id` | `-aid` | String | Conditional | The project's agent (MCS) | All agents | The owning agent id. Required for a CodeAgent deployment (a GUID). |
+| `--agent-name` | `-an` | String | Conditional | None | **MCS-specific** | The owning agent name, used when the agent id is omitted. |
 | `--deployment-name` | `-dn` | String | Yes | None | All agents | Deployment name, unique within the agent. 4-42 characters; only `-`, `a-z`, `A-Z`, `0-9`, and `_`. |
 | `--deployment-type` | `-dt` | `dev`, `test`, or `prod` | Yes | None | All agents | The stage. Values are case-insensitive. |
 | `--environment-id` | `-eid` | String | Conditional | The agent's home environment | **MCS-specific** | Target environment. Required for `test` and `prod`. |
@@ -91,7 +92,7 @@ Supplying an option for the other agent type is a usage error. Blank values are 
 
 ### Creating an MCS agent deployment
 
-The agent comes from `--agent-id` or the project configuration. A `dev` deployment targets the agent's
+The agent comes from `--agent-id`, `--agent-name`, or the project configuration. A `dev` deployment targets the agent's
 home environment unless `--environment-id` is given; `test` and `prod` require `--environment-id`. The
 target environment is resolved through the signed-in session. The command adds a record (generated
 deployment ID, type, environment, creator) to `agent.config.json` and returns the deployment ID,
@@ -99,6 +100,7 @@ name, type, environment and schema name. No cloud agent is created or adopted.
 
 ```text
 msagent deployment create --deployment-type dev --deployment-name "Development"
+msagent deployment create --agent-name "My agent" --deployment-type dev --deployment-name "Development"
 msagent deployment create --agent-id <agent-id> --deployment-type test \
   --deployment-name "Integration" --environment-id <environment-id> --project <directory>
 ```
@@ -106,7 +108,7 @@ msagent deployment create --agent-id <agent-id> --deployment-type test \
 ### Creating a CodeAgent deployment (Gated)
 
 Requires `AzureBotServiceFeatures`. Requires `--agent-id`, `--deployment-name`, `--deployment-type`,
-`--entra-id`, and `--entra-id-type`; `--environment-id` is rejected. The deployment ID is derived from the
+`--entra-id`, and `--entra-id-type`; `--environment-id` and `--agent-name` are rejected. The deployment ID is derived from the
 agent ID and name, so repeating the command adopts the existing bot instead of provisioning a duplicate.
 The result is written to the local project configuration.
 
@@ -122,8 +124,10 @@ name, type, environment, and schema name. It fails, writing nothing, when the co
 cannot be resolved, the agent is not an MCS agent, `--deployment-type` is not `dev`, `test`, or `prod`,
 `--deployment-name` is missing, a `test`/`prod` deployment has no `--environment-id`, the environment cannot be resolved, the
 project does not declare a schema name, the name is already used by the agent, or the agent already has a
-deployment in that environment. A CodeAgent-only option on an MCS agent (or `--environment-id` on a CodeAgent)
-is a usage error.
+deployment in that environment. A CodeAgent-only option on an MCS agent (or an MCS-only option such as
+`--environment-id` or `--agent-name` on a CodeAgent) is a usage error. When the project holds a configuration but nothing in it
+identifies the agent — no matching deployment record, and no single agent — `create` does not fall back to
+the CodeAgent route: it fails with a usage error asking for `--agent-id or --agent-name`.
 
 CodeAgent: fails before any Azure call on a missing or non-GUID `--agent-id`, `--entra-id`, or
 `--subscription`/`--tenant`; an invalid name; an unsupported `--entra-id-type` or SKU; a blank option; or a
@@ -131,28 +135,32 @@ non-HTTPS `--endpoint-url`. Without `AzureBotServiceFeatures` it fails with a me
 A re-run reports that the bot already existed.
 ## `msagent deployment list`
 
-Lists an agent's deployment slots, in promotion order (dev, test, prod).
+Lists deployment slots, in promotion order (dev, test, prod).
 
 > **Storage.** `deployment list` is entirely local: it reads the deployment records in the project's
 > configuration and contacts nothing. Deployment records are always local in `main`. `AzureBotServiceFeatures`
 > does not change this command.
 
 ```text
-msagent deployment list (--agent-id <id> | --agent-name <name>) [--project <directory>]
+msagent deployment list [--agent-id <id> | --agent-name <name>] [--project <directory>]
 ```
 
 | Option | Shortcut | Value | Required | Default | Description |
 | --- | --- | --- | --- | --- | --- |
 | `--project` | `-p` | Directory path | No | Current directory | The project directory holding the agent. |
-| `--agent-id` | `-aid` | String | Conditional | None | The record whose deployments are listed. Wins over `--agent-name`. |
-| `--agent-name` | `-an` | String | Conditional | None | The record whose deployments are listed, by name. |
+| `--agent-id` | `-aid` | String | No | Every agent | The record whose deployments are listed. Wins over `--agent-name`. |
+| `--agent-name` | `-an` | String | No | Every agent | The record whose deployments are listed, by name. |
 
-One of `--agent-id` or `--agent-name` is required. The agent is resolved as described in [Resolving the agent and project](#resolving-the-agent-and-project).
-Results are ordered by stage (`dev`, `test`, `prod`), then by deployment name (ordinal, case-sensitive). Each result contains the
-deployment ID, name, type, environment ID, and last-deployed time (empty when never deployed). An agent with no
-deployments returns an empty list. The command changes nothing and contacts no service.
+With `--agent-id` or `--agent-name`, the agent is resolved as described in [Resolving the agent and project](#resolving-the-agent-and-project)
+and only that agent's deployments are listed. With neither, every deployment the project holds is listed, ordered by agent
+name, and the table gains `AGENT` and `AGENT ID` columns.
+
+Within an agent, results are ordered by stage (`dev`, `test`, `prod`), then by deployment name (ordinal, case-sensitive). Each
+result contains the deployment ID, name, type, environment ID, last-deployed time (empty when never deployed), and the owning
+agent. An agent with no deployments returns an empty list. The command changes nothing and contacts no service.
 
 ```text
+msagent deployment list
 msagent deployment list --agent-name "My agent"
 ```
 
@@ -306,3 +314,15 @@ The [`connection`](Command_Deployment_Connection.md) and [`oauth`](Command_Deplo
 deployment selectors: `--deployment-id` (`-did`), or `--deployment-name` (`-dn`) with `--agent-id`
 (`-aid`). MCS commands also accept `--agent-name` (`-an`). `--project` (`-p`) is the project
 directory holding the configuration and defaults to the current directory.
+
+When the selectors identify nothing the project holds, `show`, `update` and `delete` report what was
+rejected rather than guessing a route:
+
+```text
+Nothing in this project matches --agent-id 'agent-missing'. Run `msagent deployment list` to see what it holds.
+```
+
+The one exception is an address Azure can resolve on its own: `--agent-id` together with
+`--deployment-name` is a complete Azure Bot Service address, so when `AzureBotServiceFeatures` is
+enabled those verbs still reach Azure and import a bot this project has no record of. With the
+control off there is no Azure route to take, so the same input is rejected as above.

@@ -11,7 +11,7 @@
 | [`msagent agent eval show`](#msagent-agent-eval-show) | Show one run and its per-conversation results. |
 | [`msagent agent eval cancel`](#msagent-agent-eval-cancel) | Stop a run that is still queued or in progress. |
 | [`msagent agent eval delete`](#msagent-agent-eval-delete) | Delete a finished run. |
-| [`msagent agent eval generate`](#msagent-agent-eval-generate) | Generate conversations without storing them. |
+| [`msagent agent eval generate`](#msagent-agent-eval-generate) | Generate conversations without creating a test set. |
 | [`msagent agent eval testset list`](#msagent-agent-eval-testset-list) | List the test sets an agent holds. |
 | [`msagent agent eval testset show`](#msagent-agent-eval-testset-show) | Show one test set and its conversations. |
 | [`msagent agent eval testset create`](#msagent-agent-eval-testset-create) | Create a test set from a CSV or generated conversations. |
@@ -40,7 +40,15 @@ from the per-command tables below.
 | `--project` | `-p` | Directory path | Current directory | The project directory to act on. |
 | `--agent-id` | `-aid` | String | None | The agent to act on. Wins over `--agent-name`. |
 | `--agent-name` | `-an` | String | None | The agent to act on, by name. |
-| `--environment-id` | `-eid` | String | Active environment | Act in this environment instead of the active one. |
+| `--environment-id` | `-eid` | String | The agent's own environment, else the active one | Act in this environment instead. |
+
+Environment order:
+
+1. `--environment-id`, when supplied.
+2. The environment recorded for the agent the selectors name in this project, the same environment
+   `agent deploy`, `agent delete` and `deployment connection` act in. A stale `env select` therefore
+   cannot redirect an evaluation, and these commands work with no active environment at all.
+3. The active environment, for an agent this project does not hold.
 
 Resolution order:
 
@@ -52,7 +60,8 @@ Resolution order:
 3. Otherwise the environment's agents: `--agent-name` matches an agent's display name, schema name,
    or ID (case-insensitively), and with no name the environment must hold exactly one agent.
 
-When several agents match, the command reports the ambiguity and asks for `--agent-id`.
+When several agents match, the command reports the ambiguity and asks for `--agent-id`. When nothing
+matches, the failure names the environment that was searched.
 
 ## Test set selectors
 
@@ -168,8 +177,10 @@ msagent agent eval delete --run-id <run-id>
 
 ## `msagent agent eval generate`
 
-Asks Copilot Studio to invent conversations from the agent's own description and prints or writes
-them. Nothing is stored: the agent's test sets are unchanged.
+Asks Copilot Studio to invent conversations from the agent's own description and lists them. No test
+set is created and the agent's test sets are unchanged. Pass `--output` to keep a CSV copy, or create
+a test set from the same conversations with
+[`msagent agent eval testset create --generate`](#msagent-agent-eval-testset-create).
 
 ```text
 msagent agent eval generate [--count <number>] [--turns <number>] [--output <file>]
@@ -179,7 +190,7 @@ msagent agent eval generate [--count <number>] [--turns <number>] [--output <fil
 | --- | --- | --- | --- | --- | --- |
 | `--count` | `-cnt` | Whole number | No | `10` | How many conversations to generate. Must be positive. |
 | `--turns` | `-trn` | Whole number | No | `3` | Turns per conversation. Must be positive. |
-| `--output` | `-o` | File path | No | None | Write the conversations to this file as CSV. |
+| `--output` | `-o` | File path | No | None | Write the conversations to this file as CSV. Omit to list them without keeping a copy. |
 
 A generation that returns nothing is reported as a failure rather than an empty result.
 

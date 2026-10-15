@@ -1,0 +1,3 @@
+mcs.metadata:
+  componentName: ./scripts/Get-UsTemperature.ps1
+  schemaName: ahe2e_MCSCliAgent.file.getustemperatureps1_fSRP7

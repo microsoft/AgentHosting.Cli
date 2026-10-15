@@ -1,0 +1,21 @@
+<Project ToolsVersion="15.0" DefaultTargets="Build"
+    xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <ItemGroup>
+        <ProjectToBuild Include="src\Microsoft.Agents.Hosting.Cli.slnx" />
+    </ItemGroup>
+    <Target Name="Clean">
+        <MSBuild Projects="@(ProjectToBuild)" Targets="Clean" />
+    </Target>
+    <Target Name="Restore">
+        <MSBuild Projects="@(ProjectToBuild)" Targets="Restore" />
+    </Target>
+    <Target Name="Pack">
+        <MSBuild Projects="@(ProjectToBuild)" Targets="Pack" />
+    </Target>
+    <Target Name="Build">
+        <MSBuild Projects="@(ProjectToBuild)" BuildInParallel="false" />
+    </Target>
+    <Target Name="Publish">
+        <MSBuild Projects="@(ProjectToBuild)" Targets="Publish" />
+    </Target>
+</Project>

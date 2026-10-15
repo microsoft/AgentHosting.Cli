@@ -1,0 +1,12 @@
+<Project>
+	<PropertyGroup>
+		<!--<Company Condition="'$(Company)' == ''">Microsoft</Company>--> <!-- Company Set in Nuget Properties -->
+		<Product Condition="'$(Product)' == ''">Microsoft Agent Hosting CLI</Product>
+		<Copyright Condition="'$(Copyright)' == ''">© Microsoft Corporation. All rights reserved.</Copyright>
+		<!-- <Description Condition="'$(Description)' == ''">Microsoft Agent Hosting CLI Module</Description> --> <!-- Description Set in Nuget Properties -->
+		<AssemblyVersion Condition="'$(AssemblyVersion)' == ''">0.1.0.0</AssemblyVersion>
+		<FileVersion Condition="'$(FileVersion)' == ''">0.0.1.0</FileVersion>
+		<InformationalVersion Condition="'$(InformationalVersion)' == ''">$(FileVersion)</InformationalVersion>
+		<PreSetAssemblyVersion>$(AssemblyVersion)</PreSetAssemblyVersion>
+	</PropertyGroup>
+</Project>

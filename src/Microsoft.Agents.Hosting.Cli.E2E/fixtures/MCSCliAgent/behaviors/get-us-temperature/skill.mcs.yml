@@ -1,0 +1,8 @@
+mcs.metadata:
+  componentName: get-us-temperature
+  description: PROBE161455 - Get the current observed temperature for any city or town in the United States. Use when the user asks for the current temperature, how hot or cold it is, or the temperature in a US city, e.g. "what is the temperature in Seattle" or "how cold is it in Austin right now".
+  schemaName: ahe2e_MCSCliAgent.skill.get-us-temperature_ntn
+  bundle: ahe2e_MCSCliAgent.file.getustemperaturezip_zR5NC
+  manifestSchemaName: ahe2e_MCSCliAgent.file.skillmd_NyE9f
+kind: InlineAgentSkill
+authoringSource: Upload

@@ -28,7 +28,7 @@ command; version is available only at the root.
 | `-j`, `--json` | Boolean flag | `false` | Emit machine-readable JSON output. |
 | `-dbg`, `--debug` | Boolean flag | `false` | Display debugging information, such as redacted API responses, on stderr. |
 | `-nc`, `--no-color` | Boolean flag | `false` | Disable colored output. Color is also disabled when `NO_COLOR` is set or both stdout and stderr are redirected. |
-| `-ni`, `--non-interactive` | Boolean flag | `false` | Do not open a browser or WAM sign-in; fail instead. Connection commands have command-specific non-interactive behavior; see their help for details. |
+| `-ni`, `--non-interactive` | Boolean flag | `false` | Do not open a browser or WAM sign-in, fail instead. Connection commands have command-specific non-interactive behavior; see their help for details. |
 | `-?`, `-h`, `--help` | Boolean flag | `false` | Show help and usage information for the current command. |
 | `-v`, `--version` | Boolean flag | `false` | Show version information. Available only at the root (`msagent --version`). |
 

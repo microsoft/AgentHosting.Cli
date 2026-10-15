@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+
+  <ItemGroup>
+    <!-- The deterministic ZIP writer is an implementation detail of the package builder, but its
+         guard against source content changing mid-write is only reachable by handing it an entry
+         whose declared CRC and length disagree with what the entry actually yields. That cannot be
+         staged through the public builder without a real filesystem race. -->
+    <InternalsVisibleTo Include="Microsoft.Agents.Hosting.Cli.Tests" />
+  </ItemGroup>
+
+</Project>

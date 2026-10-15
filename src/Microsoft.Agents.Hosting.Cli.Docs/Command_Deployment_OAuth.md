@@ -17,8 +17,8 @@
 | [`msagent deployment oauth show`](#msagent-deployment-oauth-show) | Get an OAuth connection setting on a deployment. |
 | [`msagent deployment oauth update`](#msagent-deployment-oauth-update) | Update an OAuth connection setting on a deployment. |
 
-Except for `list-providers`, the commands accept the deployment selectors (`--deployment-id`, or
-`--deployment-name` with `--agent-id`) and `--project`.
+Except for `list-providers`, the commands require a deployment selector (`--deployment-id`, or
+`--deployment-name` with `--agent-id`) and accept `--project`.
 
 The `--connection` (`-con`) value is the OAuth connection name, unique within the bot. It must be
 2-64 characters, start with a letter or digit, and contain only whitespace, letters, digits, `.`,

@@ -17,10 +17,14 @@
 | [`msagent deployment connection remove`](#msagent-deployment-connection-remove---mcs-specific) | Remove a connection reference from the workspace, delete a connection from the environment, or both. |
 | [`msagent deployment connection connectors`](#msagent-deployment-connection-connectors---mcs-specific) | List the connectors the environment serves, so a reference can be declared against one. |
 
-Every connection command accepts the deployment selectors and `--project` described in
-[Selecting a deployment and project](Command_Deployment.md#selecting-a-deployment-and-project). With the global
+Every connection command requires a deployment selector (`--deployment-id`, or `--deployment-name` with
+an agent selector) and accepts `--project`, as described in
+[Selecting a deployment and project](Command_Deployment.md#selecting-a-deployment-and-project). `connection
+add --connection-only` and `connection connectors` take `--environment-id` instead. With the global
 `--non-interactive` option, `connection add --connection-only` and `connection update` still create
-connections and print the consent link instead of opening a browser. Plain `connection add` creates
+connections and print the consent link instead of opening a browser. That link can be opened on
+this machine or another device; a connector that answers with a consent code needs a browser on
+this machine, and the command says so if the wait runs out. Plain `connection add` creates
 a connection only when the connector has no existing connection to choose between. `connection
 update` lists its connectors and reads the answer from stdin; end-of-input ends the run.
 
@@ -66,6 +70,11 @@ Binds the agent's connection references, resolving one connector at a time.
 
 Removes a connection reference from the workspace, deletes a connection from the environment, or
 both.
+
+Removing a reference deletes the environment's `connectionreference` record as well as the
+workspace declaration. The environment refuses that delete while another component still depends on
+the record, which leaves the declaration removed and the record in place; the command reports which
+of the two it removed.
 
 | Option | Shortcut | Value | Description |
 | --- | --- | --- | --- |

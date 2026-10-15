@@ -1,0 +1,7 @@
+{
+  "amsFeatures": "off",
+  "azureBotServiceFeatures": "off",
+  "identityFeatures": "off",
+  "liveTestFeatures": "off",
+  "evaluationFeatures": "on"
+}

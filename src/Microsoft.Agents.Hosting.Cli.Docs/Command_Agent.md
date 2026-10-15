@@ -45,26 +45,26 @@ be created, so `--agent-type MCSAgent` must be supplied.
 
 ```text
 # New MCS agent
-msagent agent create --name <name> --description <description> \
-  --agent-type MCSAgent --initial-prompt <prompt> [options]
+msagent agent create --agent-type MCSAgent --agent-name <name> --description <description> \
+  --initial-prompt <prompt> [options]
 
 # Clone an MCS agent
 msagent agent create --agent-type MCSAgent \
   (--mcs-clone-agent-id <id> | --mcs-clone-agent-schemaname <schema-name>) [options]
 
 # CodeAgent (Gated)
-msagent agent create --name <name> --description <description> \
+msagent agent create --agent-type CodeAgent --agent-name <name> \
   --language <language> --language-version <version> [options]
 ```
 
 | Option | Shortcut | Value | Applies to | Description |
 | --- | --- | --- | --- | --- |
-| `--name` | `-n` | String | All agents | Agent display name. Required unless cloning, which inherits the source agent's name. |
+| `--agent-name` | `-an` | String | All agents | Agent display name. Required unless cloning, which inherits the source agent's name. |
 | `--description` | `-d` | String | All agents | Agent description. Required for a new MCS agent. |
 | `--agent-type` | `-at` | `MCSAgent` (alias `mcs`) or `CodeAgent` | All agents | Agent type. Defaults to `CodeAgent`, which is **Gated**; use `MCSAgent` for a local MCS project. |
 | `--environment-id` | `-eid` | String | All agents | Target environment id. When omitted, the active environment is used. |
 | `--project` | `-p` | Directory path | **MCS-specific** | The project directory to initialize. Defaults to the current directory; a missing directory is created. |
-| `--schema-name` | `-sn` | String | **MCS-specific** | MCS schema name. Derived from `--name` when omitted. |
+| `--schema-name` | `-sn` | String | **MCS-specific** | MCS schema name. Derived from `--agent-name` when omitted. |
 | `--mcs-agent-type` | `-mat` | `CLI` or `Classic` | **MCS-specific** | Scaffold shape. Defaults to `CLI`. |
 | `--init-template` | `-it` | String | **MCS-specific** | Scaffold template name. Valid only with `--mcs-agent-type Classic`. |
 | `--initial-prompt` | `-ip` | String | **MCS-specific** | Instructions scaffolded into the project. Required for a new MCS agent. |
@@ -83,25 +83,25 @@ msagent agent create --name <name> --description <description> \
 - Without `MCSAgent`, supplying any MCS-specific option (`--schema-name`, `--mcs-agent-type`,
   `--init-template`, `--initial-prompt`, or a clone option) is a usage error that asks for
   `--agent-type MCSAgent`.
-- A CodeAgent requires `--name`, `--language`, and `--language-version`.
+- A CodeAgent requires `--agent-name`, `--language`, and `--language-version`.
 - **Gated:** creating a CodeAgent (any `--agent-type` other than `MCSAgent`, including the default)
   fails when `AmsFeatures` is off, with a message directing the user to `--agent-type MCSAgent`.
 
 ### Creating a new MCS agent
 
-Creating an MCS agent from scratch requires `--name`, `--description`, `--agent-type MCSAgent`, and
+Creating an MCS agent from scratch requires `--agent-name`, `--description`, `--agent-type MCSAgent`, and
 `--initial-prompt`. `--mcs-agent-type` selects the scaffold: `CLI` (the default) or `Classic`.
 `--init-template` selects a template and is valid only with `Classic`.
 
 ```text
 # Create a CLI-format MCS agent in the active environment
-msagent agent create --name "Support agent" \
+msagent agent create --agent-name "Support agent" \
   --description "Answers support questions" \
   --agent-type MCSAgent \
   --initial-prompt "Help users resolve support issues."
 
 # Create a Classic MCS agent in an explicit environment and directory
-msagent agent create --name "Support agent" \
+msagent agent create --agent-name "Support agent" \
   --description "Answers support questions" \
   --agent-type MCSAgent \
   --initial-prompt "Help users resolve support issues." \
@@ -112,7 +112,7 @@ msagent agent create --name "Support agent" \
 ### Cloning an existing MCS agent
 
 Cloning requires `--agent-type MCSAgent` and a clone selector, `--mcs-clone-agent-id` or
-`--mcs-clone-agent-schemaname`. The clone inherits the source agent's name unless `--name` is
+`--mcs-clone-agent-schemaname`. The clone inherits the source agent's name unless `--agent-name` is
 supplied. The environment holding the clone source is `--mcs-clone-environment-id`, then
 `--environment-id`, then the active environment.
 
@@ -133,7 +133,7 @@ msagent agent create --agent-type MCSAgent \
 > **Gated.** Available only when `AmsFeatures` is enabled.
 
 ```text
-msagent agent create --name "Support agent" --description "Answers support questions" \
+msagent agent create --agent-name "Support agent" --description "Answers support questions" \
   --language dotnet --language-version <version>
 ```
 
@@ -262,15 +262,15 @@ Gated behavior:
 Shares an MCS agent with a user, with the whole organization, or both.
 
 ```text
-msagent agent share [--project <directory>] [--agent-id <id> | --agent-name <name>] \
+msagent agent share (--agent-id <id> | --agent-name <name>) [--project <directory>] \
   [--user <user> --role <use|edit|view>] [--share-with-org [true|false]]
 ```
 
 | Option | Shortcut | Value | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--project` | `-p` | Directory path | Current directory | The project directory to act on. |
-| `--agent-id` | `-aid` | String | None | The agent to act on. Wins over `--agent-name`. |
-| `--agent-name` | `-an` | String | None | The agent to act on, by name. |
+| `--agent-id` | `-aid` | String | None | The agent to act on. Required unless `--agent-name` is supplied, and wins over it. |
+| `--agent-name` | `-an` | String | None | The agent to act on, by name. Required unless `--agent-id` is supplied. |
 | `--user` | `-u` | String | None | The user to grant access to, by sign-in address or Entra object id. |
 | `--role` | `-rl` | `use`, `edit`, or `view` | None | The access to grant. Required with `--user`. |
 | `--share-with-org` | `-swo` | Optional flag | Setting left unchanged | Let everyone in the organization use the agent. Omit to leave the current setting alone; `--share-with-org false` turns it off. |
@@ -285,7 +285,7 @@ accepts `--project`, `--agent-id`, and `--agent-name`, with the same meanings as
 Removes a user's access to an MCS agent. Environment Maker is environment-wide and is never removed.
 
 ```text
-msagent agent unshare [--project <directory>] [--agent-id <id> | --agent-name <name>] --user <user>
+msagent agent unshare (--agent-id <id> | --agent-name <name>) --user <user> [--project <directory>]
 ```
 
 It accepts `--project`, `--agent-id`, `--agent-name`, and `--user` (`-u`; a sign-in address or Entra
