@@ -1,0 +1,4 @@
+mcs.metadata:
+  componentName: text.md
+  description: This knowledge source searches information contained in text.md
+  schemaName: ahe2e_MCSCliAgent.file.text.md

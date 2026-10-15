@@ -1,0 +1,12 @@
+schemaVersion: 1.0.0
+providers:
+- provider: InventoryAsCode
+  version: 1.0.0
+  metadata:
+    isProduction: false
+    accountableOwners:
+      service: 0ab2a10f-f0a6-40c7-8b24-f718d4c3cf88
+    routing:
+      defaultAreaPath:
+        org: dynamicscrm
+        path: OneCRM\Copilot SDK

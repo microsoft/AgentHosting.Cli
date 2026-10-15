@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    This project proves that the operation Core is embeddable. It references Microsoft.Agents.Hosting.Cli.Core
+    ONLY — never the command host (Microsoft.Agents.Hosting.Cli) and never the MSAL
+    adapter (Microsoft.Agents.Hosting.Cli.Auth). It drives the operation facade with injected fakes to show a
+    future service can re-host the Core without the CLI shell and without loading identity/Azure
+    libraries. The single project reference is the structural half of the guarantee; the reflection
+    test is the observable half. Kept as a separate assembly so "run the embeddability check without
+    loading command-host types" is a distinct, isolated test run.
+  -->
+
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Core ONLY. Adding a reference to Microsoft.Agents.Hosting.Cli or Microsoft.Agents.Hosting.Cli.Auth here would
+         defeat the purpose of the embeddability proof. -->
+    <ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.Core\Microsoft.Agents.Hosting.Cli.Core.csproj" />
+  </ItemGroup>
+
+</Project>

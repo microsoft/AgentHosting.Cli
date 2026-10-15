@@ -1,0 +1,21 @@
+mcs.metadata:
+  componentName: Agent Flow 3
+  description: When an agent calls the flow and send back a response.
+kind: WorkflowTool
+workflowId: 6e5229e3-e343-f111-88b5-7ced8d3b6119
+toolInputs:
+  - name: text
+    displayName: Text
+    description: Text 1 description
+
+toolOutputs:
+  - name: outputnum1
+    displayName: OutputNum1
+
+  - name: outputtext1
+    displayName: OutputText1
+
+connectionProperties:
+  $kind: ConnectionProperties
+  diagnostics:
+  mode: Invoker

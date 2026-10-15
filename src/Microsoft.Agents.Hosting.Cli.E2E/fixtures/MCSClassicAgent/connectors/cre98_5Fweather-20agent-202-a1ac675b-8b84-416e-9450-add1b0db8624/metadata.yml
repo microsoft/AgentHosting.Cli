@@ -1,0 +1,21 @@
+﻿{
+  "connectorid": "a1ac675b-8b84-416e-9450-add1b0db8624",
+  "name": "cre98_5Fweather-20agent-202",
+  "displayname": "Weather Agent 2",
+  "description": "This agent answers the weather question related to US. This required city and state of US.",
+  "connectorinternalid": "shared_cre98-5fweather-20agent-202-5f2c520b622e718fe6",
+  "openapidefinition": "connectors/cre98_5Fweather-20agent-202-a1ac675b-8b84-416e-9450-add1b0db8624/openapidefinition.json",
+  "connectionparameters": "connectors/cre98_5Fweather-20agent-202-a1ac675b-8b84-416e-9450-add1b0db8624/connectionparameters.json",
+  "connectionparametersets": null,
+  "policytemplateinstances": "connectors/cre98_5Fweather-20agent-202-a1ac675b-8b84-416e-9450-add1b0db8624/policytemplateinstances.json",
+  "iconbrandcolor": "#007ee5",
+  "iconblob": "connectors/cre98_5Fweather-20agent-202-a1ac675b-8b84-416e-9450-add1b0db8624/iconblob.png",
+  "connectortype": 1,
+  "statecode": 0,
+  "statuscode": 1,
+  "ismanaged": false,
+  "componentstate": 0,
+  "createdon": "2026-07-10T22:13:12Z",
+  "modifiedon": "2026-09-10T15:52:56Z",
+  "versionnumber": 2806550
+}

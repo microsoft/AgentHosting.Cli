@@ -1,0 +1,122 @@
+// ---------------------------------------------------------------------------
+// Template for e2e.config.json. Copy this file, then edit the copy:
+//
+//   copy e2e.config.sample.json e2e.config.json
+//
+// e2e.config.json is gitignored; this template is committed. Never put your own
+// tenant, subscription or environment ids in THIS file — they would be shared
+// with everyone who clones the repository, and the next person to run the suite
+// would silently target your environment.
+//
+// Comments and trailing commas are allowed in both files.
+//
+// Nothing below is fatal if omitted. Every missing value becomes a SKIP with a
+// stated reason, so the fastest way to learn what you are missing is:
+//
+//   dotnet run --project . -- plan
+// ---------------------------------------------------------------------------
+{
+  // REQUIRED. The Entra tenant owning the environments below.
+  // Format: GUID.  Find it with:  msagent env list
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+
+  "mcs": {
+    // REQUIRED for 59 of the 93 scenarios.
+    //
+    // THE HARNESS CREATES AND DELETES COPILOT STUDIO AGENTS HERE.
+    // Naming this environment is the grant; there is no second switch.
+    // Use a disposable environment holding nothing you care about.
+    //
+    // Format: GUID.  Find it with:  msagent env list
+    "devEnvironmentId": "00000000-0000-0000-0000-000000000000",
+
+    // OPTIONAL. Unlocks the 4 dev -> test promotion scenarios.
+    // Also written to: agents are created and deleted here as well.
+    // Must differ from devEnvironmentId, or plan refuses to start.
+    // Format: GUID, or null.
+    "testEnvironmentId": null,
+
+    // OPTIONAL. Unlocks the 5 scenarios that grant and revoke real access.
+    //
+    // The Entra OBJECT ID of a user the suite shares agents with. Supply an
+    // object id and nothing else — never a sign-in address or a name — so this
+    // file, the transcripts and the run reports identify no person.
+    //
+    // The user needs no account in the environment: sharing addresses them by
+    // object id. Every grant is revoked by the scenario that made it.
+    // Format: GUID, or null.  Find one with:
+    //   az ad user show --id <upn> --query id -o tsv
+    "shareUserObjectId": null,
+
+    // NOT SUPPORTED YET. Leave both null; `plan` refuses an override.
+    //
+    // Rebranding only rewrites the bundled fixture's name, so a custom workspace
+    // keeps its own schema name. The suite would deploy over the agent that name
+    // already refers to, and cleanup would then delete it.
+    //
+    // Absolute paths to your own agent workspaces.
+    // Leave null to use the two agents bundled under fixtures/, which is what
+    // almost everyone wants — they are checked in and known to deploy cleanly.
+    //   cliAgent     - a CLI-shaped agent (behaviors, skills)
+    //   classicAgent - a classic agent (topics, knowledge files, prompts,
+    //                  connection references)
+    //   workflow     - a standalone Power Automate cloud flow, with no agent
+    //                  project file of its own
+    // Format: "C:\\path\\to\\workspace", or null.
+    "workspaces": {
+      "cliAgent": null,
+      "classicAgent": null,
+      "workflow": null
+    }
+  },
+
+  // OPTIONAL. Azure Bot Service, for the `abs` and CodeAgent deployment
+  // scenarios. Needs the Azure CLI (`az`) on PATH, because `msagent` cannot delete a
+  // bot and cleanup shells out to it.
+  "azure": {
+    // With resourceGroup, unlocks `abs preview` (2 scenarios, creates nothing).
+    // Format: GUID.  Find it with:  az account show --query id -o tsv
+    "subscriptionId": null,
+
+    // The resource group bots are created in.
+    // Format: the plain name, e.g. "rg-e2e". Not a full resource id.
+    "resourceGroup": null,
+
+    // Prefix for every bot this suite creates. A per-run suffix is appended, so
+    // a bot ends up named like "msagent-e2e-a41f-ab03".
+    // Bot names are GLOBALLY unique across Azure, so pick something distinctive.
+    "botNamePrefix": "msagent-e2e",
+
+    // OPTIONAL. Reuse an existing app registration instead of creating one.
+    //
+    // Azure permits only ONE bot per app id, so supplying this limits a run to a
+    // single bot-creating feature. Leave null and the harness creates a
+    // throwaway app per bot and deletes it afterwards.
+    // Format: the application (client) id GUID, or null.
+    "existingMsaAppId": null,
+
+    // OPTIONAL. A bot you already own, used by AB-09 for `abs preview` only.
+    //
+    // READ-ONLY BY CONSTRUCTION: the preview service has no write path, this
+    // value is never passed to `abs apply`, and it never enters the cleanup
+    // ledger. Safe to point at a bot you care about.
+    // Format: the bot resource name, or null.
+    "existingBotName": null,
+
+    // Set true to allow the 6 `abs apply` scenarios.
+    //
+    // CREATES A REAL, BILLABLE AZURE BOT (and a throwaway app registration).
+    // The harness creates its own bot, tests it, then deletes it — it never
+    // writes to a bot it did not create.
+    "allowCreate": false
+  },
+
+
+  // OPTIONAL. Agent Management Service, for CodeAgent *agent creation*
+  // (CA-19, CA-20). The CodeAgent deployment lifecycle does NOT need this —
+  // it talks to ARM directly and needs only the azure block above.
+  // Format: "https://...", or null.
+  "ams": {
+    "endpoint": null
+  }
+}

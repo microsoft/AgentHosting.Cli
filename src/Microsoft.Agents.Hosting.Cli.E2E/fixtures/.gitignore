@@ -1,0 +1,3 @@
+# Fixtures are copied to a scratch directory per scenario; a run must never write back into them.
+.config/
+.mcs/

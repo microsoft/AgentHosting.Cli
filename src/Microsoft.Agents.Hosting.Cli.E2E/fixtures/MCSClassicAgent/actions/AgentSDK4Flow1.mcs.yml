@@ -1,0 +1,17 @@
+mcs.metadata:
+  componentName: AgentSDK4 Flow1
+kind: TaskDialog
+outputs:
+  - propertyName: textout1
+
+  - propertyName: boolout1
+
+action:
+  kind: InvokeFlowTaskAction
+  flowId: 94945b98-fe8c-f111-8077-7ced8d702753
+  connectionProperties:
+    $kind: ConnectionProperties
+    diagnostics:
+    mode: Invoker
+
+outputMode: All

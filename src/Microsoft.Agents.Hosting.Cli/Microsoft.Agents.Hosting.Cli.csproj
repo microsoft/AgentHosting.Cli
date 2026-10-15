@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!--TargetFramework>net10.0</TargetFramework>-->
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Microsoft.Agents.Hosting.Cli</RootNamespace>
+    <AssemblyName>Microsoft.Agents.Hosting.Cli</AssemblyName>
+
+    <!-- Packaged as a framework-dependent .NET tool. The command tree is discovered by reflection
+         over [Command]/[CommandGroup] types, which trimming would silently remove, so this tool is
+         not trimmable. -->
+    <PackAsTool>true</PackAsTool>
+    <IsTrimmable>false</IsTrimmable>
+    <ToolCommandName>msagent</ToolCommandName>
+    <PackageId>Microsoft.Agents.Hosting.Cli</PackageId>
+    <IsPackable>true</IsPackable>
+    <Description>AgentHost CLI is the CLI for working with the Microsoft Agent Hosting platform. This tool supports various commands for managing and interacting with the platform. The CLI currently supports Microsoft Copilot Studio Agents, and Agents developed with the Microsoft 365 Agents SDK.</Description>
+    <PackageReadmeFile>Tool_Readme.md</PackageReadmeFile>
+  </PropertyGroup>
+	
+
+  <ItemGroup>
+    <None Include="Tool_Readme.md" Pack="true" PackagePath="\" />
+    <None Update="featureflags.json" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="tools/$(TargetFramework)/any/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.PowerApps.AppInsights.BatchedTelemetry" VersionOverride="4.0.28" ExcludeAssets="contentFiles" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.Hosting.Cli.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.Commands\Microsoft.Agents.Hosting.Cli.Commands.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.Core\Microsoft.Agents.Hosting.Cli.Core.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.Auth\Microsoft.Agents.Hosting.Cli.Auth.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.CopilotStudio\Microsoft.Agents.Hosting.Cli.CopilotStudio.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.Core\Microsoft.Agents.Hosting.Cli.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- CommandReflector's construction guards reject a malformed [Command] class, which can only be
+         exercised with deliberately malformed types the production tree must not contain. -->
+    <InternalsVisibleTo Include="Microsoft.Agents.Hosting.Cli.Tests" />
+  </ItemGroup>
+
+</Project>

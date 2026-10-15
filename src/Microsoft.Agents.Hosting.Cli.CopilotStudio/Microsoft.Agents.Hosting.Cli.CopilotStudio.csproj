@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Microsoft.Agents.Hosting.Cli.CopilotStudio</RootNamespace>
+    <AssemblyName>Microsoft.Agents.Hosting.Cli.CopilotStudio</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+	
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.CopilotStudio.Client" />
+    <PackageReference Include="Microsoft.CopilotStudio.Sync" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Templates\*" />
+    <EmbeddedResource Include="Templates\**\*" Exclude="Templates\*">
+      <LogicalName>Templates/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.Hosting.Cli.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.Core\Microsoft.Agents.Hosting.Cli.Core.csproj" />
+  </ItemGroup>
+
+</Project>
