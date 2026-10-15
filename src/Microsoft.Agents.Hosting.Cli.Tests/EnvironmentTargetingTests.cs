@@ -1331,7 +1331,9 @@ public sealed class PowerPlatformApiEnvironmentClientTests
 
         var environments = await client.ListEnvironmentsAsync(CancellationToken.None);
 
-        Assert.Equal("/providers/Microsoft.PowerApps/environments/env-1", Assert.Single(environments).EnvironmentId);
+        var environment = Assert.Single(environments);
+        Assert.Equal("/providers/Microsoft.PowerApps/environments/env-1", environment.EnvironmentId);
+        Assert.Equal(new Uri("https://en.v1.environment.api.powerplatform.com/"), environment.ApiEndpoint);
     }
 
     [Fact]

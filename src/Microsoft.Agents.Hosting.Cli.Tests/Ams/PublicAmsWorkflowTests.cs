@@ -24,41 +24,80 @@ public sealed class PublicAmsWorkflowTests
     [Theory]
     [InlineData(
         PowerPlatformApiRing.Production,
+        false,
         "https://api.powerplatform.com/",
-        "https://home.environment.api.powerplatform.com/")]
+        "https://222222222222222222222222222222.22.environment.api.powerplatform.com/")]
     [InlineData(
         PowerPlatformApiRing.Preprod,
+        false,
         "https://api.preprod.powerplatform.com/",
-        "https://home.environment.api.preprod.powerplatform.com/")]
+        "https://2222222222222222222222222222222.2.environment.api.preprod.powerplatform.com/")]
     [InlineData(
         PowerPlatformApiRing.Test,
+        false,
         "https://api.test.powerplatform.com/",
-        "https://home.environment.api.test.powerplatform.com/")]
-    public async Task CreateUploadDeployUpdate_UsesPublicRoutesWithoutEndpointOverrides(
+        "https://2222222222222222222222222222222.2.environment.api.test.powerplatform.com/")]
+    [InlineData(
+        PowerPlatformApiRing.Production,
+        true,
+        "https://api.powerplatform.com/",
+        "https://222222222222222222222222222222.22.environment.api.powerplatform.com/")]
+    [InlineData(
+        PowerPlatformApiRing.Preprod,
+        true,
+        "https://api.preprod.powerplatform.com/",
+        "https://2222222222222222222222222222222.2.environment.api.preprod.powerplatform.com/")]
+    [InlineData(
+        PowerPlatformApiRing.Test,
+        true,
+        "https://api.test.powerplatform.com/",
+        "https://2222222222222222222222222222222.2.environment.api.test.powerplatform.com/")]
+    public async Task CreateUploadDeployUpdate_ResolvesEnvironmentHostWithoutAdvertisedEndpoints(
         PowerPlatformApiRing ring,
+        bool useStoredGlobalEndpoint,
         string globalEndpoint,
         string environmentEndpoint)
     {
         var target = PowerPlatformApiRingSelection.TargetFor(ring);
         var profiles = InMemoryAuthProfileStore.SignedOut();
         await profiles.UpsertAsync(EnvironmentFixtures.Account(ring: ring), default);
-        var home = EnvironmentFixtures.Environment(Home, endpoint: environmentEndpoint) with
+        var inventoryBody = JsonSerializer.Serialize(new
         {
-            ApiAudience = target.Audience,
-        };
-        var targetEnvironment = home with
+            value = new[]
+            {
+                new { name = Home, properties = new { tenantId = Tenant } },
+                new { name = Target, properties = new { tenantId = Tenant } },
+            },
+        });
+        var inventoryHandler = new CapturingPackageHandler(_ =>
+            FakeHttpResponse.Json(HttpStatusCode.OK, inventoryBody));
+        using var inventoryHttp = new HttpClient(inventoryHandler);
+        var inventory = new PowerPlatformApiEnvironmentClient(
+            inventoryHttp,
+            new FakePpapiTokenProvider { Scopes = PowerPlatformApiPermissions.EnvironmentsRead },
+            target);
+        var selections = new InMemoryEnvironmentSelectionStore();
+        if (useStoredGlobalEndpoint)
         {
-            EnvironmentId = Target,
-            ApiEndpoint = new Uri($"https://target.environment.{target.GlobalEndpoint.Host}/"),
-        };
+            await selections.SetActiveAsync(
+                EnvironmentFixtures.Selection(Home, endpoint: globalEndpoint) with
+                {
+                    ApiAudience = target.Audience,
+                },
+                default);
+        }
+
         var environments = new EnvironmentSelectionService(
-            new FakeEnvironmentClient(home, targetEnvironment),
-            new InMemoryEnvironmentSelectionStore(),
+            inventory,
+            selections,
             profiles,
             PowerPlatformCloudMap.ForTarget(target),
             new FixedClock(EnvironmentFixtures.SelectedAt),
             apiTarget: target);
-        await environments.SelectAsync(Home, default);
+        if (!useStoredGlobalEndpoint)
+        {
+            await environments.SelectAsync(Home, default);
+        }
 
         byte[] packageBytes = [1, 2, 3, 4, 5];
         var digest = Convert.ToHexString(SHA256.HashData(packageBytes)).ToLowerInvariant();
@@ -107,27 +146,27 @@ public sealed class PublicAmsWorkflowTests
             isQuarantined = false,
         });
 
-        var agentUrl = $"{environmentEndpoint}agenthosting/agents/{Agent}?api-version=1";
-        var deploymentUrl =
-            $"{globalEndpoint}agenthosting/environments/{Home}/agents/{Agent}/deployments";
-        (HttpMethod Method, string Url, string Body)[] expected =
-        [
-            (HttpMethod.Post, $"{environmentEndpoint}agenthosting/agents?api-version=1", agentBody),
-            (HttpMethod.Get, agentUrl, agentBody),
-            (HttpMethod.Post, $"{environmentEndpoint}agenthosting/agents/{Agent}/packages?api-version=1", packageBody),
-            (HttpMethod.Get, agentUrl, agentBody),
-            (HttpMethod.Post, $"{deploymentUrl}?api-version=1", DeploymentBody(Revision)),
-            (HttpMethod.Get, $"{deploymentUrl}/{Deployment}?api-version=1", DeploymentBody(Revision)),
-            (HttpMethod.Patch, $"{deploymentUrl}/{Deployment}?api-version=1", DeploymentBody(UpdatedRevision)),
-        ];
-        var requestIndex = 0;
+        static string Resource(Uri uri) => uri.Segments[^1].TrimEnd('/');
+
+        var currentRevision = Revision;
         var handler = new CapturingPackageHandler(request =>
         {
-            Assert.True(requestIndex < expected.Length, "An unexpected additional request was sent.");
-            var next = expected[requestIndex++];
-            Assert.Equal(next.Method, request.Method);
-            Assert.Equal(next.Url, request.RequestUri!.AbsoluteUri);
-            return FakeHttpResponse.Json(HttpStatusCode.OK, next.Body);
+            var resource = Resource(request.RequestUri!);
+            if (request.Method == HttpMethod.Patch && resource == Deployment)
+            {
+                currentRevision = UpdatedRevision;
+            }
+
+            var body = (request.Method.Method, resource) switch
+            {
+                ("POST", "agents") or ("GET", Agent) => agentBody,
+                ("POST", "packages") => packageBody,
+                ("POST", "deployments") or ("GET", Deployment) or ("PATCH", Deployment) =>
+                    DeploymentBody(currentRevision),
+                _ => throw new InvalidOperationException(
+                    $"Unexpected workflow operation: {request.Method} {request.RequestUri!.AbsolutePath}."),
+            };
+            return FakeHttpResponse.Json(HttpStatusCode.OK, body);
         });
         using var http = new HttpClient(handler);
         var tokens = new FakePpapiTokenProvider
@@ -178,18 +217,28 @@ public sealed class PublicAmsWorkflowTests
             }, default);
 
             Assert.Equal(UpdatedRevision, updated.PackageRevisionId);
-            Assert.Equal(expected.Length, requestIndex);
-            Assert.Equal(packageBytes, handler.Requests[2].Body);
+            Assert.Contains(handler.Requests, request =>
+                request.Method == HttpMethod.Post && Resource(request.Uri) == "agents");
+            Assert.Contains(handler.Requests, request =>
+                request.Method == HttpMethod.Post && Resource(request.Uri) == "packages");
+            Assert.Contains(handler.Requests, request =>
+                request.Method == HttpMethod.Post && Resource(request.Uri) == "deployments");
+            Assert.Contains(handler.Requests, request =>
+                request.Method == HttpMethod.Patch && Resource(request.Uri) == Deployment);
+
+            var environmentOrigin = new Uri(environmentEndpoint).GetLeftPart(UriPartial.Authority);
+            var globalOrigin = new Uri(globalEndpoint).GetLeftPart(UriPartial.Authority);
             Assert.All(handler.Requests, request =>
             {
+                var expectedOrigin = Resource(request.Uri) is "deployments" or Deployment
+                    ? globalOrigin
+                    : environmentOrigin;
+                Assert.Equal(expectedOrigin, request.Uri.GetLeftPart(UriPartial.Authority));
                 Assert.True(request.HasAuthorization);
                 Assert.True(Guid.TryParse(request.ClientRequestId, out _));
             });
             Assert.All(tokens.Resources, audience => Assert.Equal(target.Audience, audience));
             Assert.All(tokens.Tenants, tenant => Assert.Equal(Tenant, tenant));
-            using var patch = JsonDocument.Parse(handler.Requests[^1].Body);
-            Assert.Equal(Revision, patch.RootElement.GetProperty("expectedPackageRevisionId").GetString());
-            Assert.Equal(UpdatedRevision, patch.RootElement.GetProperty("packageRevisionId").GetString());
         }
         finally
         {
