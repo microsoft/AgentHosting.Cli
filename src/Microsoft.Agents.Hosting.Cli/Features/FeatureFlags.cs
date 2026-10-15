@@ -27,7 +27,7 @@ public class FeatureFlags : IFeatureFlags
         _ = assembly ?? throw new ArgumentNullException(nameof(assembly));
         _ = !string.IsNullOrEmpty(filename) ? filename : throw new ArgumentNullException(nameof(filename));
 
-        var assemblyPath = Path.GetDirectoryName(assembly.Location)!;
+        var assemblyPath = Path.GetDirectoryName(AppContext.BaseDirectory)!;
         var filePath = Path.Combine(assemblyPath, filename);
         return LoadFromFile(filePath);
     }
