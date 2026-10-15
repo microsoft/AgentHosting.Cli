@@ -18,6 +18,8 @@
     <IsPackable>true</IsPackable>
     <Description>AgentHost CLI is the CLI for working with the Microsoft Agent Hosting platform. This tool supports various commands for managing and interacting with the platform. The CLI currently supports Microsoft Copilot Studio Agents, and Agents developed with the Microsoft 365 Agents SDK.</Description>
     <PackageReadmeFile>Tool_Readme.md</PackageReadmeFile>
+	<PackAsToolShimRuntimeIdentifiers>osx-x64;osx-arm64;win-x86;win-x64;win-arm64;linux-x64;linux-arm64;</PackAsToolShimRuntimeIdentifiers>
+	<RuntimeIdentifiers>osx-x64;osx-arm64;win-x86;win-x64;win-arm64;linux-x64;linux-arm64;</RuntimeIdentifiers>
   </PropertyGroup>
 	
 
