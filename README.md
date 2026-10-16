@@ -20,11 +20,11 @@ The CLI creates a local definition of a Copilot Studio agent as a project that a
 
 Initial install:
 ```text
-dotnet tool install microsoft.agents.hosting.cli --prerelease -g --source https://pkgs.dev.azure.com/dynamicscrm/OneCRM/_packaging/DPX-Tools-Upstream/nuget/v3/index.json
+dotnet tool install microsoft.agents.hosting.cli --prerelease -g
 ```
 Apply update (use this to pick up the current version after you have installed it):
 ```text
-dotnet tool update microsoft.agents.hosting.cli --prerelease -g --source https://pkgs.dev.azure.com/dynamicscrm/OneCRM/_packaging/DPX-Tools-Upstream/nuget/v3/index.json
+dotnet tool update microsoft.agents.hosting.cli --prerelease -g
 ```
 ### Note:
 - CLI updates happen frequently and are posted nightly when changes are pushed to the public feed. During the bug bash and private preview, it is useful to run the `dotnet tool update` command about every 24 hours before using the CLI.
