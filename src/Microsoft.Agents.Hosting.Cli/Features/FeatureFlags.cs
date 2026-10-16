@@ -45,7 +45,6 @@ public class FeatureFlags : IFeatureFlags
                 "Please uninstall and reinstall the Microsoft.Agents.Hosting.Cli tool.",
                 fullPath);
         }
-
         var entries = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(filePath))
             ?? throw new JsonException("Feature flags json content is null; must be an object.");
 
