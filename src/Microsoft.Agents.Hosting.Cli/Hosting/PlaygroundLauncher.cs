@@ -556,8 +556,15 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
     private async Task<PlaygroundLaunchException?> TryCleanupInvocationDirectoryAsync(
         string invocationDirectory)
     {
-        for (var attempt = 0; ; attempt++)
+        Exception? lastFailure = null;
+        // One initial attempt plus one retry per configured delay.
+        for (var attempt = 0; attempt <= InvocationDirectoryDeleteRetryDelays.Length; attempt++)
         {
+            if (attempt > 0)
+            {
+                await _delay(InvocationDirectoryDeleteRetryDelays[attempt - 1]).ConfigureAwait(false);
+            }
+
             try
             {
                 _deleteDirectory(invocationDirectory);
@@ -568,21 +575,26 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
                 return null;
             }
             catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException &&
-                attempt < InvocationDirectoryDeleteRetryDelays.Length)
+                exception is IOException or UnauthorizedAccessException)
             {
-                await _delay(InvocationDirectoryDeleteRetryDelays[attempt]).ConfigureAwait(false);
+                lastFailure = exception;
             }
             catch (Exception exception)
             {
-                return Failure(
-                    PlaygroundLaunchFailureKind.CleanupFailed,
-                    "The playground invocation directory could not be removed.",
-                    "Close the playground process and remove the owned invocation directory before retrying.",
-                    exception);
+                return InvocationDirectoryCleanupFailure(exception);
             }
         }
+
+        return InvocationDirectoryCleanupFailure(lastFailure);
     }
+
+    private static PlaygroundLaunchException InvocationDirectoryCleanupFailure(
+        Exception? innerException) =>
+        Failure(
+            PlaygroundLaunchFailureKind.CleanupFailed,
+            "The playground invocation directory could not be removed.",
+            "Close the playground process and remove the owned invocation directory before retrying.",
+            innerException);
 
     private static void DeleteDirectoryIfPresent(string directory)
     {

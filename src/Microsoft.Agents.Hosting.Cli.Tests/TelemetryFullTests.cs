@@ -175,6 +175,8 @@ public sealed class TelemetryFullTests
             new FixedClock(),
             typeof(AgentHostCli).Assembly,
             observer,
+            policyTimeout: TelemetryTestBudgets.Policy,
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
         var statusCalls = 0;
         var switchCalls = 0;
@@ -334,6 +336,8 @@ public sealed class TelemetryFullTests
             new FixedClock(),
             typeof(AgentHostCli).Assembly,
             observer,
+            policyTimeout: TelemetryTestBudgets.Policy,
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: outerTransport);
         var innerOperations = new FakeOperations
         {
