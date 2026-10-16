@@ -457,6 +457,122 @@ public sealed class PlaygroundLauncherTests
     }
 
     [Fact]
+    public async Task RunAsync_RetriesTransientInvocationDirectoryLocks()
+    {
+        var attempts = new List<string>();
+        var delays = new List<TimeSpan>();
+        var launcher = new PlaygroundLauncher(
+            new RecordingProcessFactory(new FakeProcess { Exited = true, ExitCode = 0 }),
+            TimeSpan.FromMilliseconds(1),
+            directory =>
+            {
+                attempts.Add(directory);
+                if (attempts.Count < 3)
+                {
+                    throw new IOException("locked");
+                }
+
+                Directory.Delete(directory, recursive: true);
+            },
+            delay =>
+            {
+                delays.Add(delay);
+                return Task.CompletedTask;
+            });
+
+        var exitCode = await launcher.RunAsync(
+            Tool(),
+            Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+            ClientId,
+            () => { },
+            CancellationToken.None);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(3, attempts.Count);
+        Assert.Single(attempts.Distinct(StringComparer.Ordinal));
+        Assert.Equal(PlaygroundLauncher.InvocationDirectoryDeleteRetryDelays.Take(2), delays);
+        Assert.False(Directory.Exists(attempts[0]));
+    }
+
+    [Fact]
+    public async Task RunAsync_ReportsInvocationDirectoryCleanupFailureAfterBoundedRetries()
+    {
+        var attempts = new List<string>();
+        var lastFailure = new UnauthorizedAccessException("denied");
+        var launcher = new PlaygroundLauncher(
+            new RecordingProcessFactory(new FakeProcess { Exited = true, ExitCode = 0 }),
+            TimeSpan.FromMilliseconds(1),
+            directory =>
+            {
+                attempts.Add(directory);
+                throw attempts.Count % 2 == 0 ? lastFailure : new IOException("locked");
+            },
+            _ => Task.CompletedTask);
+
+        try
+        {
+            var error = await Assert.ThrowsAsync<PlaygroundLaunchException>(() =>
+                launcher.RunAsync(
+                    Tool(),
+                    Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                    ClientId,
+                    () => { },
+                    CancellationToken.None));
+
+            Assert.Equal(PlaygroundLaunchFailureKind.CleanupFailed, error.Kind);
+            Assert.Equal(
+                PlaygroundLauncher.InvocationDirectoryDeleteRetryDelays.Length + 1,
+                attempts.Count);
+            Assert.Equal(lastFailure, error.InnerException);
+        }
+        finally
+        {
+            if (attempts.Count > 0 && Directory.Exists(attempts[0]))
+            {
+                Directory.Delete(attempts[0], recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotRetryNonTransientInvocationDirectoryFailures()
+    {
+        var attempts = new List<string>();
+        var failure = new InvalidOperationException("unexpected");
+        var launcher = new PlaygroundLauncher(
+            new RecordingProcessFactory(new FakeProcess { Exited = true, ExitCode = 0 }),
+            TimeSpan.FromMilliseconds(1),
+            directory =>
+            {
+                attempts.Add(directory);
+                throw failure;
+            },
+            _ => throw new Xunit.Sdk.XunitException("A non-transient failure must not be retried."));
+
+        try
+        {
+            var error = await Assert.ThrowsAsync<PlaygroundLaunchException>(() =>
+                launcher.RunAsync(
+                    Tool(),
+                    Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                    ClientId,
+                    () => { },
+                    CancellationToken.None));
+
+            Assert.Equal(PlaygroundLaunchFailureKind.CleanupFailed, error.Kind);
+            Assert.Single(attempts);
+            Assert.Same(failure, error.InnerException);
+        }
+        finally
+        {
+            if (attempts.Count > 0 && Directory.Exists(attempts[0]))
+            {
+                Directory.Delete(attempts[0], recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_UsesARealNodeFixtureAndTerminatesOnlyItsOwnedProcess()
     {
         var node = FindNode();

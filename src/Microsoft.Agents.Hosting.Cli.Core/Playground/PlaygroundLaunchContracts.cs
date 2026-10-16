@@ -14,11 +14,16 @@ public enum PlaygroundLaunchFailureKind
     CleanupFailed,
 }
 
-/// <summary>A bounded playground launch failure that never carries process or secret details.</summary>
+/// <summary>
+/// A bounded playground launch failure whose message and remediation never carry process or secret details.
+/// An optional local OS failure may be retained as <see cref="Exception.InnerException"/> for diagnostics
+/// only; it is never rendered to the user.
+/// </summary>
 public sealed class PlaygroundLaunchException(
     PlaygroundLaunchFailureKind kind,
     string message,
-    string remediation) : Exception(message)
+    string remediation,
+    Exception? innerException = null) : Exception(message, innerException)
 {
     public PlaygroundLaunchFailureKind Kind { get; } = kind;
 
