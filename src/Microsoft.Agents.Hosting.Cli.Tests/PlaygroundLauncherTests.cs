@@ -611,7 +611,11 @@ public sealed class PlaygroundLauncherTests
                 () => { },
                 cancellation.Token);
 
-            var pid = await WaitForPidMarkerAsync(pidFile);
+            // Cold Node startup in a loaded CI container can take well over 10 seconds.
+            var pid = await WaitForPidMarkerAsync(
+                pidFile,
+                timeout: TimeSpan.FromSeconds(60),
+                owner: runTask);
             cancellation.Cancel();
 
             Assert.Equal(130, await runTask);
@@ -703,6 +707,22 @@ public sealed class PlaygroundLauncherTests
         }
     }
 
+    [Fact]
+    public async Task WaitForPidMarkerAsync_FailsFastWhenTheOwnerEndsWithoutAMarker()
+    {
+        var markerPath = Path.Combine(
+            AppContext.BaseDirectory,
+            $"playground-launcher-ended-{Guid.NewGuid():N}.pid");
+
+        var exception = await Assert.ThrowsAsync<Xunit.Sdk.XunitException>(() =>
+            WaitForPidMarkerAsync(
+                markerPath,
+                timeout: TimeSpan.FromSeconds(30),
+                owner: Task.FromResult(7)));
+
+        Assert.Contains("exit code 7", exception.Message, StringComparison.Ordinal);
+    }
+
     private static string HostPath(params string[] parts) =>
         Path.Combine([Path.GetTempPath(), "msagent playground & tests", .. parts]);
 
@@ -743,13 +763,23 @@ public sealed class PlaygroundLauncherTests
     private static async Task<int> WaitForPidMarkerAsync(
         string path,
         Action? invalidMarkerObserved = null,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        Task<int>? owner = null)
     {
         var watchdog = timeout ?? TimeSpan.FromSeconds(10);
         var deadline = Stopwatch.GetTimestamp() +
                        (long)(watchdog.TotalSeconds * Stopwatch.Frequency);
         while (Stopwatch.GetTimestamp() < deadline)
         {
+            if (owner is { IsCompleted: true } && !File.Exists(path))
+            {
+                var outcome = owner.IsCompletedSuccessfully
+                    ? $"exit code {owner.Result}"
+                    : owner.Exception?.GetBaseException().Message ?? "cancellation";
+                throw new Xunit.Sdk.XunitException(
+                    $"The Node fixture ended ({outcome}) before publishing a PID marker.");
+            }
+
             if (File.Exists(path))
             {
                 try
