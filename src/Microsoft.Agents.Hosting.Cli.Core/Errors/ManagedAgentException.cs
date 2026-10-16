@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
+using Microsoft.Agents.Hosting.Cli.Core.Rendering;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
 
@@ -14,6 +15,9 @@ public sealed class ManagedAgentException : AgentHostingException
         : base(message, exitCode, errorKind, remediation, innerException)
     {
     }
+
+    /// <summary>Whether the message and remediation contain CLI-formatted lines.</summary>
+    public bool HasMultilineGuidance { get; private init; }
 
     /// <summary>No configuration exists in the directory the command was run from.</summary>
     /// <param name="searchedPath">The configuration path that was looked for.</param>
@@ -149,7 +153,67 @@ public sealed class ManagedAgentException : AgentHostingException
         $"No deployment matching '{selector}' is registered for this agent.",
         ExitCodes.Usage,
         "deployment-not-found",
-        "Run `msagent deployment list --agent-id <id>` to see the agent's deployments.");
+        "Run `msagent deployment list` to see the agent's deployments.");
+
+    /// <summary>Reports deployment records and next commands when a deploy target cannot be selected.</summary>
+    public static ManagedAgentException DeploymentSelectionFailed(string projectDirectory, IReadOnlyList<ManagedAgentRecord> agents, IReadOnlyList<AgentDeploymentRecord> deployments, string? selector = null)
+    {
+        var deploymentsByAgent = deployments.ToLookup(deployment => deployment.AgentId, StringComparer.OrdinalIgnoreCase);
+        var selectableDeployments = new List<AgentDeploymentRecord>();
+        var descriptions = new List<string>();
+        var commands = new List<string>();
+
+        foreach (var agent in agents)
+        {
+            var displayName = TerminalText.Sanitize(agent.DisplayName);
+
+            if (!AgentTypes.IsMcs(agent.AgentType))
+            {
+                descriptions.Add($"  {displayName} ({TerminalText.Sanitize(agent.AgentId)}): {TerminalText.Sanitize(agent.AgentType)}; use its package-revision deployment options.");
+                commands.Add($"For CodeAgent '{displayName}', see the package-revision deployment options in `msagent agent deploy --help`.");
+                continue;
+            }
+
+            var agentDeployments = deploymentsByAgent[agent.AgentId].ToArray();
+
+            selectableDeployments.AddRange(agentDeployments);
+            descriptions.Add($"  {displayName} ({TerminalText.Sanitize(agent.AgentId)}): {(agentDeployments.Length == 0 ? "no deployment records" : DeploymentNames(agentDeployments))}");
+            commands.Add(DeploymentSelectionCommands(projectDirectory, agent.AgentId, displayName, agentDeployments));
+        }
+
+        var message = agents.Count == 1
+            ? selectableDeployments.Count == 0
+                ? $"Agent '{TerminalText.Sanitize(agents[0].DisplayName)}' has no deployment records. Create a deployment before deploying."
+                : $"No deployment selected for agent '{TerminalText.Sanitize(agents[0].DisplayName)}'.{Environment.NewLine}Available deployments: {DeploymentNames(selectableDeployments)}"
+            : $"{(agents.Any(agent => deploymentsByAgent.Contains(agent.AgentId)) ? "No deployment selected." : "None of the agents in this folder has deployment records.")}{Environment.NewLine}Agents in this folder:{Environment.NewLine}{string.Join(Environment.NewLine, descriptions)}";
+
+        return new(
+            selector is null ? message : $"No deployment matching '{TerminalText.Sanitize(selector)}' is registered here.{Environment.NewLine}{message}",
+            ExitCodes.Usage,
+            selector is not null ? "deployment-not-found" : selectableDeployments.Count == 0 ? "deployment-records-empty" : "deployment-selector-required",
+            string.Join(Environment.NewLine + Environment.NewLine, commands))
+        {
+            HasMultilineGuidance = true,
+        };
+    }
+
+    private static string DeploymentSelectionCommands(string projectDirectory, string agentId, string displayName, AgentDeploymentRecord[] deployments)
+    {
+        var agentSelector = $"--project {CommandArgument(projectDirectory)} --agent-id {CommandArgument(agentId)}";
+
+        return deployments.Length == 0
+            ? $"Create a deployment for '{displayName}':{Environment.NewLine}  msagent deployment create {agentSelector} --deployment-name development --deployment-type dev{Environment.NewLine}Then deploy:{Environment.NewLine}  msagent agent deploy {agentSelector} --deployment-name development"
+            : $"Select --deployment-id or --deployment-name for '{displayName}', for example:{Environment.NewLine}  msagent agent deploy {agentSelector} --deployment-id {CommandArgument(deployments[0].DeploymentId)}";
+    }
+
+    private static string CommandArgument(string value)
+    {
+        var argument = TerminalText.Sanitize(value);
+
+        return argument.AsSpan().ContainsAny('$', '`', '"') ? $"'{argument.Replace("'", "''", StringComparison.Ordinal)}'" : $"\"{argument}\"";
+    }
+
+    private static string DeploymentNames(IEnumerable<AgentDeploymentRecord> deployments) => string.Join(", ", deployments.Select(deployment => TerminalText.Sanitize(deployment.DeploymentName)));
 
     /// <summary>A deployment selector matched more than one deployment.</summary>
     /// <param name="selector">The supplied selector, or <see langword="null"/> when none was.</param>

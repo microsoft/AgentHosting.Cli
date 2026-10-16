@@ -27,9 +27,6 @@ line and asserts on exit code, stdout, and — where it matters — the cloud st
 | `identity` | `ID-01`–`ID-05` | 5 | `azure` | `identity create app/blueprint --dry-run` and argument validation |
 | `mcs-eval` | `EV-01`–`EV-28` | 28 | `eval` | `agent eval` conversation test sets, CSV import and export, generated conversations, project-based agent resolution for both workspace shapes, and the scored runs — start, list, show, cancel, delete and `--watch` |
 
-Ids are stable and never reused, so a gap means a scenario was withdrawn. `MA-20` and `MA-48` are
-currently withdrawn — see [Withdrawn scenarios](#withdrawn-scenarios).
-
 Each scenario carries a **safety tier**, which is what the confirmation prompt counts:
 
 | Tier | Meaning |

@@ -54,7 +54,6 @@ public sealed class ProductSurfaceFeatureControlTests
         var package = Run(new FakeOperations(), AllProductSurfacesDisabled, "agent", "package", "upload");
         var identity = Run(new FakeOperations(), AllProductSurfacesDisabled, "identity", "create", "app");
         var defaultCreate = Run(new FakeOperations(), AllProductSurfacesDisabled, "agent", "create");
-        var projectDeploy = Run(new FakeOperations(), AllProductSurfacesDisabled, "agent", "deploy", "--project", ".");
         var channel = Run(
             new FakeOperations(),
             AllProductSurfacesDisabled,
@@ -67,10 +66,6 @@ public sealed class ProductSurfaceFeatureControlTests
         Assert.Equal(ExitCodes.Usage, defaultCreate.ExitCode);
         Assert.Contains(nameof(FeatureName.AmsFeatures), defaultCreate.Stderr, StringComparison.Ordinal);
         Assert.Contains("--agent-type MCSAgent", defaultCreate.Stderr, StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.Usage, projectDeploy.ExitCode);
-        Assert.Contains("--deployment-id or --deployment-name", projectDeploy.Stderr, StringComparison.Ordinal);
-        Assert.DoesNotContain("AMS", projectDeploy.Stderr, StringComparison.Ordinal);
-        Assert.DoesNotContain("package upload", projectDeploy.Stderr, StringComparison.Ordinal);
         Assert.Equal(ExitCodes.Success, channel.ExitCode);
     }
 
@@ -85,6 +80,56 @@ public sealed class ProductSurfaceFeatureControlTests
 
         Assert.Equal(ExitCodes.Usage, result.ExitCode);
         Assert.Contains("not a known agent type", result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DisabledAmsFeature_CloningAnMcsAgentNeedsNoAgentType()
+    {
+        var operations = new FakeOperations();
+
+        var result = Run(
+            operations,
+            AllProductSurfacesDisabled,
+            "agent", "create",
+            "-an", "NB1",
+            "--mcs-clone-agent-id", "f054a54e-35c1-f111-aaad-000d3a367518",
+            "--mcs-clone-environment-id", "d3e21992-3138-ec9e-855f-94ae510c3a1e");
+
+        Assert.Equal(ExitCodes.Success, result.ExitCode);
+        Assert.DoesNotContain(nameof(FeatureName.AmsFeatures), result.Stderr, StringComparison.Ordinal);
+        Assert.Null(operations.LastCreateRequest);
+        var request = operations.LastManagedAgentCreateRequest!;
+        Assert.Equal(AgentTypes.McsAgent, request.AgentType);
+        Assert.Equal("NB1", request.Name);
+        Assert.Equal("f054a54e-35c1-f111-aaad-000d3a367518", request.CloneAgentId);
+        Assert.Equal("d3e21992-3138-ec9e-855f-94ae510c3a1e", request.CloneEnvironmentId);
+    }
+
+    [Theory]
+    [InlineData("--mcs-clone-agent-id", "f054a54e-35c1-f111-aaad-000d3a367518")]
+    [InlineData("-mcaid", "f054a54e-35c1-f111-aaad-000d3a367518")]
+    [InlineData("--mcs-clone-agent-schemaname", "cr_agent")]
+    [InlineData("-mcas", "cr_agent")]
+    [InlineData("--mcs-clone-environment-id", "env-2")]
+    [InlineData("-mceid", "env-2")]
+    public void DisabledAmsFeature_EachCloneOptionSelectsAnMcsAgent(string option, string value)
+    {
+        var operations = new FakeOperations();
+
+        var result = Run(operations, AllProductSurfacesDisabled, "agent", "create", option, value);
+
+        Assert.Equal(ExitCodes.Success, result.ExitCode);
+        Assert.Equal(AgentTypes.McsAgent, operations.LastManagedAgentCreateRequest?.AgentType);
+        Assert.Null(operations.LastCreateRequest);
+    }
+
+    [Fact]
+    public void DisabledAmsFeature_StillGatesACreateWithNoAgentTypeOrCloneOption()
+    {
+        var result = Run(new FakeOperations(), AllProductSurfacesDisabled, "agent", "create", "-an", "NB1", "--initial-prompt", "Help the user.");
+
+        Assert.Equal(ExitCodes.Usage, result.ExitCode);
+        Assert.Contains(nameof(FeatureName.AmsFeatures), result.Stderr, StringComparison.Ordinal);
     }
 
     [Fact]

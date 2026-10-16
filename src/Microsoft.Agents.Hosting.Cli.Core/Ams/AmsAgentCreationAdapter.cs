@@ -38,8 +38,6 @@ public sealed class AmsAgentCreationAdapter : IAmsAgentCreationTransport
         _binaryName = string.IsNullOrWhiteSpace(binaryName) ? "msagent" : binaryName;
     }
 
-    public static HttpClientHandler CreateRedirectRejectingHandler() => new() { AllowAutoRedirect = false };
-
     public async Task<AmsAgentCreationResult> CreateAsync(
         AmsAgentCreationTransportRequest request,
         CancellationToken cancellationToken)

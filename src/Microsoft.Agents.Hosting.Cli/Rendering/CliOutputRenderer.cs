@@ -122,7 +122,7 @@ public sealed class CliOutputRenderer
             remediation = null;
         }
 
-        WriteFailure(exitCode, Describe(error), errorKind, remediation, partialReport, json);
+        WriteFailure(exitCode, Describe(error), errorKind, remediation, partialReport, json, error is ManagedAgentException { HasMultilineGuidance: true });
         return exitCode;
     }
 
@@ -156,13 +156,7 @@ public sealed class CliOutputRenderer
         return ExitCodes.Usage;
     }
 
-    private void WriteFailure(
-        int exitCode,
-        string message,
-        string? errorKind,
-        string? remediation,
-        object? partialReport,
-        bool json)
+    private void WriteFailure(int exitCode, string message, string? errorKind, string? remediation, object? partialReport, bool json, bool multiline = false)
     {
         if (json)
         {
@@ -196,10 +190,10 @@ public sealed class CliOutputRenderer
         }
         else
         {
-            WriteLine(_stderr, message, Red);
+            WriteFailureLines(message, Red, multiline);
             if (remediation is not null)
             {
-                WriteLine(_stderr, remediation, Cyan);
+                WriteFailureLines(remediation, Cyan, multiline);
             }
 
             if (partialReport is not null)
@@ -209,6 +203,14 @@ public sealed class CliOutputRenderer
                     WriteLine(_stderr, line);
                 }
             }
+        }
+    }
+
+    private void WriteFailureLines(string text, string ansiCode, bool multiline)
+    {
+        foreach (var line in multiline ? text.Split(Environment.NewLine) : [text])
+        {
+            WriteLine(_stderr, line, ansiCode);
         }
     }
 

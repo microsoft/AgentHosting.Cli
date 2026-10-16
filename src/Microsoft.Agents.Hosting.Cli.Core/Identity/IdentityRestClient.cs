@@ -1,5 +1,4 @@
 using System.Net.Http.Headers;
-using System.Security.Authentication;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
@@ -56,13 +55,6 @@ public sealed class IdentityRestClient : IIdentityRestClient
         _armConsentTokenProvider = armConsentTokenProvider;
         _retryDelay = retryDelay ?? Task.Delay;
     }
-
-    public static HttpClientHandler CreateRedirectRejectingHandler() =>
-        new()
-        {
-            AllowAutoRedirect = false,
-            SslProtocols = SslProtocols.Tls13,
-        };
 
     public async Task<IdentityRestResponse> SendGraphAsync(
         HttpMethod method,
