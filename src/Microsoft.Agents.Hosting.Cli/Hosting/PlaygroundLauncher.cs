@@ -61,15 +61,38 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
             "NODE_PATH",
         };
 
+    // Windows can briefly hold a just-terminated child's working directory (handle rundown, AV scans).
+    internal static readonly TimeSpan[] InvocationDirectoryDeleteRetryDelays =
+    [
+        TimeSpan.FromMilliseconds(50),
+        TimeSpan.FromMilliseconds(100),
+        TimeSpan.FromMilliseconds(200),
+        TimeSpan.FromMilliseconds(400),
+        TimeSpan.FromMilliseconds(800),
+    ];
+
     private readonly IPlaygroundProcessFactory _processFactory;
     private readonly TimeSpan _shutdownGracePeriod;
+    private readonly Action<string> _deleteDirectory;
+    private readonly Func<TimeSpan, Task> _delay;
 
     public PlaygroundLauncher(
         IPlaygroundProcessFactory? processFactory = null,
         TimeSpan? shutdownGracePeriod = null)
+        : this(processFactory, shutdownGracePeriod, deleteDirectory: null, delay: null)
+    {
+    }
+
+    internal PlaygroundLauncher(
+        IPlaygroundProcessFactory? processFactory,
+        TimeSpan? shutdownGracePeriod,
+        Action<string>? deleteDirectory,
+        Func<TimeSpan, Task>? delay)
     {
         _processFactory = processFactory ?? new ProcessPlaygroundProcessFactory();
         _shutdownGracePeriod = shutdownGracePeriod ?? ShutdownGracePeriod;
+        _deleteDirectory = deleteDirectory ?? DeleteDirectoryIfPresent;
+        _delay = delay ?? (static timeout => Task.Delay(timeout));
         if (_shutdownGracePeriod < TimeSpan.Zero ||
             _shutdownGracePeriod == Timeout.InfiniteTimeSpan)
         {
@@ -307,7 +330,8 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
         }
 
         var processCleanupFailure = await CleanupProcessAsync(process).ConfigureAwait(false);
-        var directoryCleanupFailure = TryCleanupInvocationDirectory(invocationDirectory);
+        var directoryCleanupFailure = await TryCleanupInvocationDirectoryAsync(invocationDirectory)
+            .ConfigureAwait(false);
         if (processCleanupFailure is not null)
         {
             throw processCleanupFailure;
@@ -529,32 +553,63 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
         return cleanupFailure;
     }
 
-    private static PlaygroundLaunchException? TryCleanupInvocationDirectory(
+    private async Task<PlaygroundLaunchException?> TryCleanupInvocationDirectoryAsync(
         string invocationDirectory)
     {
-        try
+        Exception? lastFailure = null;
+        // One initial attempt plus one retry per configured delay.
+        for (var attempt = 0; attempt <= InvocationDirectoryDeleteRetryDelays.Length; attempt++)
         {
-            if (Directory.Exists(invocationDirectory))
+            if (attempt > 0)
             {
-                Directory.Delete(invocationDirectory, recursive: true);
+                await _delay(InvocationDirectoryDeleteRetryDelays[attempt - 1]).ConfigureAwait(false);
             }
 
-            return null;
+            try
+            {
+                _deleteDirectory(invocationDirectory);
+                return null;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return null;
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException)
+            {
+                lastFailure = exception;
+            }
+            catch (Exception exception)
+            {
+                return InvocationDirectoryCleanupFailure(exception);
+            }
         }
-        catch (Exception)
+
+        return InvocationDirectoryCleanupFailure(lastFailure);
+    }
+
+    private static PlaygroundLaunchException InvocationDirectoryCleanupFailure(
+        Exception? innerException) =>
+        Failure(
+            PlaygroundLaunchFailureKind.CleanupFailed,
+            "The playground invocation directory could not be removed.",
+            "Close the playground process and remove the owned invocation directory before retrying.",
+            innerException);
+
+    private static void DeleteDirectoryIfPresent(string directory)
+    {
+        if (Directory.Exists(directory))
         {
-            return Failure(
-                PlaygroundLaunchFailureKind.CleanupFailed,
-                "The playground invocation directory could not be removed.",
-                "Close the playground process and remove the owned invocation directory before retrying.");
+            Directory.Delete(directory, recursive: true);
         }
     }
 
     private static PlaygroundLaunchException Failure(
         PlaygroundLaunchFailureKind kind,
         string message,
-        string remediation) =>
-        new(kind, message, remediation);
+        string remediation,
+        Exception? innerException = null) =>
+        new(kind, message, remediation, innerException);
 }
 
 /// <summary>Starts a child with the exact native process arguments and inherited console handles.</summary>

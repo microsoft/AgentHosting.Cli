@@ -478,7 +478,7 @@ public sealed class CommandTelemetryStateTests
             resolver ?? new CapturingResolver(),
             clock ?? new FixedClock(),
             "1.2.3-test",
-            flushTimeout: flushTimeout,
+            flushTimeout: flushTimeout ?? TelemetryTestBudgets.Flush,
             transport: transport ?? new CapturingTransport());
 
     private static TelemetryDestination Destination() =>
