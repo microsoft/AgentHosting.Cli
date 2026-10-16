@@ -18,7 +18,7 @@ public sealed class DependencyBoundaryTests
         return directory ?? throw new InvalidOperationException("The source root was not found from the test output directory.");
     }
 
-    private static IEnumerable<string> SourceFiles(string extension) =>
+    internal static IEnumerable<string> SourceFiles(string extension) =>
         Directory.EnumerateFiles(SourceRoot().FullName, extension, SearchOption.AllDirectories)
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal));

@@ -72,13 +72,8 @@ public sealed class ManagedAgentDeployService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (string.IsNullOrWhiteSpace(request.DeploymentId) && string.IsNullOrWhiteSpace(request.DeploymentName))
-        {
-            throw new UsageException("`msagent agent deploy` requires --deployment-id or --deployment-name. There is no active-environment fallback: deploying to an unnamed target is the mistake deployments exist to prevent.");
-        }
-
         var projectDirectory = _resolver.ResolveProjectDirectory(request.Project);
-        var (owner, deployment) = _resolver.ResolveAgentDeployment(projectDirectory, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName);
+        var (owner, deployment) = _resolver.ResolveAgentDeployment(projectDirectory, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName, requireExplicitDeployment: true);
         var agent = ManagedAgentResolver.RequireMcsAgent(owner, "msagent agent deploy");
         var target = await _environmentResolver.ResolveAsync(ManagedAgentResolver.TargetEnvironmentId(agent, deployment), cancellationToken).ConfigureAwait(false);
 
@@ -359,4 +354,3 @@ public sealed class ManagedAgentDeployService
         }
     }
 }
-

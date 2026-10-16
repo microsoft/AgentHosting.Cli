@@ -168,8 +168,9 @@ public sealed class ManagedAgentResolver
     /// <param name="agentName">A record name, used when no identifier was supplied.</param>
     /// <param name="deploymentId">An explicit deployment identifier, which wins over every other selector.</param>
     /// <param name="deploymentName">A deployment name.</param>
+    /// <param name="requireExplicitDeployment">Whether deploy requires an explicit target and actionable selection errors.</param>
     /// <returns>The deployment and its owning record.</returns>
-    public (ManagedAgentRecord Agent, AgentDeploymentRecord Deployment) ResolveAgentDeployment(string projectDirectory, string? agentId, string? agentName, string? deploymentId, string? deploymentName)
+    public (ManagedAgentRecord Agent, AgentDeploymentRecord Deployment) ResolveAgentDeployment(string projectDirectory, string? agentId, string? agentName, string? deploymentId, string? deploymentName, bool requireExplicitDeployment = false)
     {
         if (!_locator.ConfigExists(projectDirectory))
         {
@@ -177,14 +178,31 @@ public sealed class ManagedAgentResolver
         }
 
         var owner = string.IsNullOrWhiteSpace(agentId) && string.IsNullOrWhiteSpace(agentName) ? null : ResolveAgent(projectDirectory, agentId, agentName);
-        var deployment = ResolveDeploymentAcross(projectDirectory, owner, deploymentId, deploymentName);
+        var deployment = ResolveDeploymentAcross(projectDirectory, owner, deploymentId, deploymentName, requireExplicitDeployment);
 
         return (owner ?? OwnerOf(projectDirectory, deployment), deployment);
     }
 
-    private AgentDeploymentRecord ResolveDeploymentAcross(string projectDirectory, ManagedAgentRecord? owner, string? deploymentId, string? deploymentName)
+    private AgentDeploymentRecord ResolveDeploymentAcross(string projectDirectory, ManagedAgentRecord? owner, string? deploymentId, string? deploymentName, bool requireExplicitDeployment = false)
     {
         var candidates = owner is null ? _deployments.List(projectDirectory) : ListDeployments(projectDirectory, owner.AgentId);
+
+        if (requireExplicitDeployment && (candidates.Count == 0 || (string.IsNullOrWhiteSpace(deploymentId) && string.IsNullOrWhiteSpace(deploymentName))))
+        {
+            IReadOnlyList<ManagedAgentRecord> registeredAgents = owner is null ? _agents.List(projectDirectory) : [owner];
+
+            if (registeredAgents.Count == 0)
+            {
+                throw ManagedAgentException.AgentNotFound("(none supplied)");
+            }
+
+            if (registeredAgents.Count == 1)
+            {
+                RequireMcsAgentOrWorkflow(registeredAgents[0], "msagent agent deploy");
+            }
+
+            throw ManagedAgentException.DeploymentSelectionFailed(projectDirectory, registeredAgents, candidates, !string.IsNullOrWhiteSpace(deploymentId) ? deploymentId.Trim() : string.IsNullOrWhiteSpace(deploymentName) ? null : deploymentName.Trim());
+        }
 
         if (!string.IsNullOrWhiteSpace(deploymentId))
         {

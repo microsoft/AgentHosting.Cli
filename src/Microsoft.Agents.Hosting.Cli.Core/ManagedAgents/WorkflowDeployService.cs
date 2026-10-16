@@ -46,22 +46,12 @@ public sealed class WorkflowDeployService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (string.IsNullOrWhiteSpace(request.DeploymentId) && string.IsNullOrWhiteSpace(request.DeploymentName))
-        {
-            throw new UsageException("`msagent agent deploy` requires --deployment-id or --deployment-name. There is no active-environment fallback: deploying to an unnamed target is the mistake deployments exist to prevent.");
-        }
-
-        if (request.Overwrite)
-        {
-            throw new UsageException("--overwrite does not apply to a workflow: a workflow deploy always replaces the cloud copy. Remove --overwrite.");
-        }
-
         if (!string.IsNullOrWhiteSpace(request.SchemaName))
         {
             throw new UsageException("--schema-name does not apply to a workflow, which is addressed by its workflow id. Remove --schema-name.");
         }
 
-        var (target, deployment, environment) = await _resolver.ResolveDeploymentAsync(request.Project, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName, "msagent agent deploy", cancellationToken).ConfigureAwait(false);
+        var (target, deployment, environment) = await _resolver.ResolveDeploymentAsync(request.Project, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName, "msagent agent deploy", cancellationToken, requireExplicitDeployment: true).ConfigureAwait(false);
 
         _workflowStates.Invalidate(target.WorkspaceRoot, environment.EnvironmentId);
 
