@@ -83,18 +83,41 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
         Guid clientId,
         IReadOnlyDictionary<string, string>? inheritedEnvironment = null,
         string? workingDirectory = null,
+        string? configPath = null) =>
+        BuildLaunchPlan(
+            tool,
+            new PlaygroundConnection.DirectEngine(target, clientId),
+            inheritedEnvironment,
+            workingDirectory,
+            configPath);
+
+    public static PlaygroundLaunchPlan BuildLaunchPlan(
+        PlaygroundTool tool,
+        PlaygroundConnection connection,
+        IReadOnlyDictionary<string, string>? inheritedEnvironment = null,
+        string? workingDirectory = null,
         string? configPath = null)
     {
         ValidateTool(tool);
-        ValidateTarget(target);
         ValidateLaunchPath(workingDirectory);
         ValidateLaunchPath(configPath);
-        if (clientId == Guid.Empty)
+        if (connection is PlaygroundConnection.DirectEngine directEngine)
+        {
+            ValidateTarget(directEngine.Target);
+            if (directEngine.ClientId == Guid.Empty)
+            {
+                throw Failure(
+                    PlaygroundLaunchFailureKind.InvalidClientId,
+                    "The playground client id is not configured.",
+                    "Configure a non-zero AgentHost public-client application id.");
+            }
+        }
+        else if (connection is not PlaygroundConnection.DirectLine)
         {
             throw Failure(
-                PlaygroundLaunchFailureKind.InvalidClientId,
-                "The playground client id is not configured.",
-                "Configure a non-zero AgentHost public-client application id.");
+                PlaygroundLaunchFailureKind.InvalidTarget,
+                "The playground connection transport is not supported.",
+                "Choose directline or directengine for --target.");
         }
 
         var environment = new Dictionary<string, string>(
@@ -131,22 +154,32 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
             environment[LegacyConfigPathEnvironmentVariable] = configPath;
         }
 
-        var endpoint = target.Endpoint!.AbsoluteUri;
         var arguments = new List<string>(tool.ArgumentPrefix.Count + 15);
         arguments.AddRange(tool.ArgumentPrefix);
+        arguments.Add("start");
+        arguments.Add("--target");
+        if (connection is PlaygroundConnection.DirectEngine engine)
+        {
+            arguments.AddRange(
+            [
+                "directengine",
+                "--app-endpoint",
+                engine.Target.Endpoint!.AbsoluteUri,
+                "--client-id",
+                engine.ClientId.ToString("D"),
+                "--tenant-id",
+                engine.Target.TenantId.Trim(),
+                "--environment-id",
+                engine.Target.EnvironmentId.Trim(),
+            ]);
+        }
+        else
+        {
+            arguments.Add("directline");
+        }
+
         arguments.AddRange(
         [
-            "start",
-            "--target",
-            "directengine",
-            "--app-endpoint",
-            endpoint,
-            "--client-id",
-            clientId.ToString("D"),
-            "--tenant-id",
-            target.TenantId.Trim(),
-            "--environment-id",
-            target.EnvironmentId.Trim(),
             "--host",
             "127.0.0.1",
             "--disable-telemetry",
@@ -236,10 +269,21 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
         return normalized.Contains("CLIENT_SECRET", StringComparison.Ordinal);
     }
 
-    public async Task<int> RunAsync(
+    public Task<int> RunAsync(
         PlaygroundTool tool,
         LiveTestDestination target,
         Guid clientId,
+        Action started,
+        CancellationToken cancellationToken) =>
+        RunAsync(
+            tool,
+            new PlaygroundConnection.DirectEngine(target, clientId),
+            started,
+            cancellationToken);
+
+    public async Task<int> RunAsync(
+        PlaygroundTool tool,
+        PlaygroundConnection connection,
         Action started,
         CancellationToken cancellationToken)
     {
@@ -268,8 +312,7 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
             var startInfo = BuildStartInfo(
                 BuildLaunchPlan(
                     tool,
-                    target,
-                    clientId,
+                    connection,
                     workingDirectory: invocationDirectory,
                     configPath: configPath));
             try

@@ -39,10 +39,21 @@ public interface IPlaygroundLauncher
 {
     Task<int> RunAsync(
         PlaygroundTool tool,
-        Operations.LiveTestDestination target,
-        Guid clientId,
+        PlaygroundConnection connection,
         Action started,
         CancellationToken cancellationToken);
+}
+
+/// <summary>Non-secret, transport-specific inputs for a native playground launch.</summary>
+public abstract record PlaygroundConnection
+{
+    private PlaygroundConnection() { }
+
+    public sealed record DirectLine : PlaygroundConnection;
+
+    public sealed record DirectEngine(
+        Operations.LiveTestDestination Target,
+        Guid ClientId) : PlaygroundConnection;
 }
 
 /// <summary>The small process lifecycle seam used to test ownership and shutdown ordering.</summary>
