@@ -427,7 +427,8 @@ public sealed class TelemetryFullTests
         var session = new CommandTelemetrySession(
             new FixedDestinationResolver(Destination(server.Address)),
             new FixedClock(),
-            "1.2.3-test");
+            "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush);
 
         session.ObserveAuthenticatedTenant(tenantId);
         session.ObserveAuthenticatedTenant(tenantId);
@@ -454,7 +455,8 @@ public sealed class TelemetryFullTests
         var session = new CommandTelemetrySession(
             new FixedDestinationResolver(Destination(server.Address)),
             new FixedClock(),
-            "1.2.3-test");
+            "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush);
         session.RecordAttempt(
             CommandTelemetryPath.FromMetadata(["auth", "status"]));
 
@@ -712,7 +714,9 @@ public sealed class TelemetryFullTests
             new FixedDestinationResolver(
                 Destination(new Uri("http://127.0.0.1:1/OneCollector/1.0/"))),
             new FixedClock(),
-            typeof(AgentHostCli).Assembly);
+            typeof(AgentHostCli).Assembly,
+            policyTimeout: TelemetryTestBudgets.Policy,
+            flushTimeout: TelemetryTestBudgets.Flush);
 
         await using CommandTelemetrySession session =
             await factory.CreateAsync(suppressTelemetry: false, CancellationToken.None);
@@ -733,6 +737,7 @@ public sealed class TelemetryFullTests
             new ThrowingDestinationResolver(),
             new FixedClock(),
             "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
         session.RecordHost(CommandTelemetryHostCategory.Help);
 
@@ -759,6 +764,7 @@ public sealed class TelemetryFullTests
                 Destination(new Uri("http://127.0.0.1:1/OneCollector/1.0/"))),
             new FixedClock(),
             "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
         session.RecordHost(CommandTelemetryHostCategory.Help);
 
@@ -779,6 +785,7 @@ public sealed class TelemetryFullTests
                 Destination(new Uri("http://127.0.0.1:1/OneCollector/1.0/"))),
             new FixedClock(),
             "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: new ThrowingTransport());
         session.RecordHost(CommandTelemetryHostCategory.Help);
 
@@ -933,7 +940,8 @@ public sealed class TelemetryFullTests
         var session = new CommandTelemetrySession(
             new FixedDestinationResolver(Destination(server.Address)),
             new FixedClock(),
-            "1.2.3-test");
+            "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush);
         session.RecordHost(CommandTelemetryHostCategory.Help);
 
         await session.DisposeAsync();
@@ -1005,7 +1013,9 @@ public sealed class TelemetryFullTests
             resolver ?? new FixedDestinationResolver(Destination(endpoint)),
             new FixedClock(),
             typeof(AgentHostCli).Assembly,
-            observer);
+            observer,
+            policyTimeout: TelemetryTestBudgets.Policy,
+            flushTimeout: TelemetryTestBudgets.Flush);
 
     private sealed class StreamingHandlerProvider(int exitCode = 0, bool throwDuringRender = false) : IServiceProvider
     {
