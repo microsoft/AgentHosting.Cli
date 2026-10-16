@@ -206,11 +206,17 @@ public sealed class ManagedAgentException : AgentHostingException
             : $"Select --deployment-id or --deployment-name for '{displayName}', for example:{Environment.NewLine}  msagent agent deploy {agentSelector} --deployment-id {CommandArgument(deployments[0].DeploymentId)}";
     }
 
-    private static string CommandArgument(string value)
+    private static string CommandArgument(string value) => OperatingSystem.IsWindows() ? PowerShellCommandArgument(value) : PosixCommandArgument(value);
+
+    internal static string PowerShellCommandArgument(string value) => QuotedCommandArgument(value, "$`\"", "''");
+
+    internal static string PosixCommandArgument(string value) => QuotedCommandArgument(value, "$`\"\\!", "'\\''");
+
+    private static string QuotedCommandArgument(string value, string doubleQuotedSpecialCharacters, string singleQuotedApostrophe)
     {
         var argument = TerminalText.Sanitize(value);
 
-        return argument.AsSpan().ContainsAny('$', '`', '"') ? $"'{argument.Replace("'", "''", StringComparison.Ordinal)}'" : $"\"{argument}\"";
+        return argument.AsSpan().ContainsAny(doubleQuotedSpecialCharacters) ? $"'{argument.Replace("'", singleQuotedApostrophe, StringComparison.Ordinal)}'" : $"\"{argument}\"";
     }
 
     private static string DeploymentNames(IEnumerable<AgentDeploymentRecord> deployments) => string.Join(", ", deployments.Select(deployment => TerminalText.Sanitize(deployment.DeploymentName)));

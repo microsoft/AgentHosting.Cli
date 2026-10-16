@@ -389,14 +389,27 @@ public sealed class AgentDeploySelectionTests : IDisposable
     }
 
     [Theory]
-    [InlineData(@"C:\Users\O'Brien\agent", @"""C:\Users\O'Brien\agent""")]
-    [InlineData(@"C:\Users\O'Brien\$HOME", @"'C:\Users\O''Brien\$HOME'")]
-    public void AnApostropheStaysLiteralInEitherQuoteStyle(string projectDirectory, string expected)
+    [InlineData("agent-1", "\"agent-1\"", "\"agent-1\"")]
+    [InlineData("/tmp/O'Brien/agent", "\"/tmp/O'Brien/agent\"", "\"/tmp/O'Brien/agent\"")]
+    [InlineData("/tmp/O'Brien/$HOME", "'/tmp/O''Brien/$HOME'", "'/tmp/O'\\''Brien/$HOME'")]
+    [InlineData("agent`1", "'agent`1'", "'agent`1'")]
+    [InlineData("deploy\"ment", "'deploy\"ment'", "'deploy\"ment'")]
+    [InlineData(@"C:\Users\O'Brien\agent", @"""C:\Users\O'Brien\agent""", @"'C:\Users\O'\''Brien\agent'")]
+    [InlineData("Sales!Bot", "\"Sales!Bot\"", "'Sales!Bot'")]
+    public void PowerShellAndPosixShellsEachReadTheQuotedArgumentBackUnchanged(string value, string powerShellArgument, string posixArgument)
     {
-        Assert.Contains(
-            $"msagent deployment create --project {expected} --agent-id \"agent-1\"",
-            ManagedAgentException.DeploymentSelectionFailed(projectDirectory, [ManagedAgentFixtures.Agent("agent-1", "Tmp1")], []).Remediation,
-            StringComparison.Ordinal);
+        Assert.Equal(powerShellArgument, ManagedAgentException.PowerShellCommandArgument(value));
+        Assert.Equal(posixArgument, ManagedAgentException.PosixCommandArgument(value));
+    }
+
+    [Fact]
+    public void BothRecoveryCommandsQuoteTheProjectForThisPlatformsShell()
+    {
+        var project = OperatingSystem.IsWindows() ? "'/tmp/O''Brien/$HOME'" : "'/tmp/O'\\''Brien/$HOME'";
+
+        Assert.Equal(
+            $"Create a deployment for 'Tmp1':{Environment.NewLine}  msagent deployment create --project {project} --agent-id \"agent-1\" --deployment-name development --deployment-type dev{Environment.NewLine}Then deploy:{Environment.NewLine}  msagent agent deploy --project {project} --agent-id \"agent-1\" --deployment-name development",
+            ManagedAgentException.DeploymentSelectionFailed("/tmp/O'Brien/$HOME", [ManagedAgentFixtures.Agent("agent-1", "Tmp1")], []).Remediation);
     }
 
     [Fact]

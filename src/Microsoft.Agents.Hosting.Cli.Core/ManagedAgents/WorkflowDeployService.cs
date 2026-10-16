@@ -46,6 +46,11 @@ public sealed class WorkflowDeployService
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (!string.IsNullOrWhiteSpace(request.SchemaName))
+        {
+            throw new UsageException("--schema-name does not apply to a workflow, which is addressed by its workflow id. Remove --schema-name.");
+        }
+
         var (target, deployment, environment) = await _resolver.ResolveDeploymentAsync(request.Project, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName, "msagent agent deploy", cancellationToken, requireExplicitDeployment: true).ConfigureAwait(false);
 
         _workflowStates.Invalidate(target.WorkspaceRoot, environment.EnvironmentId);
@@ -90,12 +95,9 @@ public sealed class WorkflowDeployService
             UnboundConnectionCount = activation.UnboundConnectionCount,
             PushedComponentCount = 1,
             DeployedOn = deployedOn,
-            Warnings = [.. IgnoredWorkflowOptions(request), .. DeclaredConnectionReferenceWarnings(upserted.CreatedConnectionReferences), .. PushWarnings(upserted, running), .. activation.Warnings],
+            Warnings = [.. DeclaredConnectionReferenceWarnings(upserted.CreatedConnectionReferences), .. PushWarnings(upserted, running), .. activation.Warnings],
         };
     }
-
-    private static IEnumerable<string> IgnoredWorkflowOptions(ManagedAgentDeployRequest request) =>
-        string.IsNullOrWhiteSpace(request.SchemaName) ? [] : ["--schema-name is ignored for a workflow, which is addressed by its workflow id."];
 
     private static IEnumerable<string> PushWarnings(WorkflowUpsertOutcome upserted, bool activatedByThisDeploy) =>
         upserted.Warning.Length == 0 || (upserted.DraftedForConnections && activatedByThisDeploy) ? [] : [upserted.Warning];

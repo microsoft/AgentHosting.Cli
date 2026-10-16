@@ -296,44 +296,32 @@ public sealed class WorkflowDeployServiceTests : IDisposable
         Assert.Empty(replaced.Warnings);
     }
 
-    [Fact]
-    public async Task SchemaNameIsIgnoredWithAWarning()
-    {
-        var workflowId = Register();
-
-        var result = await Service().DeployAsync(Request(schemaName: "con_flow"), CancellationToken.None);
-
-        var warning = Assert.Single(result.Warnings);
-        Assert.Contains("--schema-name is ignored", warning, StringComparison.Ordinal);
-        Assert.Contains("workflow id", warning, StringComparison.Ordinal);
-        Assert.Equal(workflowId.ToString(), result.McsWorkflowId);
-        Assert.Null(result.SchemaName);
-        Assert.Single(_store.Calls, call => call == $"upsert:{workflowId}");
-        Assert.Null(Assert.Single(_config.List(_workspace.Root)).McsSchemaName);
-    }
-
-    [Fact]
-    public async Task TheIgnoredSchemaNameIsReportedBeforeTheDeployWarnings()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SchemaNameIsRejectedBeforeAnythingIsUploadedOrRecorded(bool overwrite)
     {
         Register();
-        _store.DeclaredConnectionReferences.Add("new_sharedteams_aa643948");
+        var configuration = File.ReadAllBytes(_workspace.ConfigPath);
 
-        var result = await Service().DeployAsync(Request(schemaName: "con_flow"), CancellationToken.None);
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Service().DeployAsync(Request(overwrite: overwrite, schemaName: "con_flow"), CancellationToken.None));
 
-        Assert.Equal(2, result.Warnings.Count);
-        Assert.Contains("--schema-name is ignored", result.Warnings[0], StringComparison.Ordinal);
-        Assert.Contains("Declared 1 connection reference", result.Warnings[1], StringComparison.Ordinal);
+        Assert.Equal("--schema-name does not apply to a workflow, which is addressed by its workflow id. Remove --schema-name.", failure.Message);
+        Assert.Empty(_store.Calls);
+        Assert.Equal(0, _connections.ReadCalls);
+        Assert.Equal(configuration, File.ReadAllBytes(_workspace.ConfigPath));
     }
 
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
-    public async Task ABlankSchemaNameIsNotReportedAsIgnored(string schemaName)
+    public async Task ABlankSchemaNameIsNotRejected(string schemaName)
     {
-        Register();
+        var workflowId = Register();
 
         var result = await Service().DeployAsync(Request(schemaName: schemaName), CancellationToken.None);
 
+        Assert.Single(_store.Calls, call => call == $"upsert:{workflowId}");
         Assert.Empty(result.Warnings);
     }
 

@@ -238,7 +238,7 @@ msagent agent deploy --agent-id <id> --package-revision <revision-id> [AMS optio
 | `--agent-name` | `-an` | String | **MCS-specific** | The record to deploy, by name. |
 | `--deployment-id` | `-did` | String | **MCS-specific** | The deployment to target. Wins over `--deployment-name`. |
 | `--deployment-name` | `-dn` | String | MCS and AMS routes | The deployment to target, by name. Required for AMS package-revision deployment. |
-| `--schema-name` | `-sn` | String | **MCS-specific** | Overrides the project's schema name for this deploy. A workflow is addressed by its workflow id, so a workflow deploy ignores this option and reports a warning. |
+| `--schema-name` | `-sn` | String | **MCS-specific** | Overrides the project's schema name for this deploy. A workflow is addressed by its workflow id, so a workflow deploy rejects this option before anything is uploaded. |
 | `--publish` | `-pub` | Flag | **MCS-specific** | Publish the agent after a push that fully landed, making the content live. |
 | `--overwrite` | `-ow` | Flag | **MCS-specific** | Overwrite cloud content that changed since the last sync, and accept replacing an existing agent this project cannot show is its own. Only a dev deployment refuses drift without it. A workflow deploy always replaces the cloud copy, so the flag is accepted there and changes nothing. |
 | `--commit-id` | `-cid` | String | Not supported | This build has no Git Repository Service, so deploy always publishes the current working tree. Supplying it is a usage error. |
