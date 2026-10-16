@@ -9,27 +9,27 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.Ams;
 public sealed class AgentDeployRoutingTests
 {
     [Fact]
-    public void Deploy_WithoutInputs_RequiresAnExplicitDeployment()
+    public void Deploy_WithoutInputs_DefersToRecordAwareMcsValidation()
     {
         var operations = new FakeOperations();
 
-        var (exitCode, _, stderr) = Run(operations, "agent", "deploy");
+        var (exitCode, _, _) = Run(operations, "agent", "deploy");
 
-        Assert.Equal(ExitCodes.Usage, exitCode);
-        AssertNothingDispatched(operations);
-        Assert.Contains("--deployment-id or --deployment-name", stderr, StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.NotNull(operations.LastManagedAgentDeployRequest);
+        Assert.Null(operations.LastDeployRequest);
     }
 
     [Fact]
-    public void Deploy_ProjectOnly_DirectsCodeAgentsToPackageUpload()
+    public void Deploy_ProjectOnly_DefersToRecordAwareMcsValidation()
     {
         var operations = new FakeOperations();
 
-        var (exitCode, _, stderr) = Run(operations, "agent", "deploy", "--project", "./my-agent");
+        var (exitCode, _, _) = Run(operations, "agent", "deploy", "--project", "./my-agent");
 
-        Assert.Equal(ExitCodes.Usage, exitCode);
-        AssertNothingDispatched(operations);
-        Assert.Contains("msagent agent package upload", stderr, StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Equal("./my-agent", operations.LastManagedAgentDeployRequest?.Project);
+        Assert.Null(operations.LastDeployRequest);
     }
 
     [Theory]

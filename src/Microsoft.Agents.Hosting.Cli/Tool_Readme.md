@@ -268,6 +268,7 @@ opted out.
 
 - The CLI is designed to be used from a shell or automation environment.
 - Commands are generally safe for deterministic scripting when used with `--json` and `--non-interactive` as appropriate.
+- The CLI supports TLS 1.3 and TLS 1.2.
 - For full command details, run:
 
 ```bash

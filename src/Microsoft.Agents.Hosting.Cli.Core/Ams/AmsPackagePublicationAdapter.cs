@@ -33,8 +33,6 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
         _claimsValidator = claimsValidator ?? new PpapiTokenClaimsValidator();
     }
 
-    public static HttpClientHandler CreateRedirectRejectingHandler() => new() { AllowAutoRedirect = false };
-
     public async Task<AmsPackagePublicationResult> PublishAsync(
         AmsPackagePublicationTransportRequest request,
         CancellationToken cancellationToken)

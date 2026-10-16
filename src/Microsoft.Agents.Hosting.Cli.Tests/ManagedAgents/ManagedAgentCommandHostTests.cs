@@ -192,6 +192,8 @@ public sealed class ManagedAgentCommandHostTests
     [InlineData("--mcs-agent-type", "Classic")]
     [InlineData("--initial-prompt", "hello")]
     [InlineData("--mcs-clone-agent-id", "9a1b")]
+    [InlineData("--mcs-clone-agent-schemaname", "cr_agent")]
+    [InlineData("--mcs-clone-environment-id", "env-2")]
     public void Create_OnTheCodeAgentPath_RejectsMcsOptions(string option, string value)
     {
         var operations = new FakeOperations();
@@ -201,6 +203,34 @@ public sealed class ManagedAgentCommandHostTests
         Assert.Equal(ExitCodes.Usage, exitCode);
         Assert.Null(operations.LastCreateRequest);
         Assert.Contains(option, stderr, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--mcs-clone-agent-id", "9a1b")]
+    [InlineData("--mcs-clone-agent-schemaname", "cr_agent")]
+    [InlineData("--mcs-clone-environment-id", "env-2")]
+    public void Create_WithACloneOptionAndNoAgentType_RoutesToMcs(string option, string value)
+    {
+        var operations = new FakeOperations();
+
+        var (exitCode, _, _) = Run(operations, "agent", "create", option, value);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Equal(AgentTypes.McsAgent, operations.LastManagedAgentCreateRequest?.AgentType);
+        Assert.Null(operations.LastCreateRequest);
+    }
+
+    [Fact]
+    public void Create_WithAnExplicitCodeAgentType_StillRejectsCloneOptions()
+    {
+        var operations = new FakeOperations();
+
+        var (exitCode, _, stderr) = Run(operations, "agent", "create", "--agent-type", "CodeAgent", "--agent-name", "Contoso Agent", "--mcs-clone-agent-id", "9a1b");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Null(operations.LastCreateRequest);
+        Assert.Null(operations.LastManagedAgentCreateRequest);
+        Assert.Contains("--mcs-clone-agent-id applies to MCS agents only", stderr, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -245,14 +275,21 @@ public sealed class ManagedAgentCommandHostTests
     [InlineData("--agent-id", "agent-1")]
     [InlineData("--agent-name", "Contoso")]
     [InlineData("--schema-name", "con_agent")]
-    public void Deploy_WithAProjectAloneAndAnMcsOption_IsAUsageError(string option, string value)
+    public void Deploy_WithAProjectAndAnMcsOption_DefersToRecordAwareValidation(string option, string value)
     {
         var operations = new FakeOperations();
 
-        var (exitCode, _, stderr) = Run(operations, "agent", "deploy", "--project", ".", option, value);
+        var (exitCode, _, _) = Run(operations, "agent", "deploy", "--project", ".", option, value);
 
-        Assert.Equal(ExitCodes.Usage, exitCode);
-        Assert.Contains(option, stderr, StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Equal(".", operations.LastManagedAgentDeployRequest?.Project);
+        Assert.Equal(value, option switch
+        {
+            "--agent-id" => operations.LastManagedAgentDeployRequest?.AgentId,
+            "--agent-name" => operations.LastManagedAgentDeployRequest?.AgentName,
+            _ => operations.LastManagedAgentDeployRequest?.SchemaName,
+        });
+        Assert.Null(operations.LastDeployRequest);
     }
 
     [Theory]
@@ -272,28 +309,29 @@ public sealed class ManagedAgentCommandHostTests
     [Theory]
     [InlineData("--publish")]
     [InlineData("--overwrite")]
-    public void Deploy_WithAProjectAndAnMcsFlag_IsAUsageError(string flag)
+    public void Deploy_WithAProjectAndAnMcsFlag_DefersToRecordAwareValidation(string flag)
     {
         var operations = new FakeOperations();
 
-        var (exitCode, _, stderr) = Run(operations, "agent", "deploy", "--project", ".", flag);
+        var (exitCode, _, _) = Run(operations, "agent", "deploy", "--project", ".", flag);
 
-        Assert.Equal(ExitCodes.Usage, exitCode);
-        Assert.Contains(flag, stderr, StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Equal(".", operations.LastManagedAgentDeployRequest?.Project);
+        Assert.True(flag == "--publish" ? operations.LastManagedAgentDeployRequest?.Publish : operations.LastManagedAgentDeployRequest?.Overwrite);
+        Assert.Null(operations.LastDeployRequest);
     }
 
     [Fact]
-    public void Deploy_WithAProjectAlone_RequiresExplicitCodeAgentPackageUpload()
+    public void Deploy_WithAProjectAlone_DefersToRecordAwareMcsValidation()
     {
         var operations = new FakeOperations();
 
-        var (exitCode, _, stderr) = Run(operations, "agent", "deploy", "--project", ".");
+        var (exitCode, _, _) = Run(operations, "agent", "deploy", "--project", ".");
 
-        Assert.Equal(ExitCodes.Usage, exitCode);
-        Assert.Null(operations.LastManagedAgentDeployRequest);
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Equal(".", operations.LastManagedAgentDeployRequest?.Project);
         Assert.Null(operations.LastDeployRequest);
         Assert.Null(operations.LastPackageUploadRequest);
-        Assert.Contains("msagent agent package upload", stderr, StringComparison.Ordinal);
     }
 
     [Fact]

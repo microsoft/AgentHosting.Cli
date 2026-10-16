@@ -287,9 +287,7 @@ public sealed class CommandTreeBuilder
         : declared[token] is CommandOption { IsSwitch: true } ? token
         : $"{token} <{token.TrimStart('-')}>";
 
-    internal static IEnumerable<string> OptionNames(string token) =>
-        token.Split([' ', '|', '(', ')'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(part => part.StartsWith("--", StringComparison.Ordinal));
+    internal static IEnumerable<string> OptionNames(string token) => token.Split([' ', '|', '(', ')', '[', ']'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(part => part.StartsWith("--", StringComparison.Ordinal));
 
     private async Task<int> ExecuteAsync(
         CommandMetadata metadata,

@@ -8,11 +8,14 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Http;
 /// </summary>
 public static class TransportDefaults
 {
-    /// <summary>Creates a handler that negotiates TLS 1.3 only and follows no redirect.</summary>
-    public static HttpClientHandler CreateRedirectRejectingHandler() =>
-        new()
-        {
-            AllowAutoRedirect = false,
-            SslProtocols = SslProtocols.Tls13,
-        };
+    /// <summary>The CLI supports TLS 1.3 and TLS 1.2.</summary>
+    public const SslProtocols EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13;
+
+    /// <summary>Creates a handler that offers <see cref="EnabledSslProtocols"/> and follows no redirect.</summary>
+    public static HttpClientHandler CreateRedirectRejectingHandler() => CreateHandler(allowAutoRedirect: false);
+
+    /// <summary>Creates a handler that offers <see cref="EnabledSslProtocols"/> and follows redirects.</summary>
+    public static HttpClientHandler CreateRedirectFollowingHandler() => CreateHandler(allowAutoRedirect: true);
+
+    private static HttpClientHandler CreateHandler(bool allowAutoRedirect) => new() { AllowAutoRedirect = allowAutoRedirect, SslProtocols = EnabledSslProtocols };
 }
