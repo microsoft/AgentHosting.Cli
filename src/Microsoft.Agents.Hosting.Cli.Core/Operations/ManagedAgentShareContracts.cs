@@ -15,7 +15,7 @@ public abstract record ManagedAgentShareSelector
 /// <summary>Input for <c>msagent agent share</c>.</summary>
 public sealed record ManagedAgentShareRequest : ManagedAgentShareSelector
 {
-    /// <summary>The user to grant access to, by sign-in address or Entra object id.</summary>
+    /// <summary>The user to grant access to, by sign-in address, email address, or Entra object id.</summary>
     public string? User { get; init; }
 
     /// <summary>The access level to grant.</summary>
@@ -31,7 +31,7 @@ public sealed record ManagedAgentShareShowRequest : ManagedAgentShareSelector;
 /// <summary>Input for <c>msagent agent unshare</c>.</summary>
 public sealed record ManagedAgentUnshareRequest : ManagedAgentShareSelector
 {
-    /// <summary>The user to revoke access from, by sign-in address or Entra object id.</summary>
+    /// <summary>The user to revoke access from, by sign-in address, email address, or Entra object id.</summary>
     public string? User { get; init; }
 }
 

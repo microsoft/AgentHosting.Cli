@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 
@@ -57,13 +58,16 @@ internal sealed class IdentityGraphClient
         return response;
     }
 
-    public async Task<List<JsonObject>> ReadCollectionAsync(
-        string path,
-        IReadOnlyList<string> scopes,
-        string tenantId,
-        CancellationToken cancellationToken)
+    public async Task<List<JsonObject>> ReadCollectionAsync(string path, IReadOnlyList<string> scopes, string tenantId, CancellationToken cancellationToken) => await EnumerateCollectionAsync(path, scopes, tenantId, cancellationToken).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Streams a collection's values, requesting each further page only once the caller reads past the previous one.</summary>
+    /// <param name="path">The collection to read.</param>
+    /// <param name="scopes">The Graph scopes each page is requested with.</param>
+    /// <param name="tenantId">The tenant to read from.</param>
+    /// <param name="cancellationToken">Cancels the read.</param>
+    /// <returns>The collection's values, in the order the service returns them.</returns>
+    public async IAsyncEnumerable<JsonObject> EnumerateCollectionAsync(string path, IReadOnlyList<string> scopes, string tenantId, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var values = new List<JsonObject>();
         var visited = new HashSet<string>(StringComparer.Ordinal);
         string? page = path;
         for (var pageNumber = 0; page is not null && pageNumber < MaxCollectionPages; pageNumber++)
@@ -73,41 +77,24 @@ internal sealed class IdentityGraphClient
                 throw MalformedCollection("The identity service returned a repeated paging link.");
             }
 
-            var response = await SendAsync(
-                HttpMethod.Get,
-                page,
-                body: null,
-                scopes,
-                tenantId,
-                cancellationToken).ConfigureAwait(false);
-            var root = BlueprintIdentityJson.ParseObject(response.Body);
-            if (!root.TryGetPropertyValue("value", out var valueNode) ||
-                valueNode is not JsonArray pageValues)
+            var root = BlueprintIdentityJson.ParseObject((await SendAsync(HttpMethod.Get, page, body: null, scopes, tenantId, cancellationToken).ConfigureAwait(false)).Body);
+            if (!root.TryGetPropertyValue("value", out var valueNode) || valueNode is not JsonArray pageValues)
             {
-                throw MalformedCollection(
-                    "The identity service returned a collection without a valid value array.");
+                throw MalformedCollection("The identity service returned a collection without a valid value array.");
             }
 
             foreach (var value in pageValues)
             {
-                if (value is not JsonObject item)
-                {
-                    throw MalformedCollection(
-                        "The identity service returned a collection with a non-object value.");
-                }
-
-                values.Add(item);
+                yield return value as JsonObject ?? throw MalformedCollection("The identity service returned a collection with a non-object value.");
             }
+
             page = BlueprintIdentityJson.ReadString(root, "@odata.nextLink");
         }
 
         if (page is not null)
         {
-            throw MalformedCollection(
-                $"The identity service returned more than {MaxCollectionPages} collection pages.");
+            throw MalformedCollection($"The identity service returned more than {MaxCollectionPages} collection pages.");
         }
-
-        return values;
     }
 
     private static TargetRequestException MalformedCollection(string message) =>

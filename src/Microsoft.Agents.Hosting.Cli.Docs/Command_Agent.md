@@ -271,7 +271,7 @@ msagent agent share (--agent-id <id> | --agent-name <name>) [--project <director
 | `--project` | `-p` | Directory path | Current directory | The project directory to act on. |
 | `--agent-id` | `-aid` | String | None | The agent to act on. Required unless `--agent-name` is supplied, and wins over it. |
 | `--agent-name` | `-an` | String | None | The agent to act on, by name. Required unless `--agent-id` is supplied. |
-| `--user` | `-u` | String | None | The user to grant access to, by sign-in address or Entra object id. |
+| `--user` | `-u` | String | None | The user to grant access to, by sign-in address, email address, or Entra object id. |
 | `--role` | `-rl` | `use`, `edit`, or `view` | None | The access to grant. Required with `--user`. |
 | `--share-with-org` | `-swo` | Optional flag | Setting left unchanged | Let everyone in the organization use the agent. Omit to leave the current setting alone; `--share-with-org false` turns it off. |
 
@@ -288,8 +288,8 @@ Removes a user's access to an MCS agent. Environment Maker is environment-wide a
 msagent agent unshare (--agent-id <id> | --agent-name <name>) --user <user> [--project <directory>]
 ```
 
-It accepts `--project`, `--agent-id`, `--agent-name`, and `--user` (`-u`; a sign-in address or Entra
-object id), with the same meanings as for `msagent agent share`.
+It accepts `--project`, `--agent-id`, `--agent-name`, and `--user` (`-u`; a sign-in address, email
+address, or Entra object id), with the same meanings as for `msagent agent share`.
 
 ## `msagent agent package upload` (Gated)
 

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
@@ -110,4 +111,56 @@ internal sealed class SignedOutDirectoryPrincipalPort : IDirectoryPrincipalPort
 
     public Task<IReadOnlyDictionary<string, DirectoryPrincipal>> ResolveManyAsync(CopilotEnvironmentContext environment, IReadOnlyCollection<string> objectIds, CancellationToken cancellationToken) =>
         throw new NotSignedInException("not signed in", remediation: "run msagent auth login");
+}
+
+internal sealed class FakeTenantUserDirectoryPort : ITenantUserDirectoryPort
+{
+    private readonly Dictionary<string, DirectoryPrincipal> _users = new(StringComparer.OrdinalIgnoreCase);
+
+    public Exception? Failure { get; init; }
+
+    public Func<CancellationToken, Task>? AfterNaming { get; init; }
+
+    public List<(string TenantId, string Address)> Lookups { get; } = [];
+
+    public List<(string TenantId, string[] ObjectIds)> NameLookups { get; } = [];
+
+    public FakeTenantUserDirectoryPort WithUser(string objectId, string displayName, string userPrincipalName, params string[] addresses)
+    {
+        var principal = new DirectoryPrincipal { ObjectId = objectId, DisplayName = displayName, PrincipalType = "User", SignInAddress = userPrincipalName };
+
+        foreach (var key in addresses.Append(userPrincipalName).Append(objectId))
+        {
+            _users[key] = principal;
+        }
+
+        return this;
+    }
+
+    public Task<DirectoryPrincipal?> FindUserAsync(string tenantId, string address, CancellationToken cancellationToken)
+    {
+        Lookups.Add((tenantId, address));
+
+        return Failure is null ? Task.FromResult(_users.GetValueOrDefault(address)) : throw Failure;
+    }
+
+    public async IAsyncEnumerable<DirectoryPrincipal> ResolveManyAsync(string tenantId, IReadOnlyCollection<string> objectIds, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        NameLookups.Add((tenantId, [.. objectIds]));
+
+        foreach (var principal in objectIds.Select(objectId => _users.GetValueOrDefault(objectId)).OfType<DirectoryPrincipal>())
+        {
+            yield return principal;
+        }
+
+        if (AfterNaming is not null)
+        {
+            await AfterNaming(cancellationToken);
+        }
+
+        if (Failure is not null)
+        {
+            throw Failure;
+        }
+    }
 }
