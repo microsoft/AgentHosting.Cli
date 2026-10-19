@@ -9,7 +9,7 @@ public sealed class PlaygroundDocumentationTests
         var section = Section(readme, "### M365 Agents Playground test (MVP)");
 
         Assert.Contains(
-            "| `msagent test playground [--target directline|directengine]` |",
+            "| `msagent test playground [--target directline\\|directengine]` |",
             readme,
             StringComparison.Ordinal);
         Assert.Contains("`msagent test playground --agent-harness standard|github-copilot`", section, StringComparison.Ordinal);
