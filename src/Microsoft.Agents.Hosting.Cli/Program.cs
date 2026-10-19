@@ -209,6 +209,7 @@ internal static class Program
                     Environment.GetEnvironmentVariable(AgentHostClientAppConfiguration.ClientIdSettingName),
                     new RuntimePlatformInfo()),
                 () => Console.IsInputRedirected,
+                () => Console.IsOutputRedirected,
                 details => sp.GetRequiredService<CommandTelemetrySessionAccessor>().Current.RecordPlaygroundDetails(details)));
         services.AddSingleton<ManagedAgentCloneMaterialiser>();
         services.AddSingleton<ManagedAgentCreateService>();
