@@ -87,6 +87,32 @@ public sealed class WorkflowCommandTests
     }
 
     [Fact]
+    public void AnExplicitWorkflowTypeWinsOverTheCloneEnvironment()
+    {
+        var (exitCode, _, _, operations) = Run(
+            "agent", "create",
+            "--agent-type", "MCSWorkflow",
+            "--mcs-clone-workflow-id", "11111111-2222-3333-4444-555555555555",
+            "--mcs-clone-environment-id", "env-2");
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(AgentTypes.McsWorkflow, operations.LastManagedAgentCreateRequest!.AgentType);
+    }
+
+    [Fact]
+    public void TheCloneEnvironmentWithoutAnAgentTypeAsksForTheWorkflowTypeWhenCloningAWorkflow()
+    {
+        var (exitCode, _, stderr, operations) = Run(
+            "agent", "create",
+            "--mcs-clone-workflow-id", "11111111-2222-3333-4444-555555555555",
+            "--mcs-clone-environment-id", "env-2");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("Add --agent-type MCSWorkflow", stderr, StringComparison.Ordinal);
+        Assert.Null(operations.LastManagedAgentCreateRequest);
+    }
+
+    [Fact]
     public void AnUnknownAgentTypeNamesTheWorkflowType()
     {
         var (exitCode, _, stderr, _) = Run("agent", "create", "--agent-type", "MCSFlow", "--name", "WF");

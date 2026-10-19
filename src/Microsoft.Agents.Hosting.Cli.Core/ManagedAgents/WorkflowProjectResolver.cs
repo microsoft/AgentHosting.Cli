@@ -61,12 +61,13 @@ public sealed class WorkflowProjectResolver
     /// <param name="deploymentName">The deployment to target, by name.</param>
     /// <param name="verb">The command being run, named in any failure.</param>
     /// <param name="requireLocalFiles">Whether the command needs the workflow to already be on disk.</param>
+    /// <param name="requireExplicitDeployment">Whether deploy requires an explicit target and actionable selection errors.</param>
     /// <param name="cancellationToken">Cancels the environment lookup.</param>
     /// <returns>The target, the deployment, and the environment it resolves to.</returns>
-    public async Task<(WorkflowTarget Target, AgentDeploymentRecord Deployment, CopilotEnvironmentContext Environment)> ResolveDeploymentAsync(string? project, string? agentId, string? agentName, string? deploymentId, string? deploymentName, string verb, CancellationToken cancellationToken, bool requireLocalFiles = true)
+    public async Task<(WorkflowTarget Target, AgentDeploymentRecord Deployment, CopilotEnvironmentContext Environment)> ResolveDeploymentAsync(string? project, string? agentId, string? agentName, string? deploymentId, string? deploymentName, string verb, CancellationToken cancellationToken, bool requireLocalFiles = true, bool requireExplicitDeployment = false)
     {
         var projectDirectory = ResolveProjectDirectory(project);
-        var (owner, deployment) = _resolver.ResolveAgentDeployment(projectDirectory, agentId, agentName, deploymentId, deploymentName);
+        var (owner, deployment) = _resolver.ResolveAgentDeployment(projectDirectory, agentId, agentName, deploymentId, deploymentName, requireExplicitDeployment);
         var agent = ManagedAgentResolver.RequireMcsWorkflow(owner, verb);
         var environment = await _environments.ResolveAsync(ManagedAgentResolver.TargetEnvironmentId(agent, deployment), cancellationToken).ConfigureAwait(false);
 

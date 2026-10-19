@@ -522,9 +522,7 @@ the behavior this command reports as acknowledged; there is not yet a separate p
 Deploy Operation. Deployment-create requests send the Agent language as the declared enum name
 `DotNet`, `Python`, or `Node`; responses accept both named and numeric enum values.
 
-The Agent-read and Deployment-create HTTP handler requires TLS 1.3 and rejects redirects. It does
-not fall back to older TLS versions; the configured service endpoint and local platform must support
-TLS 1.3.
+The Agent-read and Deployment-create HTTP handler supports TLS 1.3 and TLS 1.2 and rejects redirects.
 
 Deploy does not upload package bytes. The current GRS object remains the runtime package source;
 target-local package staging is deferred. Success does not prove runtime readiness, recovery, or a
@@ -1077,6 +1075,8 @@ environment itself:
 | `AH_CLI_AMS_ENDPOINT` | Agent Management Service **control plane** endpoint, used by deploy. Absolute HTTPS; deployment-configured, not settable per command. |
 | `AH_CLI_AMSDP_ENDPOINT` | Agent Management Service **data plane** endpoint, used by package upload and by `agent create` as a direct Dev-island override. Absolute HTTPS. |
 | `NO_COLOR` | Disable colored output (same effect as `--no-color`). |
+
+The CLI supports TLS 1.3 and TLS 1.2.
 
 ## Selecting a deployment ring
 

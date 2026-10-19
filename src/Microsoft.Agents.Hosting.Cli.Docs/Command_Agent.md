@@ -41,7 +41,7 @@ Options and behaviors labeled **MCS-specific** apply only to Microsoft Copilot S
 ## `msagent agent create`
 
 Creates an agent project in a local directory. Without the `AmsFeatures` feature, only MCS agents can
-be created, so `--agent-type MCSAgent` must be supplied.
+be created, so `--agent-type MCSAgent` must be supplied unless a clone option selects it.
 
 ```text
 # New MCS agent
@@ -49,7 +49,7 @@ msagent agent create --agent-type MCSAgent --agent-name <name> --description <de
   --initial-prompt <prompt> [options]
 
 # Clone an MCS agent
-msagent agent create --agent-type MCSAgent \
+msagent agent create [--agent-type MCSAgent] \
   (--mcs-clone-agent-id <id> | --mcs-clone-agent-schemaname <schema-name>) [options]
 
 # CodeAgent (Gated)
@@ -61,7 +61,7 @@ msagent agent create --agent-type CodeAgent --agent-name <name> \
 | --- | --- | --- | --- | --- |
 | `--agent-name` | `-an` | String | All agents | Agent display name. Required unless cloning, which inherits the source agent's name. |
 | `--description` | `-d` | String | All agents | Agent description. Required for a new MCS agent. |
-| `--agent-type` | `-at` | `MCSAgent` (alias `mcs`) or `CodeAgent` | All agents | Agent type. Defaults to `CodeAgent`, which is **Gated**; use `MCSAgent` for a local MCS project. |
+| `--agent-type` | `-at` | `MCSAgent` (alias `mcs`) or `CodeAgent` | All agents | Agent type. Defaults to `MCSAgent` when `--mcs-clone-agent-id`, `--mcs-clone-agent-schemaname`, or `--mcs-clone-environment-id` is supplied without a CodeAgent-only option; otherwise defaults to `CodeAgent`, which is **Gated**. Use `MCSAgent` for a local MCS project. |
 | `--environment-id` | `-eid` | String | All agents | Target environment id. When omitted, the active environment is used. |
 | `--project` | `-p` | Directory path | **MCS-specific** | The project directory to initialize. Defaults to the current directory; a missing directory is created. |
 | `--schema-name` | `-sn` | String | **MCS-specific** | MCS schema name. Derived from `--agent-name` when omitted. |
@@ -78,6 +78,9 @@ msagent agent create --agent-type CodeAgent --agent-name <name> \
 ### Validation
 
 - An unknown `--agent-type` or `--mcs-agent-type` value is a usage error.
+- When `--agent-type` is omitted, `--mcs-clone-agent-id`, `--mcs-clone-agent-schemaname`, or
+  `--mcs-clone-environment-id` selects `MCSAgent`, unless `--language`, `--language-version`, or
+  `--idempotency-key` is also supplied. An explicit `--agent-type` always wins.
 - With `--agent-type MCSAgent`, supplying `--language`, `--language-version`, or `--idempotency-key`
   is a usage error because they apply to CodeAgent only.
 - Without `MCSAgent`, supplying any MCS-specific option (`--schema-name`, `--mcs-agent-type`,
@@ -111,19 +114,18 @@ msagent agent create --agent-name "Support agent" \
 
 ### Cloning an existing MCS agent
 
-Cloning requires `--agent-type MCSAgent` and a clone selector, `--mcs-clone-agent-id` or
-`--mcs-clone-agent-schemaname`. The clone inherits the source agent's name unless `--agent-name` is
-supplied. The environment holding the clone source is `--mcs-clone-environment-id`, then
+Cloning requires a clone selector, `--mcs-clone-agent-id` or `--mcs-clone-agent-schemaname`.
+`--agent-type MCSAgent` is optional: when it is omitted, the clone selector or
+`--mcs-clone-environment-id` selects `MCSAgent`. The clone inherits the source agent's name unless
+`--agent-name` is supplied. The environment holding the clone source is `--mcs-clone-environment-id`, then
 `--environment-id`, then the active environment.
 
 ```text
 # Clone by schema name using the active environment
-msagent agent create --agent-type MCSAgent \
-  --mcs-clone-agent-schemaname <schema-name> --project <directory>
+msagent agent create --mcs-clone-agent-schemaname <schema-name> --project <directory>
 
 # Clone from one environment into another
-msagent agent create --agent-type MCSAgent \
-  --mcs-clone-agent-id <agent-id> \
+msagent agent create --mcs-clone-agent-id <agent-id> \
   --mcs-clone-environment-id <source-environment-id> \
   --environment-id <target-environment-id> --project <directory>
 ```
@@ -236,9 +238,9 @@ msagent agent deploy --agent-id <id> --package-revision <revision-id> [AMS optio
 | `--agent-name` | `-an` | String | **MCS-specific** | The record to deploy, by name. |
 | `--deployment-id` | `-did` | String | **MCS-specific** | The deployment to target. Wins over `--deployment-name`. |
 | `--deployment-name` | `-dn` | String | MCS and AMS routes | The deployment to target, by name. Required for AMS package-revision deployment. |
-| `--schema-name` | `-sn` | String | **MCS-specific** | Overrides the project's schema name for this deploy. |
+| `--schema-name` | `-sn` | String | **MCS-specific** | Overrides the project's schema name for this deploy. A workflow is addressed by its workflow id, so a workflow deploy rejects this option before anything is uploaded. |
 | `--publish` | `-pub` | Flag | **MCS-specific** | Publish the agent after a push that fully landed, making the content live. |
-| `--overwrite` | `-ow` | Flag | **MCS-specific** | Overwrite cloud content that changed since the last sync, and accept replacing an existing agent this project cannot show is its own. Only a dev deployment refuses drift without it. |
+| `--overwrite` | `-ow` | Flag | **MCS-specific** | Overwrite cloud content that changed since the last sync, and accept replacing an existing agent this project cannot show is its own. Only a dev deployment refuses drift without it. A workflow deploy always replaces the cloud copy, so the flag is accepted there and changes nothing. |
 | `--commit-id` | `-cid` | String | Not supported | This build has no Git Repository Service, so deploy always publishes the current working tree. Supplying it is a usage error. |
 | `--async` | `-as` | Flag | Not supported | The deploy is synchronous and returns when the push completes. Supplying it is a usage error. |
 | `--package-revision` | `-pr` | String | **Gated** | Existing immutable AMS Package Revision id. No package bytes are uploaded. |

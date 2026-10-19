@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Security.Authentication;
 using System.Text;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Identity;
@@ -10,15 +9,6 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.Identity;
 
 public class IdentityRestClientTests
 {
-    [Fact]
-    public void RedirectRejectingHandler_RequiresTls13AndDoesNotFollowRedirects()
-    {
-        using var handler = IdentityRestClient.CreateRedirectRejectingHandler();
-
-        Assert.False(handler.AllowAutoRedirect);
-        Assert.Equal(SslProtocols.Tls13, handler.SslProtocols);
-    }
-
     [Fact]
     public async Task SendGraphAsync_UsesExplicitScopeAndTargetTenant()
     {

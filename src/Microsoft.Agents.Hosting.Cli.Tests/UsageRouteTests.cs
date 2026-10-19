@@ -35,7 +35,7 @@ public sealed class UsageRouteTests
                 "Scaffold a new MCS agent",
                 "msagent agent create --agent-type MCSAgent --agent-name <agent-name> --description <description> --initial-prompt <initial-prompt> [options]",
                 "Clone an existing MCS agent",
-                "msagent agent create --agent-type MCSAgent (--mcs-clone-agent-id <id> | --mcs-clone-agent-schemaname <schema-name>) [options]",
+                "msagent agent create [--agent-type MCSAgent] (--mcs-clone-agent-id <id> | --mcs-clone-agent-schemaname <schema-name>) [options]",
                 "Create a CodeAgent",
                 "msagent agent create --agent-type CodeAgent --agent-name <agent-name> --language <language> --language-version <language-version> [options]",
             ],
@@ -367,6 +367,16 @@ public sealed class UsageRouteTests
     public void AGroupKeepsItsSubgroupUsageLine()
     {
         Assert.Contains("msagent deployment [subgroup] [command] [options]", Help(TestFeatureFlags.AllProductSurfaces, "deployment"), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--agent-type", "--agent-type")]
+    [InlineData("[--agent-type MCSAgent]", "--agent-type")]
+    [InlineData("(--mcs-clone-agent-id <id> | --mcs-clone-agent-schemaname <schema-name>)", "--mcs-clone-agent-id", "--mcs-clone-agent-schemaname")]
+    [InlineData("[--deployment-id <id> | --deployment-name <name>]", "--deployment-id", "--deployment-name")]
+    public void OptionNames_ReadsEveryOptionInsideBracketsAndAlternatives(string token, params string[] expected)
+    {
+        Assert.Equal(expected, CommandTreeBuilder.OptionNames(token));
     }
 
     [Fact]
