@@ -337,7 +337,7 @@ public sealed class CommandTelemetryTests
         Assert.False(collector.HasPendingRequest);
     }
 
-    [Theory(Skip = "Flaky test")]
+    [Theory]
     [MemberData(nameof(CanonicalLeafCases))]
     public async Task EveryCanonicalLeafRecordsItsResolvedMetadataPath(
         string expectedPath,
@@ -1044,8 +1044,8 @@ public sealed class CommandTelemetryTests
             clock ?? new FixedClock(),
             typeof(AgentHostCli).Assembly,
             tenantObserver,
-            policyTimeout: policyTimeout,
-            flushTimeout: flushTimeout,
+            policyTimeout: policyTimeout ?? TelemetryTestBudgets.Policy,
+            flushTimeout: flushTimeout ?? TelemetryTestBudgets.Flush,
             transport: transport);
 
     private static TelemetryControlService EnabledControls() =>

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Security.Authentication;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Agents.Hosting.Cli.Core.Ams;
@@ -241,15 +240,6 @@ public sealed class AmsDeploymentAdapterTests
         Assert.Equal("api.powerplatform.com", request.Uri.Host);
         Assert.True(request.HasAuthorization);
         Assert.DoesNotContain("attacker.example", exception.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void RedirectRejectingHandler_RequiresTls13AndDoesNotFollowRedirects()
-    {
-        using var handler = AmsDeploymentAdapter.CreateRedirectRejectingHandler();
-
-        Assert.False(handler.AllowAutoRedirect);
-        Assert.Equal(SslProtocols.Tls13, handler.SslProtocols);
     }
 
     [Fact]

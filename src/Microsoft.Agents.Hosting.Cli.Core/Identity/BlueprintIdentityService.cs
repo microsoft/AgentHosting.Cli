@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using static Microsoft.Agents.Hosting.Cli.Core.Identity.BlueprintIdentityJson;
 
@@ -291,9 +292,8 @@ public sealed class BlueprintIdentityService
         BlueprintIdentityRequest request,
         CancellationToken cancellationToken)
     {
-        var escapedName = request.DisplayName.Replace("'", "''", StringComparison.Ordinal);
         var path = "/beta/applications/microsoft.graph.agentIdentityBlueprint?$filter=" +
-            Uri.EscapeDataString($"displayName eq '{escapedName}'") +
+            Uri.EscapeDataString($"displayName eq {ODataLiteral.Quote(request.DisplayName)}") +
             "&$select=id,appId,displayName,identifierUris,api,web,passwordCredentials";
         var values = await _graph.ReadCollectionAsync(
             path,

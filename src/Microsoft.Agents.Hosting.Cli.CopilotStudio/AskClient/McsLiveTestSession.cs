@@ -2,9 +2,9 @@ using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Agents.Core.Models;
-using Microsoft.Agents.Core.Serialization;
 using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
@@ -320,13 +320,12 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
         _conversationIdSource = McsConversationIdSource.Service;
     }
 
-    private static SocketsHttpHandler CreateTransport() =>
-        new SocketsHttpHandler
-        {
-            AllowAutoRedirect = false,
-            UseCookies = false,
-            Credentials = null,
-        };
+    internal static HttpClientHandler CreateTransport()
+    {
+        var handler = TransportDefaults.CreateRedirectRejectingHandler();
+        handler.UseCookies = false;
+        return handler;
+    }
 
     private static void ValidateTarget(McsLiveTestTarget target)
     {

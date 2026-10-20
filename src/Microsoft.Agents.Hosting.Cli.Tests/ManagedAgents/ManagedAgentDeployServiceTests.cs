@@ -534,13 +534,16 @@ public sealed class ManagedAgentDeployServiceTests
         return workspaces;
     }
 
-    private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) Registered(string stage = DeploymentStages.Dev, string environmentId = "env-1", bool withProjectFile = true)
+    private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) Registered(string stage = DeploymentStages.Dev, string environmentId = "env-1", bool withProjectFile = true, bool withDeployment = true)
     {
         var workspace = new TemporaryWorkspace(withProjectFile);
         var store = ManagedAgentFixtures.Store();
 
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
-        store.Add(workspace.Root, ManagedAgentFixtures.Deployment(name: stage, stage: stage, environmentId: environmentId));
+        if (withDeployment)
+        {
+            store.Add(workspace.Root, ManagedAgentFixtures.Deployment(name: stage, stage: stage, environmentId: environmentId));
+        }
 
         return (workspace, store);
     }
@@ -1193,16 +1196,33 @@ public sealed class ManagedAgentDeployServiceTests
         Assert.Equal("foo_other", attach.LastCommand!.SchemaName);
     }
 
-    [Fact]
-    public async Task Deploy_WithoutADeploymentSelector_IsAUsageError()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Deploy_WithoutAResolvableDeployment_StopsBeforeCloudOrCacheChanges(bool hasDeployment, bool withSelector)
     {
-        var (workspace, store) = Registered();
+        var (workspace, store) = Registered(withDeployment: hasDeployment);
         using var _ = workspace;
         using var scope = new CurrentDirectoryScope(workspace.Root);
+        workspace.AddFile(Path.Combine(".mcs", "botdefinition.json"), "{\"source\":\"cloud\"}");
+        var configuration = File.ReadAllBytes(workspace.ConfigPath);
+        var cachePath = Path.Combine(workspace.Root, ".mcs", "botdefinition.json");
+        var cache = File.ReadAllBytes(cachePath);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true };
+        var attach = Connecting(workspaces);
 
-        await Assert.ThrowsAsync<UsageException>(() => Create(store, Fresh(out var workspaces, connected: true), Connecting(workspaces)).DeployAsync(
-            new ManagedAgentDeployRequest { AgentId = "agent-1" },
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, attach).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = withSelector ? "no-such-slot" : null },
             CancellationToken.None));
+
+        Assert.Equal(withSelector ? "deployment-not-found" : hasDeployment ? "deployment-selector-required" : "deployment-records-empty", failure.ErrorKind);
+        Assert.Contains(hasDeployment ? withSelector ? "no-such-slot" : "Available deployments: dev" : "no deployment records", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(0, workspaces.PushCalls);
+        Assert.Equal(0, attach.Calls);
+        Assert.Equal(configuration, File.ReadAllBytes(workspace.ConfigPath));
+        Assert.Equal(cache, File.ReadAllBytes(cachePath));
     }
 
     [Fact]

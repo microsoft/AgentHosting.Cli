@@ -308,7 +308,9 @@ public sealed class TelemetryStageOneTests
             controls,
             resolver,
             new FixedClock(Timestamp),
-            typeof(AgentHostCli).Assembly);
+            typeof(AgentHostCli).Assembly,
+            policyTimeout: TelemetryTestBudgets.Policy,
+            flushTimeout: TelemetryTestBudgets.Flush);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -571,7 +573,9 @@ public sealed class TelemetryStageOneTests
             controls,
             resolver,
             new FixedClock(Timestamp),
-            typeof(AgentHostCli).Assembly);
+            typeof(AgentHostCli).Assembly,
+            policyTimeout: TelemetryTestBudgets.Policy,
+            flushTimeout: TelemetryTestBudgets.Flush);
 
         await new AgentHostCli(new FakeOperations(), telemetryFactory: factory)
             .InvokeAsync(

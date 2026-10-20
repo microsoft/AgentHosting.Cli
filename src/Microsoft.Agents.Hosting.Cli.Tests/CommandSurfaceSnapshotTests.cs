@@ -285,6 +285,7 @@ public sealed class CommandSurfaceSnapshotTests
         ["--scopes"] = "-scp",
         ["--subscription"] = "-sub",
         ["--teams-sso"] = "-ts",
+        ["--target"] = "-tgt",
         ["--target-environment-id"] = "-tenv",
         ["--tenant"] = "-t",
         ["--tenant-wide"] = "-tw",

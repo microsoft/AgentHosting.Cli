@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
+using Microsoft.Agents.Hosting.Cli.Core.Rendering;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
 
@@ -14,6 +15,9 @@ public sealed class ManagedAgentException : AgentHostingException
         : base(message, exitCode, errorKind, remediation, innerException)
     {
     }
+
+    /// <summary>Whether the message and remediation contain CLI-formatted lines.</summary>
+    public bool HasMultilineGuidance { get; private init; }
 
     /// <summary>No configuration exists in the directory the command was run from.</summary>
     /// <param name="searchedPath">The configuration path that was looked for.</param>
@@ -149,7 +153,73 @@ public sealed class ManagedAgentException : AgentHostingException
         $"No deployment matching '{selector}' is registered for this agent.",
         ExitCodes.Usage,
         "deployment-not-found",
-        "Run `msagent deployment list --agent-id <id>` to see the agent's deployments.");
+        "Run `msagent deployment list` to see the agent's deployments.");
+
+    /// <summary>Reports deployment records and next commands when a deploy target cannot be selected.</summary>
+    public static ManagedAgentException DeploymentSelectionFailed(string projectDirectory, IReadOnlyList<ManagedAgentRecord> agents, IReadOnlyList<AgentDeploymentRecord> deployments, string? selector = null)
+    {
+        var deploymentsByAgent = deployments.ToLookup(deployment => deployment.AgentId, StringComparer.OrdinalIgnoreCase);
+        var selectableDeployments = new List<AgentDeploymentRecord>();
+        var descriptions = new List<string>();
+        var commands = new List<string>();
+
+        foreach (var agent in agents)
+        {
+            var displayName = TerminalText.Sanitize(agent.DisplayName);
+
+            if (!AgentTypes.IsMcs(agent.AgentType))
+            {
+                descriptions.Add($"  {displayName} ({TerminalText.Sanitize(agent.AgentId)}): {TerminalText.Sanitize(agent.AgentType)}; use its package-revision deployment options.");
+                commands.Add($"For CodeAgent '{displayName}', see the package-revision deployment options in `msagent agent deploy --help`.");
+                continue;
+            }
+
+            var agentDeployments = deploymentsByAgent[agent.AgentId].ToArray();
+
+            selectableDeployments.AddRange(agentDeployments);
+            descriptions.Add($"  {displayName} ({TerminalText.Sanitize(agent.AgentId)}): {(agentDeployments.Length == 0 ? "no deployment records" : DeploymentNames(agentDeployments))}");
+            commands.Add(DeploymentSelectionCommands(projectDirectory, agent.AgentId, displayName, agentDeployments));
+        }
+
+        var message = agents.Count == 1
+            ? selectableDeployments.Count == 0
+                ? $"Agent '{TerminalText.Sanitize(agents[0].DisplayName)}' has no deployment records. Create a deployment before deploying."
+                : $"No deployment selected for agent '{TerminalText.Sanitize(agents[0].DisplayName)}'.{Environment.NewLine}Available deployments: {DeploymentNames(selectableDeployments)}"
+            : $"{(agents.Any(agent => deploymentsByAgent.Contains(agent.AgentId)) ? "No deployment selected." : "None of the agents in this folder has deployment records.")}{Environment.NewLine}Agents in this folder:{Environment.NewLine}{string.Join(Environment.NewLine, descriptions)}";
+
+        return new(
+            selector is null ? message : $"No deployment matching '{TerminalText.Sanitize(selector)}' is registered here.{Environment.NewLine}{message}",
+            ExitCodes.Usage,
+            selector is not null ? "deployment-not-found" : selectableDeployments.Count == 0 ? "deployment-records-empty" : "deployment-selector-required",
+            string.Join(Environment.NewLine + Environment.NewLine, commands))
+        {
+            HasMultilineGuidance = true,
+        };
+    }
+
+    private static string DeploymentSelectionCommands(string projectDirectory, string agentId, string displayName, AgentDeploymentRecord[] deployments)
+    {
+        var agentSelector = $"--project {CommandArgument(projectDirectory)} --agent-id {CommandArgument(agentId)}";
+
+        return deployments.Length == 0
+            ? $"Create a deployment for '{displayName}':{Environment.NewLine}  msagent deployment create {agentSelector} --deployment-name development --deployment-type dev{Environment.NewLine}Then deploy:{Environment.NewLine}  msagent agent deploy {agentSelector} --deployment-name development"
+            : $"Select --deployment-id or --deployment-name for '{displayName}', for example:{Environment.NewLine}  msagent agent deploy {agentSelector} --deployment-id {CommandArgument(deployments[0].DeploymentId)}";
+    }
+
+    private static string CommandArgument(string value) => OperatingSystem.IsWindows() ? PowerShellCommandArgument(value) : PosixCommandArgument(value);
+
+    internal static string PowerShellCommandArgument(string value) => QuotedCommandArgument(value, "$`\"", "''");
+
+    internal static string PosixCommandArgument(string value) => QuotedCommandArgument(value, "$`\"\\!", "'\\''");
+
+    private static string QuotedCommandArgument(string value, string doubleQuotedSpecialCharacters, string singleQuotedApostrophe)
+    {
+        var argument = TerminalText.Sanitize(value);
+
+        return argument.AsSpan().ContainsAny(doubleQuotedSpecialCharacters) ? $"'{argument.Replace("'", singleQuotedApostrophe, StringComparison.Ordinal)}'" : $"\"{argument}\"";
+    }
+
+    private static string DeploymentNames(IEnumerable<AgentDeploymentRecord> deployments) => string.Join(", ", deployments.Select(deployment => TerminalText.Sanitize(deployment.DeploymentName)));
 
     /// <summary>A deployment selector matched more than one deployment.</summary>
     /// <param name="selector">The supplied selector, or <see langword="null"/> when none was.</param>
@@ -383,15 +453,38 @@ public sealed class ManagedAgentException : AgentHostingException
         "share-target-not-in-environment",
         "Run `msagent agent deploy` to deploy it there, or `msagent deployment list` to see which environments it actually reached.");
 
-    /// <summary>The user selector matched nothing the environment knows.</summary>
+    /// <summary>The user selector matched nobody in the tenant directory.</summary>
     /// <param name="selector">The value that was supplied.</param>
-    /// <param name="environmentId">The environment that was searched.</param>
+    /// <param name="tenantId">The tenant that was searched.</param>
     /// <returns>The typed failure.</returns>
-    public static ManagedAgentException SharePrincipalNotFound(string selector, string environmentId) => new(
-        $"No user matching '{selector}' has an account in environment '{environmentId}'.",
+    public static ManagedAgentException SharePrincipalNotFound(string selector, string tenantId) => new(
+        $"No user with sign-in address or email address '{selector}' exists in tenant '{tenantId}'.",
         ExitCodes.Usage,
         "share-principal-not-found",
-        $"Sharing itself needs no account here, but resolving a name does. Supply the Entra object id instead — `az ad user show --id {selector} --query id -o tsv` prints it — or share from an environment where the user already has one.");
+        "Check the address for typos, or supply the user's Entra object id.");
+
+    /// <summary>The email address belongs to more than one user in the tenant directory, so it names nobody in particular.</summary>
+    /// <param name="selector">The value that was supplied.</param>
+    /// <param name="tenantId">The tenant that was searched.</param>
+    /// <param name="signInAddresses">The sign-in addresses of users it matched. The search stops once it has found two.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException SharePrincipalAmbiguous(string selector, string tenantId, IEnumerable<string> signInAddresses) => new(
+        $"'{selector}' is the email address of more than one user in tenant '{tenantId}', including {string.Join(", ", signInAddresses)}.",
+        ExitCodes.Usage,
+        "share-principal-ambiguous",
+        "Supply the sign-in address of the user you mean or their Entra object id.");
+
+    /// <summary>The tenant directory could not answer which user an address names.</summary>
+    /// <param name="selector">The value that was supplied.</param>
+    /// <param name="detail">What the directory reported.</param>
+    /// <param name="innerException">The directory failure, when there was one.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException SharePrincipalLookupFailed(string selector, string detail, Exception? innerException = null) => new(
+        $"Microsoft Graph could not resolve '{selector}' to an Entra object id: {detail}",
+        ExitCodes.Failure,
+        "share-principal-lookup-failed",
+        "Retry the command, or supply the Entra object id instead.",
+        innerException);
 
     /// <summary>The owner's access was targeted, which sharing cannot change.</summary>
     /// <param name="principalName">The principal that owns the agent.</param>

@@ -85,6 +85,7 @@ public sealed class PlaygroundTelemetryTests
             new FixedClock(),
             "1.2.3-test",
             selectedProfile: new("account", TenantId, PrincipalObjectId),
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
 
         session.RecordAttempt(PlaygroundPath());
@@ -216,6 +217,7 @@ public sealed class PlaygroundTelemetryTests
             new CapturingResolver(),
             new FixedClock(),
             "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
 
     private static JsonElement[] Parse(string payload) =>

@@ -118,14 +118,6 @@ public sealed class AmsPackagePublicationAdapterTests
         Assert.DoesNotContain("attacker.example", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void RedirectRejectingHandler_DoesNotFollowRedirects()
-    {
-        using var handler = AmsPackagePublicationAdapter.CreateRedirectRejectingHandler();
-
-        Assert.False(handler.AllowAutoRedirect);
-    }
-
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized, "MissingUserIdentity", "ams-missing-user-identity", ExitCodes.NotSignedIn)]
     [InlineData(HttpStatusCode.Forbidden, "TenantIdMismatch", "tenant-mismatch", ExitCodes.Usage)]

@@ -631,6 +631,8 @@ public sealed class TelemetryControlTests
             resolver,
             new FixedClock(),
             typeof(AgentHostCli).Assembly,
+            policyTimeout: TelemetryTestBudgets.Policy,
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
         return new AgentHostCli(
             operations,

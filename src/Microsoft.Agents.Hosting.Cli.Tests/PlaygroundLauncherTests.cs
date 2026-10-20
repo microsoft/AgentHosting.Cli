@@ -74,6 +74,32 @@ public sealed class PlaygroundLauncherTests
     }
 
     [Fact]
+    public void BuildLaunchPlan_DirectLineUsesOnlyNativeNonSecretArguments()
+    {
+        var tool = Tool();
+
+        var plan = PlaygroundLauncher.BuildLaunchPlan(tool, new PlaygroundConnection.DirectLine());
+        var info = PlaygroundLauncher.BuildStartInfo(plan);
+
+        Assert.Equal(
+            new[]
+            {
+                tool.ArgumentPrefix[0],
+                "start",
+                "--target",
+                "directline",
+                "--host",
+                "127.0.0.1",
+                "--disable-telemetry",
+            },
+            plan.Arguments);
+        Assert.False(info.UseShellExecute);
+        Assert.False(info.RedirectStandardInput);
+        Assert.False(info.RedirectStandardOutput);
+        Assert.False(info.RedirectStandardError);
+    }
+
+    [Fact]
     public void BuildStartInfo_UsesInheritedNativeConsoleStreamsWithoutShellExecution()
     {
         var info = PlaygroundLauncher.BuildStartInfo(
@@ -110,8 +136,10 @@ public sealed class PlaygroundLauncherTests
             info.ArgumentList);
     }
 
-    [Fact]
-    public void BuildLaunchPlan_ScrubsPlaygroundOverridesWithoutMutatingTheCallerEnvironment()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BuildLaunchPlan_ScrubsPlaygroundOverridesWithoutMutatingTheCallerEnvironment(bool directLine)
     {
         var inherited = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -151,8 +179,7 @@ public sealed class PlaygroundLauncherTests
 
         var plan = PlaygroundLauncher.BuildLaunchPlan(
             Tool(),
-            Target(LiveTestAgentType.Standard, "https://example.test/standard"),
-            ClientId,
+            Connection(directLine),
             inherited);
 
         Assert.Equal(original, inherited);
@@ -161,8 +188,10 @@ public sealed class PlaygroundLauncherTests
         Assert.Equal("https://registry.example", plan.Environment["NPM_CONFIG_REGISTRY"]);
     }
 
-    [Fact]
-    public void BuildLaunchPlan_IsolatesInheritedAndLocalConfigFromAnAbsentOwnedConfig()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BuildLaunchPlan_IsolatesInheritedAndLocalConfigFromAnAbsentOwnedConfig(bool directLine)
     {
         var sourceDirectory = Path.Combine(
             AppContext.BaseDirectory,
@@ -190,8 +219,7 @@ public sealed class PlaygroundLauncherTests
         {
             var plan = PlaygroundLauncher.BuildLaunchPlan(
                 Tool(),
-                Target(LiveTestAgentType.Standard, "https://example.test/standard"),
-                ClientId,
+                Connection(directLine),
                 inherited,
                 ownedDirectory,
                 absentConfig);
@@ -236,8 +264,10 @@ public sealed class PlaygroundLauncherTests
         Assert.Equal("lower", plan.Environment["path"]);
     }
 
-    [Fact]
-    public async Task RunAsync_DeletesItsOwnedInvocationDirectoryAfterExit()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_DeletesItsOwnedInvocationDirectoryAfterExit(bool directLine)
     {
         var process = new FakeProcess { Exited = true };
         var factory = new RecordingProcessFactory(process);
@@ -245,8 +275,7 @@ public sealed class PlaygroundLauncherTests
 
         var exitCode = await launcher.RunAsync(
             Tool(),
-            Target(LiveTestAgentType.Standard, "https://example.test/standard"),
-            ClientId,
+            Connection(directLine),
             () => { },
             CancellationToken.None);
 
@@ -332,8 +361,10 @@ public sealed class PlaygroundLauncherTests
         Assert.NotEmpty(error.Remediation);
     }
 
-    [Fact]
-    public async Task RunAsync_ReportsProcessStartFailuresWithoutLeakingTheOriginalException()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_ReportsProcessStartFailuresWithoutLeakingTheOriginalException(bool directLine)
     {
         var factory = new ThrowingProcessFactory(new InvalidOperationException("secret tool"));
         var launcher = new PlaygroundLauncher(factory, TimeSpan.FromMilliseconds(1));
@@ -341,8 +372,7 @@ public sealed class PlaygroundLauncherTests
         var error = await Assert.ThrowsAsync<PlaygroundLaunchException>(() =>
             launcher.RunAsync(
                 Tool(),
-                Target(LiveTestAgentType.Standard, "https://example.test/agent"),
-                ClientId,
+                Connection(directLine),
                 () => { },
                 CancellationToken.None));
 
@@ -352,8 +382,10 @@ public sealed class PlaygroundLauncherTests
         Assert.NotEmpty(error.Remediation);
     }
 
-    [Fact]
-    public async Task RunAsync_CancellationInterruptsThenKillsOwnedProcessAndReturns130()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_CancellationInterruptsThenKillsOwnedProcessAndReturns130(bool directLine)
     {
         var process = new FakeProcess();
         var factory = new RecordingProcessFactory(process);
@@ -362,8 +394,7 @@ public sealed class PlaygroundLauncherTests
 
         var exitCode = await launcher.RunAsync(
             Tool(),
-            Target(LiveTestAgentType.Standard, "https://example.test/agent"),
-            ClientId,
+            Connection(directLine),
             cancellation.Cancel,
             cancellation.Token);
 
@@ -439,11 +470,47 @@ public sealed class PlaygroundLauncherTests
         Assert.Equal(InterruptThenKill, process.Events);
     }
 
-    [Fact]
-    public async Task RunAsync_PreservesIndependentChildExitCode()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_PreservesIndependentChildExitCode(bool directLine)
     {
         var process = new FakeProcess { Exited = true, ExitCode = 37 };
         var launcher = new PlaygroundLauncher(new RecordingProcessFactory(process), TimeSpan.FromMilliseconds(1));
+
+        var exitCode = await launcher.RunAsync(
+            Tool(),
+            Connection(directLine),
+            () => { },
+            CancellationToken.None);
+
+        Assert.Equal(37, exitCode);
+        Assert.Empty(process.Events);
+    }
+
+    [Fact]
+    public async Task RunAsync_RetriesTransientInvocationDirectoryLocks()
+    {
+        var attempts = new List<string>();
+        var delays = new List<TimeSpan>();
+        var launcher = new PlaygroundLauncher(
+            new RecordingProcessFactory(new FakeProcess { Exited = true, ExitCode = 0 }),
+            TimeSpan.FromMilliseconds(1),
+            directory =>
+            {
+                attempts.Add(directory);
+                if (attempts.Count < 3)
+                {
+                    throw new IOException("locked");
+                }
+
+                Directory.Delete(directory, recursive: true);
+            },
+            delay =>
+            {
+                delays.Add(delay);
+                return Task.CompletedTask;
+            });
 
         var exitCode = await launcher.RunAsync(
             Tool(),
@@ -452,11 +519,92 @@ public sealed class PlaygroundLauncherTests
             () => { },
             CancellationToken.None);
 
-        Assert.Equal(37, exitCode);
-        Assert.Empty(process.Events);
+        Assert.Equal(0, exitCode);
+        Assert.Equal(3, attempts.Count);
+        Assert.Single(attempts.Distinct(StringComparer.Ordinal));
+        Assert.Equal(PlaygroundLauncher.InvocationDirectoryDeleteRetryDelays.Take(2), delays);
+        Assert.False(Directory.Exists(attempts[0]));
     }
 
-    [Fact(Skip = "Flaky test")]
+    [Fact]
+    public async Task RunAsync_ReportsInvocationDirectoryCleanupFailureAfterBoundedRetries()
+    {
+        var attempts = new List<string>();
+        var lastFailure = new UnauthorizedAccessException("denied");
+        var launcher = new PlaygroundLauncher(
+            new RecordingProcessFactory(new FakeProcess { Exited = true, ExitCode = 0 }),
+            TimeSpan.FromMilliseconds(1),
+            directory =>
+            {
+                attempts.Add(directory);
+                throw attempts.Count % 2 == 0 ? lastFailure : new IOException("locked");
+            },
+            _ => Task.CompletedTask);
+
+        try
+        {
+            var error = await Assert.ThrowsAsync<PlaygroundLaunchException>(() =>
+                launcher.RunAsync(
+                    Tool(),
+                    Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                    ClientId,
+                    () => { },
+                    CancellationToken.None));
+
+            Assert.Equal(PlaygroundLaunchFailureKind.CleanupFailed, error.Kind);
+            Assert.Equal(
+                PlaygroundLauncher.InvocationDirectoryDeleteRetryDelays.Length + 1,
+                attempts.Count);
+            Assert.Equal(lastFailure, error.InnerException);
+        }
+        finally
+        {
+            if (attempts.Count > 0 && Directory.Exists(attempts[0]))
+            {
+                Directory.Delete(attempts[0], recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotRetryNonTransientInvocationDirectoryFailures()
+    {
+        var attempts = new List<string>();
+        var failure = new InvalidOperationException("unexpected");
+        var launcher = new PlaygroundLauncher(
+            new RecordingProcessFactory(new FakeProcess { Exited = true, ExitCode = 0 }),
+            TimeSpan.FromMilliseconds(1),
+            directory =>
+            {
+                attempts.Add(directory);
+                throw failure;
+            },
+            _ => throw new Xunit.Sdk.XunitException("A non-transient failure must not be retried."));
+
+        try
+        {
+            var error = await Assert.ThrowsAsync<PlaygroundLaunchException>(() =>
+                launcher.RunAsync(
+                    Tool(),
+                    Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                    ClientId,
+                    () => { },
+                    CancellationToken.None));
+
+            Assert.Equal(PlaygroundLaunchFailureKind.CleanupFailed, error.Kind);
+            Assert.Single(attempts);
+            Assert.Same(failure, error.InnerException);
+        }
+        finally
+        {
+            if (attempts.Count > 0 && Directory.Exists(attempts[0]))
+            {
+                Directory.Delete(attempts[0], recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_UsesARealNodeFixtureAndTerminatesOnlyItsOwnedProcess()
     {
         var node = FindNode();
@@ -495,7 +643,11 @@ public sealed class PlaygroundLauncherTests
                 () => { },
                 cancellation.Token);
 
-            var pid = await WaitForPidMarkerAsync(pidFile);
+            // Cold Node startup in a loaded CI container can take well over 10 seconds.
+            var pid = await WaitForPidMarkerAsync(
+                pidFile,
+                timeout: TimeSpan.FromSeconds(60),
+                owner: runTask);
             cancellation.Cancel();
 
             Assert.Equal(130, await runTask);
@@ -587,6 +739,28 @@ public sealed class PlaygroundLauncherTests
         }
     }
 
+    [Fact]
+    public async Task WaitForPidMarkerAsync_FailsFastWhenTheOwnerEndsWithoutAMarker()
+    {
+        var markerPath = Path.Combine(
+            AppContext.BaseDirectory,
+            $"playground-launcher-ended-{Guid.NewGuid():N}.pid");
+
+        var exception = await Assert.ThrowsAsync<Xunit.Sdk.XunitException>(() =>
+            WaitForPidMarkerAsync(
+                markerPath,
+                timeout: TimeSpan.FromSeconds(30),
+                owner: Task.FromResult(7)));
+
+        Assert.Contains("exit code 7", exception.Message, StringComparison.Ordinal);
+    }
+
+    private static PlaygroundConnection Connection(bool directLine) =>
+        directLine
+            ? new PlaygroundConnection.DirectLine()
+            : new PlaygroundConnection.DirectEngine(
+                Target(LiveTestAgentType.Standard, "https://example.test/standard"), ClientId);
+
     private static string HostPath(params string[] parts) =>
         Path.Combine([Path.GetTempPath(), "msagent playground & tests", .. parts]);
 
@@ -627,13 +801,23 @@ public sealed class PlaygroundLauncherTests
     private static async Task<int> WaitForPidMarkerAsync(
         string path,
         Action? invalidMarkerObserved = null,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        Task<int>? owner = null)
     {
         var watchdog = timeout ?? TimeSpan.FromSeconds(10);
         var deadline = Stopwatch.GetTimestamp() +
                        (long)(watchdog.TotalSeconds * Stopwatch.Frequency);
         while (Stopwatch.GetTimestamp() < deadline)
         {
+            if (owner is { IsCompleted: true } && !File.Exists(path))
+            {
+                var outcome = owner.IsCompletedSuccessfully
+                    ? $"exit code {owner.Result}"
+                    : owner.Exception?.GetBaseException().Message ?? "cancellation";
+                throw new Xunit.Sdk.XunitException(
+                    $"The Node fixture ended ({outcome}) before publishing a PID marker.");
+            }
+
             if (File.Exists(path))
             {
                 try

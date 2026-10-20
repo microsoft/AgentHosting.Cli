@@ -29,3 +29,4 @@ src/AuthSidecar/appsettings.Development.json
 
 # Local deployment fixtures — .ah holds runtime records referencing real Azure bots; never commit.
 .ah/
+

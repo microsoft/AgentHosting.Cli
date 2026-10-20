@@ -33,6 +33,8 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
         "Warning: this launches a live playground session; actions can have real effects against the selected agent.";
     private const string DeviceCodeDisclosure =
         "The native playground owns sign-in. If it asks for a device code, follow its instructions in this terminal.";
+    private const string DirectLineDisclosure =
+        "Enter the MCS token endpoint or Direct Line secret only in the native playground's masked terminal prompt. Do not put credentials in command arguments or chat.";
 
     private readonly PlaygroundRequest _request;
     private readonly Func<LiveTestRequest, LiveTestDestination> _resolve;
@@ -42,6 +44,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
     private readonly IConfirmationPrompt _confirmation;
     private readonly Func<AgentHostClientAppConfiguration> _clientConfiguration;
     private readonly Func<bool> _isInputRedirected;
+    private readonly Func<bool> _isOutputRedirected;
     private readonly Action<PlaygroundTelemetryDetails> _recordTelemetry;
     private PlaygroundSemanticOutcome _semanticOutcome;
 
@@ -54,6 +57,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
         IConfirmationPrompt confirmation,
         Func<AgentHostClientAppConfiguration> clientConfiguration,
         Func<bool> isInputRedirected,
+        Func<bool> isOutputRedirected,
         Action<PlaygroundTelemetryDetails> recordTelemetry)
     {
         _request = request ?? throw new ArgumentNullException(nameof(request));
@@ -64,6 +68,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
         _confirmation = confirmation ?? throw new ArgumentNullException(nameof(confirmation));
         _clientConfiguration = clientConfiguration ?? throw new ArgumentNullException(nameof(clientConfiguration));
         _isInputRedirected = isInputRedirected ?? throw new ArgumentNullException(nameof(isInputRedirected));
+        _isOutputRedirected = isOutputRedirected ?? throw new ArgumentNullException(nameof(isOutputRedirected));
         _recordTelemetry = recordTelemetry ?? throw new ArgumentNullException(nameof(recordTelemetry));
     }
 
@@ -97,40 +102,56 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            LiveTestDestination target;
-            try
+            var isDirectLine = string.Equals(_request.Target, "directline", StringComparison.OrdinalIgnoreCase);
+            var validationError = ValidateRequest(isDirectLine);
+            if (validationError is not null)
             {
-                target = _resolve(_request.ToLiveTestRequest());
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception failure)
-            {
-                errorCategory = ResolverCategory(failure);
+                errorCategory = PlaygroundErrorCategory.Unsupported;
                 _semanticOutcome = PlaygroundSemanticOutcome.Usage;
-                return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Usage).ConfigureAwait(false);
+                await WriteErrorAsync(stderr, validationError).ConfigureAwait(false);
+                return ExitCodes.Usage;
             }
 
-            AgentHostClientAppConfiguration clientConfiguration;
-            try
+            PlaygroundConnection connection;
+            if (isDirectLine)
             {
-                // Resolve the public client before discovery, prompting, or npm mutation. A malformed
-                // client id is a local preflight failure and must not cause a global install.
-                clientConfiguration = _clientConfiguration();
+                connection = new PlaygroundConnection.DirectLine();
             }
-            catch (AgentHostingException failure)
+            else
             {
-                errorCategory = PlaygroundErrorCategory.LaunchFailed;
-                return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Failure).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                errorCategory = PlaygroundErrorCategory.LaunchFailed;
-                await WriteErrorAsync(stderr, "The playground client configuration could not be created. Configure the AgentHost public-client id and try again.")
-                    .ConfigureAwait(false);
-                return ExitCodes.Failure;
+                LiveTestDestination target;
+                try
+                {
+                    target = _resolve(_request.ToLiveTestRequest());
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception failure)
+                {
+                    errorCategory = ResolverCategory(failure);
+                    _semanticOutcome = PlaygroundSemanticOutcome.Usage;
+                    return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Usage).ConfigureAwait(false);
+                }
+
+                try
+                {
+                    // A malformed client id must fail before discovery, consent, or npm mutation.
+                    connection = new PlaygroundConnection.DirectEngine(target, _clientConfiguration().ClientId);
+                }
+                catch (AgentHostingException failure)
+                {
+                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                    return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Failure).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                    await WriteErrorAsync(stderr, "The playground client configuration could not be created. Configure the AgentHost public-client id and try again.")
+                        .ConfigureAwait(false);
+                    return ExitCodes.Failure;
+                }
             }
 
             PlaygroundTool? tool;
@@ -233,7 +254,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
             errorCategory = PlaygroundErrorCategory.None;
             version = tool.Version.ToString();
             await WriteLineAsync(stdout, LiveEffectsWarning).ConfigureAwait(false);
-            await WriteLineAsync(stdout, DeviceCodeDisclosure).ConfigureAwait(false);
+            await WriteLineAsync(stdout, isDirectLine ? DirectLineDisclosure : DeviceCodeDisclosure).ConfigureAwait(false);
             await WriteLineAsync(stdout, $"Playground tool: {SafeValue(tool.SelectedPath)} (version {SafeValue(version)}).")
                 .ConfigureAwait(false);
 
@@ -244,8 +265,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
             {
                 var exitCode = await _launcher.RunAsync(
                     tool,
-                    target,
-                    clientConfiguration.ClientId,
+                    connection,
                     started,
                     cancellationToken).ConfigureAwait(false);
 
@@ -318,6 +338,43 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
                     OptionalMeasurementFailureCategory.TelemetrySerialization);
             }
         }
+    }
+
+    private string? ValidateRequest(bool isDirectLine)
+    {
+        if (!isDirectLine && !string.Equals(_request.Target, "directengine", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The --target value is not supported. Choose directline or directengine.";
+        }
+
+        if (!isDirectLine)
+        {
+            return string.IsNullOrWhiteSpace(_request.AgentType)
+                ? "--agent-harness is required for DirectEngine. Choose standard or github-copilot."
+                : null;
+        }
+
+        if (_request.AgentType is not null ||
+            _request.Project is not null ||
+            _request.AgentId is not null ||
+            _request.AgentName is not null ||
+            _request.SchemaName is not null ||
+            _request.DeploymentId is not null ||
+            _request.DeploymentName is not null ||
+            _request.EnvironmentId is not null ||
+            _request.Tenant is not null)
+        {
+            return "Direct Line does not accept --agent-harness, --project, --agent-id, --agent-name, --schema-name, --deployment-id, --deployment-name, --environment-id, or --tenant. Remove these options or select --target directengine.";
+        }
+
+        if (_request.NonInteractive)
+        {
+            return "Direct Line does not support --non-interactive. Run without that option in an interactive terminal and enter the credential at the native masked prompt.";
+        }
+
+        return _isInputRedirected() || _isOutputRedirected()
+            ? "Direct Line requires an interactive terminal for both input and output. Run without input/output redirection and enter the credential at the native masked prompt."
+            : null;
     }
 
     private async Task<bool> GetInstallConsentAsync(
