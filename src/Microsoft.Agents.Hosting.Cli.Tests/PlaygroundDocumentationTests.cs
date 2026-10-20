@@ -9,14 +9,21 @@ public sealed class PlaygroundDocumentationTests
         var section = Section(readme, "### M365 Agents Playground test (MVP)");
 
         Assert.Contains(
-            "| `msagent test playground` |",
+            "| `msagent test playground [--target directline\\|directengine]` |",
             readme,
             StringComparison.Ordinal);
         Assert.Contains("`msagent test playground`", section, StringComparison.Ordinal);
         Assert.Contains("discovery service", section, StringComparison.Ordinal);
         Assert.DoesNotContain("--agent-harness", readme, StringComparison.Ordinal);
         Assert.Contains("same agent selectors as `test ask`", section, StringComparison.Ordinal);
-        Assert.Contains("does not accept `--query` or `--conversation-id`", section, StringComparison.Ordinal);
+        Assert.Contains("Neither mode accepts `--query` or `--conversation-id`", section, StringComparison.Ordinal);
+        Assert.Contains("`msagent test playground --target directline`", section, StringComparison.Ordinal);
+        Assert.Contains("`directengine` (the default)", section, StringComparison.Ordinal);
+        Assert.Contains("masked terminal prompt", section, StringComparison.Ordinal);
+        Assert.Contains("It rejects `--non-interactive`", section, StringComparison.Ordinal);
+        Assert.Contains("no authentication", section, StringComparison.Ordinal);
+        Assert.Contains("22.17.1+ LTS", section, StringComparison.Ordinal);
+        Assert.Contains("The user manually validated that the Direct Line connection works.", section, StringComparison.Ordinal);
         Assert.Contains("`LiveTestFeatures`", section, StringComparison.Ordinal);
         Assert.Contains("`@microsoft/m365agentsplayground`", section, StringComparison.Ordinal);
         Assert.Contains("0.2.29", section, StringComparison.Ordinal);

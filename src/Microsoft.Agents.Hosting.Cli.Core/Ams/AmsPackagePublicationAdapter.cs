@@ -46,9 +46,7 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
         }
 
         var relativePath =
-            $"agenthosting/tenants/{Uri.EscapeDataString(request.TenantId)}/" +
-            $"environments/{Uri.EscapeDataString(request.EnvironmentId)}/" +
-            $"agents/{Uri.EscapeDataString(request.AgentId)}/packages?api-version=1";
+            $"agenthosting/agents/{Uri.EscapeDataString(request.AgentId)}/packages?api-version=1";
         var targetUri = new Uri(EnsureTrailingSlash(request.Endpoint), relativePath);
         var clientRequestId = Guid.NewGuid().ToString("D");
         var token = await _tokens

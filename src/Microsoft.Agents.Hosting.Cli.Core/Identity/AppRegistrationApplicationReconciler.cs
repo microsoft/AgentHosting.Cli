@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using static Microsoft.Agents.Hosting.Cli.Core.Identity.BlueprintIdentityJson;
 
@@ -182,9 +183,8 @@ internal sealed class AppRegistrationApplicationReconciler
         AppRegistrationIdentityPlan plan,
         CancellationToken cancellationToken)
     {
-        var escapedName = plan.Request.DisplayName.Replace("'", "''", StringComparison.Ordinal);
         var path = "/v1.0/applications?$filter=" +
-            Uri.EscapeDataString($"displayName eq '{escapedName}'") +
+            Uri.EscapeDataString($"displayName eq {ODataLiteral.Quote(plan.Request.DisplayName)}") +
             "&$select=id";
         var values = await _graph.ReadCollectionAsync(
             path,

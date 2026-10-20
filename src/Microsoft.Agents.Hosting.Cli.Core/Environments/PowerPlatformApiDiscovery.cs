@@ -12,6 +12,12 @@ public static class PowerPlatformApiDiscovery
         string environmentId)
     {
         ArgumentNullException.ThrowIfNull(target);
+        const string resourcePrefix = "/providers/Microsoft.PowerApps/environments/";
+        if (environmentId?.StartsWith(resourcePrefix, StringComparison.OrdinalIgnoreCase) == true)
+        {
+            environmentId = environmentId[resourcePrefix.Length..];
+        }
+
         if (string.IsNullOrWhiteSpace(environmentId)
             || environmentId.Any(character =>
                 character is not (>= 'a' and <= 'z'

@@ -26,6 +26,7 @@ public sealed class PlaygroundCommandTests
     {
         Assert.True(OptionCatalog.DeclaredAliases.ContainsKey("--install-playground"));
         Assert.Equal("-ipg", OptionCatalog.Alias("--install-playground"));
+        Assert.Equal("-tgt", OptionCatalog.Alias("--target"));
     }
 
     [Fact]
@@ -57,10 +58,11 @@ public sealed class PlaygroundCommandTests
         Assert.Contains("--install-playground", stdout.ToString(), StringComparison.Ordinal);
         Assert.Contains("may execute package lifecycle scripts", stdout.ToString(), StringComparison.Ordinal);
         Assert.Contains(
-            "Native browser/device-code sign-in may still require user action even with --non-interactive; --json is unsupported in this MVP.",
+            "DirectEngine browser/device-code sign-in may still require user action even with --non-interactive; --json is unsupported in this MVP.",
             stdout.ToString(),
             StringComparison.Ordinal);
         Assert.Contains("--plain", stdout.ToString(), StringComparison.Ordinal);
+        Assert.Contains("--target", stdout.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("--query", stdout.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("--conversation-id", stdout.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("--agent-harness", stdout.ToString(), StringComparison.Ordinal);
@@ -129,7 +131,7 @@ public sealed class PlaygroundCommandTests
     }
 
     [Fact]
-    public void PlaygroundSymbolsMatchAskSelectorsWithoutQueryOrConversation()
+    public void PlaygroundSymbolsAddTargetToAskSelectorsWithoutQueryOrConversation()
     {
         var group = CommandReflector
             .Discover(typeof(TestGroup).Assembly, TestFeatureFlags.Everything)
@@ -140,6 +142,7 @@ public sealed class PlaygroundCommandTests
         var expected = ask.Implementation.Symbols
             .Select(symbol => symbol.Name)
             .Where(name => name is not "--query" and not "--conversation-id")
+            .Prepend("--target")
             .Append("--install-playground");
 
         Assert.Equal(expected, playground.Implementation.Symbols.Select(symbol => symbol.Name));
@@ -153,6 +156,7 @@ public sealed class PlaygroundCommandTests
         var request = Assert.IsType<PlaygroundRequest>(InvokeBind(command, new FakeInput(
             values: new Dictionary<string, string?>(StringComparer.Ordinal)
             {
+                ["--target"] = "directengine",
                 ["--project"] = "project",
                 ["--agent-id"] = "agent-id",
                 ["--agent-name"] = "agent-name",
@@ -166,6 +170,7 @@ public sealed class PlaygroundCommandTests
             json: true,
             nonInteractive: true)));
 
+        Assert.Equal("directengine", request.Target);
         Assert.Equal("project", Property(request, "Project"));
         Assert.Equal("agent-id", Property(request, "AgentId"));
         Assert.Equal("agent-name", Property(request, "AgentName"));

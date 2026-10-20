@@ -20,6 +20,7 @@ internal sealed class PlaygroundCommandHandler : ICommandHandler<PlaygroundReque
     private readonly IConfirmationPrompt _confirmation;
     private readonly Func<AgentHostClientAppConfiguration> _clientConfiguration;
     private readonly Func<bool> _isInputRedirected;
+    private readonly Func<bool> _isOutputRedirected;
     private readonly Action<PlaygroundTelemetryDetails> _recordTelemetry;
 
     internal PlaygroundCommandHandler(
@@ -31,6 +32,7 @@ internal sealed class PlaygroundCommandHandler : ICommandHandler<PlaygroundReque
         IConfirmationPrompt confirmation,
         Func<AgentHostClientAppConfiguration> clientConfiguration,
         Func<bool> isInputRedirected,
+        Func<bool> isOutputRedirected,
         Action<PlaygroundTelemetryDetails> recordTelemetry)
     {
         _resolve = resolve ?? throw new ArgumentNullException(nameof(resolve));
@@ -41,6 +43,7 @@ internal sealed class PlaygroundCommandHandler : ICommandHandler<PlaygroundReque
         _confirmation = confirmation ?? throw new ArgumentNullException(nameof(confirmation));
         _clientConfiguration = clientConfiguration ?? throw new ArgumentNullException(nameof(clientConfiguration));
         _isInputRedirected = isInputRedirected ?? throw new ArgumentNullException(nameof(isInputRedirected));
+        _isOutputRedirected = isOutputRedirected ?? throw new ArgumentNullException(nameof(isOutputRedirected));
         _recordTelemetry = recordTelemetry ?? throw new ArgumentNullException(nameof(recordTelemetry));
     }
 
@@ -58,5 +61,6 @@ internal sealed class PlaygroundCommandHandler : ICommandHandler<PlaygroundReque
                 _confirmation,
                 _clientConfiguration,
                 _isInputRedirected,
+                _isOutputRedirected,
                 _recordTelemetry));
 }

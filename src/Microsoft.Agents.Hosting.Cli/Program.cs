@@ -124,20 +124,7 @@ internal static class Program
             powerPlatformApiTarget,
             claimsValidator: sp.GetRequiredService<PpapiTokenClaimsValidator>()));
 
-        // Package upload and deploy resolve configured AMS-DP/AMS-CMP targets independently. Record creation uses the
-        // environment-specific Power Platform API endpoint; its optional target is a direct-island
-        // Dev override resolved only by that command.
-        services.AddSingleton(new AgentHostingServiceTargets
-        {
-            DataPlaneEndpoint = Environment.GetEnvironmentVariable(
-                AgentHostingServiceTargets.DataPlaneEndpointVariableName),
-            ControlPlaneEndpoint = Environment.GetEnvironmentVariable(
-                AgentHostingServiceTargets.ControlPlaneEndpointVariableName),
-        });
-        services.AddSingleton(new AgentCreationTarget
-        {
-            Endpoint = Environment.GetEnvironmentVariable(AgentCreationTarget.EndpointVariableName),
-        });
+        services.AddSingleton<AgentCreationTarget>();
 
         // Automatic redirect following is disabled at client construction — before any authorization
         // header exists — so a host-changing redirect can never cause the delegated bearer token to be
@@ -224,6 +211,7 @@ internal static class Program
                     Environment.GetEnvironmentVariable(AgentHostClientAppConfiguration.ClientIdSettingName),
                     new RuntimePlatformInfo()),
                 () => Console.IsInputRedirected,
+                () => Console.IsOutputRedirected,
                 details => sp.GetRequiredService<CommandTelemetrySessionAccessor>().Current.RecordPlaygroundDetails(details)));
         services.AddSingleton<ManagedAgentCloneMaterialiser>();
         services.AddSingleton<ManagedAgentCreateService>();
@@ -231,6 +219,7 @@ internal static class Program
         services.AddSingleton<ManagedAgentListService>();
         services.AddSingleton<ManagedAgentShowService>();
         services.AddSingleton<ManagedAgentDeleteService>();
+        services.AddSingleton<ITenantUserDirectoryPort, GraphTenantUserDirectoryAdapter>();
         services.AddSingleton<ManagedAgentShareService>();
         services.AddSingleton<ManagedAgentPullService>();
         services.AddSingleton<ManagedAgentDeployService>();

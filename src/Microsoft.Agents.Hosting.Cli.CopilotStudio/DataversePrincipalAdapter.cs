@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.CopilotStudio;
@@ -27,13 +28,7 @@ public sealed class DataversePrincipalAdapter : IDirectoryPrincipalPort
         ArgumentException.ThrowIfNullOrWhiteSpace(selector);
 
         var trimmed = selector.Trim();
-        var filter = Guid.TryParse(trimmed, out var objectId)
-            ? ObjectIdFilter([objectId.ToString()])
-            : $"internalemailaddress eq '{DataverseWebApiClient.EscapeODataLiteral(trimmed)}' or domainname eq '{DataverseWebApiClient.EscapeODataLiteral(trimmed)}'";
-
-        var matches = (await ReadUsersAsync(environment, filter, cancellationToken).ConfigureAwait(false))
-            .DistinctBy(user => user.ObjectId, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var matches = (await ReadUsersAsync(environment, Guid.TryParse(trimmed, out var objectId) ? ObjectIdFilter([objectId.ToString()]) : SignInAddressFilter(ODataLiteral.Quote(trimmed)), cancellationToken).ConfigureAwait(false)).DistinctBy(user => user.ObjectId, StringComparer.OrdinalIgnoreCase).ToArray();
 
         return matches switch
         {
@@ -75,6 +70,8 @@ public sealed class DataversePrincipalAdapter : IDirectoryPrincipalPort
 
     private static string ObjectIdFilter(IReadOnlyCollection<string> objectIds) =>
         string.Join(" or ", objectIds.Select(objectId => $"azureactivedirectoryobjectid eq {objectId}"));
+
+    private static string SignInAddressFilter(string literal) => $"internalemailaddress eq {literal} or domainname eq {literal}";
 
     private async Task<IReadOnlyList<DirectoryPrincipal>> ReadUsersAsync(CopilotEnvironmentContext environment, string filter, CancellationToken cancellationToken) =>
         [.. (await _client.ReadCollectionAsync(

@@ -254,11 +254,10 @@ public sealed class PowerPlatformApiEnvironmentClient : IEnvironmentClient
         var rawEndpoint = ReadString(properties, "apiEndpoint")
             ?? ReadString(properties, "environmentApiEndpoint");
 
-        // An entry that does not advertise its own endpoint is addressed through the global endpoint;
-        // either way the endpoint is trusted only after the cloud map accepts it. The rejected value is
-        // never echoed: it is unbounded, server-controlled text that can carry query material.
+        // Missing endpoints are derived from the environment id; the global host cannot route
+        // environment-scoped data-plane requests.
         var endpoint = string.IsNullOrWhiteSpace(rawEndpoint)
-            ? _config.GlobalEndpoint
+            ? PowerPlatformApiDiscovery.GetEnvironmentEndpoint(_config, environmentId)
             : Uri.TryCreate(rawEndpoint.Trim(), UriKind.Absolute, out var parsed)
                 ? parsed
                 : throw new EndpointTrustException(

@@ -47,7 +47,7 @@ MCS routes and shared authentication/environment commands remain enabled by defa
 | `msagent agent deploy --agent-id … --package-revision …` | Create explicit AMS Deployment state selecting an existing Package Revision and await the current target-routed AHRG projection. Provisional fN13j notation. |
 | `msagent agent deploy --deployment-id …` / `--deployment-name …` | Push an MCS workspace to an existing MCS deployment, with optional agent selectors, `--publish`, and `--overwrite`. |
 | `msagent test ask --query <text>` | Send one live query to a selected standard or GitHub Copilot Harness agent. Requires `LiveTestFeatures`; may perform real actions. |
-| `msagent test playground` | Launch the M365 Agents Playground for a selected live agent. Requires `LiveTestFeatures`; may perform real actions. |
+| `msagent test playground [--target directline\|directengine]` | Launch the M365 Agents Playground for a live agent. DirectEngine discovers its endpoint; Direct Line prompts for a credential. Requires `LiveTestFeatures`; may perform real actions. |
 | `msagent agent eval run` | Run a Copilot Studio evaluation against an MCS agent: run a saved test set with `--testset`, or create one from `--from-csv` / `--generate` plus `--name`. `--watch` polls until it finishes, `--published` targets the published agent, and `--output` writes the finished run as JSON once `--watch` has waited for it. Uses Copilot Credits; the cost is reported when the run finishes. |
 | `msagent agent eval list` | List the agent's evaluation runs, newest first. `--limit` bounds the listing (default 20). |
 | `msagent agent eval show --run-id <run-id>` | Show one run with its score, credits and per-conversation grader results. `--transcript` adds every conversation's questions and answers, shortened; `--conversation <n>` adds just one; `--output <file>` writes the full, untruncated run (`.json` writes JSON, any other name writes Markdown). |
@@ -159,7 +159,9 @@ from the MCS implementation. No numerical release SLO or live baseline is claime
 
 `msagent test playground` launches the
 M365 Agents Playground in the foreground for the same selected agent as `test ask`.
-It uses the same agent selectors as `test ask` and the same resolver, but does not accept `--query` or `--conversation-id`.
+The `--target` option selects `directengine` (the default) or `directline`.
+DirectEngine uses the same agent selectors as `test ask` and the same resolver.
+Neither mode accepts `--query` or `--conversation-id`.
 The command is gated by the existing
 `LiveTestFeatures` flag, which is off by default; enabling that flag also enables
 this command, with no separate playground flag.
@@ -167,9 +169,10 @@ this command, with no separate playground flag.
 ```text
 msagent test playground --project <project> --agent-name <agent> --deployment-name <deployment>
 msagent test playground --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label>
+msagent test playground --target directline
 ```
 
-The CLI uses the selected signed-in account and delegated
+For DirectEngine, the CLI uses the selected signed-in account and delegated
 `CopilotStudio.Copilots.Invoke` permission to query the discovery service, without
 starting a conversation. It passes the discovered DirectEngine endpoint and
 public client configuration to the package. Discovery failure prevents launch.
@@ -180,6 +183,37 @@ not hand it tokens or secrets. The command reports the selected
 the process starts. The package owns authentication timing; `msagent` does not
 wait for the package's authentication, and process start is not proof that authentication
 succeeded.
+
+#### Direct Line connection
+
+`msagent test playground --target directline` requires an interactive terminal
+with both input and output attached. It rejects `--non-interactive`, including
+when `--install-playground` is supplied. It also rejects the DirectEngine-only
+options `--project`, `--agent-id`, `--agent-name`,
+`--schema-name`, `--deployment-id`, `--deployment-name`, `--environment-id`, and
+`--tenant`. It does not resolve local project/deployment configuration, sign
+the CLI into Entra ID, or load the AgentHost public-client configuration.
+
+Publish the Copilot Studio agent with **no authentication** and enable its
+global public-cloud Direct Line connectivity. At the native playground's
+**masked terminal prompt**, enter either the complete HTTPS token endpoint from
+**Channels > Mobile app**, or a raw Direct Line secret from
+**Settings > Security > Web channel security**. Do not paste credentials into
+chat, command arguments, environment variables, or configuration files.
+Empty Enter, Escape, or Ctrl+C cancels native credential setup.
+
+The native playground owns credential validation and the connection. `msagent`
+does not acquire, save, or log the credential and uses an isolated, disposable
+working directory with no inherited playground config. The native default
+display name is used. The listener remains on `127.0.0.1`, native telemetry is
+disabled, and connection/recording overrides are removed from the child
+environment without changing the parent environment.
+
+Use Node.js 22.17.1+ LTS for Direct Line. Regional/custom/sovereign Direct Line
+endpoints, OAuth-card sign-in, file upload, headless interaction, and saved
+connections are not supported by this integration. Use DirectEngine when the
+agent requires Microsoft sign-in. Process start is not proof of a connected
+conversation; wait for Connected and an enabled composer in the owning browser.
 
 #### Playground installation and options
 
@@ -197,8 +231,8 @@ manager when a global prefix requires elevation. The user's npm registry,
 proxy, and authentication configuration is left intact.
 
 `--plain` suppresses `msagent` transient progress; the package's own console
-output is still inherited, and its authentication may require user action even
-with `--non-interactive`. `--json` is rejected in this MVP because structured
+output is still inherited. DirectEngine authentication may require user action even
+with `--non-interactive`; Direct Line rejects that option. `--json` is rejected in this MVP because structured
 playground streaming is not supported. The MVP has no optional upgrades,
 managed install store, detach, retry, or transcript feature.
 
@@ -224,6 +258,8 @@ not part of the offline test suite:
 | `msagent` command (POSIX) | Not run on macOS or Linux/WSL; POSIX manual validation remains pending and no full certification is claimed. |
 | Tool resolution | Cover an existing current tool, a missing tool, and an old tool; verify the version probe, consent text, `--install-playground`, npm registry/proxy/auth settings, permission failures, and network/install failures. |
 | Safety and output | Verify LiveTestFeatures opt-in, `--json` rejection, `--plain` output, native device-code/browser behavior, and the warning that live effects are not rolled back. |
+| Direct Line native contract | Installed `0.2.29` help and bundled setup code were inspected for target support, masked entry, default display name, cancellation, and isolated-config fallback. This is not a live connection check. |
+| Direct Line live validation | The user manually validated that the Direct Line connection works. Reply, Ctrl+C, browser-survival, and owned-process-cleanup checks were not separately reported; those manual checks remain pending. Do not record credentials or conversation content. |
 
 ## Command telemetry
 

@@ -86,6 +86,43 @@ public sealed class PlaygroundCommandHostTests
         Assert.Contains("test", stderr.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("--target")]
+    [InlineData("-tgt")]
+    public async Task DirectLineParsesWithoutAHarness(string targetOption)
+    {
+        var handler = new RecordingHandler();
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+        var cli = new AgentHostCli(
+            new FakeOperations(),
+            new HandlerProvider(handler),
+            TestFeatureFlags.Everything);
+
+        var exitCode = await cli.InvokeAsync(
+            ["test", "playground", targetOption, "directline"], stdout, stderr, color: false);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal("directline", handler.Request!.Target);
+        Assert.Empty(stderr.ToString());
+    }
+
+    [Fact]
+    public async Task ExistingInvocationDefaultsToDirectEngine()
+    {
+        var handler = new RecordingHandler();
+        var cli = new AgentHostCli(
+            new FakeOperations(),
+            new HandlerProvider(handler),
+            TestFeatureFlags.Everything);
+
+        Assert.Equal(0, await cli.InvokeAsync(
+            ["test", "playground"],
+            new StringWriter(), new StringWriter(), color: false));
+        Assert.Equal("directengine", handler.Request!.Target);
+    }
+
     private sealed class HandlerProvider(RecordingHandler handler) : IServiceProvider
     {
         public object? GetService(Type serviceType) =>
@@ -97,12 +134,14 @@ public sealed class PlaygroundCommandHostTests
     private sealed class RecordingHandler : ICommandHandler<PlaygroundRequest, ILiveTestStreamingResult>
     {
         public int Calls { get; private set; }
+        public PlaygroundRequest? Request { get; private set; }
 
         public Task<ILiveTestStreamingResult> HandleAsync(
             PlaygroundRequest request,
             CancellationToken cancellationToken)
         {
             Calls++;
+            Request = request;
             return Task.FromResult<ILiveTestStreamingResult>(new EmptyResult());
         }
     }

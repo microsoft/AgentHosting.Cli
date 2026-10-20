@@ -73,6 +73,32 @@ public sealed class PlaygroundLauncherTests
     }
 
     [Fact]
+    public void BuildLaunchPlan_DirectLineUsesOnlyNativeNonSecretArguments()
+    {
+        var tool = Tool();
+
+        var plan = PlaygroundLauncher.BuildLaunchPlan(tool, new PlaygroundConnection.DirectLine());
+        var info = PlaygroundLauncher.BuildStartInfo(plan);
+
+        Assert.Equal(
+            new[]
+            {
+                tool.ArgumentPrefix[0],
+                "start",
+                "--target",
+                "directline",
+                "--host",
+                "127.0.0.1",
+                "--disable-telemetry",
+            },
+            plan.Arguments);
+        Assert.False(info.UseShellExecute);
+        Assert.False(info.RedirectStandardInput);
+        Assert.False(info.RedirectStandardOutput);
+        Assert.False(info.RedirectStandardError);
+    }
+
+    [Fact]
     public void BuildStartInfo_UsesInheritedNativeConsoleStreamsWithoutShellExecution()
     {
         var info = PlaygroundLauncher.BuildStartInfo(
@@ -109,8 +135,10 @@ public sealed class PlaygroundLauncherTests
             info.ArgumentList);
     }
 
-    [Fact]
-    public void BuildLaunchPlan_ScrubsPlaygroundOverridesWithoutMutatingTheCallerEnvironment()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BuildLaunchPlan_ScrubsPlaygroundOverridesWithoutMutatingTheCallerEnvironment(bool directLine)
     {
         var inherited = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -150,8 +178,7 @@ public sealed class PlaygroundLauncherTests
 
         var plan = PlaygroundLauncher.BuildLaunchPlan(
             Tool(),
-            Target("https://example.test/standard"),
-            ClientId,
+            Connection(directLine),
             inherited);
 
         Assert.Equal(original, inherited);
@@ -160,8 +187,10 @@ public sealed class PlaygroundLauncherTests
         Assert.Equal("https://registry.example", plan.Environment["NPM_CONFIG_REGISTRY"]);
     }
 
-    [Fact]
-    public void BuildLaunchPlan_IsolatesInheritedAndLocalConfigFromAnAbsentOwnedConfig()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BuildLaunchPlan_IsolatesInheritedAndLocalConfigFromAnAbsentOwnedConfig(bool directLine)
     {
         var sourceDirectory = Path.Combine(
             AppContext.BaseDirectory,
@@ -189,8 +218,7 @@ public sealed class PlaygroundLauncherTests
         {
             var plan = PlaygroundLauncher.BuildLaunchPlan(
                 Tool(),
-                Target("https://example.test/standard"),
-                ClientId,
+                Connection(directLine),
                 inherited,
                 ownedDirectory,
                 absentConfig);
@@ -235,8 +263,10 @@ public sealed class PlaygroundLauncherTests
         Assert.Equal("lower", plan.Environment["path"]);
     }
 
-    [Fact]
-    public async Task RunAsync_DeletesItsOwnedInvocationDirectoryAfterExit()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_DeletesItsOwnedInvocationDirectoryAfterExit(bool directLine)
     {
         var process = new FakeProcess { Exited = true };
         var factory = new RecordingProcessFactory(process);
@@ -244,8 +274,7 @@ public sealed class PlaygroundLauncherTests
 
         var exitCode = await launcher.RunAsync(
             Tool(),
-            Target("https://example.test/standard"),
-            ClientId,
+            Connection(directLine),
             () => { },
             CancellationToken.None);
 
@@ -330,8 +359,10 @@ public sealed class PlaygroundLauncherTests
         Assert.NotEmpty(error.Remediation);
     }
 
-    [Fact]
-    public async Task RunAsync_ReportsProcessStartFailuresWithoutLeakingTheOriginalException()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_ReportsProcessStartFailuresWithoutLeakingTheOriginalException(bool directLine)
     {
         var factory = new ThrowingProcessFactory(new InvalidOperationException("secret tool"));
         var launcher = new PlaygroundLauncher(factory, TimeSpan.FromMilliseconds(1));
@@ -339,8 +370,7 @@ public sealed class PlaygroundLauncherTests
         var error = await Assert.ThrowsAsync<PlaygroundLaunchException>(() =>
             launcher.RunAsync(
                 Tool(),
-                Target("https://example.test/agent"),
-                ClientId,
+                Connection(directLine),
                 () => { },
                 CancellationToken.None));
 
@@ -350,8 +380,10 @@ public sealed class PlaygroundLauncherTests
         Assert.NotEmpty(error.Remediation);
     }
 
-    [Fact]
-    public async Task RunAsync_CancellationInterruptsThenKillsOwnedProcessAndReturns130()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_CancellationInterruptsThenKillsOwnedProcessAndReturns130(bool directLine)
     {
         var process = new FakeProcess();
         var factory = new RecordingProcessFactory(process);
@@ -360,8 +392,7 @@ public sealed class PlaygroundLauncherTests
 
         var exitCode = await launcher.RunAsync(
             Tool(),
-            Target("https://example.test/agent"),
-            ClientId,
+            Connection(directLine),
             cancellation.Cancel,
             cancellation.Token);
 
@@ -437,16 +468,17 @@ public sealed class PlaygroundLauncherTests
         Assert.Equal(InterruptThenKill, process.Events);
     }
 
-    [Fact]
-    public async Task RunAsync_PreservesIndependentChildExitCode()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_PreservesIndependentChildExitCode(bool directLine)
     {
         var process = new FakeProcess { Exited = true, ExitCode = 37 };
         var launcher = new PlaygroundLauncher(new RecordingProcessFactory(process), TimeSpan.FromMilliseconds(1));
 
         var exitCode = await launcher.RunAsync(
             Tool(),
-            Target("https://example.test/agent"),
-            ClientId,
+            Connection(directLine),
             () => { },
             CancellationToken.None);
 
@@ -720,6 +752,12 @@ public sealed class PlaygroundLauncherTests
 
         Assert.Contains("exit code 7", exception.Message, StringComparison.Ordinal);
     }
+
+    private static PlaygroundConnection Connection(bool directLine) =>
+        directLine
+            ? new PlaygroundConnection.DirectLine()
+            : new PlaygroundConnection.DirectEngine(
+                Target("https://example.test/standard"), ClientId);
 
     private static string HostPath(params string[] parts) =>
         Path.Combine([Path.GetTempPath(), "msagent playground & tests", .. parts]);
