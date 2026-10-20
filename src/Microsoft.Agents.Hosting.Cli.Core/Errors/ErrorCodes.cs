@@ -81,6 +81,9 @@ public static class ErrorCodes
         public const int CreationInvalidResponse = 11046;
         public const int CreationResponseMismatch = 11047;
         public const int CreationServiceRejected = 11048;
+        public const int ConnectorNotServed = 11049;
+        public const int ConnectionNotACandidate = 11050;
+        public const int ConnectionNotServed = 11051;
     }
 
     /// <summary>Error identifiers for the Authentication area (prefix 12).</summary>

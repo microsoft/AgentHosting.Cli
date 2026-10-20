@@ -147,12 +147,18 @@ public sealed class ConnectorCatalogQueryTests
         Assert.Contains("--limit must be a positive integer", failure.Message, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void NotServed_NamesTheConnectorTheEnvironmentDoesNotServe()
+    [Theory]
+    [InlineData("shared_nothing")]
+    [InlineData("/providers/Microsoft.PowerApps/apis/shared_nothing")]
+    public void NotServed_NamesTheConnectorTheEnvironmentDoesNotServe(string connectorId)
     {
-        var failure = ConnectorCatalogQuery.NotServed(Catalog(), "shared_nothing", "env-1", ListCommand);
+        var failure = Assert.IsType<ManagedAgentException>(ConnectorCatalogQuery.NotServed(Catalog(), connectorId, "env-1", ListCommand));
 
+        Assert.Equal(11049, failure.ErrorCode);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("connector-not-served", failure.ErrorKind);
         Assert.Contains("serves no connector 'shared_nothing'", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("env-1", failure.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -160,8 +166,8 @@ public sealed class ConnectorCatalogQueryTests
     {
         var failure = ConnectorCatalogQuery.NotServed(Catalog(), "weather", "env-1", ListCommand);
 
-        Assert.Contains("Did you mean", failure.Message, StringComparison.Ordinal);
-        Assert.Contains("shared_msnweather", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Did you mean", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains("shared_msnweather", failure.Remediation, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -169,7 +175,7 @@ public sealed class ConnectorCatalogQueryTests
     {
         var failure = ConnectorCatalogQuery.NotServed(Catalog(), "zzz", "env-1", ListCommand);
 
-        Assert.Contains(ListCommand, failure.Message, StringComparison.Ordinal);
+        Assert.Contains(ListCommand, failure.Remediation, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -217,18 +223,24 @@ public sealed class ConnectorCatalogQueryTests
     [Fact]
     public void RequireConnected_RejectsAConnectionTheConnectorDoesNotServe()
     {
-        var failure = Assert.Throws<UsageException>(() => ConnectionReadinessPlanner.RequireConnected([Connection("conn-a")], "conn-z", "connector 'shared_teams'"));
+        var failure = Assert.Throws<ManagedAgentException>(() => ConnectionReadinessPlanner.RequireConnected([Connection("conn-a")], "conn-z", "connector 'shared_teams'"));
 
+        Assert.Equal(11050, failure.ErrorCode);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("connection-not-a-candidate", failure.ErrorKind);
         Assert.Contains("shared_teams", failure.Message, StringComparison.Ordinal);
         Assert.Contains("conn-a", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Choose a Connected connection", failure.Remediation, StringComparison.Ordinal);
     }
 
     [Fact]
     public void RequireConnected_SaysSoWhenTheConnectorHasNoConnections()
     {
-        var failure = Assert.Throws<UsageException>(() => ConnectionReadinessPlanner.RequireConnected([], "conn-z", "connector 'shared_teams'"));
+        var failure = Assert.Throws<ManagedAgentException>(() => ConnectionReadinessPlanner.RequireConnected([], "conn-z", "connector 'shared_teams'"));
 
+        Assert.Equal(11050, failure.ErrorCode);
         Assert.Contains("no connections", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Create a connection", failure.Remediation, StringComparison.Ordinal);
     }
 
     [Fact]

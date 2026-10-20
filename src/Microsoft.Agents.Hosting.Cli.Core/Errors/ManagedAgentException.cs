@@ -615,6 +615,55 @@ public sealed class ManagedAgentException : AgentHostingException
             ? $"The workspace declares {string.Join(", ", nearMatches)}. Re-run with the full name."
             : $"Run `{listCommand}` to see the references the workspace declares.");
 
+    /// <summary>The environment does not serve the requested connector.</summary>
+    /// <param name="connectorId">The normalized connector identifier.</param>
+    /// <param name="environmentId">The environment that was searched.</param>
+    /// <param name="nearMatches">The closest connector identifiers in the catalog.</param>
+    /// <param name="listCommand">The command that lists the available connectors.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException ConnectorNotServed(string connectorId, string environmentId, IReadOnlyList<string> nearMatches, string listCommand) => new(
+        ErrorCodes.ManagedAgent.ConnectorNotServed,
+        $"Environment '{environmentId}' serves no connector '{connectorId}'.",
+        ExitCodes.Usage,
+        "connector-not-served",
+        nearMatches.Count == 0
+            ? $"Run `{listCommand}` to find it."
+            : $"Did you mean: {string.Join(", ", nearMatches)}?");
+
+    /// <summary>The requested connection is not among the connector's candidates.</summary>
+    /// <param name="connectionId">The connection the request named.</param>
+    /// <param name="subject">What the connection has to satisfy.</param>
+    /// <param name="candidateIds">The connection identifiers the connector serves.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException ConnectionNotACandidate(string connectionId, string subject, IReadOnlyList<string> candidateIds)
+    {
+        var offered = candidateIds.Count == 0
+            ? "no connections exist for its connector"
+            : $"valid connections are: {string.Join(", ", candidateIds)}";
+
+        return new(
+            ErrorCodes.ManagedAgent.ConnectionNotACandidate,
+            $"Connection '{connectionId}' is not a candidate for {subject} — {offered}.",
+            ExitCodes.Usage,
+            "connection-not-a-candidate",
+            candidateIds.Count == 0
+                ? "Create a connection for its connector, then retry."
+                : "Choose a Connected connection from the listed candidates.");
+    }
+
+    /// <summary>The connector does not serve the connection requested for removal.</summary>
+    /// <param name="connectorId">The connector that was searched.</param>
+    /// <param name="connectionId">The connection the request named.</param>
+    /// <param name="environmentId">The environment that was searched.</param>
+    /// <param name="listCommand">The command that lists the available connections.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException ConnectionNotServed(string connectorId, string connectionId, string environmentId, string listCommand) => new(
+        ErrorCodes.ManagedAgent.ConnectionNotServed,
+        $"Connector {connectorId} serves no connection {connectionId} in {environmentId}.",
+        ExitCodes.Usage,
+        "connection-not-served",
+        $"Run `{listCommand}` to see which connector holds it.");
+
     /// <summary>The reference was declared, but a later step failed before it could be bound.</summary>
     /// <param name="logicalName">The reference that now exists.</param>
     /// <param name="connectorId">The connector it targets.</param>

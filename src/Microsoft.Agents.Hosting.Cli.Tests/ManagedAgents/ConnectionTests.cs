@@ -444,7 +444,7 @@ public sealed class ConnectionReadinessPlannerTests
     {
         var item = ManagedAgentFixtures.Plan(ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null, ManagedAgentFixtures.Candidate("conn-1")));
 
-        var failure = Assert.Throws<UsageException>(() => ConnectionReadinessPlanner.Select(item, "conn-9"));
+        var failure = Assert.Throws<ManagedAgentException>(() => ConnectionReadinessPlanner.Select(item, "conn-9"));
 
         Assert.Contains("conn-1", failure.Message, StringComparison.Ordinal);
     }
@@ -454,7 +454,7 @@ public sealed class ConnectionReadinessPlannerTests
     {
         var item = ManagedAgentFixtures.Plan(ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null, ManagedAgentFixtures.Candidate("conn-1")) with { CatalogUnavailable = true });
 
-        Assert.Throws<UsageException>(() => ConnectionReadinessPlanner.Select(item, "conn-9"));
+        Assert.Throws<ManagedAgentException>(() => ConnectionReadinessPlanner.Select(item, "conn-9"));
     }
 
     [Fact]
@@ -1729,7 +1729,7 @@ public sealed class AgentDeploymentConnectionServiceTests
         var connections = new FakeConnectionPort();
         connections.Views.Add(ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null, ManagedAgentFixtures.Candidate("conn-1"), ManagedAgentFixtures.Candidate("conn-2")));
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store, connections).UpdateAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, connections).UpdateAsync(
             new AgentDeploymentConnectionRequest { AgentId = "agent-1", DeploymentName = "dev", ConnectionReference = "cr_sql", ConnectionId = "conn-9", NonInteractive = true },
             CancellationToken.None));
 
