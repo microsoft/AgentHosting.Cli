@@ -26,6 +26,7 @@ public sealed class PlaygroundCommandTests
     {
         Assert.True(OptionCatalog.DeclaredAliases.ContainsKey("--install-playground"));
         Assert.Equal("-ipg", OptionCatalog.Alias("--install-playground"));
+        Assert.Equal("-tgt", OptionCatalog.Alias("--target"));
     }
 
     [Fact]
@@ -42,7 +43,7 @@ public sealed class PlaygroundCommandTests
     }
 
     [Fact]
-    public async Task PlaygroundHelpUsesTheRequiredHarnessRouteAndOwnOptions()
+    public async Task PlaygroundHelpDocumentsConditionalHarnessAndTransport()
     {
         var stdout = new StringWriter();
         var stderr = new StringWriter();
@@ -51,16 +52,18 @@ public sealed class PlaygroundCommandTests
 
         Assert.Equal(0, exitCode);
         Assert.Contains(
-            "msagent test playground --agent-harness <agent-harness> [options]",
+            "msagent test playground [options]",
             stdout.ToString(),
             StringComparison.Ordinal);
         Assert.Contains("--install-playground", stdout.ToString(), StringComparison.Ordinal);
         Assert.Contains("may execute package lifecycle scripts", stdout.ToString(), StringComparison.Ordinal);
         Assert.Contains(
-            "Native browser/device-code sign-in may still require user action even with --non-interactive; --json is unsupported in this MVP.",
+            "DirectEngine browser/device-code sign-in may still require user action even with --non-interactive; --json is unsupported in this MVP.",
             stdout.ToString(),
             StringComparison.Ordinal);
         Assert.Contains("--plain", stdout.ToString(), StringComparison.Ordinal);
+        Assert.Contains("--target", stdout.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Required for DirectEngine", stdout.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("--query", stdout.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("--conversation-id", stdout.ToString(), StringComparison.Ordinal);
         Assert.Empty(stderr.ToString());
@@ -129,7 +132,7 @@ public sealed class PlaygroundCommandTests
     }
 
     [Fact]
-    public void PlaygroundSymbolsMatchAskSelectorsWithoutQueryOrConversation()
+    public void PlaygroundSymbolsAddTargetToAskSelectorsWithoutQueryOrConversation()
     {
         var group = CommandReflector
             .Discover(typeof(TestGroup).Assembly, TestFeatureFlags.Everything)
@@ -140,10 +143,11 @@ public sealed class PlaygroundCommandTests
         var expected = ask.Implementation.Symbols
             .Select(symbol => symbol.Name)
             .Where(name => name is not "--query" and not "--conversation-id")
+            .Prepend("--target")
             .Append("--install-playground");
 
         Assert.Equal(expected, playground.Implementation.Symbols.Select(symbol => symbol.Name));
-        Assert.True(playground.Implementation.Symbols
+        Assert.False(playground.Implementation.Symbols
             .OfType<CommandOption>()
             .Single(symbol => symbol.Name == "--agent-harness")
             .IsRequired);
@@ -157,6 +161,7 @@ public sealed class PlaygroundCommandTests
             values: new Dictionary<string, string?>(StringComparer.Ordinal)
             {
                 ["--agent-harness"] = "github-copilot",
+                ["--target"] = "directengine",
                 ["--project"] = "project",
                 ["--agent-id"] = "agent-id",
                 ["--agent-name"] = "agent-name",
@@ -171,6 +176,7 @@ public sealed class PlaygroundCommandTests
             nonInteractive: true)));
 
         Assert.Equal("github-copilot", Property(request, "AgentType"));
+        Assert.Equal("directengine", request.Target);
         Assert.Equal("project", Property(request, "Project"));
         Assert.Equal("agent-id", Property(request, "AgentId"));
         Assert.Equal("agent-name", Property(request, "AgentName"));

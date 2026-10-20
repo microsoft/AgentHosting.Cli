@@ -61,15 +61,38 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
             "NODE_PATH",
         };
 
+    // Windows can briefly hold a just-terminated child's working directory (handle rundown, AV scans).
+    internal static readonly TimeSpan[] InvocationDirectoryDeleteRetryDelays =
+    [
+        TimeSpan.FromMilliseconds(50),
+        TimeSpan.FromMilliseconds(100),
+        TimeSpan.FromMilliseconds(200),
+        TimeSpan.FromMilliseconds(400),
+        TimeSpan.FromMilliseconds(800),
+    ];
+
     private readonly IPlaygroundProcessFactory _processFactory;
     private readonly TimeSpan _shutdownGracePeriod;
+    private readonly Action<string> _deleteDirectory;
+    private readonly Func<TimeSpan, Task> _delay;
 
     public PlaygroundLauncher(
         IPlaygroundProcessFactory? processFactory = null,
         TimeSpan? shutdownGracePeriod = null)
+        : this(processFactory, shutdownGracePeriod, deleteDirectory: null, delay: null)
+    {
+    }
+
+    internal PlaygroundLauncher(
+        IPlaygroundProcessFactory? processFactory,
+        TimeSpan? shutdownGracePeriod,
+        Action<string>? deleteDirectory,
+        Func<TimeSpan, Task>? delay)
     {
         _processFactory = processFactory ?? new ProcessPlaygroundProcessFactory();
         _shutdownGracePeriod = shutdownGracePeriod ?? ShutdownGracePeriod;
+        _deleteDirectory = deleteDirectory ?? DeleteDirectoryIfPresent;
+        _delay = delay ?? (static timeout => Task.Delay(timeout));
         if (_shutdownGracePeriod < TimeSpan.Zero ||
             _shutdownGracePeriod == Timeout.InfiniteTimeSpan)
         {
@@ -83,18 +106,41 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
         Guid clientId,
         IReadOnlyDictionary<string, string>? inheritedEnvironment = null,
         string? workingDirectory = null,
+        string? configPath = null) =>
+        BuildLaunchPlan(
+            tool,
+            new PlaygroundConnection.DirectEngine(target, clientId),
+            inheritedEnvironment,
+            workingDirectory,
+            configPath);
+
+    public static PlaygroundLaunchPlan BuildLaunchPlan(
+        PlaygroundTool tool,
+        PlaygroundConnection connection,
+        IReadOnlyDictionary<string, string>? inheritedEnvironment = null,
+        string? workingDirectory = null,
         string? configPath = null)
     {
         ValidateTool(tool);
-        ValidateTarget(target);
         ValidateLaunchPath(workingDirectory);
         ValidateLaunchPath(configPath);
-        if (clientId == Guid.Empty)
+        if (connection is PlaygroundConnection.DirectEngine directEngine)
+        {
+            ValidateTarget(directEngine.Target);
+            if (directEngine.ClientId == Guid.Empty)
+            {
+                throw Failure(
+                    PlaygroundLaunchFailureKind.InvalidClientId,
+                    "The playground client id is not configured.",
+                    "Configure a non-zero AgentHost public-client application id.");
+            }
+        }
+        else if (connection is not PlaygroundConnection.DirectLine)
         {
             throw Failure(
-                PlaygroundLaunchFailureKind.InvalidClientId,
-                "The playground client id is not configured.",
-                "Configure a non-zero AgentHost public-client application id.");
+                PlaygroundLaunchFailureKind.InvalidTarget,
+                "The playground connection transport is not supported.",
+                "Choose directline or directengine for --target.");
         }
 
         var environment = new Dictionary<string, string>(
@@ -131,22 +177,32 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
             environment[LegacyConfigPathEnvironmentVariable] = configPath;
         }
 
-        var endpoint = target.Endpoint!.AbsoluteUri;
         var arguments = new List<string>(tool.ArgumentPrefix.Count + 15);
         arguments.AddRange(tool.ArgumentPrefix);
+        arguments.Add("start");
+        arguments.Add("--target");
+        if (connection is PlaygroundConnection.DirectEngine engine)
+        {
+            arguments.AddRange(
+            [
+                "directengine",
+                "--app-endpoint",
+                engine.Target.Endpoint!.AbsoluteUri,
+                "--client-id",
+                engine.ClientId.ToString("D"),
+                "--tenant-id",
+                engine.Target.TenantId.Trim(),
+                "--environment-id",
+                engine.Target.EnvironmentId.Trim(),
+            ]);
+        }
+        else
+        {
+            arguments.Add("directline");
+        }
+
         arguments.AddRange(
         [
-            "start",
-            "--target",
-            "directengine",
-            "--app-endpoint",
-            endpoint,
-            "--client-id",
-            clientId.ToString("D"),
-            "--tenant-id",
-            target.TenantId.Trim(),
-            "--environment-id",
-            target.EnvironmentId.Trim(),
             "--host",
             "127.0.0.1",
             "--disable-telemetry",
@@ -236,10 +292,21 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
         return normalized.Contains("CLIENT_SECRET", StringComparison.Ordinal);
     }
 
-    public async Task<int> RunAsync(
+    public Task<int> RunAsync(
         PlaygroundTool tool,
         LiveTestDestination target,
         Guid clientId,
+        Action started,
+        CancellationToken cancellationToken) =>
+        RunAsync(
+            tool,
+            new PlaygroundConnection.DirectEngine(target, clientId),
+            started,
+            cancellationToken);
+
+    public async Task<int> RunAsync(
+        PlaygroundTool tool,
+        PlaygroundConnection connection,
         Action started,
         CancellationToken cancellationToken)
     {
@@ -268,8 +335,7 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
             var startInfo = BuildStartInfo(
                 BuildLaunchPlan(
                     tool,
-                    target,
-                    clientId,
+                    connection,
                     workingDirectory: invocationDirectory,
                     configPath: configPath));
             try
@@ -307,7 +373,8 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
         }
 
         var processCleanupFailure = await CleanupProcessAsync(process).ConfigureAwait(false);
-        var directoryCleanupFailure = TryCleanupInvocationDirectory(invocationDirectory);
+        var directoryCleanupFailure = await TryCleanupInvocationDirectoryAsync(invocationDirectory)
+            .ConfigureAwait(false);
         if (processCleanupFailure is not null)
         {
             throw processCleanupFailure;
@@ -529,32 +596,63 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
         return cleanupFailure;
     }
 
-    private static PlaygroundLaunchException? TryCleanupInvocationDirectory(
+    private async Task<PlaygroundLaunchException?> TryCleanupInvocationDirectoryAsync(
         string invocationDirectory)
     {
-        try
+        Exception? lastFailure = null;
+        // One initial attempt plus one retry per configured delay.
+        for (var attempt = 0; attempt <= InvocationDirectoryDeleteRetryDelays.Length; attempt++)
         {
-            if (Directory.Exists(invocationDirectory))
+            if (attempt > 0)
             {
-                Directory.Delete(invocationDirectory, recursive: true);
+                await _delay(InvocationDirectoryDeleteRetryDelays[attempt - 1]).ConfigureAwait(false);
             }
 
-            return null;
+            try
+            {
+                _deleteDirectory(invocationDirectory);
+                return null;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return null;
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException)
+            {
+                lastFailure = exception;
+            }
+            catch (Exception exception)
+            {
+                return InvocationDirectoryCleanupFailure(exception);
+            }
         }
-        catch (Exception)
+
+        return InvocationDirectoryCleanupFailure(lastFailure);
+    }
+
+    private static PlaygroundLaunchException InvocationDirectoryCleanupFailure(
+        Exception? innerException) =>
+        Failure(
+            PlaygroundLaunchFailureKind.CleanupFailed,
+            "The playground invocation directory could not be removed.",
+            "Close the playground process and remove the owned invocation directory before retrying.",
+            innerException);
+
+    private static void DeleteDirectoryIfPresent(string directory)
+    {
+        if (Directory.Exists(directory))
         {
-            return Failure(
-                PlaygroundLaunchFailureKind.CleanupFailed,
-                "The playground invocation directory could not be removed.",
-                "Close the playground process and remove the owned invocation directory before retrying.");
+            Directory.Delete(directory, recursive: true);
         }
     }
 
     private static PlaygroundLaunchException Failure(
         PlaygroundLaunchFailureKind kind,
         string message,
-        string remediation) =>
-        new(kind, message, remediation);
+        string remediation,
+        Exception? innerException = null) =>
+        new(kind, message, remediation, innerException);
 }
 
 /// <summary>Starts a child with the exact native process arguments and inherited console handles.</summary>

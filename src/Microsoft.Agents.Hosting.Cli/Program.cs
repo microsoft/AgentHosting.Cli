@@ -11,6 +11,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Evaluations;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -117,7 +118,7 @@ internal static class Program
         // redirect following is disabled so a host-changing redirect can never cause the delegated
         // bearer token to be replayed to a host the cloud map never approved.
         services.AddSingleton<IEnvironmentClient>(sp => new PowerPlatformApiEnvironmentClient(
-            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }),
+            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
             powerPlatformApiTarget,
             claimsValidator: sp.GetRequiredService<PpapiTokenClaimsValidator>()));
@@ -142,11 +143,11 @@ internal static class Program
         // resent to a host that is not the configured one.
         var debugRequested = GlobalOptions.IsPresent(args, "--debug");
         services.AddSingleton<IAmsPackagePublicationTransport>(sp => new AmsPackagePublicationAdapter(
-            new HttpClient(AmsPackagePublicationAdapter.CreateRedirectRejectingHandler()),
+            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
             sp.GetRequiredService<PpapiTokenClaimsValidator>()));
         services.AddSingleton(sp => new AmsDeploymentAdapter(
-            new HttpClient(AmsDeploymentAdapter.CreateRedirectRejectingHandler()),
+            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
             sp.GetRequiredService<PpapiTokenClaimsValidator>()));
         services.AddSingleton<IAmsAgentReadTransport>(
@@ -154,7 +155,7 @@ internal static class Program
         services.AddSingleton<IAmsDeploymentTransport>(
             sp => sp.GetRequiredService<AmsDeploymentAdapter>());
         services.AddSingleton<IAmsAgentCreationTransport>(sp => new AmsAgentCreationAdapter(
-            new HttpClient(AmsAgentCreationAdapter.CreateRedirectRejectingHandler()),
+            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
             sp.GetRequiredService<PpapiTokenClaimsValidator>()));
 
@@ -166,8 +167,7 @@ internal static class Program
         services.AddAgentHostCopilotStudio(Console.Error, powerPlatformApiTarget, debugRequested);
         services.AddSingleton<IEnvironmentGeographyClient>(
             sp => new PowerPlatformApiEnvironmentGeographyClient(
-                new HttpClient(
-                    new HttpClientHandler { AllowAutoRedirect = false }),
+                new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
                 sp.GetRequiredService<ISelectedAccountTokenProvider>(),
                 powerPlatformApiTarget,
                 sp.GetRequiredService<PpapiTokenClaimsValidator>()));
@@ -209,6 +209,7 @@ internal static class Program
                     Environment.GetEnvironmentVariable(AgentHostClientAppConfiguration.ClientIdSettingName),
                     new RuntimePlatformInfo()),
                 () => Console.IsInputRedirected,
+                () => Console.IsOutputRedirected,
                 details => sp.GetRequiredService<CommandTelemetrySessionAccessor>().Current.RecordPlaygroundDetails(details)));
         services.AddSingleton<ManagedAgentCloneMaterialiser>();
         services.AddSingleton<ManagedAgentCreateService>();

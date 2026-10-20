@@ -27,7 +27,7 @@ public class FeatureFlags : IFeatureFlags
         _ = assembly ?? throw new ArgumentNullException(nameof(assembly));
         _ = !string.IsNullOrEmpty(filename) ? filename : throw new ArgumentNullException(nameof(filename));
 
-        var assemblyPath = Path.GetDirectoryName(assembly.Location)!;
+        var assemblyPath = Path.GetDirectoryName(AppContext.BaseDirectory)!;
         var filePath = Path.Combine(assemblyPath, filename);
         return LoadFromFile(filePath);
     }
@@ -45,7 +45,6 @@ public class FeatureFlags : IFeatureFlags
                 "Please uninstall and reinstall the Microsoft.Agents.Hosting.Cli tool.",
                 fullPath);
         }
-
         var entries = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(filePath))
             ?? throw new JsonException("Feature flags json content is null; must be an object.");
 

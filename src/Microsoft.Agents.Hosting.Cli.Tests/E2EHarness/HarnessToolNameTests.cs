@@ -74,6 +74,55 @@ public sealed partial class HarnessToolNameTests
         Assert.Empty(Directory.GetFileSystemEntries(directory.Path));
     }
 
+    [Fact]
+    public void TheSourceRootIsTheFolderHoldingTheCliProject()
+    {
+        using var directory = new TemporaryDirectory();
+        directory.Place(Path.Combine("Microsoft.Agents.Hosting.Cli", "Microsoft.Agents.Hosting.Cli.csproj"));
+
+        Assert.Equal(directory.Path, HarnessEnvironment.SourceRoot(Directory.CreateDirectory(Path.Combine(directory.Path, "Microsoft.Agents.Hosting.Cli.E2E")).FullName));
+    }
+
+    [Fact]
+    public void AMissingCliProjectStopsTheHarnessAndNamesTheProject()
+    {
+        using var directory = new TemporaryDirectory();
+
+        Assert.Contains("Microsoft.Agents.Hosting.Cli.csproj", Assert.Throws<E2EException>(() => HarnessEnvironment.SourceRoot(directory.Path)).Message);
+    }
+
+    [Fact]
+    public void TheHarnessBuildOutputLeadsToTheHarnessProjectAndTheSourceRootInThisRepository()
+    {
+        var sourceRoot = HarnessEnvironment.SourceRoot(AppContext.BaseDirectory);
+        var harnessDirectory = Path.Combine(sourceRoot, "Microsoft.Agents.Hosting.Cli.E2E");
+        var projectDirectory = HarnessEnvironment.FindProjectDirectory(Path.Combine(harnessDirectory, "bin", "Debug", "net10.0"));
+
+        Assert.Equal(harnessDirectory, projectDirectory);
+        Assert.Equal(sourceRoot, HarnessEnvironment.SourceRoot(projectDirectory!));
+    }
+
+    [Fact]
+    public void TheHarnessProjectIsTheNearestFolderAboveTheBuildOutputHoldingItsProjectFile()
+    {
+        using var directory = new TemporaryDirectory();
+        var harnessDirectory = Path.GetDirectoryName(directory.Place(Path.Combine("src", "Microsoft.Agents.Hosting.Cli.E2E", "Microsoft.Agents.Hosting.Cli.E2E.Tests.csproj")))!;
+        directory.Place(Path.Combine("src", "Microsoft.Agents.Hosting.Cli", "Microsoft.Agents.Hosting.Cli.csproj"));
+
+        var projectDirectory = HarnessEnvironment.FindProjectDirectory(Directory.CreateDirectory(Path.Combine(harnessDirectory, "bin", "Release", "net10.0")).FullName);
+
+        Assert.Equal(harnessDirectory, projectDirectory);
+        Assert.Equal(Path.Combine(directory.Path, "src"), HarnessEnvironment.SourceRoot(projectDirectory!));
+    }
+
+    [Fact]
+    public void NoHarnessProjectIsReportedWhenOnlyTheRetiredProjectFileNameIsPresent()
+    {
+        using var directory = new TemporaryDirectory();
+
+        Assert.Null(HarnessEnvironment.FindProjectDirectory(Path.Combine(Path.GetDirectoryName(directory.Place(Path.Combine("Microsoft.Agents.Hosting.Cli.E2E", "Microsoft.Agents.Hosting.Cli.E2E.csproj")))!, "bin", "Debug", "net10.0")));
+    }
+
     [Theory]
     [InlineData("--msagent-path")]
     [InlineData("--ah-path")]
@@ -178,6 +227,7 @@ public sealed partial class HarnessToolNameTests
         public string Place(string fileName)
         {
             var file = System.IO.Path.Combine(Path, fileName);
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(file)!);
             File.WriteAllText(file, string.Empty);
 
             return file;

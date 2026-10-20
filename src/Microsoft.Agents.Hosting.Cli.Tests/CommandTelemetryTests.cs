@@ -1044,8 +1044,8 @@ public sealed class CommandTelemetryTests
             clock ?? new FixedClock(),
             typeof(AgentHostCli).Assembly,
             tenantObserver,
-            policyTimeout: policyTimeout,
-            flushTimeout: flushTimeout,
+            policyTimeout: policyTimeout ?? TelemetryTestBudgets.Policy,
+            flushTimeout: flushTimeout ?? TelemetryTestBudgets.Flush,
             transport: transport);
 
     private static TelemetryControlService EnabledControls() =>

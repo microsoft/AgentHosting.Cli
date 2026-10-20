@@ -30,12 +30,15 @@ public sealed class WorkflowDeployServiceTests : IDisposable
         ManagedAgentFixtures.Principals(),
         new FixedClock(ManagedAgentFixtures.Now));
 
-    private Guid Register(bool activated = true)
+    private Guid Register(bool activated = true, bool withDeployment = true)
     {
         var workflowId = WorkflowFixtures.Write(_workspace.Root, "WF Hook 2", activated);
 
         _config.Add(_workspace.Root, WorkflowFixtures.Record(workflowId: workflowId.ToString()));
-        ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment());
+        if (withDeployment)
+        {
+            ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment());
+        }
 
         return workflowId;
     }
@@ -279,33 +282,74 @@ public sealed class WorkflowDeployServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task OverwriteIsRejected()
+    public async Task OverwriteIsAcceptedBecauseAWorkflowDeployAlwaysReplacesTheCloudCopy()
     {
-        Register();
+        var workflowId = Register();
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => Service().DeployAsync(Request(overwrite: true), CancellationToken.None));
+        var created = await Service().DeployAsync(Request(overwrite: true), CancellationToken.None);
+        var replaced = await Service().DeployAsync(Request(overwrite: true), CancellationToken.None);
 
-        Assert.Contains("--overwrite", failure.Message, StringComparison.Ordinal);
+        Assert.Equal("create", created.Action);
+        Assert.Equal("update", replaced.Action);
+        Assert.Equal(2, _store.Calls.Count(call => call == $"upsert:{workflowId}"));
+        Assert.Empty(created.Warnings);
+        Assert.Empty(replaced.Warnings);
     }
 
-    [Fact]
-    public async Task SchemaNameIsRejected()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SchemaNameIsRejectedBeforeAnythingIsUploadedOrRecorded(bool overwrite)
     {
         Register();
+        var configuration = File.ReadAllBytes(_workspace.ConfigPath);
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => Service().DeployAsync(Request(schemaName: "con_flow"), CancellationToken.None));
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Service().DeployAsync(Request(overwrite: overwrite, schemaName: "con_flow"), CancellationToken.None));
 
-        Assert.Contains("--schema-name", failure.Message, StringComparison.Ordinal);
+        Assert.Equal("--schema-name does not apply to a workflow, which is addressed by its workflow id. Remove --schema-name.", failure.Message);
+        Assert.Empty(_store.Calls);
+        Assert.Equal(0, _connections.ReadCalls);
+        Assert.Equal(configuration, File.ReadAllBytes(_workspace.ConfigPath));
     }
 
-    [Fact]
-    public async Task ADeploymentSelectorIsRequired()
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ABlankSchemaNameIsNotRejected(string schemaName)
     {
-        Register();
+        var workflowId = Register();
 
-        await Assert.ThrowsAsync<UsageException>(() => Service().DeployAsync(
-            new ManagedAgentDeployRequest { Project = _workspace.Root, AgentId = "wf-1" },
+        var result = await Service().DeployAsync(Request(schemaName: schemaName), CancellationToken.None);
+
+        Assert.Single(_store.Calls, call => call == $"upsert:{workflowId}");
+        Assert.Empty(result.Warnings);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task AnUnresolvedDeploymentStopsBeforeCloudOrCacheChanges(bool hasDeployment, bool withSelector)
+    {
+        Register(withDeployment: hasDeployment);
+        States().Write(_workspace.Root, "env-1", new Dictionary<string, int> { ["cloud-only"] = WorkflowStateCache.Activated });
+        _workspace.AddFile(Path.Combine(".mcs", "botdefinition.json"), "{\"source\":\"cloud\"}");
+        var configuration = File.ReadAllBytes(_workspace.ConfigPath);
+        var cachePath = Path.Combine(_workspace.Root, ".mcs", "botdefinition.json");
+        var cache = File.ReadAllBytes(cachePath);
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service().DeployAsync(
+            new ManagedAgentDeployRequest { Project = _workspace.Root, AgentId = "wf-1", DeploymentName = withSelector ? "no-such-slot" : null },
             CancellationToken.None));
+
+        Assert.Equal(withSelector ? "deployment-not-found" : hasDeployment ? "deployment-selector-required" : "deployment-records-empty", failure.ErrorKind);
+        Assert.Contains(hasDeployment ? withSelector ? "no-such-slot" : "Available deployments: devwf" : "no deployment records", failure.Message, StringComparison.Ordinal);
+        Assert.Empty(_store.Calls);
+        Assert.Equal(0, _connections.ReadCalls);
+        Assert.Equal(WorkflowStateCache.Activated, Assert.Single(States().Read(_workspace.Root, "env-1")).Value);
+        Assert.Equal(configuration, File.ReadAllBytes(_workspace.ConfigPath));
+        Assert.Equal(cache, File.ReadAllBytes(cachePath));
     }
 
     [Fact]

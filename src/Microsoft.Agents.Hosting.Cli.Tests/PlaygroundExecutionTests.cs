@@ -21,12 +21,14 @@ public sealed class PlaygroundExecutionTests
         LiveTestAgentType.Standard,
         new Uri("https://example.test/agent"));
 
-    [Fact]
-    public async Task JsonIsRejectedBeforeTargetResolutionOrToolDiscovery()
+    [Theory]
+    [InlineData("directengine")]
+    [InlineData("directline")]
+    public async Task JsonIsRejectedBeforeTargetResolutionOrToolDiscovery(string target)
     {
         var doubles = new Doubles();
         var execution = CreateExecution(
-            new PlaygroundRequest { AgentType = "standard", Json = true },
+            new PlaygroundRequest { Target = target, AgentType = "standard", Json = true },
             doubles);
 
         var exitCode = await RenderAsync(execution);
@@ -34,6 +36,7 @@ public sealed class PlaygroundExecutionTests
         Assert.Equal(ExitCodes.Usage, exitCode);
         Assert.Contains("not yet supported for playground", doubles.Error.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, doubles.ResolveCalls);
+        Assert.Equal(0, doubles.ClientConfigurationCalls);
         Assert.Equal(0, doubles.LocateCalls);
         Assert.Equal(0, doubles.PromptCalls);
         Assert.Equal(0, doubles.LaunchCalls);
@@ -53,11 +56,11 @@ public sealed class PlaygroundExecutionTests
             doubles.Events.Add("locate");
             return Task.FromResult(Discovery(doubles.Tool));
         };
-        doubles.Launch = async (tool, target, clientId, started, _) =>
+        doubles.Launch = async (tool, connection, started, _) =>
         {
             doubles.Events.Add("launch");
             doubles.LaunchCalls++;
-            doubles.LaunchedClientId = clientId;
+            doubles.LaunchedClientId = Assert.IsType<PlaygroundConnection.DirectEngine>(connection).ClientId;
             started();
             doubles.StartedObservedBeforeLaunchCompleted = true;
             return 0;
@@ -342,6 +345,160 @@ public sealed class PlaygroundExecutionTests
         Assert.DoesNotContain("secret", doubles.Error.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("directengine")]
+    [InlineData("DIRECTENGINE")]
+    public async Task ExplicitDirectEnginePreservesResolutionAndClientConfiguration(string target)
+    {
+        var doubles = new Doubles();
+
+        var exitCode = await RenderAsync(CreateExecution(Request() with { Target = target }, doubles));
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(1, doubles.ResolveCalls);
+        Assert.Equal(1, doubles.ClientConfigurationCalls);
+        var connection = Assert.IsType<PlaygroundConnection.DirectEngine>(doubles.LaunchedConnection);
+        Assert.Equal(Target, connection.Target);
+        Assert.Equal(ClientId, connection.ClientId);
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    public async Task DirectLineLaunchesWithoutResolvingTargetOrClient(
+        bool install,
+        bool plain,
+        bool uppercase)
+    {
+        var doubles = new Doubles
+        {
+            Resolve = _ => throw new InvalidOperationException("resolver must not run"),
+            ClientConfiguration = () => throw new InvalidOperationException("client must not run"),
+        };
+        if (install)
+        {
+            doubles.Tool = null;
+        }
+
+        var exitCode = await RenderAsync(CreateExecution(new PlaygroundRequest
+        {
+            Target = uppercase ? "DIRECTLINE" : "directline",
+            Plain = plain,
+            InstallPlayground = install,
+        }, doubles));
+
+        Assert.Equal(0, exitCode);
+        Assert.IsType<PlaygroundConnection.DirectLine>(doubles.LaunchedConnection);
+        Assert.Equal(0, doubles.ClientConfigurationCalls);
+        Assert.Equal(install ? 1 : 0, doubles.InstallCalls);
+        Assert.Equal(install ? 1 : 0, doubles.PromptCalls);
+        Assert.Contains("real effects", doubles.Output.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("masked terminal prompt", doubles.Output.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("device code", doubles.Output.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(!plain, doubles.Output.ToString().Contains("process started", StringComparison.OrdinalIgnoreCase));
+        var details = Assert.IsType<PlaygroundTelemetryDetails>(Assert.Single(doubles.Telemetry));
+        Assert.Equal(PlaygroundErrorCategory.None, details.ErrorCategory);
+    }
+
+    public static TheoryData<PlaygroundRequest> InvalidRequests => new()
+    {
+        new PlaygroundRequest { Target = "unsupported-private-value" },
+        new PlaygroundRequest(),
+        new PlaygroundRequest { AgentType = " " },
+        new PlaygroundRequest { Target = "directline", AgentType = "standard" },
+        new PlaygroundRequest { Target = "directline", Project = "private-project" },
+        new PlaygroundRequest { Target = "directline", AgentId = "private-id" },
+        new PlaygroundRequest { Target = "directline", AgentName = "private-name" },
+        new PlaygroundRequest { Target = "directline", SchemaName = "private-schema" },
+        new PlaygroundRequest { Target = "directline", DeploymentId = "private-id" },
+        new PlaygroundRequest { Target = "directline", DeploymentName = "private-name" },
+        new PlaygroundRequest { Target = "directline", EnvironmentId = "private-environment" },
+        new PlaygroundRequest { Target = "directline", Tenant = "private-tenant" },
+        new PlaygroundRequest { Target = "directline", Project = "" },
+        new PlaygroundRequest { Target = "directline", NonInteractive = true },
+        new PlaygroundRequest { Target = "directline", NonInteractive = true, InstallPlayground = true },
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidRequests))]
+    public async Task InvalidTransportOptionsFailBeforeAnySideEffects(PlaygroundRequest request)
+    {
+        var doubles = new Doubles { Tool = null };
+        var execution = CreateExecution(request, doubles);
+
+        var exitCode = await RenderAsync(execution);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Equal(0, doubles.ResolveCalls);
+        Assert.Equal(0, doubles.ClientConfigurationCalls);
+        Assert.Equal(0, doubles.LocateCalls);
+        Assert.Equal(0, doubles.PromptCalls);
+        Assert.Equal(0, doubles.InstallCalls);
+        Assert.Equal(0, doubles.LaunchCalls);
+        Assert.Empty(doubles.Output.ToString());
+        Assert.DoesNotContain("private", doubles.Error.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(CommandTelemetryOutcome.Usage, CommandTreeBuilder.StreamingOutcome(execution, exitCode));
+        var details = Assert.IsType<PlaygroundTelemetryDetails>(Assert.Single(doubles.Telemetry));
+        Assert.Equal(PlaygroundErrorCategory.Unsupported, details.ErrorCategory);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task DirectLineRejectsRedirectedConsoleBeforeInstallation(bool input, bool output)
+    {
+        var doubles = new Doubles
+        {
+            Tool = null,
+            IsInputRedirected = input,
+            IsOutputRedirected = output,
+        };
+
+        var exitCode = await RenderAsync(CreateExecution(new PlaygroundRequest
+        {
+            Target = "directline",
+            InstallPlayground = true,
+        }, doubles));
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Equal(0, doubles.ResolveCalls);
+        Assert.Equal(0, doubles.ClientConfigurationCalls);
+        Assert.Equal(0, doubles.LocateCalls);
+        Assert.Equal(0, doubles.InstallCalls);
+        Assert.Equal(0, doubles.PromptCalls);
+        Assert.Equal(0, doubles.LaunchCalls);
+        Assert.Contains("interactive terminal for both input and output", doubles.Error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(37)]
+    [InlineData(130)]
+    public async Task DirectLinePreservesIndependentChildExitCode(int childExitCode)
+    {
+        var doubles = new Doubles { Launch = (_, _, _, _) => Task.FromResult(childExitCode) };
+        var execution = CreateExecution(new PlaygroundRequest { Target = "directline" }, doubles);
+
+        Assert.Equal(childExitCode, await RenderAsync(execution));
+        Assert.Equal(PlaygroundErrorCategory.LaunchFailed,
+            Assert.IsType<PlaygroundTelemetryDetails>(Assert.Single(doubles.Telemetry)).ErrorCategory);
+    }
+
+    [Fact]
+    public async Task DirectLineFailureDoesNotExposeNativeErrorDetails()
+    {
+        var doubles = new Doubles
+        {
+            LaunchException = new InvalidOperationException("private-token-endpoint-and-secret"),
+        };
+
+        Assert.Equal(ExitCodes.Failure, await RenderAsync(CreateExecution(
+            new PlaygroundRequest { Target = "directline" }, doubles)));
+        Assert.DoesNotContain("private", doubles.Error.ToString(), StringComparison.Ordinal);
+    }
+
     private static PlaygroundRequest Request() => new()
     {
         AgentType = "standard",
@@ -358,8 +515,13 @@ public sealed class PlaygroundExecutionTests
             doubles.Installer,
             doubles.Launcher,
             doubles.Confirmation,
-            doubles.ClientConfiguration,
+            () =>
+            {
+                doubles.ClientConfigurationCalls++;
+                return doubles.ClientConfiguration();
+            },
             () => doubles.IsInputRedirected,
+            () => doubles.IsOutputRedirected,
             details => doubles.Telemetry.Add(details));
 
     private static async Task<int> RenderAsync(
@@ -429,10 +591,14 @@ public sealed class PlaygroundExecutionTests
                     ? Task.FromException<PlaygroundTool>(failure)
                     : Task.FromResult(InstallTool!);
             };
-            Launch = async (tool, target, clientId, started, _) =>
+            Launch = async (tool, connection, started, _) =>
             {
                 LaunchCalls++;
-                LaunchedClientId = clientId;
+                LaunchedConnection = connection;
+                if (connection is PlaygroundConnection.DirectEngine engine)
+                {
+                    LaunchedClientId = engine.ClientId;
+                }
                 started();
                 StartedObservedBeforeLaunchCompleted = true;
                 return 0;
@@ -454,7 +620,7 @@ public sealed class PlaygroundExecutionTests
         public Func<CancellationToken, Task<PlaygroundToolDiscoveryResult>> Locate { get; set; }
         public Func<CancellationToken, Task<PlaygroundToolDiscoveryResult>> DetectNpm { get; set; }
         public Func<CancellationToken, Task<PlaygroundTool>> Install { get; set; }
-        public Func<PlaygroundTool, LiveTestDestination, Guid, Action, CancellationToken, Task<int>> Launch { get; set; }
+        public Func<PlaygroundTool, PlaygroundConnection, Action, CancellationToken, Task<int>> Launch { get; set; }
         public Func<string, string, CancellationToken, Task<ConfirmationOutcome>> Confirm { get; set; }
         public IPlaygroundToolLocator Locator => new DelegateLocator(Locate, DetectNpm);
         public IPlaygroundGlobalInstaller Installer => new DelegateInstaller(Install);
@@ -465,16 +631,19 @@ public sealed class PlaygroundExecutionTests
         public PlaygroundToolDiscoveryResult? DiscoveryResult { get; set; }
         public Exception? LocateException { get; set; }
         public bool IsInputRedirected { get; set; }
+        public bool IsOutputRedirected { get; set; }
         public ConfirmationOutcome PromptOutcome { get; set; } = ConfirmationOutcome.Confirmed;
         public Exception? LaunchException { get; set; }
         public PlaygroundInstallException? InstallException { get; set; }
         public int ResolveCalls { get; set; }
+        public int ClientConfigurationCalls { get; set; }
         public int LocateCalls { get; set; }
         public int DetectNpmCalls { get; set; }
         public int InstallCalls { get; set; }
         public int PromptCalls { get; set; }
         public int LaunchCalls { get; set; }
         public Guid LaunchedClientId { get; set; }
+        public PlaygroundConnection? LaunchedConnection { get; set; }
         public bool StartedObservedBeforeLaunchCompleted { get; set; }
         public string PromptDetail { get; set; } = string.Empty;
         public string ExpectedResponse { get; set; } = string.Empty;
@@ -487,18 +656,17 @@ public sealed class PlaygroundExecutionTests
             ?? throw new InvalidOperationException("Test doubles are not installed.");
 
         private sealed class DelegateLauncher(
-            Func<PlaygroundTool, LiveTestDestination, Guid, Action, CancellationToken, Task<int>> callback,
+            Func<PlaygroundTool, PlaygroundConnection, Action, CancellationToken, Task<int>> callback,
             Doubles owner) : IPlaygroundLauncher
         {
             public Task<int> RunAsync(
                 PlaygroundTool tool,
-                LiveTestDestination target,
-                Guid clientId,
+                PlaygroundConnection connection,
                 Action started,
                 CancellationToken cancellationToken) =>
                 owner.LaunchException is { } failure
                     ? Task.FromException<int>(failure)
-                    : callback(tool, target, clientId, started, cancellationToken);
+                    : callback(tool, connection, started, cancellationToken);
         }
 
         private sealed class DelegateInstaller(
