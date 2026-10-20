@@ -80,10 +80,24 @@ public static class ProvisioningErrorKindExtensions
 public sealed class ProvisioningException : AgentHostingException
 {
     public ProvisioningException(ProvisioningErrorKind kind, string message, string remediation)
-        : base(message, kind.ToExitCode(), kind.ToWireString(), remediation)
+        : base(message, kind.ToExitCode(), kind.ToWireString(), remediation, errorCode: ToErrorCode(kind))
     {
         Kind = kind;
     }
+
+    private static int ToErrorCode(ProvisioningErrorKind kind) => kind switch
+    {
+        ProvisioningErrorKind.MissingAzureAuth => ErrorCodes.Provisioning.MissingAzureAuth,
+        ProvisioningErrorKind.MissingContext => ErrorCodes.Provisioning.MissingContext,
+        ProvisioningErrorKind.AmbiguousContext => ErrorCodes.Provisioning.AmbiguousContext,
+        ProvisioningErrorKind.NamingConflict => ErrorCodes.Provisioning.NamingConflict,
+        ProvisioningErrorKind.ProviderNotRegistered => ErrorCodes.Provisioning.ProviderNotRegistered,
+        ProvisioningErrorKind.SkuQuota => ErrorCodes.Provisioning.SkuQuota,
+        ProvisioningErrorKind.PolicyDenied => ErrorCodes.Provisioning.PolicyDenied,
+        ProvisioningErrorKind.PermissionDenied => ErrorCodes.Provisioning.PermissionDenied,
+        ProvisioningErrorKind.InvalidResponse => ErrorCodes.Provisioning.InvalidResponse,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown provisioning error kind."),
+    };
 
     /// <summary>The typed failure category.</summary>
     public ProvisioningErrorKind Kind { get; }

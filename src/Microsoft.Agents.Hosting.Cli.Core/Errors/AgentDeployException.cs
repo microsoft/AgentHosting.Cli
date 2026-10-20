@@ -6,23 +6,25 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
 public sealed class AgentDeployException : AgentHostingException
 {
     private AgentDeployException(
+        int errorCode,
         string message,
         int exitCode,
         string errorKind,
         string remediation,
         Exception? innerException = null)
-        : base(message, exitCode, errorKind, remediation, innerException)
+        : base(message, exitCode, errorKind, remediation, innerException, errorCode)
     {
     }
 
     public static AgentDeployException TargetNotConfigured(string detail, string remediation) =>
-        new(detail, ExitCodes.Failure, "service-target-not-configured", remediation);
+        new(ErrorCodes.Deployment.AgentDeployTargetNotConfigured, detail, ExitCodes.Failure, "service-target-not-configured", remediation);
 
     public static AgentDeployException EndpointNotUsable(string detail, string remediation) =>
-        new(detail, ExitCodes.Failure, "endpoint-untrusted", remediation);
+        new(ErrorCodes.Deployment.AgentDeployEndpointNotUsable, detail, ExitCodes.Failure, "endpoint-untrusted", remediation);
 
     public static AgentDeployException PackageReadFailed(string packagePath, Exception innerException) =>
         new(
+            ErrorCodes.Deployment.AgentDeployPackageReadFailed,
             $"The supplied agent package could not be read from '{packagePath}'.",
             ExitCodes.Failure,
             "package-read-failed",
@@ -31,6 +33,7 @@ public sealed class AgentDeployException : AgentHostingException
 
     public static AgentDeployException PackageEmpty() =>
         new(
+            ErrorCodes.Deployment.AgentDeployPackageEmpty,
             "The supplied agent package is empty.",
             ExitCodes.Usage,
             "package-empty",
@@ -38,6 +41,7 @@ public sealed class AgentDeployException : AgentHostingException
 
     public static AgentDeployException PackageTooLarge(long size, long limit) =>
         new(
+            ErrorCodes.Deployment.AgentDeployPackageTooLarge,
             $"The supplied agent package is {size} bytes; the deployed upload contract accepts at most {limit} bytes.",
             ExitCodes.Usage,
             "package-too-large",
@@ -45,6 +49,7 @@ public sealed class AgentDeployException : AgentHostingException
 
     public static AgentDeployException AgentNotCompatible(string detail) =>
         new(
+            ErrorCodes.Deployment.AgentDeployAgentNotCompatible,
             detail,
             ExitCodes.Usage,
             "agent-not-deployable",
@@ -56,6 +61,7 @@ public sealed class AgentDeployException : AgentHostingException
         string? clientRequestId = null,
         string? serviceRequestId = null) =>
         new(
+            ErrorCodes.Deployment.AgentDeployResponseMismatch,
             AddCorrelation(
                 $"The {phase} response field '{field}' did not match the requested or locally verified value.",
                 clientRequestId,
@@ -70,6 +76,7 @@ public sealed class AgentDeployException : AgentHostingException
         string? clientRequestId = null,
         string? serviceRequestId = null) =>
         new(
+            ErrorCodes.Deployment.AgentDeployDeploymentUpdateResponseMismatch,
             AddCorrelation(
                 $"The deployment update response field '{field}' did not match the requested or freshly read deployment identity. {DeploymentUpdateOutcome(mutationAttempted)}",
                 clientRequestId,
@@ -88,6 +95,7 @@ public sealed class AgentDeployException : AgentHostingException
         string? clientRequestId = null,
         string? serviceRequestId = null) =>
         new(
+            ErrorCodes.Deployment.AgentDeployInvalidResponse,
             AddCorrelation(
                 $"The {phase} returned a success status without the required response fields.",
                 clientRequestId,
@@ -102,6 +110,7 @@ public sealed class AgentDeployException : AgentHostingException
         string? serviceRequestId = null,
         Exception? innerException = null) =>
         new(
+            ErrorCodes.Deployment.AgentDeployDeploymentUpdateInvalidResponse,
             AddCorrelation(
                 $"The Agent Management Service returned a success status without the required deployment fields. {DeploymentUpdateOutcome(mutationAttempted)}",
                 clientRequestId,
@@ -115,6 +124,7 @@ public sealed class AgentDeployException : AgentHostingException
 
     public static AgentDeployException RedirectRejected(string phase, int status, string configuredHost) =>
         new(
+            ErrorCodes.Deployment.AgentDeployRedirectRejected,
             $"The {phase} answered HTTP {status} with a redirect, which this command does not follow. The delegated authorization header was sent only to '{configuredHost}'.",
             ExitCodes.Failure,
             "redirect-rejected",
@@ -128,6 +138,7 @@ public sealed class AgentDeployException : AgentHostingException
         string? clientRequestId,
         string? serviceRequestId) =>
         new(
+            ErrorCodes.Deployment.AgentDeployDeploymentUpdateRedirectRejected,
             AddCorrelation(
                 $"The {phase} answered HTTP {status} with a redirect, which this command does not follow. The delegated authorization header was sent only to '{configuredHost}'. {DeploymentUpdateOutcome(mutationAttempted)}",
                 clientRequestId,
@@ -144,6 +155,7 @@ public sealed class AgentDeployException : AgentHostingException
         bool outcomeMayBeIndeterminate,
         Exception innerException) =>
         new(
+            ErrorCodes.Deployment.AgentDeployTimedOut,
             $"The {phase} timed out before a response was received (clientRequestId={clientRequestId})." +
             (outcomeMayBeIndeterminate ? " The remote outcome may be indeterminate." : string.Empty),
             ExitCodes.Failure,
@@ -159,6 +171,7 @@ public sealed class AgentDeployException : AgentHostingException
         bool outcomeMayBeIndeterminate,
         Exception innerException) =>
         new(
+            ErrorCodes.Deployment.AgentDeployTransportFailed,
             $"The {phase} failed before a response was received (clientRequestId={clientRequestId})." +
             (outcomeMayBeIndeterminate ? " The remote outcome may be indeterminate." : string.Empty),
             ExitCodes.Failure,
@@ -175,6 +188,7 @@ public sealed class AgentDeployException : AgentHostingException
         Exception innerException,
         string? serviceRequestId = null) =>
         new(
+            mutationAttempted ? ErrorCodes.Deployment.UpdateTimedOut : ErrorCodes.Deployment.UpdateReadTimedOut,
             AddCorrelation(
                 $"The {phase} timed out before its response was fully received. {DeploymentUpdateOutcome(mutationAttempted)}",
                 clientRequestId,
@@ -193,6 +207,7 @@ public sealed class AgentDeployException : AgentHostingException
         Exception innerException,
         string? serviceRequestId = null) =>
         new(
+            mutationAttempted ? ErrorCodes.Deployment.UpdateTransportFailed : ErrorCodes.Deployment.UpdateReadFailed,
             AddCorrelation(
                 $"The {phase} failed before its response was fully received. {DeploymentUpdateOutcome(mutationAttempted)}",
                 clientRequestId,
@@ -210,7 +225,7 @@ public sealed class AgentDeployException : AgentHostingException
         string errorKind,
         string remediation,
         Exception? innerException = null) =>
-        new(message, exitCode, errorKind, remediation, innerException);
+        new(ErrorCodes.Deployment.AgentDeployServiceRejected, message, exitCode, errorKind, remediation, innerException);
 
     private static string DeploymentUpdateOutcome(bool mutationAttempted) =>
         mutationAttempted

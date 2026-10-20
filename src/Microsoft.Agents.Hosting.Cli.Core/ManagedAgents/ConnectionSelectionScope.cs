@@ -23,9 +23,11 @@ public static class ConnectionSelectionScope
     /// <summary>Chooses which plan entries a request addresses.</summary>
     /// <param name="plan">Every reference the workspace has.</param>
     /// <param name="request">The command input.</param>
+    /// <param name="workspaceDirectory">The workspace whose references are selected.</param>
     /// <returns>Indexes into <paramref name="plan"/>, in order.</returns>
-    /// <exception cref="UsageException">A selector names nothing.</exception>
-    public static IReadOnlyList<int> Apply(IReadOnlyList<ConnectionPlanItem> plan, AgentDeploymentConnectionRequest request)
+    /// <exception cref="ManagedAgentException">The named connection reference is not declared.</exception>
+    /// <exception cref="UsageException">No selected reference targets the named connector.</exception>
+    public static IReadOnlyList<int> Apply(IReadOnlyList<ConnectionPlanItem> plan, AgentDeploymentConnectionRequest request, string workspaceDirectory)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(request);
@@ -38,7 +40,11 @@ public static class ConnectionSelectionScope
 
             if (selected.Count == 0)
             {
-                throw new UsageException($"No connection reference named '{request.ConnectionReference.Trim()}'. This workspace declares: {Names(plan)}.");
+                throw ManagedAgentException.ConnectionReferenceNotDeclared(
+                    request.ConnectionReference.Trim(),
+                    workspaceDirectory,
+                    [.. plan.Select(item => item.View.LogicalName)],
+                    ConnectionCommandHints.ListConnections(request));
             }
         }
 
@@ -292,7 +298,4 @@ public static class ConnectionSelectionScope
 
     private static int Rank(IReadOnlyList<ConnectionPlanItem> plan, ConnectorGroup group) =>
         !NeedsAttention(plan, group) ? 2 : Candidates(plan, group).Count > 0 ? 0 : 1;
-
-    private static string Names(IReadOnlyList<ConnectionPlanItem> plan) =>
-        plan.Count == 0 ? "none" : string.Join(", ", plan.Select(item => item.View.LogicalName));
 }

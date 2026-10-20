@@ -1787,21 +1787,46 @@ public sealed class AgentDeploymentConnectionServiceTests
         Assert.Equal(0, connections.BindCalls);
     }
 
-    [Fact]
-    public async Task Update_AnUnknownConnectionReference_IsRejectedBeforeAnyBinding()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Update_AnUnknownConnectionReference_IsRejectedBeforeAnyBinding(bool hasReferences)
     {
         var (workspace, store) = Deployed();
         using var _ = workspace;
         using var scope = new CurrentDirectoryScope(workspace.Root);
         var connections = new FakeConnectionPort();
-        connections.Views.Add(ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null, ManagedAgentFixtures.Candidate("conn-1")));
+        if (hasReferences)
+        {
+            connections.Views.Add(ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null, ManagedAgentFixtures.Candidate("conn-1")));
+        }
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store, connections).UpdateAsync(
-            new AgentDeploymentConnectionRequest { AgentId = "agent-1", DeploymentName = "dev", ConnectionReference = "cr_missing", NonInteractive = true },
+        var states = ManagedAgentFixtures.WorkflowStates();
+        states.Write(workspace.Root, "env-1", new Dictionary<string, int> { ["SubmitExpense"] = WorkflowStateCache.Activated });
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, connections, workflowStates: states).UpdateAsync(
+            new AgentDeploymentConnectionRequest { AgentId = "agent-1", DeploymentName = "dev", Project = workspace.Root, ConnectionReference = " cr_missing ", NonInteractive = true },
             CancellationToken.None));
 
-        Assert.Contains("cr_sql", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("connection-reference-not-declared", failure.ErrorKind);
+        Assert.Contains("cr_missing", failure.Message, StringComparison.Ordinal);
+        Assert.Contains(workspace.Root, failure.Message, StringComparison.Ordinal);
+        if (hasReferences)
+        {
+            Assert.Contains("cr_sql", failure.Remediation, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains("msagent deployment connection list", failure.Remediation, StringComparison.Ordinal);
+            Assert.Contains(workspace.Root, failure.Remediation, StringComparison.Ordinal);
+            Assert.Contains("--agent-id agent-1", failure.Remediation, StringComparison.Ordinal);
+            Assert.Contains("--deployment-name dev", failure.Remediation, StringComparison.Ordinal);
+        }
+
         Assert.Equal(0, connections.BindCalls);
+        Assert.Equal(0, connections.ActivateCalls);
+        Assert.Equal(WorkflowStateCache.Activated, states.Read(workspace.Root, "env-1")["SubmitExpense"]);
     }
 
     [Fact]

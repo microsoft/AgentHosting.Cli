@@ -37,7 +37,7 @@ public enum TargetErrorKind
 public sealed class TargetRequestException : AgentHostingException
 {
     public TargetRequestException(string message, int exitCode, TargetErrorKind kind, int status, string? serviceMessage = null)
-        : base(message, exitCode, ToErrorKind(kind))
+        : base(message, exitCode, ToErrorKind(kind), errorCode: ToErrorCode(kind))
     {
         Kind = kind;
         Status = status;
@@ -59,6 +59,16 @@ public sealed class TargetRequestException : AgentHostingException
     /// material — only the service's error text, which may include resource/subscription ids.
     /// </summary>
     public string? ServiceMessage { get; }
+
+    private static int ToErrorCode(TargetErrorKind kind) => kind switch
+    {
+        TargetErrorKind.AuthExpired => ErrorCodes.Environment.TargetAuthExpired,
+        TargetErrorKind.WrongAudience => ErrorCodes.Environment.TargetWrongAudience,
+        TargetErrorKind.PermissionDenied => ErrorCodes.Environment.TargetPermissionDenied,
+        TargetErrorKind.ConsentRequired => ErrorCodes.Environment.TargetConsentRequired,
+        TargetErrorKind.RequestFailed => ErrorCodes.Environment.TargetRequestFailed,
+        _ => ErrorCodes.Environment.TargetRequestFailed,
+    };
 
     private static string ToErrorKind(TargetErrorKind kind) => kind switch
     {

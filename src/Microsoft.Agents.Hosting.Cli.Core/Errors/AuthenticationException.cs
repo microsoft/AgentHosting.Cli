@@ -8,8 +8,8 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
 /// </summary>
 public class AuthenticationException : AgentHostingException
 {
-    public AuthenticationException(string message, int exitCode = ExitCodes.Failure, string? remediation = null)
-        : base(message, exitCode, errorKind: null, remediation: remediation)
+    public AuthenticationException(string message, int exitCode = ExitCodes.Failure, string? remediation = null, int errorCode = ErrorCodes.Authentication.AuthenticationFailed)
+        : base(message, exitCode, errorKind: null, remediation: remediation, errorCode: errorCode)
     {
     }
 }
@@ -21,7 +21,7 @@ public class AuthenticationException : AgentHostingException
 public sealed class NotSignedInException : AuthenticationException
 {
     public NotSignedInException(string message, string? remediation = null)
-        : base(message, ExitCodes.NotSignedIn, remediation)
+        : base(message, ExitCodes.NotSignedIn, remediation, ErrorCodes.Authentication.NotSignedIn)
     {
     }
 }
@@ -38,7 +38,7 @@ public sealed class NotSignedInException : AuthenticationException
 public sealed class ClientApplicationConfigurationException : AuthenticationException
 {
     public ClientApplicationConfigurationException(string message, string? remediation = null)
-        : base(message, ExitCodes.Failure, remediation)
+        : base(message, ExitCodes.Failure, remediation, ErrorCodes.Authentication.ClientApplicationConfiguration)
     {
     }
 }
@@ -52,7 +52,7 @@ public sealed class ClientApplicationConfigurationException : AuthenticationExce
 public sealed class AuthProfileStateException : AuthenticationException
 {
     public AuthProfileStateException(string message, string? remediation = null)
-        : base(message, ExitCodes.Failure, remediation)
+        : base(message, ExitCodes.Failure, remediation, ErrorCodes.Authentication.AuthProfileState)
     {
     }
 }
@@ -68,7 +68,8 @@ public sealed class ActiveAccountMismatchException : AuthenticationException
         : base(
             "The account returned by interactive consent does not match the active AgentHost account.",
             ExitCodes.Failure,
-            "Run `msagent auth login` for the intended account, then retry the command without switching accounts.")
+            "Run `msagent auth login` for the intended account, then retry the command without switching accounts.",
+            ErrorCodes.Authentication.ActiveAccountMismatch)
     {
     }
 }
@@ -84,7 +85,7 @@ public sealed class ActiveAccountMismatchException : AuthenticationException
 public sealed class CacheProtectionUnavailableException : AuthenticationException
 {
     public CacheProtectionUnavailableException(string message, string? remediation = null)
-        : base(message, ExitCodes.Failure, remediation)
+        : base(message, ExitCodes.Failure, remediation, ErrorCodes.Authentication.CacheProtectionUnavailable)
     {
     }
 }
@@ -113,7 +114,8 @@ public sealed class InteractionRequiredException : AuthenticationException
         : base(
             message,
             ExitCodes.NotSignedIn,
-            remediation ?? "Run `msagent auth login` to sign in interactively, then retry.")
+            remediation ?? "Run `msagent auth login` to sign in interactively, then retry.",
+            ErrorCodes.Authentication.InteractionRequired)
     {
         Resource = resource;
     }
@@ -132,7 +134,8 @@ public sealed class TokenThrottledException : AuthenticationException
             ExitCodes.Failure,
             retryAfter is null
                 ? "Wait before retrying; repeated immediate retries extend the throttling period."
-                : $"Wait {retryAfter.Value.TotalSeconds:F0} seconds before retrying.")
+                : $"Wait {retryAfter.Value.TotalSeconds:F0} seconds before retrying.",
+            ErrorCodes.Authentication.TokenThrottled)
     {
         RetryAfter = retryAfter;
     }
@@ -156,7 +159,8 @@ public sealed class CorporateAccountRequiresBrokerException : AuthenticationExce
         : base(
             message,
             ExitCodes.Failure,
-            remediation ?? "Sign in on a platform with the OS broker (Windows WAM) so the Microsoft corporate account flows through the broker.")
+            remediation ?? "Sign in on a platform with the OS broker (Windows WAM) so the Microsoft corporate account flows through the broker.",
+            ErrorCodes.Authentication.CorporateAccountRequiresBroker)
     {
     }
 }
@@ -166,7 +170,7 @@ public sealed class BrokerUnavailableException : AuthenticationException
 {
     /// <summary>Creates the failure from a short, secret-free <paramref name="reason"/> naming what the broker reported.</summary>
     public BrokerUnavailableException(string reason)
-        : base($"The operating-system broker could not sign you in ({reason}).", ExitCodes.Failure, "Run `msagent auth login --device-code` to sign in without the operating-system broker.")
+        : base($"The operating-system broker could not sign you in ({reason}).", ExitCodes.Failure, "Run `msagent auth login --device-code` to sign in without the operating-system broker.", ErrorCodes.Authentication.BrokerUnavailable)
     {
         Reason = reason;
     }
@@ -180,7 +184,7 @@ public sealed class SignInCanceledException : AuthenticationException
 {
     /// <summary>Creates the failure from a short, secret-free <paramref name="reason"/> naming what the broker reported.</summary>
     public SignInCanceledException(string reason)
-        : base($"Sign-in was canceled ({reason}).", ExitCodes.Failure, "Run `msagent auth login` again to choose an account, or `msagent auth login --device-code` to sign in with a code instead.")
+        : base($"Sign-in was canceled ({reason}).", ExitCodes.Failure, "Run `msagent auth login` again to choose an account, or `msagent auth login --device-code` to sign in with a code instead.", ErrorCodes.Authentication.SignInCanceled)
     {
     }
 }

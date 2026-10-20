@@ -107,9 +107,51 @@ public sealed class WorkflowCreateServiceTests : IDisposable
         var store = ManagedAgentFixtures.Store();
         await Service(store).CreateAsync(new ManagedAgentCreateRequest { Name = "WF Hook 2", AgentType = AgentTypes.McsWorkflow, Project = _workspace.Root }, CancellationToken.None);
 
-        await Assert.ThrowsAsync<UsageException>(() => Service(store).CreateAsync(
+        var existing = Assert.Single(store.List(_workspace.Root));
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service(store).CreateAsync(
             new ManagedAgentCreateRequest { Name = "WF Hook 2", AgentType = AgentTypes.McsWorkflow, Project = _workspace.Root },
             CancellationToken.None));
+
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("already-registered", failure.ErrorKind);
+        Assert.Contains(existing.DisplayName, failure.Message, StringComparison.Ordinal);
+        Assert.Contains(existing.AgentId, failure.Message, StringComparison.Ordinal);
+        Assert.Contains(new AgentConfigLocator().ConfigFilePath(_workspace.Root), failure.Message, StringComparison.Ordinal);
+        Assert.Contains("msagent agent delete", failure.Remediation, StringComparison.Ordinal);
+        Assert.Single(store.List(_workspace.Root));
+        Assert.Single(_scaffold.Calls);
+    }
+
+    [Theory]
+    [InlineData(true, "a workflow")]
+    [InlineData(false, "an agent project")]
+    public async Task ScaffoldRefusesAnExistingWorkspace(bool workflow, string existingContent)
+    {
+        var store = ManagedAgentFixtures.Store();
+        var workspaceRoot = Path.Combine(_workspace.Root, "WF");
+
+        Directory.CreateDirectory(workspaceRoot);
+        if (workflow)
+        {
+            new FakeWorkflowScaffoldPort().Scaffold(workspaceRoot, "Existing", Guid.NewGuid());
+        }
+        else
+        {
+            File.WriteAllText(Path.Combine(workspaceRoot, "settings.mcs.yml"), "kind: GptComponentMetadata\n");
+        }
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service(store).CreateAsync(
+            new ManagedAgentCreateRequest { Name = "WF", AgentType = AgentTypes.McsWorkflow, Project = _workspace.Root },
+            CancellationToken.None));
+
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("workspace-not-empty", failure.ErrorKind);
+        Assert.Contains(workspaceRoot, failure.Message, StringComparison.Ordinal);
+        Assert.Contains(existingContent, failure.Message, StringComparison.Ordinal);
+        Assert.Contains("--agent-name", failure.Remediation, StringComparison.Ordinal);
+        Assert.Empty(store.List(_workspace.Root));
+        Assert.Empty(_scaffold.Calls);
     }
 
     [Fact]
