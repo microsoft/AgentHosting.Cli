@@ -13,6 +13,7 @@ namespace Microsoft.Agents.Hosting.Cli.Hosting;
 internal sealed class PlaygroundCommandHandler : ICommandHandler<PlaygroundRequest, ILiveTestStreamingResult>
 {
     private readonly Func<LiveTestRequest, LiveTestDestination> _resolve;
+    private readonly Func<LiveTestDestination, bool, CancellationToken, Task<LiveTestDestination>> _discover;
     private readonly IPlaygroundToolLocator _locator;
     private readonly IPlaygroundGlobalInstaller _installer;
     private readonly IPlaygroundLauncher _launcher;
@@ -23,6 +24,7 @@ internal sealed class PlaygroundCommandHandler : ICommandHandler<PlaygroundReque
 
     internal PlaygroundCommandHandler(
         Func<LiveTestRequest, LiveTestDestination> resolve,
+        Func<LiveTestDestination, bool, CancellationToken, Task<LiveTestDestination>> discover,
         IPlaygroundToolLocator locator,
         IPlaygroundGlobalInstaller installer,
         IPlaygroundLauncher launcher,
@@ -32,6 +34,7 @@ internal sealed class PlaygroundCommandHandler : ICommandHandler<PlaygroundReque
         Action<PlaygroundTelemetryDetails> recordTelemetry)
     {
         _resolve = resolve ?? throw new ArgumentNullException(nameof(resolve));
+        _discover = discover ?? throw new ArgumentNullException(nameof(discover));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _installer = installer ?? throw new ArgumentNullException(nameof(installer));
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
@@ -48,6 +51,7 @@ internal sealed class PlaygroundCommandHandler : ICommandHandler<PlaygroundReque
             new PlaygroundExecution(
                 request,
                 _resolve,
+                _discover,
                 _locator,
                 _installer,
                 _launcher,

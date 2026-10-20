@@ -42,7 +42,7 @@ public sealed class PlaygroundCommandTests
     }
 
     [Fact]
-    public async Task PlaygroundHelpUsesTheRequiredHarnessRouteAndOwnOptions()
+    public async Task PlaygroundHelpUsesDiscoveryAndOwnOptions()
     {
         var stdout = new StringWriter();
         var stderr = new StringWriter();
@@ -51,7 +51,7 @@ public sealed class PlaygroundCommandTests
 
         Assert.Equal(0, exitCode);
         Assert.Contains(
-            "msagent test playground --agent-harness <agent-harness> [options]",
+            "msagent test playground [options]",
             stdout.ToString(),
             StringComparison.Ordinal);
         Assert.Contains("--install-playground", stdout.ToString(), StringComparison.Ordinal);
@@ -63,6 +63,8 @@ public sealed class PlaygroundCommandTests
         Assert.Contains("--plain", stdout.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("--query", stdout.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("--conversation-id", stdout.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("--agent-harness", stdout.ToString(), StringComparison.Ordinal);
+        Assert.False(OptionCatalog.DeclaredAliases.ContainsKey("--agent-harness"));
         Assert.Empty(stderr.ToString());
     }
 
@@ -80,9 +82,7 @@ public sealed class PlaygroundCommandTests
             new TestFeatureFlags(),
             handler,
             "test",
-            "playground",
-            "--agent-harness",
-            "standard");
+            "playground");
 
         Assert.Equal(ExitCodes.Usage, disabledHelp.ExitCode);
         Assert.Empty(disabledHelp.Stdout);
@@ -96,6 +96,8 @@ public sealed class PlaygroundCommandTests
     [Theory]
     [InlineData("--query", "hello")]
     [InlineData("--conversation-id", "conversation")]
+    [InlineData("--agent-harness", "standard")]
+    [InlineData("-ah", "github-copilot")]
     public async Task PlaygroundRejectsAskOnlyInputsBeforeDispatch(string option, string value)
     {
         var handler = new RecordingHandler();
@@ -104,8 +106,6 @@ public sealed class PlaygroundCommandTests
             handler,
             "test",
             "playground",
-            "--agent-harness",
-            "standard",
             option,
             value);
 
@@ -143,10 +143,7 @@ public sealed class PlaygroundCommandTests
             .Append("--install-playground");
 
         Assert.Equal(expected, playground.Implementation.Symbols.Select(symbol => symbol.Name));
-        Assert.True(playground.Implementation.Symbols
-            .OfType<CommandOption>()
-            .Single(symbol => symbol.Name == "--agent-harness")
-            .IsRequired);
+        Assert.DoesNotContain(playground.Implementation.Symbols, symbol => symbol.Name == "--agent-harness");
     }
 
     [Fact]
@@ -156,7 +153,6 @@ public sealed class PlaygroundCommandTests
         var request = Assert.IsType<PlaygroundRequest>(InvokeBind(command, new FakeInput(
             values: new Dictionary<string, string?>(StringComparer.Ordinal)
             {
-                ["--agent-harness"] = "github-copilot",
                 ["--project"] = "project",
                 ["--agent-id"] = "agent-id",
                 ["--agent-name"] = "agent-name",
@@ -170,7 +166,6 @@ public sealed class PlaygroundCommandTests
             json: true,
             nonInteractive: true)));
 
-        Assert.Equal("github-copilot", Property(request, "AgentType"));
         Assert.Equal("project", Property(request, "Project"));
         Assert.Equal("agent-id", Property(request, "AgentId"));
         Assert.Equal("agent-name", Property(request, "AgentName"));
@@ -192,7 +187,6 @@ public sealed class PlaygroundCommandTests
         var request = Assert.IsType<PlaygroundRequest>(InvokeBind(command, new FakeInput(
             values: new Dictionary<string, string?>(StringComparer.Ordinal)
             {
-                ["--agent-harness"] = "standard",
                 ["--project"] = "project",
                 ["--schema-name"] = "schema",
                 ["--environment-id"] = "environment",
@@ -205,7 +199,6 @@ public sealed class PlaygroundCommandTests
         var liveTestRequest = request.ToLiveTestRequest();
 
         Assert.IsType<LiveTestRequest>(liveTestRequest);
-        Assert.Equal("standard", Property(liveTestRequest, "AgentType"));
         Assert.Equal("project", Property(liveTestRequest, "Project"));
         Assert.Equal("schema", Property(liveTestRequest, "SchemaName"));
         Assert.Equal("environment", Property(liveTestRequest, "EnvironmentId"));

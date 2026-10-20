@@ -47,7 +47,7 @@ MCS routes and shared authentication/environment commands remain enabled by defa
 | `msagent agent deploy --agent-id … --package-revision …` | Create explicit AMS Deployment state selecting an existing Package Revision and await the current target-routed AHRG projection. Provisional fN13j notation. |
 | `msagent agent deploy --deployment-id …` / `--deployment-name …` | Push an MCS workspace to an existing MCS deployment, with optional agent selectors, `--publish`, and `--overwrite`. |
 | `msagent test ask --query <text>` | Send one live query to a selected standard or GitHub Copilot Harness agent. Requires `LiveTestFeatures`; may perform real actions. |
-| `msagent test playground --agent-harness <agent-harness>` | Launch the M365 Agents Playground for a selected live agent. Requires `LiveTestFeatures`; may perform real actions. |
+| `msagent test playground` | Launch the M365 Agents Playground for a selected live agent. Requires `LiveTestFeatures`; may perform real actions. |
 | `msagent agent eval run` | Run a Copilot Studio evaluation against an MCS agent: run a saved test set with `--testset`, or create one from `--from-csv` / `--generate` plus `--name`. `--watch` polls until it finishes, `--published` targets the published agent, and `--output` writes the finished run as JSON once `--watch` has waited for it. Uses Copilot Credits; the cost is reported when the run finishes. |
 | `msagent agent eval list` | List the agent's evaluation runs, newest first. `--limit` bounds the listing (default 20). |
 | `msagent agent eval show --run-id <run-id>` | Show one run with its score, credits and per-conversation grader results. `--transcript` adds every conversation's questions and answers, shortened; `--conversation <n>` adds just one; `--output <file>` writes the full, untruncated run (`.json` writes JSON, any other name writes Markdown). |
@@ -104,15 +104,16 @@ specified environment and shared with that account. Public cloud is the
 supported target; CodeAgent/AHRG is not.
 
 ```text
-msagent test ask --query "Explain this policy" --agent-harness standard --project <project> --agent-name <agent> --deployment-name <deployment>
-msagent test ask --query "Hello" --agent-harness github-copilot --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label>
-msagent test ask --query "Clarify" --agent-harness standard --conversation-id <returned-id> --json --agent-id <agent-id>
-msagent test ask --query "Hello" --agent-harness standard --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label> --plain
+msagent test ask --query "Explain this policy" --project <project> --agent-name <agent> --deployment-name <deployment>
+msagent test ask --query "Hello" --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label>
+msagent test ask --query "Clarify" --conversation-id <returned-id> --json --agent-id <agent-id>
+msagent test ask --query "Hello" --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label> --plain
 ```
 
-`--agent-harness` is required and accepts `standard` or `github-copilot`.
-`github-copilot` explicitly selects the agentic-runtime route on the same
-environment host; the command never falls back between runtime endpoints.
+The beta Copilot Studio client uses the discovery service to resolve the runtime
+endpoints from the environment and schema name. No harness selection is needed.
+Discovery failure stops the invocation; the command never guesses or falls back
+between runtime endpoints.
 
 The configured route reads `agent.config.json` and requires an explicit deployment
 or exactly one marked default; it never substitutes the home/current environment.
@@ -152,7 +153,7 @@ from the MCS implementation. No numerical release SLO or live baseline is claime
 
 ### M365 Agents Playground test (MVP)
 
-`msagent test playground --agent-harness standard|github-copilot` launches the
+`msagent test playground` launches the
 M365 Agents Playground in the foreground for the same selected agent as `test ask`.
 It uses the same agent selectors as `test ask` and the same resolver, but does not accept `--query` or `--conversation-id`.
 The command is gated by the existing
@@ -160,17 +161,20 @@ The command is gated by the existing
 this command, with no separate playground flag.
 
 ```text
-msagent test playground --agent-harness standard --project <project> --agent-name <agent> --deployment-name <deployment>
-msagent test playground --agent-harness github-copilot --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label>
+msagent test playground --project <project> --agent-name <agent> --deployment-name <deployment>
+msagent test playground --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label>
 ```
 
-Both harnesses are launched against the resolved DirectEngine endpoint with the
-public client configuration needed by the package. The package owns device-code
+The CLI uses the selected signed-in account and delegated
+`CopilotStudio.Copilots.Invoke` permission to query the discovery service, without
+starting a conversation. It passes the discovered DirectEngine endpoint and
+public client configuration to the package. Discovery failure prevents launch.
+The package owns device-code
 or browser authentication in the attached foreground console; `msagent` does
 not hand it tokens or secrets. The command reports the selected
 `agentsplayground` path and version. Readiness is established immediately when
 the process starts. The package owns authentication timing; `msagent` does not
-wait for authentication, and process start is not proof that authentication
+wait for the package's authentication, and process start is not proof that authentication
 succeeded.
 
 #### Playground installation and options

@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Operations;
 
@@ -9,7 +8,6 @@ public sealed record LiveTestDestination(
     string TenantId,
     string SchemaName,
     string TargetSource,
-    LiveTestAgentType AgentType = LiveTestAgentType.Standard,
     Uri? Endpoint = null);
 
 /// <summary>One identity- and destination-bound invocation of the live MCS client.</summary>

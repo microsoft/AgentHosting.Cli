@@ -29,10 +29,10 @@ Direct configuration uses Entra ID to connect to the copilot studio agent using 
 If you want to test your agent in a terminal, typically using non-interactive with GitHub Copilot, use `msagent test ask`. Non-interactive commands for testing only support direct (using copilot studio client) using Entra ID and does not support directline. The agent will run using the signed in users’ credentials that agree to the interaction. If you require testing the agent in annon mode, directline must be used via the agent playground.
 
 ```
-msagent test ask --agent-harness <standard|github-copilot> [--query "<your question>"] [--agent-name <agentname> | --agent-id <agentid> | --schema-name <schemaname>] [--deployment-name <deploymentname> | --deployment-id <deploymentid>]
+msagent test ask [--query "<your question>"] [--agent-name <agentname> | --agent-id <agentid> | --schema-name <schemaname>] [--deployment-name <deploymentname> | --deployment-id <deploymentid>]
 ```
 
-- `--agent-harness` (`-ah`, required) selects the harness used to send the query: `standard` or `github-copilot`.
+- The Copilot Studio client's discovery service resolves the runtime endpoints from the environment and schema name; no harness argument is needed. Playground also discovers its app endpoint automatically, using the selected CLI account before the playground's own sign-in.
 - `--query` (`-q`) is the literal question to send. Omit it to be prompted for it interactively. Live actions the query triggers are not rolled back, and the query may enter your shell history.
 - Select the agent and deployment the same way as other `msagent` commands: `--project`, one of `--agent-id`/`--agent-name`/`--schema-name`, and optionally `--deployment-id`/`--deployment-name` (and `--environment-id`/`--tenant` to assert the destination).
 - `--conversation-id` continues an existing conversation; omit it to start a new one (the id is not saved automatically, so save it yourself to continue later).
@@ -41,7 +41,7 @@ msagent test ask --agent-harness <standard|github-copilot> [--query "<your quest
 Example:
 
 ```
-msagent test ask --agent-harness github-copilot --agent-name agentname --deployment-name dev --query "What is your return policy?"
+msagent test ask --agent-name agentname --deployment-name dev --query "What is your return policy?"
 ```
 
 Expect a browser to open if this is the first time you have used this to agree to using your credentials to run the copilot studio agent.

@@ -26,7 +26,6 @@ public static class OptionCatalog
     {
         ["--account"] = "-acc",
         ["--agent-id"] = "-aid",
-        ["--agent-harness"] = "-ah",
         ["--agent-name"] = "-an",
         ["--agent-type"] = "-at",
         ["--app-id"] = "-app",

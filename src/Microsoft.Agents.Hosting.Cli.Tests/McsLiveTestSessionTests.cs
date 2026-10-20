@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio.AskClient;
-using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
@@ -73,6 +72,12 @@ public sealed class McsLiveTestSessionTests
         Assert.Equal("service-conversation", session.ConversationId);
         Assert.Equal("service-conversation", session.ServiceConversationId);
         Assert.Equal(2, handler.Requests.Count);
+        var discovery = Assert.Single(handler.DiscoveryRequests);
+        Assert.Equal(HttpMethod.Get, discovery.Method);
+        Assert.Equal(
+            $"https://{McsLiveTargetValidation.GetAuthority(Target)}/copilotstudio/agents/contoso_schema/conversation-endpoints",
+            discovery.RequestUri!.AbsoluteUri);
+        Assert.Equal("delegated-token", discovery.Headers.Authorization?.Parameter);
         Assert.Contains("/conversations?api-version=2022-03-01-preview", handler.Requests[0].RequestUri!.PathAndQuery);
         Assert.EndsWith("/service-conversation", handler.Requests[1].RequestUri!.AbsolutePath, StringComparison.Ordinal);
         Assert.All(handler.Requests, request => Assert.Equal("Bearer", request.Headers.Authorization?.Scheme));
@@ -84,7 +89,7 @@ public sealed class McsLiveTestSessionTests
     }
 
     [Fact]
-    public async Task GitHubCopilotUsesDirectConnectUrlForStartAndQueryAndContinuesAfterEndOfConversation()
+    public async Task DiscoverySelectsGitHubCopilotForStartAndQueryAndContinuesAfterEndOfConversation()
     {
         var endpoint = new Uri(
             "https://a47151cf4f34488fb377ebe84e17b4.78.environment.api.powerplatform.com/" +
@@ -92,8 +97,6 @@ public sealed class McsLiveTestSessionTests
         var target = Target with
         {
             EnvironmentId = "A47151CF-4F34-488F-B377-EBE84E17B478",
-            AgentType = LiveTestAgentType.GitHubCopilot,
-            Endpoint = endpoint,
         };
         var handler = new RecordingHandler(
             JsonResponse("""
@@ -110,7 +113,10 @@ public sealed class McsLiveTestSessionTests
                 {"type":"message","text":"still available","conversation":{"id":"harness-conversation"}}
               ]
             }
-            """));
+            """))
+        {
+            DiscoveryEndpoint = endpoint,
+        };
 
         var tokenProvider = new RecordingTokenProvider("token");
         await using var session = new McsLiveTestSession(
@@ -123,6 +129,7 @@ public sealed class McsLiveTestSessionTests
         Assert.Equal("endOfConversation", started[0].GetProperty("type").GetString());
         Assert.Equal("still available", GetText(Assert.Single(queried)));
         Assert.Equal(2, handler.Requests.Count);
+        Assert.Single(handler.DiscoveryRequests);
         Assert.Equal(endpoint.Host, handler.Requests[0].RequestUri!.Host);
         Assert.Equal(endpoint.AbsolutePath, handler.Requests[0].RequestUri!.AbsolutePath);
         Assert.Equal("?api-version=1", handler.Requests[0].RequestUri!.Query);
@@ -135,6 +142,155 @@ public sealed class McsLiveTestSessionTests
         Assert.All(handler.Requests, request =>
             Assert.Contains(request.Headers.Accept, header =>
                 string.Equals(header.MediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [Fact]
+    public void DiscoveryOnlyApprovesAdvertisedOperations()
+    {
+        var discovery = DiscoveredEndpoints();
+        var endpoint = StandardEndpoint(discovery.DiscoveryUri);
+        var conversation = endpoint.GetLeftPart(UriPartial.Path) + "/c" + endpoint.Query;
+
+        Assert.True(discovery.IsExpectedRequestResource(discovery.DiscoveryUri.AbsoluteUri));
+        Assert.True(discovery.IsExpectedRequestResource(endpoint.AbsoluteUri));
+        Assert.True(discovery.IsExpectedRequestResource(conversation));
+        Assert.False(new McsLiveEndpointDiscovery(Target).IsExpectedRequestResource(conversation));
+        Assert.False(discovery.IsExpectedRequestResource(conversation.Replace("api-version=2022-03-01-preview", "api-version=1", StringComparison.Ordinal)));
+        Assert.False(discovery.IsExpectedRequestResource(conversation.Replace("/c?", "/c/other?", StringComparison.Ordinal)));
+        Assert.False(discovery.IsExpectedRequestResource(conversation.Replace("/c?", "/c%2fother?", StringComparison.Ordinal)));
+        Assert.False(discovery.IsExpectedRequestResource(conversation.Replace(endpoint.Host, "untrusted.example", StringComparison.Ordinal)));
+    }
+
+    [Theory]
+    [InlineData("existing-id")]
+    [InlineData("space id")]
+    [InlineData("unicode-\u00e9")]
+    public async Task DiscoveryPreservesSafeEncodedConversationIds(string conversationId)
+    {
+        var handler = new RecordingHandler(JsonResponse("""{"activities":[]}"""));
+        await using var session = new McsLiveTestSession(Target, "token", handler);
+
+        await ReadAsync(session.QueryAsync("query", conversationId));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.EndsWith("/" + Uri.EscapeDataString(conversationId), request.RequestUri!.AbsolutePath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DiscoveryUsesAdvertisedExecuteUrlWithoutStartingAConversation()
+    {
+        var endpoint = new Uri("https://island.environment.api.powerplatform.com/runtime/conversations?api-version=7");
+        var execute = "https://island.environment.api.powerplatform.com/runtime/turn/{conversationId}?api-version=8";
+        var handler = new RecordingHandler(JsonResponse("""{"activities":[]}"""))
+        {
+            DiscoveryResponse = JsonResponse(JsonSerializer.Serialize(new
+            {
+                createConversation = endpoint.AbsoluteUri,
+                executeTurn = execute,
+                continueTurn = execute,
+            })),
+        };
+        await using var session = new McsLiveTestSession(Target, "token", handler);
+
+        await ReadAsync(session.QueryAsync("query", "existing-id"));
+
+        Assert.Single(handler.DiscoveryRequests);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(execute.Replace("{conversationId}", "existing-id", StringComparison.Ordinal), request.RequestUri!.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task PlaygroundDiscoveryDoesNotStartAConversation()
+    {
+        var endpoint = new Uri(
+            $"https://{McsLiveTargetValidation.GetAuthority(Target)}/copilotstudio/agenticruntime/3p/dataverse-backed/authenticated/bots/contoso_schema/conversations?api-version=1");
+        var handler = new RecordingHandler { DiscoveryEndpoint = endpoint };
+        await using var session = new McsLiveTestSession(Target, "token", handler);
+
+        Assert.Equal(endpoint, await session.DiscoverEndpointAsync());
+        Assert.Single(handler.DiscoveryRequests);
+        Assert.Empty(handler.Requests);
+        Assert.Null(session.ConversationId);
+    }
+
+    [Theory]
+    [InlineData("https://untrusted.example/conversations")]
+    [InlineData("https://host.environment.api.powerplatform.com.evil.example/conversations")]
+    [InlineData("http://host.environment.api.powerplatform.com/conversations")]
+    [InlineData("https://host.environment.api.powerplatform.com:444/conversations")]
+    [InlineData("https://user@host.environment.api.powerplatform.com/conversations")]
+    [InlineData("https://host.environment.api.powerplatform.com/conversations#fragment")]
+    public async Task InvalidDiscoveredEndpointFailsBeforeAnyConversationRequest(string endpoint)
+    {
+        var handler = new RecordingHandler { DiscoveryEndpoint = new Uri(endpoint) };
+        await using var session = new McsLiveTestSession(Target, "token", handler);
+
+        await Assert.ThrowsAsync<McsLiveTestProtocolException>(
+            async () => await ReadAsync(session.QueryAsync("query", "c")));
+        Assert.Single(handler.DiscoveryRequests);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    [InlineData("null")]
+    [InlineData("{\"createConversation\":42}")]
+    [InlineData("{\"createConversation\":\"CANARY-secret\"}")]
+    [InlineData("{\"CANARY-secret")]
+    public async Task InvalidDiscoveryResponseIsSanitizedAndDoesNotFallBack(string json)
+    {
+        var handler = new RecordingHandler { DiscoveryResponse = JsonResponse(json) };
+        await using var session = new McsLiveTestSession(Target, "token", handler);
+
+        var error = await Assert.ThrowsAsync<McsLiveTestProtocolException>(
+            async () => await ReadAsync(session.QueryAsync("query", "c")));
+
+        Assert.DoesNotContain("CANARY", error.ToString(), StringComparison.Ordinal);
+        Assert.Null(error.InnerException);
+        Assert.Single(handler.DiscoveryRequests);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Found)]
+    public async Task DiscoveryFailureIsNotRetriedAndDoesNotFallBack(HttpStatusCode status)
+    {
+        var handler = new RecordingHandler
+        {
+            DiscoveryResponse = new HttpResponseMessage(status)
+            {
+                Content = new StringContent("CANARY-secret-discovery-response"),
+                Headers = { Location = new Uri("https://untrusted.example") },
+            },
+        };
+        await using var session = new McsLiveTestSession(Target, "token", handler);
+
+        var error = await Assert.ThrowsAsync<McsLiveTestTransportException>(
+            async () => await ReadAsync(session.QueryAsync("query", "c")));
+
+        Assert.Equal(status, error.StatusCode);
+        Assert.DoesNotContain("CANARY", error.ToString(), StringComparison.Ordinal);
+        Assert.Single(handler.DiscoveryRequests);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task CancelledPlaygroundDiscoveryDoesNotSendARequest()
+    {
+        var handler = new RecordingHandler();
+        await using var session = new McsLiveTestSession(Target, "token", handler);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => session.DiscoverEndpointAsync(cancellation.Token));
+
+        Assert.Empty(handler.DiscoveryRequests);
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
@@ -155,6 +311,7 @@ public sealed class McsLiveTestSessionTests
         Assert.Equal("supplied-id", session.ConversationId);
         Assert.Equal("supplied-id", session.ServiceConversationId);
         Assert.Single(handler.Requests);
+        Assert.Single(handler.DiscoveryRequests);
         Assert.DoesNotContain("/conversations?api-version=", handler.Requests[0].RequestUri!.PathAndQuery);
 
         await using var second = new McsLiveTestSession(Target, "token-b", handler);
@@ -381,7 +538,7 @@ public sealed class McsLiveTestSessionTests
         {
             Content = content,
         });
-        using var bridge = new McsResponseBridgeHandler(handler, Target, _ => { }, _ => { });
+        using var bridge = new McsResponseBridgeHandler(handler, DiscoveredEndpoints(), _ => { }, _ => { });
         using var invoker = new HttpMessageInvoker(bridge);
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -435,7 +592,7 @@ public sealed class McsLiveTestSessionTests
         {
             Content = content,
         });
-        using var bridge = new McsResponseBridgeHandler(handler, Target, _ => { }, _ => { });
+        using var bridge = new McsResponseBridgeHandler(handler, DiscoveredEndpoints(), _ => { }, _ => { });
         using var invoker = new HttpMessageInvoker(bridge);
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -770,13 +927,7 @@ public sealed class McsLiveTestSessionTests
             Target with { SchemaName = "bad/schema" }, "token", new RecordingHandler()));
         Assert.Throws<ArgumentException>(() => new McsLiveTestSession(Target, " ", new RecordingHandler()));
         Assert.Throws<ArgumentException>(() => new McsLiveTestSession(
-            Target with
-            {
-                AgentType = LiveTestAgentType.GitHubCopilot,
-                Endpoint = new Uri("https://untrusted.example/conversations?api-version=1"),
-            },
-            "token",
-            new RecordingHandler()));
+            Target with { TenantId = "invalid" }, "token", new RecordingHandler()));
 
         var handler = new RecordingHandler(JsonResponse("""{"activities":[]}"""));
         var tokenProvider = new RecordingTokenProvider("token");
@@ -869,6 +1020,23 @@ public sealed class McsLiveTestSessionTests
         Content = new StringContent(json, Encoding.UTF8, "application/json")
     };
 
+    private static string DiscoveryJson(Uri endpoint) => JsonSerializer.Serialize(new
+    {
+        createConversation = endpoint.AbsoluteUri,
+        executeTurn = endpoint.GetLeftPart(UriPartial.Path) + "/{conversationId}" + endpoint.Query,
+        continueTurn = endpoint.GetLeftPart(UriPartial.Path) + "/{conversationId}/continue" + endpoint.Query,
+    });
+
+    private static Uri StandardEndpoint(Uri discoveryUri) => new(
+        $"https://{discoveryUri.Host}/copilotstudio/dataverse-backed/authenticated/bots/contoso_schema/conversations?api-version=2022-03-01-preview");
+
+    private static McsLiveEndpointDiscovery DiscoveredEndpoints()
+    {
+        var discovery = new McsLiveEndpointDiscovery(Target);
+        discovery.ReadResponse(DiscoveryJson(StandardEndpoint(discovery.DiscoveryUri)));
+        return discovery;
+    }
+
     private static string GetText(JsonElement activity) => activity.GetProperty("text").GetString()!;
 
     private static IEnumerable<Exception> EnumerateExceptions(Exception exception)
@@ -930,18 +1098,28 @@ public sealed class McsLiveTestSessionTests
         }
 
         public List<HttpRequestMessage> Requests { get; } = [];
+        public List<HttpRequestMessage> DiscoveryRequests { get; } = [];
         public List<string?> RequestBodies { get; } = [];
+        public Uri? DiscoveryEndpoint { get; init; }
+        public HttpResponseMessage? DiscoveryResponse { get; init; }
         public string TokenAudience { get; set; } = "https://api.powerplatform.com";
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            Requests.Add(request);
-            RequestBodies.Add(request.Content?.ReadAsStringAsync(CancellationToken.None).GetAwaiter().GetResult());
             if (request.Headers.Authorization is null)
             {
                 throw new InvalidOperationException("The SDK did not attach a bearer token.");
             }
 
+            if (request.Method == HttpMethod.Get)
+            {
+                DiscoveryRequests.Add(request);
+                return Task.FromResult(DiscoveryResponse ??
+                    JsonResponse(DiscoveryJson(DiscoveryEndpoint ?? StandardEndpoint(request.RequestUri!))));
+            }
+
+            Requests.Add(request);
+            RequestBodies.Add(request.Content?.ReadAsStringAsync(CancellationToken.None).GetAwaiter().GetResult());
             if (_responses.Count == 0)
             {
                 throw new InvalidOperationException("Unexpected replay.");
@@ -967,12 +1145,17 @@ public sealed class McsLiveTestSessionTests
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            RequestCount++;
             if (request.Headers.Authorization is null)
             {
                 throw new InvalidOperationException("The SDK did not attach a bearer token.");
             }
 
+            if (request.Method == HttpMethod.Get)
+            {
+                return JsonResponse(DiscoveryJson(StandardEndpoint(request.RequestUri!)));
+            }
+
+            RequestCount++;
             await Task.Yield();
             return response;
         }

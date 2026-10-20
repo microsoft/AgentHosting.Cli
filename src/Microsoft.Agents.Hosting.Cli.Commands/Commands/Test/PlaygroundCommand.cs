@@ -14,7 +14,6 @@ public sealed class PlaygroundCommand : CommandBase<PlaygroundRequest, ILiveTest
     /// <inheritdoc />
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
-        OptionCatalog.Value("--agent-harness", "Agent harness: standard or github-copilot.", required: true),
         OptionCatalog.Value("--project", "Local project directory holding agent.config.json."),
         OptionCatalog.Value("--agent-id", "Managed-agent record id."),
         OptionCatalog.Value("--agent-name", "Managed-agent record name."),
@@ -30,7 +29,6 @@ public sealed class PlaygroundCommand : CommandBase<PlaygroundRequest, ILiveTest
     /// <inheritdoc />
     protected override PlaygroundRequest Bind(ICommandInput input) => new()
     {
-        AgentType = input.GetString("--agent-harness")!,
         Project = input.GetString("--project"),
         AgentId = input.GetString("--agent-id"),
         AgentName = input.GetString("--agent-name"),

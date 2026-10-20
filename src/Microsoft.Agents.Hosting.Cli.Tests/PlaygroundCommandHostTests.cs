@@ -54,7 +54,7 @@ public sealed class PlaygroundCommandHostTests
             new TestFeatureFlags(FeatureName.LiveTestFeatures));
 
         var exitCode = await cli.InvokeAsync(
-            ["test", "playground", "--agent-harness", "standard", "--json"],
+            ["test", "playground", "--json"],
             stdout,
             stderr,
             color: false);
@@ -76,7 +76,7 @@ public sealed class PlaygroundCommandHostTests
             new TestFeatureFlags());
 
         var exitCode = await cli.InvokeAsync(
-            ["test", "playground", "--agent-harness", "standard"],
+            ["test", "playground"],
             stdout,
             stderr,
             color: false);

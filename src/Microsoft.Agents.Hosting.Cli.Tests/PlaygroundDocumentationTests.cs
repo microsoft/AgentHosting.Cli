@@ -9,10 +9,12 @@ public sealed class PlaygroundDocumentationTests
         var section = Section(readme, "### M365 Agents Playground test (MVP)");
 
         Assert.Contains(
-            "| `msagent test playground --agent-harness <agent-harness>` |",
+            "| `msagent test playground` |",
             readme,
             StringComparison.Ordinal);
-        Assert.Contains("`msagent test playground --agent-harness standard|github-copilot`", section, StringComparison.Ordinal);
+        Assert.Contains("`msagent test playground`", section, StringComparison.Ordinal);
+        Assert.Contains("discovery service", section, StringComparison.Ordinal);
+        Assert.DoesNotContain("--agent-harness", readme, StringComparison.Ordinal);
         Assert.Contains("same agent selectors as `test ask`", section, StringComparison.Ordinal);
         Assert.Contains("does not accept `--query` or `--conversation-id`", section, StringComparison.Ordinal);
         Assert.Contains("`LiveTestFeatures`", section, StringComparison.Ordinal);

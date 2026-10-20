@@ -27,9 +27,6 @@ public sealed record PlaygroundRequest
     /// <summary>The destination tenant id.</summary>
     public string? Tenant { get; init; }
 
-    /// <summary>The selected agent harness.</summary>
-    public string AgentType { get; init; } = "standard";
-
     /// <summary>Whether machine-readable output was requested.</summary>
     public bool Json { get; init; }
 
@@ -53,6 +50,5 @@ public sealed record PlaygroundRequest
         DeploymentName = DeploymentName,
         EnvironmentId = EnvironmentId,
         Tenant = Tenant,
-        AgentType = AgentType,
     };
 }
