@@ -217,6 +217,7 @@ internal static class Program
         services.AddSingleton<ManagedAgentListService>();
         services.AddSingleton<ManagedAgentShowService>();
         services.AddSingleton<ManagedAgentDeleteService>();
+        services.AddSingleton<ITenantUserDirectoryPort, GraphTenantUserDirectoryAdapter>();
         services.AddSingleton<ManagedAgentShareService>();
         services.AddSingleton<ManagedAgentPullService>();
         services.AddSingleton<ManagedAgentDeployService>();

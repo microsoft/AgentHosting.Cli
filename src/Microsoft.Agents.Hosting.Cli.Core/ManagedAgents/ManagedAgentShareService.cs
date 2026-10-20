@@ -14,12 +14,16 @@ public sealed class ManagedAgentShareService
 {
     private const string PortalBaseUrl = "https://copilotstudio.microsoft.com";
 
+    private static readonly TimeSpan DefaultTenantNamingTimeout = TimeSpan.FromSeconds(10);
+
     private readonly ManagedAgentResolver _resolver;
     private readonly CopilotEnvironmentResolver _environmentResolver;
     private readonly ICopilotCatalogPort _catalog;
     private readonly CopilotProjectIdentityReader _projectIdentities;
     private readonly IAgentSharingPort _sharing;
     private readonly IDirectoryPrincipalPort _directory;
+    private readonly ITenantUserDirectoryPort _tenantDirectory;
+    private readonly TimeSpan _tenantNamingTimeout;
 
     /// <summary>Creates the service.</summary>
     /// <param name="resolver">Resolves records from selectors.</param>
@@ -28,7 +32,9 @@ public sealed class ManagedAgentShareService
     /// <param name="projectIdentities">Reads the project's declared schema name.</param>
     /// <param name="sharing">Reads and writes the agent's sharing state.</param>
     /// <param name="directory">Resolves and names directory principals.</param>
-    public ManagedAgentShareService(ManagedAgentResolver resolver, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, CopilotProjectIdentityReader projectIdentities, IAgentSharingPort sharing, IDirectoryPrincipalPort directory)
+    /// <param name="tenantDirectory">Resolves users the environment has not provisioned.</param>
+    /// <param name="tenantNamingTimeout">How long <c>share show</c> waits on the tenant directory for names, showing object ids for any it has not returned by then. Defaults to ten seconds.</param>
+    public ManagedAgentShareService(ManagedAgentResolver resolver, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, CopilotProjectIdentityReader projectIdentities, IAgentSharingPort sharing, IDirectoryPrincipalPort directory, ITenantUserDirectoryPort tenantDirectory, TimeSpan? tenantNamingTimeout = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
@@ -36,6 +42,8 @@ public sealed class ManagedAgentShareService
         _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
         _sharing = sharing ?? throw new ArgumentNullException(nameof(sharing));
         _directory = directory ?? throw new ArgumentNullException(nameof(directory));
+        _tenantDirectory = tenantDirectory ?? throw new ArgumentNullException(nameof(tenantDirectory));
+        _tenantNamingTimeout = tenantNamingTimeout ?? DefaultTenantNamingTimeout;
     }
 
     /// <summary>Grants a principal access to the agent.</summary>
@@ -152,13 +160,31 @@ public sealed class ManagedAgentShareService
             return ReadOnlyDictionary<string, DirectoryPrincipal>.Empty;
         }
 
+        var names = new Dictionary<string, DirectoryPrincipal>(await BestEffortAsync(() => _directory.ResolveManyAsync(environment, objectIds, cancellationToken), ReadOnlyDictionary<string, DirectoryPrincipal>.Empty, IsRecoverable).ConfigureAwait(false), StringComparer.OrdinalIgnoreCase);
+        var unnamed = objectIds.Where(objectId => !names.ContainsKey(objectId)).ToArray();
+
+        if (unnamed.Length > 0)
+        {
+            await NameThroughTenantAsync(environment.TenantId, unnamed, names, cancellationToken).ConfigureAwait(false);
+        }
+
+        return names;
+    }
+
+    private async Task NameThroughTenantAsync(string tenantId, IReadOnlyCollection<string> objectIds, Dictionary<string, DirectoryPrincipal> names, CancellationToken cancellationToken)
+    {
+        using var timeLimit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeLimit.CancelAfter(_tenantNamingTimeout);
+
         try
         {
-            return await _directory.ResolveManyAsync(environment, objectIds, cancellationToken).ConfigureAwait(false);
+            await foreach (var principal in _tenantDirectory.ResolveManyAsync(tenantId, objectIds, timeLimit.Token).ConfigureAwait(false))
+            {
+                names.TryAdd(principal.ObjectId, principal);
+            }
         }
-        catch (Exception failure) when (IsRecoverable(failure))
+        catch (Exception failure) when (!cancellationToken.IsCancellationRequested && (failure is AgentHostingException or OperationCanceledException || IsRecoverable(failure)))
         {
-            return ReadOnlyDictionary<string, DirectoryPrincipal>.Empty;
         }
     }
 
@@ -287,31 +313,24 @@ public sealed class ManagedAgentShareService
         }
 
         var selector = user.Trim();
-        var isObjectId = Guid.TryParse(selector, out var objectId);
-        var resolved = isObjectId
-            ? await TryNameAsync(environment, selector, cancellationToken).ConfigureAwait(false)
-            : await _directory.ResolveUserAsync(environment, selector, cancellationToken).ConfigureAwait(false);
 
-        if (resolved is not null)
+        if (Guid.TryParse(selector, out var objectId))
         {
-            return resolved;
+            return await BestEffortAsync(() => _directory.ResolveUserAsync(environment, selector, cancellationToken), null, IsRecoverable).ConfigureAwait(false) ?? new DirectoryPrincipal { ObjectId = objectId.ToString(), DisplayName = objectId.ToString(), PrincipalType = "Unknown" };
         }
 
-        return isObjectId
-            ? new DirectoryPrincipal { ObjectId = objectId.ToString(), DisplayName = objectId.ToString(), PrincipalType = "Unknown" }
-            : throw ManagedAgentException.SharePrincipalNotFound(selector, environment.EnvironmentId);
+        return await _directory.ResolveUserAsync(environment, selector, cancellationToken).ConfigureAwait(false) ?? await _tenantDirectory.FindUserAsync(environment.TenantId, selector, cancellationToken).ConfigureAwait(false) ?? throw ManagedAgentException.SharePrincipalNotFound(selector, environment.TenantId);
     }
 
-    /// <summary>Names one principal, best effort, so an unreachable directory never fails a share by object id.</summary>
-    private async Task<DirectoryPrincipal?> TryNameAsync(CopilotEnvironmentContext environment, string selector, CancellationToken cancellationToken)
+    private static async Task<TResult> BestEffortAsync<TResult>(Func<Task<TResult>> lookup, TResult fallback, Func<Exception, bool> isRecoverable)
     {
         try
         {
-            return await _directory.ResolveUserAsync(environment, selector, cancellationToken).ConfigureAwait(false);
+            return await lookup().ConfigureAwait(false);
         }
-        catch (Exception failure) when (IsRecoverable(failure))
+        catch (Exception failure) when (isRecoverable(failure))
         {
-            return null;
+            return fallback;
         }
     }
 
