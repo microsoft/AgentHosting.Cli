@@ -117,6 +117,10 @@ between runtime endpoints.
 
 The configured route reads `agent.config.json` and requires an explicit deployment
 or exactly one marked default; it never substitutes the home/current environment.
+A single deployment is not automatically a default. If target selection reports
+no configured default deployment, pass its name explicitly, for example
+`msagent test ask -dn dev -q "What can you do?"`. This validation happens before
+authentication, endpoint discovery, or any SDK request.
 The fully explicit route needs schema, environment, tenant and a deployment label;
 the label records your selection but is **not** a verified registry association.
 An omitted conversation ID starts a new conversation; reusing an ID must be

@@ -358,7 +358,8 @@ public sealed class LiveTestTargetResolverTests
             HomeEnvironmentId = "home-environment",
         });
 
-        var failure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(store, store, new AgentConfigLocator()).Resolve(new LiveTestTargetRequest
+        var resolver = new LiveTestTargetResolver(store, store, new AgentConfigLocator());
+        var failure = Assert.Throws<LiveTestTargetResolutionException>(() => resolver.Resolve(new LiveTestTargetRequest
         {
             Project = project.Root,
             AgentId = "agent-1",
@@ -366,6 +367,16 @@ public sealed class LiveTestTargetResolverTests
 
         Assert.Equal("invalid-configuration", failure.ErrorKind);
         Assert.Contains("default", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("--deployment-name", failure.Remediation, StringComparison.Ordinal);
+
+        var target = resolver.Resolve(new LiveTestRequest
+        {
+            Project = project.Root,
+            DeploymentName = "dev",
+        });
+
+        Assert.Equal("target-environment", target.EnvironmentId);
+        Assert.Equal("schema-one", target.SchemaName);
     }
 
     [Fact]

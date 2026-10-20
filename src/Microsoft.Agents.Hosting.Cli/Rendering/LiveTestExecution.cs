@@ -57,6 +57,7 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult
         string? errorKind = null;
         string? errorMessage = null;
         string? remediation = null;
+        bool sdkStarted = false;
         int exitCode = 0;
         try
         {
@@ -67,6 +68,7 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult
             var token = await _acquireToken(target, _request.NonInteractive, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             await using var session = _createSession(target, token, cancellationToken);
+            sdkStarted = true;
             if (conversationId is null)
             {
                 await foreach (var activity in session.StartAsync(cancellationToken).WithCancellation(cancellationToken))
@@ -107,7 +109,7 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult
                     human!.WriteConversationId(conversationId);
                 if (status != "completed")
                     human!.WriteError($"{errorMessage} {remediation}");
-                human!.Finish(status == "completed");
+                human!.Finish(status == "completed", sdkStarted);
             }
         }
         catch (Exception failure)
@@ -200,9 +202,9 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult
         if (failure is LiveTestFailure typed)
             return ("failed", typed.ExitCode, typed.Kind, typed.Message, typed.Remediation);
         if (failure is LiveTestTargetResolutionException targetFailure)
-            return ("failed", 2, targetFailure.ErrorKind ?? "invalid-configuration",
-                "The live-test destination could not be selected.",
-                "Check the agent, deployment, schema, environment, and tenant options.");
+            return ("failed", targetFailure.ExitCode, targetFailure.ErrorKind ?? "invalid-configuration",
+                targetFailure.Message,
+                targetFailure.Remediation ?? "Check the agent, deployment, schema, environment, and tenant options.");
         if (failure is ManagedAgentException)
             return ("failed", 2, "invalid-configuration", "The local agent configuration could not be read.",
                 "Check --project and the managed-agent configuration.");
