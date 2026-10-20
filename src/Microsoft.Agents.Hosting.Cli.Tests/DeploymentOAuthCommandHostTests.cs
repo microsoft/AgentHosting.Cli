@@ -257,7 +257,8 @@ public sealed class DeploymentOAuthCommandHostTests
             "--debug");
 
         Assert.Equal(ExitCodes.Success, exitCode);
-        Assert.Empty(stdout);
+        Assert.Contains("/connections/first", stdout);
+        Assert.Contains("/connections/second", stdout);
         Assert.StartsWith("ARM response:", stderr);
         Assert.Contains("ARM response:", stderr);
         Assert.Contains("/connections/first", stderr);
@@ -334,5 +335,132 @@ public sealed class DeploymentOAuthCommandHostTests
         Assert.Equal(ExitCodes.Success, exitCode);
         Assert.Empty(stderr);
         Assert.Equal("Aadv2WithFic", operations.LastListDeploymentOAuthProvidersRequest!.ServiceProviderName);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OAuthListProviders_InvalidSelection_WithAndWithoutHelpReturnsSameError(bool json)
+    {
+        var expected = DeploymentException.OAuthServiceProviderNotFound("line");
+        foreach (var help in new[] { false, true })
+        {
+            var operations = new FakeOperations
+            {
+                OnListDeploymentOAuthProviders = _ => throw expected,
+            };
+            string[] helpOptions = help ? ["--help"] : [];
+            string[] outputOptions = json ? ["--json"] : [];
+            var (exitCode, stdout, stderr) = Run(operations,
+                ["deployment", "oauth", "list-providers", "--provider-name", "line",
+                    .. helpOptions, .. outputOptions]);
+
+            Assert.Equal(ExitCodes.Usage, exitCode);
+            Assert.Equal("line", operations.LastListDeploymentOAuthProvidersRequest!.ServiceProviderName);
+            if (json)
+            {
+                Assert.Empty(stderr);
+                using var document = JsonDocument.Parse(stdout);
+                Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+                Assert.Equal(expected.Message, document.RootElement.GetProperty("errorMessage").GetString());
+                Assert.Equal(expected.ErrorKind, document.RootElement.GetProperty("errorKind").GetString());
+                Assert.Equal(expected.Remediation, document.RootElement.GetProperty("remediation").GetString());
+            }
+            else
+            {
+                Assert.Empty(stdout);
+                Assert.Contains(expected.Message, stderr);
+                Assert.Contains(expected.Remediation!, stderr);
+            }
+
+            Assert.DoesNotContain("Usage:", stdout + stderr);
+        }
+    }
+
+    [Theory]
+    [InlineData("--provider-name")]
+    [InlineData("-pn")]
+    public void OAuthListProviders_SelectedHelpDisplaysLiveParametersWithSingleLookup(string option)
+    {
+        var calls = 0;
+        var operations = new FakeOperations
+        {
+            OnListDeploymentOAuthProviders = _ =>
+            {
+                calls++;
+                return [new()
+                {
+                    Id = "provider-id", Name = "Google", DisplayName = "Google",
+                    Parameters =
+                    [
+                        new() { Name = "ClientId", Type = "String", DisplayName = "Client ID",
+                            Description = "Google application id.", IsRequired = true },
+                        new() { Name = "Scopes", Type = "String", DisplayName = "Requested scopes",
+                            DefaultValue = "openid" },
+                    ],
+                }];
+            },
+        };
+        var (exitCode, stdout, stderr) = Run(operations,
+            "deployment", "oauth", "list-providers", option, "google",
+            "--subscription", "sub-1", "--tenant", "tenant-1", "--help");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Contains("Usage:", stdout);
+        Assert.Contains("--provider-name", stdout);
+        Assert.Contains("Parameters:", stdout);
+        Assert.Contains("ClientId <String> (REQUIRED)", stdout);
+        Assert.Contains("Google application id.", stdout);
+        Assert.Contains("Scopes <String>", stdout);
+        Assert.Contains("Requested scopes Default: openid.", stdout);
+        Assert.DoesNotContain("Scopes <String> (REQUIRED)", stdout);
+        Assert.Equal(1, calls);
+        var request = Assert.IsType<DeploymentOAuthProviderListRequest>(operations.LastListDeploymentOAuthProvidersRequest);
+        Assert.Equal("google", request.ServiceProviderName);
+        Assert.Equal("sub-1", request.SubscriptionId);
+        Assert.Equal("tenant-1", request.TenantId);
+    }
+
+    [Fact]
+    public void OAuthListProviders_UnselectedHelpDoesNotReadCatalogue()
+    {
+        var operations = new FakeOperations();
+        var (exitCode, stdout, stderr) = Run(operations, "deployment", "oauth", "list-providers", "--help");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Contains("Usage:", stdout);
+        Assert.Null(operations.LastListDeploymentOAuthProvidersRequest);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OAuthListProviders_SelectedHelpReportsLookupFailuresWithoutDisplayingHelp(bool timeout)
+    {
+        Exception error = timeout
+            ? new OperationCanceledException("Synthetic timeout")
+            : new HttpRequestException("Synthetic lookup failure");
+        var operations = new FakeOperations
+        {
+            OnListDeploymentOAuthProviders = _ => throw error,
+        };
+        var (exitCode, stdout, stderr) = Run(operations,
+            "deployment", "oauth", "list-providers", "--provider-name", "Aadv2", "--help", "--json");
+
+        Assert.Equal(ExitCodes.Failure, exitCode);
+        Assert.Empty(stderr);
+        using var document = JsonDocument.Parse(stdout);
+        Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+        Assert.DoesNotContain("Usage:", stdout);
+        if (timeout)
+        {
+            Assert.Equal("transport-timeout", document.RootElement.GetProperty("errorKind").GetString());
+        }
+        else
+        {
+            Assert.Contains("Synthetic lookup failure", document.RootElement.GetProperty("errorMessage").GetString());
+        }
     }
 }

@@ -2,6 +2,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -58,26 +59,11 @@ public sealed class CliOutputRenderer
     /// <summary>Renders a successful command result as the JSON or human success envelope.</summary>
     public void RenderSuccess(object payload, bool json, bool debug = false)
     {
-        if (debug && payload is IDeploymentResult deploymentResult)
+        if (debug && payload is IDeploymentResult { ArmResponse: { } armResponse })
         {
-            var summary = DescribeDeploymentSummary(deploymentResult);
-            if (summary is not null)
-            {
-                _stderr.WriteLine(summary);
-            }
-
-            if (deploymentResult.ArmResponse is { } armResponse)
-            {
-                if (summary is not null)
-                {
-                    _stderr.WriteLine();
-                }
-
-                _stderr.WriteLine("ARM response:");
-                _stderr.WriteLine(JsonSerializer.Serialize(armResponse, IndentedJson));
-            }
-
-            return;
+            _stderr.WriteLine("ARM response:");
+            _stderr.WriteLine(JsonSerializer.Serialize(armResponse, IndentedJson));
+            _stderr.Flush();
         }
 
         if (json)
@@ -299,6 +285,21 @@ public sealed class CliOutputRenderer
     private static JsonObject BuildDeploymentNode(IDeploymentResult result)
     {
         var node = new JsonObject();
+        if (result.AuthorizationUrl is { } authorizationUrl)
+        {
+            node["authorizationUrl"] = authorizationUrl.AbsoluteUri;
+        }
+        if (result.Warnings.Count > 0)
+        {
+            var warnings = new JsonArray();
+            foreach (var warning in result.Warnings)
+            {
+                warnings.Add(warning);
+            }
+
+            node["warnings"] = warnings;
+        }
+
         if (result.Payload is not null)
         {
             node[JsonNamingPolicy.CamelCase.ConvertName(result.TargetName)] = JsonSerializer.SerializeToNode(
@@ -317,6 +318,12 @@ public sealed class CliOutputRenderer
         if (summary is not null)
         {
             lines.Add(summary);
+        }
+
+        lines.AddRange(result.Warnings.Select(warning => $"Warning: {warning}"));
+        if (result.AuthorizationUrl is { } authorizationUrl)
+        {
+            lines.Add($"Authorization URL: {authorizationUrl.AbsoluteUri}");
         }
 
         if (result.Payload is not null)
@@ -344,6 +351,7 @@ public sealed class CliOutputRenderer
             DeploymentOperationStatus.Existed => "already exists",
             DeploymentOperationStatus.Updated => "updated",
             DeploymentOperationStatus.Deleted => "deleted",
+            DeploymentOperationStatus.WriteAccepted => "write accepted by Azure",
             _ => null,
         };
         if (operation is null)

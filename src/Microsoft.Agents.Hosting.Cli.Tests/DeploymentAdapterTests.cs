@@ -272,7 +272,7 @@ public sealed class DeploymentAdapterTests
     }
 
     [Fact]
-    public async Task GetBot_RedactsSchemaSensitiveFields_PreservesNullsAndNonSecrets()
+    public async Task GetBot_RedactsSchemaSensitiveFieldsIncludingNulls_PreservesNonSecrets()
     {
         const string botResourceId = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.BotService/botServices/bb";
         var body = """
@@ -307,8 +307,7 @@ public sealed class DeploymentAdapterTests
         Assert.Equal("***", props.GetProperty("developerAppInsightsApiKey").GetString());
         // Free-form bags are masked entirely, catching secrets under arbitrary key names.
         Assert.Equal("***", props.GetProperty("allSettings").GetString());
-        // A null-valued sensitive field stays null (nothing sensitive present).
-        Assert.Equal(JsonValueKind.Null, props.GetProperty("luisKey").ValueKind);
+        Assert.Equal("***", props.GetProperty("luisKey").GetString());
         // Non-secret fields survive verbatim — including cmekKeyVaultUrl, which the old name heuristic over-redacted.
         Assert.Equal("https://kv.vault.azure.net/keys/k", props.GetProperty("cmekKeyVaultUrl").GetString());
         Assert.Equal("app-1", props.GetProperty("msaAppId").GetString());

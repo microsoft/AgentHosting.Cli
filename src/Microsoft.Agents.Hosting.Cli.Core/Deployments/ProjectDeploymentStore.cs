@@ -132,12 +132,15 @@ public sealed class ProjectDeploymentStore : IDeploymentStore
                 .Select(connection => DeploymentOAuthParameters.Sanitize(
                     connection,
                     provider: null,
-                    includeArmResponse: false))
+                    includeArmResponse: false,
+                    omitSecrets: true))
                 .ToArray(),
             Channels = (record.Channels ?? [])
                 .Select(channel => DeploymentChannelCatalog.Sanitize(
                     channel,
-                    includeArmResponse: false))
+                    includeArmResponse: false,
+                    omitSecrets: true))
+                .OfType<DeploymentChannelRecord>()
                 .ToArray(),
         };
     }
@@ -171,14 +174,17 @@ public sealed class ProjectDeploymentStore : IDeploymentStore
                     .Select(connection => DeploymentOAuthParameters.Sanitize(
                         connection,
                         provider: null,
-                        includeArmResponse: false))
+                        includeArmResponse: false,
+                        omitSecrets: true))
                     .ToArray()
                 : null,
             Channels = deployment.Channels is { Count: > 0 } channels
                 ? channels
                     .Select(channel => DeploymentChannelCatalog.Sanitize(
                         channel,
-                        includeArmResponse: false))
+                        includeArmResponse: false,
+                        omitSecrets: true))
+                    .OfType<DeploymentChannelRecord>()
                     .ToArray()
                 : null,
             EntityTag = entityTag,

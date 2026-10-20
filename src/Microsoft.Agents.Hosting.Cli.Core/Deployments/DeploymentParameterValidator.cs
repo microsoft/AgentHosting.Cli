@@ -6,6 +6,8 @@ public enum DeploymentParameterType
 {
     String,
     Boolean,
+    Integer,
+    Array,
 }
 
 /// <summary>Controls whether a parsed <c>Key=</c> assignment may have an empty value.</summary>

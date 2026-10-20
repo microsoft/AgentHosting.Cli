@@ -31,7 +31,8 @@ internal static class DeploymentOAuthParameters
     internal static DeploymentOAuthConnection Sanitize(
         DeploymentOAuthConnection connection,
         OAuthProviderDefinition? provider,
-        bool includeArmResponse = true)
+        bool includeArmResponse = true,
+        bool omitSecrets = false)
     {
         var parameters = connection.Parameters ??
             new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
@@ -53,6 +54,12 @@ internal static class DeploymentOAuthParameters
                 continue;
             }
 
+            if (omitSecrets && (parameter.Value == BotServiceResponseRedactor.Mask ||
+                (provider is null ? IsSecret(parameter.Key) : secretNames.Contains(parameter.Key))))
+            {
+                continue;
+            }
+
             if (provider is not null)
             {
                 if (definitions.TryGetValue(parameter.Key, out var definition))
@@ -66,7 +73,9 @@ internal static class DeploymentOAuthParameters
             {
                 sanitized[parameter.Key] = SanitizeValue(
                     parameter.Value,
-                    IsSecret(parameter.Key));
+                    IsSecret(parameter.Key) &&
+                        (parameter.Value is not null ||
+                         parameter.Key.Equals(CommonOAuthParameters.ClientSecret, StringComparison.OrdinalIgnoreCase)));
             }
         }
 
@@ -80,7 +89,7 @@ internal static class DeploymentOAuthParameters
     }
 
     private static string? SanitizeValue(string? value, bool isSecret) =>
-        isSecret && value is not null
+        isSecret
             ? BotServiceResponseRedactor.Mask
             : value;
 
