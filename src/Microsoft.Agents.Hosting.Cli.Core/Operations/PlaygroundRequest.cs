@@ -30,9 +30,6 @@ public sealed record PlaygroundRequest
     /// <summary>The destination tenant id.</summary>
     public string? Tenant { get; init; }
 
-    /// <summary>The explicitly selected DirectEngine agent harness, absent for Direct Line.</summary>
-    public string? AgentType { get; init; }
-
     /// <summary>Whether machine-readable output was requested.</summary>
     public bool Json { get; init; }
 
@@ -56,6 +53,5 @@ public sealed record PlaygroundRequest
         DeploymentName = DeploymentName,
         EnvironmentId = EnvironmentId,
         Tenant = Tenant,
-        AgentType = AgentType ?? string.Empty,
     };
 }

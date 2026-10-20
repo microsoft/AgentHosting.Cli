@@ -5,7 +5,6 @@ using Microsoft.Agents.Core.Models;
 using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Agents.Hosting.Cli.Core.Http;
-using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
@@ -15,9 +14,7 @@ namespace Microsoft.Agents.Hosting.Cli.CopilotStudio.AskClient;
 public sealed record McsLiveTestTarget(
     string EnvironmentId,
     string TenantId,
-    string SchemaName,
-    LiveTestAgentType AgentType = LiveTestAgentType.Standard,
-    Uri? Endpoint = null);
+    string SchemaName);
 
 /// <summary>A single, non-retrying Copilot Studio conversation invocation.</summary>
 public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTestSession
@@ -29,6 +26,7 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
     private readonly CancellationToken _cancellationToken;
     private readonly HttpClient _httpClient;
     private readonly CopilotClient _copilotClient;
+    private readonly McsLiveEndpointDiscovery _discovery;
     private bool _started;
     private bool _queryStarted;
     private bool _disposed;
@@ -62,16 +60,15 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
         CancellationToken cancellationToken = default)
     {
         ValidateTarget(target);
-        var endpoint = target.Endpoint ?? McsLiveTargetValidation.GetEndpoint(target);
-        target = target with { Endpoint = endpoint };
         _target = target;
+        _discovery = new McsLiveEndpointDiscovery(target);
         _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
         _cancellationToken = cancellationToken;
         McsLiveActivityCodec.Initialize();
 
         var inner = transport ?? CreateTransport();
         _httpClient = new HttpClient(
-            new McsResponseBridgeHandler(inner, target, SetServiceConversationId, error => _responseError = error),
+            new McsResponseBridgeHandler(inner, _discovery, SetServiceConversationId, error => _responseError = error),
             disposeHandler: true)
         {
             Timeout = Timeout.InfiniteTimeSpan,
@@ -81,7 +78,6 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
             {
                 EnvironmentId = target.EnvironmentId,
                 SchemaName = target.SchemaName,
-                DirectConnectUrl = target.AgentType == LiveTestAgentType.GitHubCopilot ? endpoint.ToString() : null,
                 UseExperimentalEndpoint = false,
                 EnableDiagnostics = false,
             },
@@ -102,6 +98,20 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
 
     /// <summary>The dedicated transport timeout, exposed for characterization tests.</summary>
     public TimeSpan HttpClientTimeout => _httpClient.Timeout;
+
+    /// <summary>Discovers the playground endpoint without creating a conversation or sending an activity.</summary>
+    public async Task<Uri> DiscoverEndpointAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+        using var request = new HttpRequestMessage(HttpMethod.Get, _discovery.DiscoveryUri);
+        request.Headers.Accept.ParseAdd("application/json");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", await GetTokenAsync(_discovery.DiscoveryUri.AbsoluteUri).ConfigureAwait(false));
+        using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        return _discovery.CreateConversationUri
+            ?? throw new McsLiveTestProtocolException("The service did not return a conversation endpoint.");
+    }
 
     /// <summary>Starts a new conversation and yields each raw activity in service order.</summary>
     public async IAsyncEnumerable<JsonElement> StartAsync(
@@ -200,7 +210,7 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
 
     private async Task<string> GetTokenAsync(string resource)
     {
-        if (!McsLiveTargetValidation.IsExpectedRequestResource(resource, _target))
+        if (!_discovery.IsExpectedRequestResource(resource))
         {
             throw new McsLiveTestTokenException("The transport requested an unapproved Copilot Studio resource.");
         }
@@ -333,11 +343,6 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
         McsLiveTargetValidation.ValidateEnvironmentId(target.EnvironmentId);
         McsLiveTargetValidation.ValidateTenantId(target.TenantId);
         McsLiveTargetValidation.ValidatePathSegment(target.SchemaName, nameof(target.SchemaName));
-        if (!Enum.IsDefined(target.AgentType) ||
-            target.Endpoint is not null && target.Endpoint != McsLiveTargetValidation.GetEndpoint(target))
-        {
-            throw new ArgumentException("The selected runtime endpoint is invalid.", nameof(target));
-        }
     }
 
     private void ThrowIfDisposed()

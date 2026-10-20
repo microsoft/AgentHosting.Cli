@@ -18,7 +18,6 @@ public sealed class PlaygroundExecutionTests
         "11111111-1111-1111-1111-111111111111",
         "schema",
         "explicit",
-        LiveTestAgentType.Standard,
         new Uri("https://example.test/agent"));
 
     [Theory]
@@ -28,7 +27,7 @@ public sealed class PlaygroundExecutionTests
     {
         var doubles = new Doubles();
         var execution = CreateExecution(
-            new PlaygroundRequest { Target = target, AgentType = "standard", Json = true },
+            new PlaygroundRequest { Target = target, Json = true },
             doubles);
 
         var exitCode = await RenderAsync(execution);
@@ -40,6 +39,7 @@ public sealed class PlaygroundExecutionTests
         Assert.Equal(0, doubles.LocateCalls);
         Assert.Equal(0, doubles.PromptCalls);
         Assert.Equal(0, doubles.LaunchCalls);
+        Assert.Equal(0, doubles.DiscoverCalls);
     }
 
     [Fact]
@@ -85,6 +85,59 @@ public sealed class PlaygroundExecutionTests
         Assert.Equal(0, doubles.InstallCalls);
         Assert.Equal(1, doubles.LaunchCalls);
         Assert.Equal(ClientId, doubles.LaunchedClientId);
+        Assert.Equal(1, doubles.DiscoverCalls);
+    }
+
+    [Fact]
+    public async Task DiscoveredEndpointIsPassedToLauncherWithNonInteractivePreference()
+    {
+        var doubles = new Doubles();
+        var endpoint = new Uri("https://example.test/discovered");
+        doubles.Discover = (target, nonInteractive, _) =>
+        {
+            Assert.True(nonInteractive);
+            return Task.FromResult(target with { Endpoint = endpoint });
+        };
+        doubles.Launch = (_, connection, _, _) =>
+        {
+            Assert.Equal(endpoint, Assert.IsType<PlaygroundConnection.DirectEngine>(connection).Target.Endpoint);
+            return Task.FromResult(0);
+        };
+
+        Assert.Equal(0, await RenderAsync(CreateExecution(Request() with { NonInteractive = true }, doubles)));
+    }
+
+    [Fact]
+    public async Task EndpointDiscoveryFailureStopsBeforeLaunchingAndDoesNotExposeResponse()
+    {
+        var doubles = new Doubles
+        {
+            Discover = (_, _, _) => throw new HttpRequestException("CANARY-secret-discovery-response"),
+        };
+
+        Assert.Equal(ExitCodes.Failure, await RenderAsync(CreateExecution(Request(), doubles)));
+        Assert.Equal(0, doubles.LaunchCalls);
+        Assert.Contains("endpoint could not be discovered", doubles.Error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("CANARY", doubles.Error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EndpointDiscoveryCancellationStopsBeforeLaunching()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var doubles = new Doubles
+        {
+            Discover = (_, _, _) =>
+            {
+                cancellation.Cancel();
+                return Task.FromCanceled<LiveTestDestination>(cancellation.Token);
+            },
+        };
+        var execution = CreateExecution(Request(), doubles);
+
+        Assert.Equal(130, await RenderAsync(execution, cancellation.Token));
+        Assert.Equal(PlaygroundSemanticOutcome.Cancellation, execution.SemanticOutcome);
+        Assert.Equal(0, doubles.LaunchCalls);
     }
 
     [Fact]
@@ -376,6 +429,7 @@ public sealed class PlaygroundExecutionTests
         {
             Resolve = _ => throw new InvalidOperationException("resolver must not run"),
             ClientConfiguration = () => throw new InvalidOperationException("client must not run"),
+            Discover = (_, _, _) => throw new InvalidOperationException("endpoint discovery must not run"),
         };
         if (install)
         {
@@ -392,6 +446,7 @@ public sealed class PlaygroundExecutionTests
         Assert.Equal(0, exitCode);
         Assert.IsType<PlaygroundConnection.DirectLine>(doubles.LaunchedConnection);
         Assert.Equal(0, doubles.ClientConfigurationCalls);
+        Assert.Equal(0, doubles.DiscoverCalls);
         Assert.Equal(install ? 1 : 0, doubles.InstallCalls);
         Assert.Equal(install ? 1 : 0, doubles.PromptCalls);
         Assert.Contains("real effects", doubles.Output.ToString(), StringComparison.OrdinalIgnoreCase);
@@ -405,9 +460,6 @@ public sealed class PlaygroundExecutionTests
     public static TheoryData<PlaygroundRequest> InvalidRequests => new()
     {
         new PlaygroundRequest { Target = "unsupported-private-value" },
-        new PlaygroundRequest(),
-        new PlaygroundRequest { AgentType = " " },
-        new PlaygroundRequest { Target = "directline", AgentType = "standard" },
         new PlaygroundRequest { Target = "directline", Project = "private-project" },
         new PlaygroundRequest { Target = "directline", AgentId = "private-id" },
         new PlaygroundRequest { Target = "directline", AgentName = "private-name" },
@@ -437,6 +489,7 @@ public sealed class PlaygroundExecutionTests
         Assert.Equal(0, doubles.PromptCalls);
         Assert.Equal(0, doubles.InstallCalls);
         Assert.Equal(0, doubles.LaunchCalls);
+        Assert.Equal(0, doubles.DiscoverCalls);
         Assert.Empty(doubles.Output.ToString());
         Assert.DoesNotContain("private", doubles.Error.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(CommandTelemetryOutcome.Usage, CommandTreeBuilder.StreamingOutcome(execution, exitCode));
@@ -501,7 +554,6 @@ public sealed class PlaygroundExecutionTests
 
     private static PlaygroundRequest Request() => new()
     {
-        AgentType = "standard",
         SchemaName = "schema",
         EnvironmentId = "environment",
         Tenant = "11111111-1111-1111-1111-111111111111",
@@ -511,6 +563,7 @@ public sealed class PlaygroundExecutionTests
         new(
             request,
             doubles.Resolve,
+            doubles.Discover,
             doubles.Locator,
             doubles.Installer,
             doubles.Launcher,
@@ -572,6 +625,11 @@ public sealed class PlaygroundExecutionTests
                 ResolveCalls++;
                 return Target;
             };
+            Discover = (target, _, _) =>
+            {
+                DiscoverCalls++;
+                return Task.FromResult(target);
+            };
             Locate = _ =>
             {
                 LocateCalls++;
@@ -616,6 +674,7 @@ public sealed class PlaygroundExecutionTests
         }
 
         public Func<LiveTestRequest, LiveTestDestination> Resolve { get; set; }
+        public Func<LiveTestDestination, bool, CancellationToken, Task<LiveTestDestination>> Discover { get; set; }
         public Func<AgentHostClientAppConfiguration> ClientConfiguration { get; set; }
         public Func<CancellationToken, Task<PlaygroundToolDiscoveryResult>> Locate { get; set; }
         public Func<CancellationToken, Task<PlaygroundToolDiscoveryResult>> DetectNpm { get; set; }
@@ -636,6 +695,7 @@ public sealed class PlaygroundExecutionTests
         public Exception? LaunchException { get; set; }
         public PlaygroundInstallException? InstallException { get; set; }
         public int ResolveCalls { get; set; }
+        public int DiscoverCalls { get; set; }
         public int ClientConfigurationCalls { get; set; }
         public int LocateCalls { get; set; }
         public int DetectNpmCalls { get; set; }

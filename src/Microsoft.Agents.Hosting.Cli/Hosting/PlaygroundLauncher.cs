@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
-using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Playground;
 
@@ -429,9 +428,6 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
     private static void ValidateTarget(LiveTestDestination target)
     {
         if (target is null ||
-            !Enum.IsDefined(target.AgentType) ||
-            (target.AgentType != LiveTestAgentType.Standard &&
-             target.AgentType != LiveTestAgentType.GitHubCopilot) ||
             !string.Equals(target.TargetSource, "configured", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(target.TargetSource, "explicit", StringComparison.OrdinalIgnoreCase) ||
             target.Endpoint is null ||

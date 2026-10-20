@@ -66,16 +66,13 @@ public sealed class LiveTestTargetResolver
             DeploymentName = request.DeploymentName,
             EnvironmentId = request.EnvironmentId,
             TenantId = request.Tenant,
-            AgentType = ParseAgentType(request.AgentType),
         });
 
         return new LiveTestDestination(
             resolved.EnvironmentId,
             resolved.TenantId,
             resolved.SchemaName,
-            resolved.Source == LiveTestTargetSource.Configured ? "configured" : "explicit",
-            resolved.AgentType,
-            resolved.Endpoint);
+            resolved.Source == LiveTestTargetSource.Configured ? "configured" : "explicit");
     }
 
     private static ResolvedMcsTarget ResolveExplicit(LiveTestTargetRequest request)
@@ -92,8 +89,7 @@ public sealed class LiveTestTargetResolver
             agent: null,
             deployment: null,
             request.DeploymentId,
-            request.DeploymentName,
-            request.AgentType);
+            request.DeploymentName);
     }
 
     private ResolvedMcsTarget ResolveConfigured(LiveTestTargetRequest request)
@@ -164,8 +160,7 @@ public sealed class LiveTestTargetResolver
             owner,
             selectedDeployment,
             selectedDeployment.DeploymentId,
-            selectedDeployment.DeploymentName,
-            request.AgentType);
+            selectedDeployment.DeploymentName);
     }
 
     private ManagedAgentRecord? ResolveAgent(
@@ -419,25 +414,8 @@ public sealed class LiveTestTargetResolver
     private static bool HasDeploymentSelector(LiveTestTargetRequest request) =>
         !string.IsNullOrWhiteSpace(request.DeploymentId) || !string.IsNullOrWhiteSpace(request.DeploymentName);
 
-    private static LiveTestAgentType ParseAgentType(string? value) =>
-        value?.Trim().ToLowerInvariant() switch
-        {
-            "standard" => LiveTestAgentType.Standard,
-            "github-copilot" => LiveTestAgentType.GitHubCopilot,
-            _ => throw LiveTestTargetResolutionException.InvalidInput(
-                "The --agent-harness value is not supported.",
-                "Choose standard or github-copilot for --agent-harness."),
-        };
-
     private static void ValidateRequestShape(LiveTestTargetRequest request)
     {
-        if (!Enum.IsDefined(request.AgentType))
-        {
-            throw LiveTestTargetResolutionException.InvalidInput(
-                "The --agent-harness value is not supported.",
-                "Choose standard or github-copilot for --agent-harness.");
-        }
-
         foreach (var (value, option) in new[]
         {
             (request.Project, "--project"),
@@ -506,12 +484,8 @@ public sealed class LiveTestTargetResolver
         ManagedAgentRecord? agent,
         AgentDeploymentRecord? deployment,
         string? deploymentId,
-        string? deploymentName,
-        LiveTestAgentType agentType)
+        string? deploymentName)
     {
-        var endpoints = LiveTestTargetEndpointsBuilder.DeriveDirectEngineUrls(environment, schema);
-        var endpoint = agentType == LiveTestAgentType.GitHubCopilot ? endpoints.GitHubCopilot : endpoints.Standard;
-
         return new ResolvedMcsTarget
         {
             Source = source,
@@ -519,8 +493,6 @@ public sealed class LiveTestTargetResolver
             TenantId = tenant,
             EnvironmentId = environment,
             SchemaName = schema,
-            AgentType = agentType,
-            Endpoint = endpoint,
             Agent = agent,
             Deployment = deployment,
             DeploymentId = source == LiveTestTargetSource.Explicit ? deploymentId?.Trim() : deployment?.DeploymentId,

@@ -17,21 +17,20 @@ public sealed class LiveTestCommandHostTests
         Assert.Equal(0, handler.Calls);
 
         var enabled = await Invoke(new TestFeatureFlags(FeatureName.LiveTestFeatures), handler,
-            "test", "ask", "--query", "literal  text", "--agent-harness", "github-copilot", "--json");
+            "test", "ask", "--query", "literal  text", "--json");
         Assert.Equal(0, enabled.Exit);
         Assert.Equal(1, handler.Calls);
         Assert.Equal("literal  text", handler.Request!.Query);
-        Assert.Equal("github-copilot", handler.Request.AgentType);
         Assert.Equal("""{"streaming":true}""", enabled.Output);
         Assert.Empty(enabled.Error);
     }
 
     [Fact]
-    public async Task AgentHarnessIsRequiredBeforeDispatch()
+    public async Task RemovedAgentHarnessOptionIsRejectedBeforeDispatch()
     {
         var handler = new TestHandler();
         var result = await Invoke(new TestFeatureFlags(FeatureName.LiveTestFeatures), handler,
-            "test", "ask", "--query", "hello", "--json");
+            "test", "ask", "--query", "hello", "--agent-harness", "standard", "--json");
 
         Assert.Equal(2, result.Exit);
         Assert.Equal(0, handler.Calls);
@@ -42,7 +41,7 @@ public sealed class LiveTestCommandHostTests
     {
         var handler = new TestHandler { Exit = 1 };
         var result = await Invoke(new TestFeatureFlags(FeatureName.LiveTestFeatures), handler,
-            "test", "ask", "--query", "hello", "--agent-harness", "standard", "--json");
+            "test", "ask", "--query", "hello", "--json");
         Assert.Equal(1, result.Exit);
         Assert.Equal("""{"streaming":true}""", result.Output);
     }
@@ -52,7 +51,7 @@ public sealed class LiveTestCommandHostTests
     {
         var handler = new TestHandler();
         var result = await Invoke(new TestFeatureFlags(FeatureName.LiveTestFeatures), handler,
-            "test", "ask", "--query", "first", "--query", "second", "--agent-harness", "standard", "--json");
+            "test", "ask", "--query", "first", "--query", "second", "--json");
         Assert.Equal(2, result.Exit);
         Assert.Equal(0, handler.Calls);
     }
@@ -74,7 +73,7 @@ public sealed class LiveTestCommandHostTests
             new TestFeatureFlags(FeatureName.LiveTestFeatures));
 
         var exit = await cli.InvokeAsync(
-            ["test", "ask", "--query", "hello", "--agent-harness", "standard", "--json"],
+            ["test", "ask", "--query", "hello", "--json"],
             output,
             error,
             color: false);
@@ -90,7 +89,7 @@ public sealed class LiveTestCommandHostTests
     {
         var handler = new TestHandler { ResultFactory = _ => new ThrowingResult() };
         var result = await Invoke(new TestFeatureFlags(FeatureName.LiveTestFeatures), handler,
-            "test", "ask", "--query", "hello", "--agent-harness", "standard", "--json");
+            "test", "ask", "--query", "hello", "--json");
 
         Assert.Equal(1, result.Exit);
         Assert.Equal("""{"partial":""", result.Output);
