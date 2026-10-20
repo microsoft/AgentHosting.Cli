@@ -13,14 +13,13 @@ internal static class AgentDeployFixtures
 {
     public static AgentPackageUploadService PendingUploadService(EnvironmentSelectionService environments) =>
         new(
-            new AgentHostingServiceTargets(),
             environments,
             new PendingAmsAgentReadTransport(),
             new PendingAmsPackagePublicationTransport());
 
     public static AgentDeployService PendingService(EnvironmentSelectionService environments) =>
         new(
-            new AgentHostingServiceTargets(),
+            PowerPlatformApiTargetConfig.Public,
             environments,
             new PendingAmsAgentReadTransport(),
             new PendingAmsDeploymentTransport());

@@ -402,9 +402,7 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
     private static Uri BuildAgentUri(AmsAgentReadTransportRequest request)
     {
         var relativePath =
-            $"agenthosting/tenants/{Uri.EscapeDataString(request.TenantId)}/" +
-            $"environments/{Uri.EscapeDataString(request.EnvironmentId)}/" +
-            $"agents/{Uri.EscapeDataString(request.AgentId)}?api-version=1";
+            $"agenthosting/agents/{Uri.EscapeDataString(request.AgentId)}?api-version=1";
         return new Uri(EnsureTrailingSlash(request.Endpoint), relativePath);
     }
 

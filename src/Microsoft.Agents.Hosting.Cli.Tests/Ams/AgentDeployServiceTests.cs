@@ -10,8 +10,8 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.Ams;
 
 public sealed class AgentDeployServiceTests
 {
-    private const string DataPlaneEndpoint = "https://amsdp.example.invalid/";
-    private const string ControlPlaneEndpoint = "https://ams.example.invalid/";
+    private const string DataPlaneEndpoint = "https://env-1.api.powerplatform.com/";
+    private const string ControlPlaneEndpoint = "https://api.powerplatform.com/";
     private const string Agent = "44444444-4444-4444-4444-444444444444";
     private const string HomeEnvironment = "22222222-2222-2222-2222-222222222222";
     private const string TargetEnvironment = "33333333-3333-3333-3333-333333333333";
@@ -269,17 +269,17 @@ public sealed class AgentDeployServiceTests
     }
 
     [Fact]
-    public async Task Deploy_RequiresBothConfiguredServiceTargets()
+    public void Deploy_RejectsAnUntrustedControlPlaneEndpoint()
     {
-        var service = Service(
+        var target = PowerPlatformApiTargetConfig.Public with
+        {
+            GlobalEndpoint = new Uri("https://attacker.example/"),
+        };
+
+        Assert.Throws<EndpointTrustException>(() => Service(
             new RecordingAgentReadTransport(BoundAgent()),
             new RecordingDeploymentTransport(CreatedDeployment),
-            targets: new AgentHostingServiceTargets { DataPlaneEndpoint = DataPlaneEndpoint });
-
-        var exception = await Assert.ThrowsAsync<AgentDeployException>(
-            () => service.DeployAsync(Request(), default));
-
-        Assert.Equal("service-target-not-configured", exception.ErrorKind);
+            target: target));
     }
 
     [Fact]
@@ -559,7 +559,7 @@ public sealed class AgentDeployServiceTests
         IAmsAgentReadTransport agents,
         IAmsDeploymentTransport deployments,
         string targetTenantId = EnvironmentFixtures.ContosoTenant,
-        AgentHostingServiceTargets? targets = null,
+        PowerPlatformApiTargetConfig? target = null,
         FakeEnvironmentClient? inventory = null)
     {
         var profiles = InMemoryAuthProfileStore.SignedIn(
@@ -579,11 +579,7 @@ public sealed class AgentDeployServiceTests
         environments.SelectAsync(HomeEnvironment, default).GetAwaiter().GetResult();
 
         return new AgentDeployService(
-            targets ?? new AgentHostingServiceTargets
-            {
-                DataPlaneEndpoint = DataPlaneEndpoint,
-                ControlPlaneEndpoint = ControlPlaneEndpoint,
-            },
+            target ?? PowerPlatformApiTargetConfig.Public,
             environments,
             agents,
             deployments);

@@ -15,18 +15,15 @@ public sealed class AgentPackageUploadService
     public const long MaxPackageSizeBytes = 128L * 1024L * 1024L;
     private const int ReadBufferSizeBytes = 81_920;
 
-    private readonly AgentHostingServiceTargets _targets;
     private readonly EnvironmentSelectionService _environments;
     private readonly IAmsAgentReadTransport _agents;
     private readonly IAmsPackagePublicationTransport _packages;
 
     public AgentPackageUploadService(
-        AgentHostingServiceTargets targets,
         EnvironmentSelectionService environments,
         IAmsAgentReadTransport agents,
         IAmsPackagePublicationTransport packages)
     {
-        _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _environments = environments ?? throw new ArgumentNullException(nameof(environments));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
@@ -40,7 +37,6 @@ public sealed class AgentPackageUploadService
 
         var agentId = RequireGuid(request.AgentId, "--agent");
         var packagePath = Require(request.PackagePath, "--package");
-        var dataPlaneEndpoint = _targets.ResolveDataPlane();
         var environment = await _environments
             .ResolveForCommandAsync(request.EnvironmentId, cancellationToken)
             .ConfigureAwait(false);
@@ -62,7 +58,7 @@ public sealed class AgentPackageUploadService
             .GetAsync(
                 new AmsAgentReadTransportRequest
                 {
-                    Endpoint = dataPlaneEndpoint,
+                    Endpoint = environment.ApiEndpoint,
                     Audience = environment.ApiAudience,
                     TenantId = environment.TenantId,
                     EnvironmentId = environment.EnvironmentId,
@@ -76,7 +72,7 @@ public sealed class AgentPackageUploadService
             .PublishAsync(
                 new AmsPackagePublicationTransportRequest
                 {
-                    Endpoint = dataPlaneEndpoint,
+                    Endpoint = environment.ApiEndpoint,
                     Audience = environment.ApiAudience,
                     TenantId = environment.TenantId,
                     EnvironmentId = environment.EnvironmentId,
