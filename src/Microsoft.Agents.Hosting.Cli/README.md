@@ -253,8 +253,9 @@ not part of the offline test suite:
 
 | Area | Guidance |
 | --- | --- |
-| Native package (Windows) | The Windows native-package spike passed both harnesses on `0.2.29`. |
-| `msagent` command (Windows) | `standard` passed with user-observed connected state, two replies, Ctrl+C, browser survival, and no package process survivor. The actual `github-copilot` command was not run. |
+| Native package (Windows) | Before CLI endpoint discovery was introduced, the Windows native-package spike passed against standard and GitHub Copilot agents on `0.2.29`. This does not validate the CLI discovery flow. |
+| DirectEngine discovery (offline) | Automated tests cover discovery responses, passing the discovered endpoint to the launcher, discovery failures, and cancellation using test doubles. These are not live connection checks. |
+| DirectEngine discovery (Windows, live) | Run `msagent test playground` with the appropriate agent/deployment selectors for both standard and GitHub Copilot agents; the discovery service selects the endpoint automatically, with no harness argument. Live validation of this discovery flow remains pending. The earlier pre-discovery standard-agent run passed connected-state, two-reply, Ctrl+C, browser-survival, and owned-process-cleanup checks; it does not validate discovery. |
 | `msagent` command (POSIX) | Not run on macOS or Linux/WSL; POSIX manual validation remains pending and no full certification is claimed. |
 | Tool resolution | Cover an existing current tool, a missing tool, and an old tool; verify the version probe, consent text, `--install-playground`, npm registry/proxy/auth settings, permission failures, and network/install failures. |
 | Safety and output | Verify LiveTestFeatures opt-in, `--json` rejection, `--plain` output, native device-code/browser behavior, and the warning that live effects are not rolled back. |
