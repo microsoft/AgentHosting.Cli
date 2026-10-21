@@ -508,6 +508,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="signInAddresses">The sign-in addresses of users it matched. The search stops once it has found two.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException SharePrincipalAmbiguous(string selector, string tenantId, IEnumerable<string> signInAddresses) => new(
+        ErrorCodes.ManagedAgent.SharePrincipalAmbiguous,
         $"'{selector}' is the email address of more than one user in tenant '{tenantId}', including {string.Join(", ", signInAddresses)}.",
         ExitCodes.Usage,
         "share-principal-ambiguous",
@@ -519,6 +520,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="innerException">The directory failure, when there was one.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException SharePrincipalLookupFailed(string selector, string detail, Exception? innerException = null) => new(
+        ErrorCodes.ManagedAgent.SharePrincipalLookupFailed,
         $"Microsoft Graph could not resolve '{selector}' to an Entra object id: {detail}",
         ExitCodes.Failure,
         "share-principal-lookup-failed",

@@ -666,7 +666,7 @@ public sealed class TelemetryFullTests
         var output = new StringWriter();
 
         int exitCode = await host.InvokeAsync(
-            ["test", "ask", "--query", "hello", "--agent-harness", "standard", "--json"],
+            ["test", "ask", "--query", "hello", "--json"],
             output, new StringWriter(), color: false);
 
         Assert.NotEqual(0, exitCode);
@@ -699,7 +699,7 @@ public sealed class TelemetryFullTests
             featureFlags: new TestFeatureFlags(FeatureName.LiveTestFeatures));
 
         int exitCode = await host.InvokeAsync(
-            ["test", "ask", "--query", "hello", "--agent-harness", "standard", "--json"],
+            ["test", "ask", "--query", "hello", "--json"],
             new StringWriter(), new StringWriter(), color: false, cancellation.Token);
 
         Assert.NotEqual(0, exitCode);

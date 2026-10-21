@@ -84,6 +84,8 @@ public static class ErrorCodes
         public const int ConnectorNotServed = 11049;
         public const int ConnectionNotACandidate = 11050;
         public const int ConnectionNotServed = 11051;
+        public const int SharePrincipalAmbiguous = 11052;
+        public const int SharePrincipalLookupFailed = 11053;
     }
 
     /// <summary>Error identifiers for the Authentication area (prefix 12).</summary>

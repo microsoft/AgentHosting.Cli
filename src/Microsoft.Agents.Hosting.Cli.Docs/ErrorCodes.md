@@ -115,6 +115,8 @@ mean a change partially completed or its result is uncertain.
 | [11049](ErrorCodes/11049.md) | The target environment's catalog does not contain the requested connector. |
 | [11050](ErrorCodes/11050.md) | The supplied connection ID is not among the connector's available candidates. |
 | [11051](ErrorCodes/11051.md) | The selected connector does not serve the connection requested for removal. |
+| [11052](ErrorCodes/11052.md) | The recipient email address matches more than one user in the tenant directory. |
+| [11053](ErrorCodes/11053.md) | Microsoft Graph could not resolve the recipient to a usable Entra user identity. |
 
 ## Authentication
 
