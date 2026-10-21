@@ -57,7 +57,11 @@ msagent env select <environment-id>
 msagent agent create --project MyAgent --agent-type MCSAgent --mcs-agent-type CLI --agent-name "My Agent" --description "Customer support assistant" --initial-prompt "Answer support questions using the provided knowledge. Ask when unsure."
 ```
 
-Work from the new `MyAgent` project directory for the following commands:
+Work from the new `MyAgent` project directory for the following commands.
+A deploy without `--publish` does not publish conversational-agent changes, but can
+activate eligible attached workflows. `deployment connection update` can also
+activate workflows as their connections become ready. If attached workflows are
+present, obtain approval for their activation before running either command:
 
 ```text
 msagent agent show
