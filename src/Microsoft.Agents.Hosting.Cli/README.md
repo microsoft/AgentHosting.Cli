@@ -153,7 +153,9 @@ from the MCS implementation. No numerical release SLO or live baseline is claime
 ### M365 Agents Playground test (MVP)
 
 `msagent test playground --agent-harness standard|github-copilot` launches the
-M365 Agents Playground in the foreground for the same selected agent as `test ask`.
+M365 Agents Playground in a new terminal window for the same selected agent as `test ask`.
+The calling terminal returns after the child confirms process startup; the new
+window owns the session and remains open while Playground is running.
 The `--target` option selects `directengine` (the default) or `directline`.
 DirectEngine uses the same agent selectors as `test ask` and the same resolver.
 Neither mode accepts `--query` or `--conversation-id`.
@@ -169,7 +171,7 @@ msagent test playground --target directline
 
 For DirectEngine, `--agent-harness` is required. Both harnesses are launched against the resolved DirectEngine endpoint with the
 public client configuration needed by the package. The package owns device-code
-or browser authentication in the attached foreground console; `msagent` does
+or browser authentication in the new terminal window; `msagent` does
 not hand it tokens or secrets. The command reports the selected
 `agentsplayground` path and version. Readiness is established immediately when
 the process starts. The package owns authentication timing; `msagent` does not
@@ -193,6 +195,7 @@ global public-cloud Direct Line connectivity. At the native playground's
 **Settings > Security > Web channel security**. Do not paste credentials into
 chat, command arguments, environment variables, or configuration files.
 Empty Enter, Escape, or Ctrl+C cancels native credential setup.
+Enter credentials in the new window, not the calling terminal.
 
 The native playground owns credential validation and the connection. `msagent`
 does not acquire, save, or log the credential and uses an isolated, disposable
@@ -223,20 +226,33 @@ manager when a global prefix requires elevation. The user's npm registry,
 proxy, and authentication configuration is left intact.
 
 `--plain` suppresses `msagent` transient progress; the package's own console
-output is still inherited. DirectEngine authentication may require user action even
+output appears in the new terminal window. DirectEngine authentication may require user action even
 with `--non-interactive`; Direct Line rejects that option. `--json` is rejected in this MVP because structured
 playground streaming is not supported. The MVP has no optional upgrades,
-managed install store, detach, retry, or transcript feature.
+managed install store, retry, or transcript feature.
 
 #### Lifetime, effects, and limits
 
-This is a live action: effects are not rolled back. On Ctrl+C or normal exit,
-the command requests graceful shutdown, waits up to 10 seconds, then kills only
+This is a live action: effects are not rolled back. Use Ctrl+C in the Playground
+window to stop the session; closing or interrupting the calling terminal after
+startup does not stop it. The child `msagent` owns cleanup, including removal of
+the disposable invocation directory. On Ctrl+C or normal exit, that child
+requests graceful shutdown, waits up to 10 seconds, then kills only
 the child process tree and allows up to another 10 seconds for cleanup. It never
 kills by process name or port, and the user's shared browser must survive. An
-abrupt `msagent` parent crash can orphan the playground server; that is a known MVP limitation.
+abrupt child `msagent` crash or forcibly closing its window can orphan the playground
+server; that is a known MVP limitation.
 Version probes time out after 10 seconds and installation after 600 seconds.
-There is no separate readiness-timeout promise beyond process-start readiness.
+Terminal startup and the process-start handoff time out after 30 seconds.
+This is not an authentication or conversation-readiness timeout, and later
+Playground exit codes are reported only in its own terminal.
+
+A local desktop session is required. Windows opens a separate console window.
+macOS opens Terminal and may request permission to automate it. Linux requires
+GNOME Terminal, Konsole, Xfce Terminal, xterm, or `x-terminal-emulator` on `PATH`;
+the command fails explicitly if no terminal can be opened. Linux launches the
+child executable directly without a shell script. Headless/SSH hosts do not
+gain interactive or DirectEngine support from this launch mechanism.
 
 #### Manual MVP test matrix
 
@@ -248,6 +264,7 @@ not part of the offline test suite:
 | Native package (Windows) | The Windows native-package spike passed both harnesses on `0.2.29`. |
 | `msagent` command (Windows) | `standard` passed with user-observed connected state, two replies, Ctrl+C, browser survival, and no package process survivor. The actual `github-copilot` command was not run. |
 | `msagent` command (POSIX) | Not run on macOS or Linux/WSL; POSIX manual validation remains pending and no full certification is claimed. |
+| Separate terminal lifecycle | A Windows synthetic process confirmed real terminal input/output, survival after the calling pipe closes, and child-owned invocation-directory cleanup. macOS/Linux desktop validation of the new launch path remains pending. |
 | Tool resolution | Cover an existing current tool, a missing tool, and an old tool; verify the version probe, consent text, `--install-playground`, npm registry/proxy/auth settings, permission failures, and network/install failures. |
 | Safety and output | Verify LiveTestFeatures opt-in, `--json` rejection, `--plain` output, native device-code/browser behavior, and the warning that live effects are not rolled back. |
 | Direct Line native contract | Installed `0.2.29` help and bundled setup code were inspected for target support, masked entry, default display name, cancellation, and isolated-config fallback. This is not a live connection check. |

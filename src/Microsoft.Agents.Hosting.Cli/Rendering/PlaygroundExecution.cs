@@ -32,9 +32,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
     private const string LiveEffectsWarning =
         "Warning: this launches a live playground session; actions can have real effects against the selected agent.";
     private const string DeviceCodeDisclosure =
-        "The native playground owns sign-in. If it asks for a device code, follow its instructions in this terminal.";
+        "The native playground owns sign-in. If it asks for a device code, follow its instructions in the new terminal window.";
     private const string DirectLineDisclosure =
-        "Enter the MCS token endpoint or Direct Line secret only in the native playground's masked terminal prompt. Do not put credentials in command arguments or chat.";
+        "Enter the MCS token endpoint or Direct Line secret only in the native playground's masked terminal prompt in the new terminal window. Do not put credentials in command arguments or chat.";
 
     private readonly PlaygroundRequest _request;
     private readonly Func<LiveTestRequest, LiveTestDestination> _resolve;
@@ -260,7 +260,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
 
             Action started = _request.Plain
                 ? static () => { }
-                : () => stdout.WriteLine("Playground process started.");
+                : () => stdout.WriteLine("Playground process started in a new terminal window. This terminal is free to use; stop Playground in its own window.");
             try
             {
                 var exitCode = await _launcher.RunAsync(

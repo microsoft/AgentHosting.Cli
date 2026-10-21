@@ -44,6 +44,29 @@ internal static class Program
 
     private static async Task<int> RunAsync(string[] args)
     {
+        if (args.Length == 2 &&
+            args[0] == PlaygroundTerminalSession.ChildOption &&
+            args[1].StartsWith("msagent-playground-", StringComparison.Ordinal) &&
+            Guid.TryParseExact(args[1]["msagent-playground-".Length..], "N", out _))
+        {
+            using var cancellation = new CancellationTokenSource();
+            ConsoleCancelEventHandler cancel = (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                cancellation.Cancel();
+            };
+            Console.CancelKeyPress += cancel;
+            try
+            {
+                return await PlaygroundTerminalSession.RunChildAsync(
+                    args[1], new PlaygroundLauncher(), cancellation.Token);
+            }
+            finally
+            {
+                Console.CancelKeyPress -= cancel;
+            }
+        }
+
         var configDirectory = ResolveConfigDirectory(Environment.GetEnvironmentVariable);
         InvocationTarget invocation;
 
@@ -183,7 +206,7 @@ internal static class Program
         services.AddSingleton<IPlaygroundToolEnvironment, SystemPlaygroundToolEnvironment>();
         services.AddSingleton<IPlaygroundToolLocator, PlaygroundToolLocator>();
         services.AddSingleton<IPlaygroundGlobalInstaller, PlaygroundGlobalInstaller>();
-        services.AddSingleton<IPlaygroundLauncher, PlaygroundLauncher>();
+        services.AddSingleton<IPlaygroundLauncher, PlaygroundTerminalSession>();
         services.AddSingleton<
             ICommandHandler<PlaygroundRequest, ILiveTestStreamingResult>>(
             sp => new PlaygroundCommandHandler(
