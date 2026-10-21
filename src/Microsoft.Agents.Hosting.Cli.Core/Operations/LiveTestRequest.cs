@@ -12,7 +12,6 @@ public sealed record LiveTestRequest
     public string? DeploymentName { get; init; }
     public string? EnvironmentId { get; init; }
     public string? Tenant { get; init; }
-    public string AgentType { get; init; } = "standard";
     public string? ConversationId { get; init; }
     public bool Json { get; init; }
     public bool Plain { get; init; }

@@ -491,16 +491,39 @@ public sealed class ManagedAgentException : AgentHostingException
         "share-target-not-in-environment",
         "Run `msagent agent deploy` to deploy it there, or `msagent deployment list` to see which environments it actually reached.");
 
-    /// <summary>The user selector matched nothing the environment knows.</summary>
+    /// <summary>The user selector matched nobody in the tenant directory.</summary>
     /// <param name="selector">The value that was supplied.</param>
-    /// <param name="environmentId">The environment that was searched.</param>
+    /// <param name="tenantId">The tenant that was searched.</param>
     /// <returns>The typed failure.</returns>
-    public static ManagedAgentException SharePrincipalNotFound(string selector, string environmentId) => new(
+    public static ManagedAgentException SharePrincipalNotFound(string selector, string tenantId) => new(
         ErrorCodes.ManagedAgent.SharePrincipalNotFound,
-        $"No user matching '{selector}' has an account in environment '{environmentId}'.",
+        $"No user with sign-in address or email address '{selector}' exists in tenant '{tenantId}'.",
         ExitCodes.Usage,
         "share-principal-not-found",
-        $"Sharing itself needs no account here, but resolving a name does. Supply the Entra object id instead — `az ad user show --id {selector} --query id -o tsv` prints it — or share from an environment where the user already has one.");
+        "Check the address for typos, or supply the user's Entra object id.");
+
+    /// <summary>The email address belongs to more than one user in the tenant directory, so it names nobody in particular.</summary>
+    /// <param name="selector">The value that was supplied.</param>
+    /// <param name="tenantId">The tenant that was searched.</param>
+    /// <param name="signInAddresses">The sign-in addresses of users it matched. The search stops once it has found two.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException SharePrincipalAmbiguous(string selector, string tenantId, IEnumerable<string> signInAddresses) => new(
+        $"'{selector}' is the email address of more than one user in tenant '{tenantId}', including {string.Join(", ", signInAddresses)}.",
+        ExitCodes.Usage,
+        "share-principal-ambiguous",
+        "Supply the sign-in address of the user you mean or their Entra object id.");
+
+    /// <summary>The tenant directory could not answer which user an address names.</summary>
+    /// <param name="selector">The value that was supplied.</param>
+    /// <param name="detail">What the directory reported.</param>
+    /// <param name="innerException">The directory failure, when there was one.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException SharePrincipalLookupFailed(string selector, string detail, Exception? innerException = null) => new(
+        $"Microsoft Graph could not resolve '{selector}' to an Entra object id: {detail}",
+        ExitCodes.Failure,
+        "share-principal-lookup-failed",
+        "Retry the command, or supply the Entra object id instead.",
+        innerException);
 
     /// <summary>The owner's access was targeted, which sharing cannot change.</summary>
     /// <param name="principalName">The principal that owns the agent.</param>

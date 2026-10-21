@@ -293,3 +293,21 @@ public interface IDirectoryPrincipalPort
     /// <returns>The principals that resolved, keyed by object id.</returns>
     Task<IReadOnlyDictionary<string, DirectoryPrincipal>> ResolveManyAsync(CopilotEnvironmentContext environment, IReadOnlyCollection<string> objectIds, CancellationToken cancellationToken);
 }
+
+/// <summary>Resolves users across the whole tenant directory, whether or not any environment has provisioned them.</summary>
+public interface ITenantUserDirectoryPort
+{
+    /// <summary>Finds a user by user principal name or, when no user has that name, by email address.</summary>
+    /// <param name="tenantId">The tenant to search.</param>
+    /// <param name="address">The user principal name or email address to look up.</param>
+    /// <param name="cancellationToken">Cancels the lookup.</param>
+    /// <returns>The user, or <see langword="null"/> when the tenant has no such user.</returns>
+    Task<DirectoryPrincipal?> FindUserAsync(string tenantId, string address, CancellationToken cancellationToken);
+
+    /// <summary>Names users by Entra object id in as few requests as the directory allows.</summary>
+    /// <param name="tenantId">The tenant to search.</param>
+    /// <param name="objectIds">The object ids to name.</param>
+    /// <param name="cancellationToken">Cancels the lookup.</param>
+    /// <returns>Each user that resolved, as soon as the directory returns it. An object id that names no user is left out.</returns>
+    IAsyncEnumerable<DirectoryPrincipal> ResolveManyAsync(string tenantId, IReadOnlyCollection<string> objectIds, CancellationToken cancellationToken);
+}

@@ -13,18 +13,25 @@ public sealed class ManagedAgentShareServiceTests
     private const string Owner = "00000000-0000-0000-0000-0000000000aa";
     private const string Ada = "00000000-0000-0000-0000-0000000000bb";
     private const string Support = "00000000-0000-0000-0000-0000000000cc";
+    private const string Grace = "00000000-0000-0000-0000-0000000000dd";
+    private const string Stranger = "00000000-0000-0000-0000-0000000000ee";
     private const string Bot = "bot-1";
 
-    private static ManagedAgentShareService Create(JsonAgentConfigStore store, FakeAgentSharingPort sharing, IDirectoryPrincipalPort directory, ICopilotCatalogPort? catalog = null) =>
+    private static ManagedAgentShareService Create(JsonAgentConfigStore store, FakeAgentSharingPort sharing, IDirectoryPrincipalPort directory, ICopilotCatalogPort? catalog = null, ITenantUserDirectoryPort? tenantDirectory = null, TimeSpan? tenantNamingTimeout = null) =>
+        Construct(store, sharing, directory, catalog ?? Catalog(), tenantDirectory ?? new FakeTenantUserDirectoryPort(), tenantNamingTimeout);
+
+    private static ManagedAgentShareService Construct(JsonAgentConfigStore store, FakeAgentSharingPort sharing, IDirectoryPrincipalPort directory, ICopilotCatalogPort catalog, ITenantUserDirectoryPort tenantDirectory, TimeSpan? tenantNamingTimeout = null) =>
         new(
             ManagedAgentFixtures.AgentResolver(store),
             ManagedAgentFixtures.Resolver(
                 EnvironmentFixtures.Environment("env-1", instanceUrl: CopilotTestFixtures.DataverseOrganization),
                 EnvironmentFixtures.Environment("env-2", instanceUrl: CopilotTestFixtures.DataverseOrganization)),
-            catalog ?? Catalog(),
+            catalog,
             new CopilotProjectIdentityReader(new AgentConfigLocator()),
             sharing,
-            directory);
+            directory,
+            tenantDirectory,
+            tenantNamingTimeout);
 
     private static FakeCopilotCatalogPort Catalog(string? resolves = Bot) => new() { ResolveReturns = resolves };
 
@@ -43,6 +50,22 @@ public sealed class ManagedAgentShareServiceTests
 
     private static FakeAgentSharingPort OwnedAgent() =>
         new FakeAgentSharingPort().WithTargets(Bot, AgentShareTarget.For(Owner, AgentSharingRole.Owner));
+
+    private static Task<ManagedAgentShareShowResult> ShowGraceAndAStrangerAsync(TemporaryWorkspace workspace, FakeTenantUserDirectoryPort tenantDirectory, TimeSpan? tenantNamingTimeout = null, CancellationToken cancellationToken = default) =>
+        Create(
+            Seeded(workspace),
+            new FakeAgentSharingPort().WithTargets(Bot, AgentShareTarget.For(Owner, AgentSharingRole.Owner), AgentShareTarget.For(Grace, AgentSharingRole.Consumer), AgentShareTarget.For(Stranger, AgentSharingRole.Consumer)),
+            Directory(),
+            tenantDirectory: tenantDirectory.WithUser(Grace, "Grace Hopper", "grace_fabrikam.com#EXT#@contoso.com"),
+            tenantNamingTimeout: tenantNamingTimeout).ShowAsync(new ManagedAgentShareShowRequest { AgentId = "agent-1" }, cancellationToken);
+
+    private static void AssertOnlyGraceIsNamed(ManagedAgentShareShowResult result)
+    {
+        Assert.Equal("Grace Hopper", result.Shares.Single(share => share.ObjectId == Grace).PrincipalName);
+        var stranger = result.Shares.Single(share => share.ObjectId == Stranger);
+        Assert.Equal(Stranger, stranger.PrincipalName);
+        Assert.Equal("Unknown", stranger.PrincipalType);
+    }
 
     [Fact]
     public async Task Share_GrantsUseAccessAndKeepsTheOwner()
@@ -222,16 +245,154 @@ public sealed class ManagedAgentShareServiceTests
     }
 
     [Fact]
-    public async Task Share_RejectsASignInAddressTheDirectoryDoesNotKnow()
+    public async Task Share_RejectsASignInAddressTheTenantDoesNotKnow()
     {
         using var workspace = new TemporaryWorkspace();
         using var scope = new CurrentDirectoryScope(workspace.Root);
+        var sharing = OwnedAgent();
+        var tenantDirectory = new FakeTenantUserDirectoryPort();
 
-        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(Seeded(workspace), OwnedAgent(), Directory()).ShareAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(Seeded(workspace), sharing, Directory(), tenantDirectory: tenantDirectory).ShareAsync(
             new ManagedAgentShareRequest { AgentId = "agent-1", User = "nobody@contoso.com", Role = "use" },
             CancellationToken.None));
 
         Assert.Equal("share-principal-not-found", failure.ErrorKind);
+        Assert.Contains(EnvironmentFixtures.ContosoTenant, failure.Message, StringComparison.Ordinal);
+        Assert.Equal([(EnvironmentFixtures.ContosoTenant, "nobody@contoso.com")], tenantDirectory.Lookups);
+        Assert.Empty(sharing.Writes);
+    }
+
+    [Fact]
+    public async Task Share_ResolvesASignInAddressTheEnvironmentHasNotProvisionedThroughTheTenant()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var sharing = OwnedAgent();
+        var grace = "44444444-4444-4444-4444-444444444444";
+        var tenantDirectory = new FakeTenantUserDirectoryPort().WithUser(grace, "Grace Hopper", "grace@contoso.com");
+
+        var result = await Create(Seeded(workspace), sharing, Directory(), tenantDirectory: tenantDirectory).ShareAsync(
+            new ManagedAgentShareRequest { AgentId = "agent-1", User = "  grace@contoso.com ", Role = "use" },
+            CancellationToken.None);
+
+        Assert.Equal("shared", result.Status);
+        Assert.Equal(grace, result.Principal!.ObjectId);
+        Assert.Equal("Grace Hopper", result.Principal.PrincipalName);
+        Assert.Equal("grace@contoso.com", result.Principal.SignInAddress);
+        Assert.Equal("User", result.Principal.PrincipalType);
+        Assert.Equal("use", result.Principal.Role);
+        Assert.Equal(AgentSharingRole.Consumer, sharing.StateOf(Bot).RoleOf(grace));
+        Assert.Equal(AgentSharingRole.Owner, sharing.StateOf(Bot).RoleOf(Owner));
+        Assert.Equal([(EnvironmentFixtures.ContosoTenant, "grace@contoso.com")], tenantDirectory.Lookups);
+    }
+
+    [Fact]
+    public async Task Share_ReportsTheSignInAddressOfAGuestTheTenantResolvedByEmailAddress()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var sharing = OwnedAgent();
+        var guest = "66666666-6666-6666-6666-666666666666";
+        var tenantDirectory = new FakeTenantUserDirectoryPort().WithUser(guest, "Grace Hopper", "grace_fabrikam.com#EXT#@contoso.com", "grace@fabrikam.com");
+
+        var result = await Create(Seeded(workspace), sharing, Directory(), tenantDirectory: tenantDirectory).ShareAsync(
+            new ManagedAgentShareRequest { AgentId = "agent-1", User = "grace@fabrikam.com", Role = "edit" },
+            CancellationToken.None);
+
+        Assert.Equal("shared", result.Status);
+        Assert.Equal(guest, result.Principal!.ObjectId);
+        Assert.Equal("Grace Hopper", result.Principal.PrincipalName);
+        Assert.Equal("grace_fabrikam.com#EXT#@contoso.com", result.Principal.SignInAddress);
+        Assert.Equal(AgentSharingRole.Collaborator, sharing.StateOf(Bot).RoleOf(guest));
+        Assert.Equal(AgentSharingRole.Owner, sharing.StateOf(Bot).RoleOf(Owner));
+    }
+
+    [Fact]
+    public async Task Share_DoesNotAskTheTenantForAUserTheEnvironmentAlreadyKnows()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var tenantDirectory = new FakeTenantUserDirectoryPort().WithUser("55555555-5555-5555-5555-555555555555", "Ada Elsewhere", "ada@contoso.com");
+
+        var result = await Create(Seeded(workspace), OwnedAgent(), Directory(), tenantDirectory: tenantDirectory).ShareAsync(
+            new ManagedAgentShareRequest { AgentId = "agent-1", User = "ada@contoso.com", Role = "use" },
+            CancellationToken.None);
+
+        Assert.Equal(Ada, result.Principal!.ObjectId);
+        Assert.Equal("Ada Lovelace", result.Principal.PrincipalName);
+        Assert.Empty(tenantDirectory.Lookups);
+    }
+
+    [Fact]
+    public async Task Share_DoesNotAskTheTenantForAnObjectId()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var tenantDirectory = new FakeTenantUserDirectoryPort();
+
+        await Create(Seeded(workspace), OwnedAgent(), Directory(), tenantDirectory: tenantDirectory).ShareAsync(
+            new ManagedAgentShareRequest { AgentId = "agent-1", User = "33333333-3333-3333-3333-333333333333", Role = "use" },
+            CancellationToken.None);
+
+        Assert.Empty(tenantDirectory.Lookups);
+        Assert.Empty(tenantDirectory.NameLookups);
+    }
+
+    public static TheoryData<AgentHostingException> TenantLookupFailures => new()
+    {
+        ManagedAgentException.SharePrincipalLookupFailed("grace@contoso.com", "HTTP 403."),
+        new TargetRequestException("Authentication for Graph was rejected (token missing, invalid, or expired).", ExitCodes.NotSignedIn, TargetErrorKind.AuthExpired, status: 401),
+    };
+
+    [Theory]
+    [MemberData(nameof(TenantLookupFailures))]
+    public async Task Share_PassesOnATenantLookupFailureUnchanged(AgentHostingException failure)
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var sharing = OwnedAgent();
+
+        Assert.Same(failure, await Assert.ThrowsAnyAsync<AgentHostingException>(() => Create(Seeded(workspace), sharing, Directory(), tenantDirectory: new FakeTenantUserDirectoryPort { Failure = failure }).ShareAsync(
+            new ManagedAgentShareRequest { AgentId = "agent-1", User = "grace@contoso.com", Role = "use" },
+            CancellationToken.None)));
+        Assert.Empty(sharing.Writes);
+    }
+
+    [Fact]
+    public async Task Unshare_RemovesAPrincipalResolvedThroughTheTenant()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var grace = "44444444-4444-4444-4444-444444444444";
+        var sharing = new FakeAgentSharingPort().WithTargets(
+            Bot,
+            AgentShareTarget.For(Owner, AgentSharingRole.Owner),
+            AgentShareTarget.For(grace, AgentSharingRole.Consumer));
+        var tenantDirectory = new FakeTenantUserDirectoryPort().WithUser(grace, "Grace Hopper", "grace@contoso.com");
+
+        var result = await Create(Seeded(workspace), sharing, Directory(), tenantDirectory: tenantDirectory).UnshareAsync(
+            new ManagedAgentUnshareRequest { AgentId = "agent-1", User = "grace@contoso.com" },
+            CancellationToken.None);
+
+        Assert.Equal("unshared", result.Status);
+        Assert.Equal("Grace Hopper", result.Principal.PrincipalName);
+        Assert.Null(sharing.StateOf(Bot).RoleOf(grace));
+        Assert.Equal(AgentSharingRole.Owner, sharing.StateOf(Bot).RoleOf(Owner));
+    }
+
+    [Fact]
+    public async Task Unshare_RejectsASignInAddressTheTenantDoesNotKnow()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var sharing = OwnedAgent();
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(Seeded(workspace), sharing, Directory()).UnshareAsync(
+            new ManagedAgentUnshareRequest { AgentId = "agent-1", User = "nobody@contoso.com" },
+            CancellationToken.None));
+
+        Assert.Equal("share-principal-not-found", failure.ErrorKind);
+        Assert.Empty(sharing.Writes);
     }
 
     [Fact]
@@ -255,12 +416,14 @@ public sealed class ManagedAgentShareServiceTests
         using var workspace = new TemporaryWorkspace();
         using var scope = new CurrentDirectoryScope(workspace.Root);
         var refused = new ThrowingDirectoryPrincipalPort(CopilotStudioException.ServiceError("GET systemusers", "HTTP 403 Forbidden."));
+        var tenantDirectory = new FakeTenantUserDirectoryPort();
 
-        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(Seeded(workspace), OwnedAgent(), refused).ShareAsync(
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(Seeded(workspace), OwnedAgent(), refused, tenantDirectory: tenantDirectory).ShareAsync(
             new ManagedAgentShareRequest { AgentId = "agent-1", User = "ada@contoso.com", Role = "use" },
             CancellationToken.None));
 
         Assert.Contains("HTTP 403", failure.Message, StringComparison.Ordinal);
+        Assert.Empty(tenantDirectory.Lookups);
     }
 
     [Fact]
@@ -830,6 +993,153 @@ public sealed class ManagedAgentShareServiceTests
     }
 
     [Fact]
+    public async Task ShareShow_NamesThroughTheTenantThePrincipalsTheEnvironmentHasNotProvisioned()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var guest = "66666666-6666-6666-6666-666666666666";
+        var tenantDirectory = new FakeTenantUserDirectoryPort().WithUser(guest, "Grace Hopper", "grace_fabrikam.com#EXT#@contoso.com");
+
+        var result = await Create(Seeded(workspace), new FakeAgentSharingPort().WithTargets(Bot, AgentShareTarget.For(Owner, AgentSharingRole.Owner), AgentShareTarget.For(guest, AgentSharingRole.Collaborator)), Directory(), tenantDirectory: tenantDirectory).ShowAsync(
+            new ManagedAgentShareShowRequest { AgentId = "agent-1" },
+            CancellationToken.None);
+
+        Assert.Equal(["Hoa Nguyen", "Grace Hopper"], result.Shares.Select(share => share.PrincipalName));
+        var named = result.Shares[1];
+        Assert.Equal(guest, named.ObjectId);
+        Assert.Equal("User", named.PrincipalType);
+        Assert.Equal("grace_fabrikam.com#EXT#@contoso.com", named.SignInAddress);
+        Assert.Equal("edit", named.Role);
+        var lookup = Assert.Single(tenantDirectory.NameLookups);
+        Assert.Equal(EnvironmentFixtures.ContosoTenant, lookup.TenantId);
+        Assert.Equal([guest], lookup.ObjectIds);
+        Assert.Empty(tenantDirectory.Lookups);
+    }
+
+    [Fact]
+    public async Task ShareShow_DoesNotAskTheTenantWhenTheEnvironmentNamesEveryPrincipal()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var tenantDirectory = new FakeTenantUserDirectoryPort();
+
+        await Create(Seeded(workspace), new FakeAgentSharingPort().WithTargets(Bot, AgentShareTarget.For(Owner, AgentSharingRole.Owner), AgentShareTarget.For(Ada, AgentSharingRole.Consumer), AgentShareTarget.For(Support, AgentSharingRole.Consumer)), Directory(), tenantDirectory: tenantDirectory).ShowAsync(
+            new ManagedAgentShareShowRequest { AgentId = "agent-1" },
+            CancellationToken.None);
+
+        Assert.Empty(tenantDirectory.NameLookups);
+    }
+
+    [Fact]
+    public async Task ShareShow_AsksTheTenantForEveryPrincipalWhenTheEnvironmentCannotBeReached()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var tenantDirectory = new FakeTenantUserDirectoryPort().WithUser(Ada, "Ada Lovelace", "ada@contoso.com");
+
+        var share = Assert.Single((await Create(Seeded(workspace), new FakeAgentSharingPort().WithTargets(Bot, AgentShareTarget.For(Ada, AgentSharingRole.Consumer)), new ThrowingDirectoryPrincipalPort(), tenantDirectory: tenantDirectory).ShowAsync(
+            new ManagedAgentShareShowRequest { AgentId = "agent-1" },
+            CancellationToken.None)).Shares);
+
+        Assert.Equal("Ada Lovelace", share.PrincipalName);
+        Assert.Equal("ada@contoso.com", share.SignInAddress);
+        Assert.Equal([Ada], Assert.Single(tenantDirectory.NameLookups).ObjectIds);
+    }
+
+    public static TheoryData<Exception> TenantNamingFailures => new()
+    {
+        new TargetRequestException("The signed-in account lacks permission for this Graph operation.", ExitCodes.Failure, TargetErrorKind.PermissionDenied, status: 403),
+        new TargetRequestException("Authentication for Graph was rejected (token missing, invalid, or expired).", ExitCodes.NotSignedIn, TargetErrorKind.AuthExpired, status: 401),
+        new InteractionRequiredException("Could not silently obtain the requested access token."),
+        new TokenThrottledException("Microsoft Entra ID is throttling token requests from this client."),
+        ManagedAgentException.SharePrincipalLookupFailed("66666666-6666-6666-6666-666666666666", "HTTP 500."),
+        new HttpRequestException("graph unreachable"),
+        new TimeoutException("graph timed out"),
+        new IOException("connection reset"),
+    };
+
+    [Theory]
+    [MemberData(nameof(TenantNamingFailures))]
+    public async Task ShareShow_KeepsTheObjectIdWhenTheTenantCannotNameThePrincipal(Exception failure)
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var guest = "66666666-6666-6666-6666-666666666666";
+
+        var result = await Create(Seeded(workspace), new FakeAgentSharingPort().WithTargets(Bot, AgentShareTarget.For(Owner, AgentSharingRole.Owner), AgentShareTarget.For(guest, AgentSharingRole.Consumer)), Directory(), tenantDirectory: new FakeTenantUserDirectoryPort { Failure = failure }).ShowAsync(
+            new ManagedAgentShareShowRequest { AgentId = "agent-1" },
+            CancellationToken.None);
+
+        Assert.Equal(["Hoa Nguyen", guest], result.Shares.Select(share => share.PrincipalName));
+        Assert.Equal("Unknown", result.Shares[1].PrincipalType);
+    }
+
+    [Fact]
+    public async Task ShareShow_DoesNotAbsorbAProgrammingErrorFromTheTenant()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Create(Seeded(workspace), new FakeAgentSharingPort().WithTargets(Bot, AgentShareTarget.For("66666666-6666-6666-6666-666666666666", AgentSharingRole.Consumer)), Directory(), tenantDirectory: new FakeTenantUserDirectoryPort { Failure = new InvalidOperationException("a bug in this build") }).ShowAsync(
+            new ManagedAgentShareShowRequest { AgentId = "agent-1" },
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ShareShow_KeepsTheNamesTheTenantReturnedBeforeItFailed()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+
+        AssertOnlyGraceIsNamed(await ShowGraceAndAStrangerAsync(workspace, new FakeTenantUserDirectoryPort { Failure = new HttpRequestException("graph unreachable") }));
+    }
+
+    [Fact]
+    public async Task ShareShow_ShowsTheObjectIdOfWhatTheTenantHasNotNamedOnceNamingRunsOutOfTime()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        using var testTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+        var tenantDirectory = new FakeTenantUserDirectoryPort { AfterNaming = cancellationToken => Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken) };
+
+        AssertOnlyGraceIsNamed(await ShowGraceAndAStrangerAsync(workspace, tenantDirectory, TimeSpan.FromMilliseconds(1), testTimeout.Token));
+        Assert.Single(tenantDirectory.NameLookups);
+    }
+
+    [Fact]
+    public async Task ShareShow_StopsWhenCancelledWhileTheTenantIsNaming()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        using var cancellation = new CancellationTokenSource();
+        var tenantDirectory = new FakeTenantUserDirectoryPort
+        {
+            AfterNaming = async cancellationToken =>
+            {
+                await cancellation.CancelAsync();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            },
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ShowGraceAndAStrangerAsync(workspace, tenantDirectory, cancellationToken: cancellation.Token));
+        Assert.Single(tenantDirectory.NameLookups);
+    }
+
+    [Fact]
+    public async Task ShareShow_MatchesATenantNameToItsObjectIdWhateverTheCase()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+
+        var share = Assert.Single((await Create(Seeded(workspace), new FakeAgentSharingPort().WithTargets(Bot, AgentShareTarget.For(Grace.ToUpperInvariant(), AgentSharingRole.Consumer)), Directory(), tenantDirectory: new FakeTenantUserDirectoryPort().WithUser(Grace, "Grace Hopper", "grace@contoso.com")).ShowAsync(
+            new ManagedAgentShareShowRequest { AgentId = "agent-1" },
+            CancellationToken.None)).Shares);
+
+        Assert.Equal("Grace Hopper", share.PrincipalName);
+        Assert.Equal("User", share.PrincipalType);
+    }
+
+    [Fact]
     public async Task ShareShow_WithNoSharesIsEmpty()
     {
         using var workspace = new TemporaryWorkspace();
@@ -1238,6 +1548,10 @@ public sealed class ManagedAgentShareServiceTests
                 new ManagedAgentShareRequest { AgentId = "agent-1", User = Ada, Role = "use" },
                 CancellationToken.None));
     }
+
+    [Fact]
+    public void Constructor_RequiresATenantDirectory() =>
+        Assert.Equal("tenantDirectory", Assert.Throws<ArgumentNullException>(() => Construct(ManagedAgentFixtures.Store(), OwnedAgent(), Directory(), Catalog(), null!)).ParamName);
 }
 
 public sealed class AgentShareRolesTests

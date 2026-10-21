@@ -156,7 +156,7 @@ public sealed class AgentCreateServiceTests
                 .CreateAsync(Request(), default));
 
         Assert.Equal("endpoint-untrusted", exception.ErrorKind);
-        Assert.Contains(AgentCreationTarget.EndpointVariableName, exception.Remediation, StringComparison.Ordinal);
+        Assert.Contains("https", exception.Remediation, StringComparison.Ordinal);
         Assert.Equal(0, transport.Calls);
     }
 

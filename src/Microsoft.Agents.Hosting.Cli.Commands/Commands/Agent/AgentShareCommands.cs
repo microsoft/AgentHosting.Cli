@@ -21,7 +21,7 @@ public static class AgentShareSelector
     public static IReadOnlyList<CommandSymbol> SymbolsWithPrincipal =>
     [
         .. Symbols,
-        OptionCatalog.Value("--user", "User to grant access to, by sign-in address or Entra object id."),
+        OptionCatalog.Value("--user", "User to grant access to, by sign-in address, email address, or Entra object id."),
     ];
 
     /// <summary>Reports the agent-selector rule the input breaks, or null when it is valid.</summary>

@@ -54,6 +54,7 @@ public sealed class ManagedAgentCompositionTests
         services.AddSingleton<ManagedAgentDeleteService>();
         services.AddSingleton<IAgentSharingPort>(new FakeAgentSharingPort());
         services.AddSingleton<IDirectoryPrincipalPort>(new FakeDirectoryPrincipalPort());
+        services.AddSingleton<ITenantUserDirectoryPort>(new FakeTenantUserDirectoryPort());
         services.AddSingleton<ManagedAgentShareService>();
         services.AddSingleton<ManagedAgentPullService>();
         services.AddSingleton<ManagedAgentDeployService>();
