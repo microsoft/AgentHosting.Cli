@@ -21,6 +21,11 @@ TypeScript proposal.
 > that ship `off` (for example `abs`, `identity`, AMS package upload/CodeAgent creation, or
 > `test ask`). When a flag's shipped default changes to `on`, add its documentation to
 > `Tool_Readme.md`; when it changes to `off`, remove it.
+>
+> **Error-code maintenance:** Any addition or change to an error code, its meaning, triggering
+> conditions, or recovery guidance must update the [error code directory](../Microsoft.Agents.Hosting.Cli.Docs/ErrorCodes.md)
+> and the affected [per-code troubleshooting pages](../Microsoft.Agents.Hosting.Cli.Docs/ErrorCodes/)
+> in the same change. Keep the directory complete and the guidance user-facing.
 
 ## Command surface
 
@@ -261,6 +266,12 @@ The CLI uses one command-telemetry sender and one shared schema. A leaf dispatch
 the shared OneDS `event` envelope and one invocation-local batch. Outcomes distinguish success,
 usage, not-signed-in, failure, timeout, and caller cancellation. A rendering failure leaves the
 attempt without inventing an outcome. The `telemetry` control group never measures itself.
+
+Every event includes a native JSON boolean `IsFailure` inside `data.customDimensions`
+(the JSON-encoded custom dimensions object), not directly on the event data. It is `true` for usage,
+not-signed-in, failure, and timeout outcomes, and for parser rejection and group usage host
+events. It is `false` for success, caller cancellation, help, version, and command attempts;
+for attempts, `false` means no failure has been reported, not that execution has completed.
 
 After collection policy enables an invocation, normal command authentication may enrich its
 buffered events with the issuer tenant. A tenant-local Entra object id is accepted only when the

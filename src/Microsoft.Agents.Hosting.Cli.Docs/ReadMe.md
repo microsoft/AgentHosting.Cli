@@ -18,6 +18,8 @@ only; host configuration environment variables are documented in
 Commands or options labeled **MCS-specific** apply only to Microsoft Copilot Studio agents. Unlabeled
 commands either apply to all agent types or retain their existing CodeAgent behavior.
 
+For error meanings, causes, and recovery steps, see the [error code reference](ErrorCodes.md).
+
 ## Global options
 
 The first four options are available recursively on every command. Help is available on every
