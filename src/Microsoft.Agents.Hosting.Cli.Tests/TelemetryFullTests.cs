@@ -586,7 +586,7 @@ public sealed class TelemetryFullTests
             featureFlags: new TestFeatureFlags(FeatureName.LiveTestFeatures));
 
         int exitCode = await host.InvokeAsync(
-            ["test", "ask", "--query", "hello", "--agent-harness", "standard"],
+            ["test", "ask", "--query", "hello"],
             new StringWriter(),
             new StringWriter(),
             color: false);
@@ -612,7 +612,7 @@ public sealed class TelemetryFullTests
             featureFlags: new TestFeatureFlags(FeatureName.LiveTestFeatures));
 
         int exitCode = await host.InvokeAsync(
-            ["test", "ask", "--query", "hello", "--agent-harness", "standard"],
+            ["test", "ask", "--query", "hello"],
             new StringWriter(),
             new StringWriter(),
             color: false);

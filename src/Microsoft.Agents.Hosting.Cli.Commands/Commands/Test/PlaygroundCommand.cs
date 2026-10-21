@@ -15,7 +15,6 @@ public sealed class PlaygroundCommand : CommandBase<PlaygroundRequest, ILiveTest
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
         OptionCatalog.Value("--target", "Connection transport: directline or directengine (default)."),
-        OptionCatalog.Value("--agent-harness", "Agent harness: standard or github-copilot. Required for DirectEngine; not accepted for Direct Line."),
         OptionCatalog.Value("--project", "Local project directory holding agent.config.json."),
         OptionCatalog.Value("--agent-id", "Managed-agent record id."),
         OptionCatalog.Value("--agent-name", "Managed-agent record name."),
@@ -32,7 +31,6 @@ public sealed class PlaygroundCommand : CommandBase<PlaygroundRequest, ILiveTest
     protected override PlaygroundRequest Bind(ICommandInput input) => new()
     {
         Target = input.GetString("--target") ?? "directengine",
-        AgentType = input.GetString("--agent-harness"),
         Project = input.GetString("--project"),
         AgentId = input.GetString("--agent-id"),
         AgentName = input.GetString("--agent-name"),

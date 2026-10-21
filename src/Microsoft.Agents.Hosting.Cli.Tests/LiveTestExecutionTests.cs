@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Rendering;
 
@@ -6,6 +7,61 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 public sealed class LiveTestExecutionTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TargetResolutionFailurePreservesSafeGuidanceWithoutStartingSdk(bool jsonOutput)
+    {
+        const string message = "The selected managed agent has no configured default deployment.";
+        const string remediation = "Supply --deployment-id or --deployment-name; a singleton non-default deployment is not used.";
+        var execution = new LiveTestExecution(
+            new LiveTestRequest { Query = "hello", Json = jsonOutput },
+            _ => throw LiveTestTargetResolutionException.InvalidConfiguration(message, remediation),
+            (_, _, _) => throw new InvalidOperationException("Authentication must not run."),
+            (_, _, _) => throw new InvalidOperationException("SDK session must not be created."));
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        Assert.Equal(2, await execution.RenderAsync(output, error, false, CancellationToken.None));
+
+        if (jsonOutput)
+        {
+            using var json = JsonDocument.Parse(output.ToString());
+            var result = json.RootElement;
+            Assert.Equal("invalid-configuration", result.GetProperty("errorKind").GetString());
+            Assert.Equal(message, result.GetProperty("errorMessage").GetString());
+            Assert.Equal(remediation, result.GetProperty("remediation").GetString());
+            Assert.Equal("not-attempted", result.GetProperty("queryDelivery").GetString());
+            Assert.Equal(0, result.GetProperty("activityCount").GetInt32());
+            Assert.Empty(error.ToString());
+        }
+        else
+        {
+            Assert.Equal($"CLI: {message} {remediation}{Environment.NewLine}", error.ToString());
+            Assert.Empty(output.ToString());
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HumanFailureOnlyReportsSdkStatusAfterSdkStarts(bool sdkStarted)
+    {
+        var execution = new LiveTestExecution(
+            new LiveTestRequest { Query = "hello", ConversationId = "supplied" },
+            _ => new LiveTestDestination("synthetic", "tenant", "schema", "configured"),
+            (_, _, _) => sdkStarted
+                ? Task.FromResult("token")
+                : throw new IOException("CANARY-secret"),
+            (_, _, _) => new FakeSession { FailQuery = true });
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        Assert.Equal(1, await execution.RenderAsync(output, error, false, CancellationToken.None));
+        Assert.Equal(sdkStarted, output.ToString().Contains("SDK response did not complete", StringComparison.Ordinal));
+        Assert.DoesNotContain("CANARY", output.ToString() + error.ToString(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task NewConversationStreamsInitializationThenOneQuery()
     {

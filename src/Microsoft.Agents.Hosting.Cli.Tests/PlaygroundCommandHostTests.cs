@@ -54,7 +54,7 @@ public sealed class PlaygroundCommandHostTests
             new TestFeatureFlags(FeatureName.LiveTestFeatures));
 
         var exitCode = await cli.InvokeAsync(
-            ["test", "playground", "--agent-harness", "standard", "--json"],
+            ["test", "playground", "--json"],
             stdout,
             stderr,
             color: false);
@@ -76,7 +76,7 @@ public sealed class PlaygroundCommandHostTests
             new TestFeatureFlags());
 
         var exitCode = await cli.InvokeAsync(
-            ["test", "playground", "--agent-harness", "standard"],
+            ["test", "playground"],
             stdout,
             stderr,
             color: false);
@@ -105,7 +105,6 @@ public sealed class PlaygroundCommandHostTests
         Assert.Equal(0, exitCode);
         Assert.Equal(1, handler.Calls);
         Assert.Equal("directline", handler.Request!.Target);
-        Assert.Null(handler.Request.AgentType);
         Assert.Empty(stderr.ToString());
     }
 
@@ -119,10 +118,9 @@ public sealed class PlaygroundCommandHostTests
             TestFeatureFlags.Everything);
 
         Assert.Equal(0, await cli.InvokeAsync(
-            ["test", "playground", "--agent-harness", "standard"],
+            ["test", "playground"],
             new StringWriter(), new StringWriter(), color: false));
         Assert.Equal("directengine", handler.Request!.Target);
-        Assert.Equal("standard", handler.Request.AgentType);
     }
 
     private sealed class HandlerProvider(RecordingHandler handler) : IServiceProvider

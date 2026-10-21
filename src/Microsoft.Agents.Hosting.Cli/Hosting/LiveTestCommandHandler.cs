@@ -24,9 +24,7 @@ public sealed class LiveTestCommandHandler(
                     new McsLiveTestTarget(
                         target.EnvironmentId,
                         target.TenantId,
-                        target.SchemaName,
-                        target.AgentType,
-                        target.Endpoint),
+                        target.SchemaName),
                     tokenProvider,
                     cancellationToken: token)));
 }
