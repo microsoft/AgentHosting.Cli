@@ -1004,6 +1004,7 @@ public sealed class TelemetryFullTests
 
         Assert.Equal(
             [
+                "IsFailure",
                 "cliVersion",
                 "cloud",
                 "exitClass",
@@ -1020,6 +1021,7 @@ public sealed class TelemetryFullTests
                 .Order(StringComparer.Ordinal));
         Assert.Equal(
             [
+                "IsFailure",
                 "cliVersion",
                 "cloud",
                 "isOnePlayer",
@@ -1034,6 +1036,7 @@ public sealed class TelemetryFullTests
                 .Order(StringComparer.Ordinal));
         Assert.Equal(
             [
+                "IsFailure",
                 "cliVersion",
                 "cloud",
                 "exitClass",
@@ -1064,6 +1067,56 @@ public sealed class TelemetryFullTests
         await session.DisposeAsync();
 
         Assert.NotEmpty(await server.RequestBody);
+    }
+
+    [Theory]
+    [InlineData((int)CommandTelemetryOutcome.Success, false)]
+    [InlineData((int)CommandTelemetryOutcome.Usage, true)]
+    [InlineData((int)CommandTelemetryOutcome.NotSignedIn, true)]
+    [InlineData((int)CommandTelemetryOutcome.Failure, true)]
+    [InlineData((int)CommandTelemetryOutcome.Timeout, true)]
+    [InlineData((int)CommandTelemetryOutcome.Cancellation, false)]
+    public async Task OutcomeFailureFlagIsWrittenAsBoolean(
+        int outcome,
+        bool expectedFailure)
+    {
+        await using var server = new LoopbackServer();
+        await using CommandTelemetrySession session =
+            await Factory(server.Address).CreateAsync(suppressTelemetry: false, CancellationToken.None);
+        session.RecordAttempt(CommandTelemetryPath.FromMetadata(["auth", "status"]));
+        session.RecordOutcome((CommandTelemetryOutcome)outcome);
+
+        await session.DisposeAsync();
+
+        JsonElement[] events = Parse(await server.RequestBody);
+        Assert.Equal(2, events.Length);
+        Assert.All(events, item => Assert.False(Data(item).TryGetProperty("IsFailure", out _)));
+        Assert.False(Dimensions(events[0]).GetProperty("IsFailure").GetBoolean());
+        Assert.Equal(expectedFailure, Dimensions(events[1]).GetProperty("IsFailure").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData((int)CommandTelemetryHostCategory.Help, false)]
+    [InlineData((int)CommandTelemetryHostCategory.Version, false)]
+    [InlineData((int)CommandTelemetryHostCategory.ParserRejection, true)]
+    [InlineData((int)CommandTelemetryHostCategory.GroupUsage, true)]
+    public async Task HostFailureFlagDistinguishesErrorsFromInformationalEvents(
+        int category,
+        bool expectedFailure)
+    {
+        await using var server = new LoopbackServer();
+        var session = new CommandTelemetrySession(
+            new FixedDestinationResolver(Destination(server.Address)),
+            new FixedClock(),
+            "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush);
+        session.RecordHost((CommandTelemetryHostCategory)category);
+
+        await session.DisposeAsync();
+
+        JsonElement item = Assert.Single(Parse(await server.RequestBody));
+        Assert.False(Data(item).TryGetProperty("IsFailure", out _));
+        Assert.Equal(expectedFailure, Dimensions(item).GetProperty("IsFailure").GetBoolean());
     }
 
     [Theory]

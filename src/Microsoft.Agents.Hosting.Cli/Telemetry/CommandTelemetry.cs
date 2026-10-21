@@ -372,8 +372,13 @@ internal sealed class CommandTelemetryData
             record.Path?.OperationName ?? "AgentHostingCLI.Host";
         string telemetryLocation =
             destination.Location == Telemetry.TelemetryLocation.Europe ? "eu" : "global";
-        var dimensions = new Dictionary<string, string>(StringComparer.Ordinal)
+        var dimensions = new Dictionary<string, object>(StringComparer.Ordinal)
         {
+            ["IsFailure"] = record.Outcome is not (null
+                or CommandTelemetryOutcome.Success
+                or CommandTelemetryOutcome.Cancellation)
+                || record.HostCategory is CommandTelemetryHostCategory.ParserRejection
+                    or CommandTelemetryHostCategory.GroupUsage,
             ["operationName"] = operationName,
             ["telemetryLocation"] = telemetryLocation,
             ["isOnePlayer"] = "false",
