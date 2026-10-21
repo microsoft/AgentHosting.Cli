@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Commands.Common;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -9,6 +10,22 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 public sealed class PlaygroundCommandHostTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TenantAliasesAreDeclaredForRegularAndRecursiveOptions(bool recursive)
+    {
+        var option = recursive
+            ? OptionCatalog.Recursive("--tenant", "Tenant id.")
+            : OptionCatalog.Value("--tenant", "Tenant id.", required: true);
+
+        Assert.Equal("--tenant", option.Name);
+        Assert.Equal("-t", option.ShortAlias);
+        Assert.Equal("--tenant-id", Assert.Single(option.ExtraAliases));
+        Assert.Equal(recursive, option.Recursive);
+        Assert.Equal(!recursive, option.IsRequired);
+    }
+
     [Theory]
     [InlineData(130, 5)]
     [InlineData(2, 1)]
@@ -121,6 +138,30 @@ public sealed class PlaygroundCommandHostTests
             ["test", "playground"],
             new StringWriter(), new StringWriter(), color: false));
         Assert.Equal("directengine", handler.Request!.Target);
+    }
+
+    [Theory]
+    [InlineData("--tenant")]
+    [InlineData("--tenant-id")]
+    [InlineData("-t")]
+    public async Task TenantSpellingsBindToTheSameRequestProperty(string tenantOption)
+    {
+        const string tenantId = "11111111-1111-1111-1111-111111111111";
+        var handler = new RecordingHandler();
+        var cli = new AgentHostCli(
+            new FakeOperations(),
+            new HandlerProvider(handler),
+            TestFeatureFlags.Everything);
+        var stderr = new StringWriter();
+
+        var exitCode = await cli.InvokeAsync(
+            ["test", "playground", tenantOption, tenantId],
+            new StringWriter(), stderr, color: false);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal(tenantId, handler.Request!.Tenant);
+        Assert.Empty(stderr.ToString());
     }
 
     private sealed class HandlerProvider(RecordingHandler handler) : IServiceProvider

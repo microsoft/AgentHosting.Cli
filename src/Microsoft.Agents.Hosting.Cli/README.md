@@ -162,6 +162,7 @@ M365 Agents Playground in a new terminal window for the same selected agent as `
 The calling terminal returns after the child confirms process startup; the new
 window owns the session and remains open while Playground is running.
 The `--target` option selects `directengine` (the default) or `directline`.
+Wherever `--tenant` is accepted, `--tenant-id` and `-t` are equivalent aliases.
 DirectEngine uses the same agent selectors as `test ask` and the same resolver.
 Neither mode accepts `--query` or `--conversation-id`.
 The command is gated by the existing
