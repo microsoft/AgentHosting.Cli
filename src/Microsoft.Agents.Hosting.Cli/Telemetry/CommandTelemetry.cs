@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.Hosting.Cli.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Diagnostics;
+using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.PowerPlatform.Tooling.OneDS;
 
@@ -84,12 +85,14 @@ internal sealed record CommandTelemetryRecord
         DateTimeOffset timestamp,
         Guid? tenantId,
         Guid? principalObjectId,
-        PlaygroundTelemetryDetails? playgroundDetails)
+        PlaygroundTelemetryDetails? playgroundDetails,
+        int? errorCode = null)
     {
         Kind = kind;
         Path = path;
         HostCategory = hostCategory;
         Outcome = outcome;
+        ErrorCode = errorCode;
         Timestamp = timestamp;
         PlaygroundDetails = ValidatePlaygroundDetails(path, playgroundDetails);
         TenantId = ValidateTenantId(tenantId);
@@ -105,6 +108,8 @@ internal sealed record CommandTelemetryRecord
     public CommandTelemetryHostCategory? HostCategory { get; }
 
     public CommandTelemetryOutcome? Outcome { get; }
+
+    public int? ErrorCode { get; }
 
     public DateTimeOffset Timestamp { get; }
 
@@ -132,7 +137,10 @@ internal sealed record CommandTelemetryRecord
             timestamp,
             tenantId,
             principalObjectId: null,
-            playgroundDetails: null);
+            playgroundDetails: null,
+            errorCode: category is CommandTelemetryHostCategory.ParserRejection or CommandTelemetryHostCategory.GroupUsage
+                ? ErrorCodes.General.Usage
+                : null);
     }
 
     internal static CommandTelemetryRecord Attempt(
@@ -158,13 +166,22 @@ internal sealed record CommandTelemetryRecord
         CommandTelemetryOutcome outcome,
         DateTimeOffset timestamp,
         Guid? tenantId,
-        PlaygroundTelemetryDetails? playgroundDetails = null)
+        PlaygroundTelemetryDetails? playgroundDetails = null,
+        int? errorCode = null)
     {
         ArgumentNullException.ThrowIfNull(path);
         if (!Enum.IsDefined(outcome))
         {
             throw new ArgumentOutOfRangeException(nameof(outcome));
         }
+
+        errorCode = outcome switch
+        {
+            CommandTelemetryOutcome.Success or CommandTelemetryOutcome.Cancellation => null,
+            CommandTelemetryOutcome.Usage => errorCode ?? ErrorCodes.General.Usage,
+            CommandTelemetryOutcome.Timeout => errorCode ?? ErrorCodes.General.TransportTimeout,
+            _ => errorCode ?? ErrorCodes.General.Unknown,
+        };
 
         return new(
             CommandTelemetryRecordKind.CommandOutcome,
@@ -174,7 +191,8 @@ internal sealed record CommandTelemetryRecord
             timestamp,
             tenantId,
             principalObjectId: null,
-            playgroundDetails);
+            playgroundDetails,
+            errorCode);
     }
 
     internal CommandTelemetryRecord WithAttribution(
@@ -190,7 +208,8 @@ internal sealed record CommandTelemetryRecord
             Kind == CommandTelemetryRecordKind.CommandAttempt
                 ? principalObjectId
                 : null,
-            PlaygroundDetails);
+            PlaygroundDetails,
+            ErrorCode);
 
     private static PlaygroundTelemetryDetails? ValidatePlaygroundDetails(
         CommandTelemetryPath? path,
@@ -394,6 +413,12 @@ internal sealed class CommandTelemetryData
             {
                 dimensions["exitClass"] = ExitClass(outcome);
             }
+        }
+
+        if (record.ErrorCode is { } errorCode)
+        {
+            dimensions["errorCode"] =
+                errorCode.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         if (record.PlaygroundDetails is { } playgroundDetails)
@@ -738,7 +763,7 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
         }
     }
 
-    internal void RecordOutcome(CommandTelemetryOutcome outcome)
+    internal void RecordOutcome(CommandTelemetryOutcome outcome, int? errorCode = null)
     {
         if (_destinationResolver is null)
         {
@@ -771,7 +796,8 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
                     outcome,
                     timestamp,
                     _tenantId,
-                    _playgroundDetails);
+                    _playgroundDetails,
+                    errorCode);
             if (!TryAddRecord(record))
             {
                 return;

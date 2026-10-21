@@ -42,6 +42,45 @@ public sealed class PlaygroundExecutionTests
         Assert.Equal(0, doubles.LaunchCalls);
     }
 
+    [Theory]
+    [InlineData("resolve", 11049)]
+    [InlineData("client", 12003)]
+    [InlineData("locate", 12003)]
+    [InlineData("install", 12003)]
+    [InlineData("launch", 12003)]
+    public async Task TypedFailuresRetainTheirErrorCodeForTelemetry(string stage, int expectedErrorCode)
+    {
+        AgentHostingException failure = stage == "resolve"
+            ? ManagedAgentException.ConnectorNotServed("connector", "environment", [], "list-command")
+            : new ClientApplicationConfigurationException("client-configuration");
+        var doubles = new Doubles();
+        switch (stage)
+        {
+            case "resolve":
+                doubles.Resolve = _ => throw failure;
+                break;
+            case "client":
+                doubles.ClientConfiguration = () => throw failure;
+                break;
+            case "locate":
+                doubles.LocateException = failure;
+                break;
+            case "install":
+                doubles.Tool = null;
+                doubles.Install = _ => Task.FromException<PlaygroundTool>(failure);
+                break;
+            case "launch":
+                doubles.LaunchException = failure;
+                break;
+        }
+        var execution = CreateExecution(Request() with { InstallPlayground = true }, doubles);
+
+        Assert.Equal(stage == "resolve" ? ExitCodes.Usage : ExitCodes.Failure, await RenderAsync(execution));
+
+        var result = Assert.IsAssignableFrom<IStreamingFailureResult>(execution);
+        Assert.Equal(expectedErrorCode, result.ErrorCode);
+    }
+
     [Fact]
     public async Task TargetIsResolvedBeforeToolDiscovery()
     {
