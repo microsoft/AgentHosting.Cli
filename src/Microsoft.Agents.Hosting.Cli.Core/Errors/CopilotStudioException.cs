@@ -111,13 +111,14 @@ public static class CopilotErrorKinds
 /// </summary>
 public sealed class CopilotStudioException : AgentHostingException
 {
-    private CopilotStudioException(string message, int exitCode, string errorKind, string? remediation, Exception? innerException = null) : base(message, exitCode, errorKind, remediation, innerException)
+    private CopilotStudioException(int errorCode, string message, int exitCode, string errorKind, string? remediation, Exception? innerException = null) : base(message, exitCode, errorKind, remediation, innerException, errorCode)
     {
     }
 
     /// <summary>No environment is selected and none was supplied.</summary>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException EnvironmentNotSelected() => new(
+        ErrorCodes.CopilotStudio.EnvironmentNotSelected,
         "No environment is selected.",
         ExitCodes.Usage,
         CopilotErrorKinds.EnvironmentNotSelected,
@@ -127,6 +128,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="environmentId">The environment that is missing the url.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException EnvironmentMissingInstanceUrl(string environmentId) => new(
+        ErrorCodes.CopilotStudio.EnvironmentMissingInstanceUrl,
         $"Environment '{environmentId}' has no linked Dataverse organization url.",
         ExitCodes.Usage,
         CopilotErrorKinds.EnvironmentMissingInstanceUrl,
@@ -136,6 +138,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="environmentId">The environment that was resolved.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException AgentManagementEndpointMissing(string environmentId) => new(
+        ErrorCodes.CopilotStudio.AgentManagementEndpointMissing,
         $"Environment '{environmentId}' advertises no Copilot Studio endpoint, so its agents cannot be reached.",
         ExitCodes.Failure,
         "agent-management-endpoint-missing",
@@ -146,6 +149,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The parse failure, when there was one.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException SharingStateNotReturned(string operation, Exception? innerException = null) => new(
+        ErrorCodes.CopilotStudio.SharingStateNotReturned,
         $"'{operation}' did not return a readable sharing state. Sharing is written whole, so a state that cannot be read cannot be safely changed.",
         ExitCodes.Failure,
         "sharing-state-not-returned",
@@ -157,6 +161,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="matches">The accounts it matched.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException SharePrincipalAmbiguous(string selector, IEnumerable<string> matches) => new(
+        ErrorCodes.CopilotStudio.SharePrincipalAmbiguous,
         $"'{selector}' matches more than one account in this environment: {string.Join(", ", matches)}.",
         ExitCodes.Usage,
         "share-principal-ambiguous",
@@ -167,6 +172,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="reason">What the file system reported.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException ConnectionStateNotRecorded(string directory, string reason) => new(
+        ErrorCodes.CopilotStudio.ConnectionStateNotRecorded,
         $"The connection state could not be recorded in '{directory}': {reason}",
         ExitCodes.Failure,
         CopilotErrorKinds.ConnectionStateNotRecorded,
@@ -176,6 +182,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="directory">The directory that was searched.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException WorkspaceNotFound(string directory) => new(
+        ErrorCodes.Workspace.CopilotWorkspaceNotFound,
         $"No Copilot Studio workspace was found at or above '{directory}'.",
         ExitCodes.Usage,
         CopilotErrorKinds.WorkspaceNotFound,
@@ -185,6 +192,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="directory">The non-empty directory.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException WorkspaceNotEmpty(string directory) => new(
+        ErrorCodes.Workspace.CopilotWorkspaceNotEmpty,
         $"The directory '{directory}' is not empty.",
         ExitCodes.Usage,
         CopilotErrorKinds.WorkspaceNotEmpty,
@@ -195,6 +203,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="environmentId">The environment that was searched, when it is known.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException AgentNotFound(string botIdOrSchemaName, string? environmentId = null) => new(
+        ErrorCodes.CopilotStudio.AgentNotFound,
         environmentId is null
             ? $"No agent matching '{botIdOrSchemaName}' was found in the environment."
             : $"No agent matching '{botIdOrSchemaName}' was found in environment {environmentId}.",
@@ -208,6 +217,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="schemaName">The schema name that is already taken.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException AgentAlreadyExists(string schemaName) => new(
+        ErrorCodes.CopilotStudio.AgentAlreadyExists,
         $"An agent with schema name '{schemaName}' already exists in the environment.",
         ExitCodes.Usage,
         CopilotErrorKinds.AgentAlreadyExists,
@@ -217,6 +227,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="conflictingSchemaNames">The components changed on both sides.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException PushConflictsRequirePull(IReadOnlyCollection<string> conflictingSchemaNames) => new(
+        ErrorCodes.CopilotStudio.PushConflictsRequirePull,
         $"The agent has {conflictingSchemaNames.Count} remote change{(conflictingSchemaNames.Count == 1 ? string.Empty : "s")} that must be retrieved before your local changes can be applied: {string.Join(", ", conflictingSchemaNames)}.",
         ExitCodes.Usage,
         CopilotErrorKinds.PushConflictsRequirePull,
@@ -226,6 +237,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="operation">The operation that requires confirmation.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException ConfirmationRequired(string operation) => new(
+        ErrorCodes.CopilotStudio.ConfirmationRequired,
         $"The '{operation}' operation requires confirmation.",
         ExitCodes.Usage,
         CopilotErrorKinds.ConfirmationRequired,
@@ -235,6 +247,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="template">The template that could not be resolved.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException TemplateNotFound(string template) => new(
+        ErrorCodes.CopilotStudio.TemplateNotFound,
         $"The template '{template}' was not found.",
         ExitCodes.Usage,
         CopilotErrorKinds.TemplateNotFound,
@@ -245,6 +258,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="expected">The origin the token was minted for.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException UntrustedDataverseOrigin(string requested, string expected) => new(
+        ErrorCodes.CopilotStudio.UntrustedDataverseOrigin,
         $"A Dataverse request targeted '{requested}' but the credential is bound to '{expected}'.",
         ExitCodes.Failure,
         CopilotErrorKinds.UntrustedDataverseOrigin,
@@ -256,6 +270,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The failure that interrupted the link.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException BootstrapReattachFailed(string agentId, string schemaName, Exception? innerException = null) => new(
+        ErrorCodes.CopilotStudio.BootstrapReattachFailed,
         $"Agent '{schemaName}' ({agentId}) exists, but the workspace could not be linked to it: {(innerException is null ? "no further detail was reported." : Describe(innerException))}",
         ExitCodes.Failure,
         CopilotErrorKinds.BootstrapReattachFailed,
@@ -269,6 +284,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="projectDirectory">The workspace directory.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException WorkspaceOriginMismatch(string recordedOrigin, string expectedOrigin, string environmentId, string projectDirectory) => new(
+        ErrorCodes.Workspace.CopilotWorkspaceOriginMismatch,
         $"{projectDirectory} records the Dataverse organization {recordedOrigin}, but environment {environmentId} is {expectedOrigin}.",
         ExitCodes.Usage,
         CopilotErrorKinds.UntrustedDataverseOrigin,
@@ -280,6 +296,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The underlying failure.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException BootstrapAttachFailed(string schemaName, string environmentId, Exception? innerException = null) => new(
+        ErrorCodes.CopilotStudio.BootstrapAttachFailed,
         $"Agent '{schemaName}' could not be created or adopted in {environmentId}.",
         ExitCodes.Failure,
         CopilotErrorKinds.BootstrapReattachFailed,
@@ -292,6 +309,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The underlying failure.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException BootstrapAttachUncertain(string schemaName, string environmentId, Exception? innerException = null) => new(
+        ErrorCodes.CopilotStudio.BootstrapAttachUncertain,
         $"Agent '{schemaName}' could not be created or adopted in {environmentId}, and the environment could not be re-read to confirm what it now holds.",
         ExitCodes.Failure,
         CopilotErrorKinds.BootstrapReattachFailed,
@@ -303,6 +321,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="maximumWait">How long polling ran.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException StatusTimeout(string agentId, TimeSpan maximumWait) => new(
+        ErrorCodes.CopilotStudio.StatusTimeout,
         $"Agent '{agentId}' was still not ready after {maximumWait}.",
         ExitCodes.Failure,
         CopilotErrorKinds.StatusTimeout,
@@ -314,6 +333,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The underlying failure.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException ServiceError(string operation, string? detail = null, Exception? innerException = null) => new(
+        ErrorCodes.CopilotStudio.ServiceError,
         string.IsNullOrWhiteSpace(detail)
             ? $"The Copilot Studio service reported a failure during '{operation}'."
             : $"The Copilot Studio service reported a failure during '{operation}'. {detail}",
@@ -327,6 +347,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="maximumWait">How long polling ran.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException PublishTimeout(string agentId, TimeSpan maximumWait) => new(
+        ErrorCodes.CopilotStudio.PublishTimeout,
         $"Publishing agent '{agentId}' was not confirmed complete after {maximumWait}.",
         ExitCodes.Failure,
         CopilotErrorKinds.PublishTimeout,
@@ -336,6 +357,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="value">The value that could not be resolved.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException ComponentCollectionNotFound(string value) => new(
+        ErrorCodes.CopilotStudio.ComponentCollectionNotFound,
         $"No component collection matching '{value}' was found in the environment.",
         ExitCodes.Usage,
         CopilotErrorKinds.ComponentCollectionNotFound,
@@ -345,6 +367,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="path">The non-empty destination.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException DestinationNotEmpty(string path) => new(
+        ErrorCodes.Workspace.CopilotDestinationNotEmpty,
         $"The directory '{path}' already holds content a clone would overwrite.",
         ExitCodes.Usage,
         CopilotErrorKinds.DestinationNotEmpty,
@@ -355,6 +378,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The underlying failure.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException QuarantinePermissionDenied(string agentId, Exception? innerException = null) => new(
+        ErrorCodes.CopilotStudio.QuarantinePermissionDenied,
         $"The quarantine API rejected the request for agent '{agentId}' (HTTP 403).",
         ExitCodes.Failure,
         CopilotErrorKinds.QuarantinePermissionDenied,
@@ -367,6 +391,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="directory">The workspace directory.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException WorkspaceAlreadyConnected(string directory) => new(
+        ErrorCodes.Workspace.CopilotWorkspaceAlreadyConnected,
         $"The workspace at '{directory}' is already connected to a cloud agent.",
         ExitCodes.Usage,
         CopilotErrorKinds.WorkspaceAlreadyConnected,
@@ -377,6 +402,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="reason">The gate's own explanation.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException ReattachNotSupported(string directory, string reason) => new(
+        ErrorCodes.Workspace.CopilotReattachNotSupported,
         $"The project at '{directory}' cannot be connected to a cloud agent: {reason}",
         ExitCodes.Usage,
         CopilotErrorKinds.ReattachNotSupported,
@@ -388,6 +414,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The underlying failure.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException ConnectionReferencesUnreadable(string path, string reason, Exception? innerException = null) => new(
+        ErrorCodes.CopilotStudio.ConnectionReferencesUnreadable,
         $"The connection references declared at '{path}' could not be read: {reason}",
         ExitCodes.Usage,
         CopilotErrorKinds.ConnectionReferencesUnreadable,
@@ -399,6 +426,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The failure the sync library raised.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException WorkspaceFilesUnreadable(string summary, Exception innerException) => new(
+        ErrorCodes.Workspace.CopilotWorkspaceFilesUnreadable,
         summary,
         ExitCodes.Usage,
         CopilotErrorKinds.WorkspaceFilesUnreadable,
@@ -416,6 +444,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException ConnectionReferencesConflict(
         string logicalName, string firstPath, string firstConnectorId, string secondPath, string secondConnectorId) => new(
+        ErrorCodes.CopilotStudio.ConnectionReferencesConflict,
         $"Connection reference '{logicalName}' is declared for two connectors: '{firstConnectorId}' at '{firstPath}' and '{secondConnectorId}' at '{secondPath}'.",
         ExitCodes.Usage,
         CopilotErrorKinds.ConnectionReferencesConflict,
@@ -428,6 +457,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The transport failure.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException KnowledgeUploadFailed(int pushedComponentCount, Exception innerException) => new(
+        ErrorCodes.CopilotStudio.KnowledgeUploadFailed,
         $"{pushedComponentCount} component(s) were pushed, but uploading their knowledge file content failed: {Describe(innerException)}",
         ExitCodes.Failure,
         CopilotErrorKinds.KnowledgeUploadFailed,
@@ -441,6 +471,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The sync library's failure.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException ConnectedAgentNotInTarget(string environmentId, Exception innerException) => new(
+        ErrorCodes.CopilotStudio.ConnectedAgentNotInTarget,
         $"A component references another agent that does not exist in {environmentId}. Connected and child agents are referenced by id, and an id only exists in the environment that issued it.",
         ExitCodes.Failure,
         CopilotErrorKinds.ConnectedAgentNotInTarget,
@@ -454,6 +485,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The sync library's failure.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException RemoteChangedDuringPush(Exception innerException) => new(
+        ErrorCodes.CopilotStudio.RemoteChangedDuringPush,
         "The agent changed in the cloud while this push was being prepared.",
         ExitCodes.Usage,
         CopilotErrorKinds.RemoteChangedDuringPush,
@@ -468,6 +500,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The component push failure.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException PushFailedAfterRefusedComponents(string environmentId, IReadOnlyList<string> refusals, Exception innerException) => new(
+        ErrorCodes.CopilotStudio.PushFailedAfterRefusedComponents,
         $"A component push to {environmentId} failed because the service did not store a workflow or prompt it depends on, after refusing {Count(refusals)} earlier in the same push.",
         ExitCodes.Failure,
         CopilotErrorKinds.PushFailedAfterRefusedComponents,
@@ -475,6 +508,7 @@ public sealed class CopilotStudioException : AgentHostingException
         innerException);
 
     public static CopilotStudioException PushResponseUnreadable(string environmentId, int attempts, Exception innerException) => new(
+        ErrorCodes.CopilotStudio.PushResponseUnreadable,
         $"The service's reply to this push could not be read after {attempts} attempt(s), so what it stored is unknown: {Describe(innerException)} Environment {environmentId}.",
         ExitCodes.Failure,
         CopilotErrorKinds.PushResponseUnreadable,
@@ -488,16 +522,16 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="refusals">Anything the service had already refused in this push.</param>
     /// <param name="innerException">The service's refusal.</param>
     /// <returns>The exception to throw.</returns>
-    public static CopilotStudioException DuplicateConnectionReference(string environmentId, IReadOnlyList<string> refusals, Exception innerException) => ComponentPushNotCompleted($"A connection reference this push declares already exists in {environmentId}", CopilotErrorKinds.DuplicateConnectionReference, "Delete or rename the conflicting connection reference, or run `msagent deployment connection update` to bind it, then deploy again.", refusals, innerException);
+    public static CopilotStudioException DuplicateConnectionReference(string environmentId, IReadOnlyList<string> refusals, Exception innerException) => ComponentPushNotCompleted(ErrorCodes.CopilotStudio.DuplicateConnectionReference, $"A connection reference this push declares already exists in {environmentId}", CopilotErrorKinds.DuplicateConnectionReference, "Delete or rename the conflicting connection reference, or run `msagent deployment connection update` to bind it, then deploy again.", refusals, innerException);
 
     /// <summary>The service reported a connection reference missing after the baseline was re-read from the environment.</summary>
     /// <param name="environmentId">The environment that was pushed to.</param>
     /// <param name="refusals">Anything the service had already refused in this push.</param>
     /// <param name="innerException">The service's refusal.</param>
     /// <returns>The exception to throw.</returns>
-    public static CopilotStudioException MissingConnectionReference(string environmentId, IReadOnlyList<string> refusals, Exception innerException) => ComponentPushNotCompleted($"A connection reference this push names does not exist in {environmentId}, even after the baseline was re-read from the environment", CopilotErrorKinds.MissingConnectionReference, "A component still uses a connection reference the environment does not hold. Run `msagent deployment connection list` to see the references this deployment declares, declare the missing one with `msagent deployment connection add`, or remove the component that uses it, then deploy again.", refusals, innerException);
+    public static CopilotStudioException MissingConnectionReference(string environmentId, IReadOnlyList<string> refusals, Exception innerException) => ComponentPushNotCompleted(ErrorCodes.CopilotStudio.MissingConnectionReference, $"A connection reference this push names does not exist in {environmentId}, even after the baseline was re-read from the environment", CopilotErrorKinds.MissingConnectionReference, "A component still uses a connection reference the environment does not hold. Run `msagent deployment connection list` to see the references this deployment declares, declare the missing one with `msagent deployment connection add`, or remove the component that uses it, then deploy again.", refusals, innerException);
 
-    private static CopilotStudioException ComponentPushNotCompleted(string cause, string errorKind, string remediation, IReadOnlyList<string> refusals, Exception innerException) => new($"{cause}, so the component push did not complete and the agent definition was left as it is.{Appended(refusals)}", ExitCodes.Failure, errorKind, remediation, innerException);
+    private static CopilotStudioException ComponentPushNotCompleted(int errorCode, string cause, string errorKind, string remediation, IReadOnlyList<string> refusals, Exception innerException) => new(errorCode, $"{cause}, so the component push did not complete and the agent definition was left as it is.{Appended(refusals)}", ExitCodes.Failure, errorKind, remediation, innerException);
 
     /// <summary>The declaration was removed but its connectionreference record survived.</summary>
     /// <param name="logicalName">The reference that was removed.</param>
@@ -505,6 +539,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">What stopped the delete.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException ConnectionReferenceNotDeleted(string logicalName, string environmentId, Exception innerException) => new(
+        ErrorCodes.CopilotStudio.ConnectionReferenceNotDeleted,
         $"The {logicalName} declaration was removed from the workspace, but its connectionreference record could not be deleted from {environmentId}: {Describe(innerException)}",
         ExitCodes.Failure,
         CopilotErrorKinds.ConnectionReferenceNotDeleted,
@@ -516,6 +551,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">What stopped the update.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException ConnectionReferenceCacheStale(string logicalName, Exception innerException) => new(
+        ErrorCodes.CopilotStudio.ConnectionReferenceCacheStale,
         $"The {logicalName} declaration and its connectionreference record were both deleted, but the cloud cache could not be updated, so it still lists the reference.",
         ExitCodes.Failure,
         CopilotErrorKinds.ConnectionReferenceCacheStale,
@@ -526,6 +562,7 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="tools">The tools with an empty workflowId.</param>
     /// <returns>The typed failure.</returns>
     public static CopilotStudioException WorkflowToolIdEmpty(IReadOnlyList<string> tools) => new(
+        ErrorCodes.CopilotStudio.WorkflowToolIdEmpty,
         $"The workspace has {ToolCount(tools)} with an empty workflowId: {string.Join(", ", tools)}.",
         ExitCodes.Usage,
         CopilotErrorKinds.WorkflowToolIdEmpty,

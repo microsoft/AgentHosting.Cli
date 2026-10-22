@@ -16,7 +16,7 @@ namespace Microsoft.Agents.Hosting.Cli.Rendering;
 ///
 /// <list type="bullet">
 ///   <item>JSON success — <c>{ "success": true, ...payload }</c> to stdout.</item>
-///   <item>JSON failure — <c>{ "success": false, "exitCode", "errorMessage", "errorKind"?,
+///   <item>JSON failure — <c>{ "success": false, "exitCode", "errorCode", "errorMessage", "errorKind"?,
 ///     "remediation"? }</c> to stdout.</item>
 ///   <item>Human success — payload lines to stdout.</item>
 ///   <item>Human failure — the error (and any remediation) to stderr.</item>
@@ -92,12 +92,14 @@ public sealed class CliOutputRenderer
 
     /// <summary>
     /// Renders a failure and returns the process exit code. Typed <see cref="AgentHostingException"/>
-    /// failures carry their own exit code, error kind, and remediation; every other exception maps to
-    /// <see cref="ExitCodes.Failure"/> with no kind or remediation (the generic guard).
+    /// failures carry their own exit code, numeric error code, error kind, and remediation; every other
+    /// exception maps to <see cref="ExitCodes.Failure"/> and <see cref="ErrorCodes.General.Unknown"/>
+    /// with no kind or remediation (the generic guard).
     /// </summary>
     public int RenderFailure(Exception error, bool json)
     {
         int exitCode;
+        int errorCode;
         string? errorKind;
         string? remediation;
         object? partialReport = null;
@@ -105,6 +107,7 @@ public sealed class CliOutputRenderer
         if (error is AgentHostingException typed)
         {
             exitCode = typed.ExitCode;
+            errorCode = typed.ErrorCode;
             errorKind = typed.ErrorKind;
             remediation = typed.Remediation;
             partialReport = typed switch
@@ -118,11 +121,12 @@ public sealed class CliOutputRenderer
         else
         {
             exitCode = ExitCodes.Failure;
+            errorCode = ErrorCodes.General.Unknown;
             errorKind = null;
             remediation = null;
         }
 
-        WriteFailure(exitCode, Describe(error), errorKind, remediation, partialReport, json, error is ManagedAgentException { HasMultilineGuidance: true });
+        WriteFailure(exitCode, errorCode, Describe(error), errorKind, remediation, partialReport, json, error is ManagedAgentException { HasMultilineGuidance: true });
         return exitCode;
     }
 
@@ -148,6 +152,7 @@ public sealed class CliOutputRenderer
     {
         WriteFailure(
             ExitCodes.Usage,
+            ErrorCodes.General.Usage,
             message,
             errorKind: null,
             remediation: null,
@@ -156,7 +161,7 @@ public sealed class CliOutputRenderer
         return ExitCodes.Usage;
     }
 
-    private void WriteFailure(int exitCode, string message, string? errorKind, string? remediation, object? partialReport, bool json, bool multiline = false)
+    private void WriteFailure(int exitCode, int errorCode, string message, string? errorKind, string? remediation, object? partialReport, bool json, bool multiline = false)
     {
         if (json)
         {
@@ -164,6 +169,7 @@ public sealed class CliOutputRenderer
             {
                 ["success"] = false,
                 ["exitCode"] = exitCode,
+                ["errorCode"] = errorCode,
                 ["errorMessage"] = message,
             };
             if (errorKind is not null)

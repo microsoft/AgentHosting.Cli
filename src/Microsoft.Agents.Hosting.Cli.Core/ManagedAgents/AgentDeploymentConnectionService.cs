@@ -55,7 +55,7 @@ public sealed class AgentDeploymentConnectionService
         {
             return await ResolveAndBindAsync(request, target, environment, workspaceDirectory, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception failure) when (failure is not UsageException)
+        catch (Exception failure) when (failure is not AgentHostingException { ExitCode: ExitCodes.Usage })
         {
             _workflowStates.Invalidate(workspaceDirectory, environment.EnvironmentId);
 
@@ -71,7 +71,7 @@ public sealed class AgentDeploymentConnectionService
         var snapshot = await _connections.ReadConnectionsAsync(environment, workspaceDirectory, cancellationToken).ConfigureAwait(false);
         var principal = await _principals.ResolveUsernameAsync(cancellationToken).ConfigureAwait(false);
         var observed = snapshot.References.Select(ConnectionReadinessPlanner.Observe).ToList();
-        var selected = ConnectionSelectionScope.Apply(observed, request);
+        var selected = ConnectionSelectionScope.Apply(observed, request, workspaceDirectory);
         var plan = Propose(observed, selected, principal);
         var diagnostics = new List<string>();
         var settlement = new WorkflowSettlement(snapshot.Workflows);

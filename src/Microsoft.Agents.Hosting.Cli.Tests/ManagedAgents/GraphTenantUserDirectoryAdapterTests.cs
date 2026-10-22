@@ -69,6 +69,7 @@ public sealed class GraphTenantUserDirectoryAdapterTests
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => adapter.FindUserAsync(Tenant, address, CancellationToken.None));
 
         Assert.Equal(ExitCodes.Failure, failure.ExitCode);
+        Assert.Equal(11053, failure.ErrorCode);
         Assert.Equal("share-principal-lookup-failed", failure.ErrorKind);
         Assert.Contains($"'{address}'", failure.Message, StringComparison.Ordinal);
 
@@ -194,6 +195,7 @@ public sealed class GraphTenantUserDirectoryAdapterTests
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => adapter.FindUserAsync(Tenant, "grace@fabrikam.com", CancellationToken.None));
 
         Assert.Equal("share-principal-ambiguous", failure.ErrorKind);
+        Assert.Equal(11052, failure.ErrorCode);
         Assert.Contains($"including {GuestPrincipalName}, ada@contoso.com", failure.Message, StringComparison.Ordinal);
         Assert.Equal(3, client.Calls.Count);
     }
@@ -206,6 +208,7 @@ public sealed class GraphTenantUserDirectoryAdapterTests
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => adapter.FindUserAsync(Tenant, "grace@fabrikam.com", CancellationToken.None));
 
         Assert.Equal("share-principal-ambiguous", failure.ErrorKind);
+        Assert.Equal(11052, failure.ErrorCode);
         Assert.Contains("'grace@fabrikam.com'", failure.Message, StringComparison.Ordinal);
         Assert.Contains(Tenant, failure.Message, StringComparison.Ordinal);
         Assert.Contains($"including {GuestPrincipalName}, grace@contoso.com", failure.Message, StringComparison.Ordinal);

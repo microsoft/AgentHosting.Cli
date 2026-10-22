@@ -55,10 +55,22 @@ public sealed class AgentPackageException : AgentHostingException
             rejection == AgentPackageRejection.SourceUnreadable ? ExitCodes.Failure : ExitCodes.Usage,
             ToErrorKind(rejection),
             remediation,
-            innerException)
+            innerException,
+            ToErrorCode(rejection))
     {
         Rejection = rejection;
     }
+
+    private static int ToErrorCode(AgentPackageRejection rejection) => rejection switch
+    {
+        AgentPackageRejection.EnvelopeSourceConflict => ErrorCodes.Package.EnvelopeSourceConflict,
+        AgentPackageRejection.ArchiveSizeExceeded => ErrorCodes.Package.ArchiveSizeExceeded,
+        AgentPackageRejection.EntryCountExceeded => ErrorCodes.Package.EntryCountExceeded,
+        AgentPackageRejection.SourceLink => ErrorCodes.Package.SourceLink,
+        AgentPackageRejection.SourceEntryNotAFile => ErrorCodes.Package.SourceEntryNotAFile,
+        AgentPackageRejection.SourceUnreadable => ErrorCodes.Package.SourceUnreadable,
+        _ => ErrorCodes.Package.SourceUnreadable,
+    };
 
     /// <summary>The classified rejection category.</summary>
     public AgentPackageRejection Rejection { get; }

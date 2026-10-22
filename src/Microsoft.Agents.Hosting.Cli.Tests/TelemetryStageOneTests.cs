@@ -265,6 +265,7 @@ public sealed class TelemetryStageOneTests
             data.GetProperty("operation_Name").GetString());
         Assert.Equal(
             [
+                "IsFailure",
                 "cliVersion",
                 "cloud",
                 "exitClass",

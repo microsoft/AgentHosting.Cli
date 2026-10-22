@@ -15,13 +15,14 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
 public sealed class PackagePublicationException : AgentHostingException
 {
     private PackagePublicationException(
+        int errorCode,
         string message,
         int exitCode,
         string errorKind,
         string remediation,
         Exception? innerException = null,
         AgentPackageUploadPartialResult? partialResult = null)
-        : base(message, exitCode, errorKind, remediation, innerException)
+        : base(message, exitCode, errorKind, remediation, innerException, errorCode)
     {
         PartialResult = partialResult;
     }
@@ -35,15 +36,16 @@ public sealed class PackagePublicationException : AgentHostingException
     /// delegated token at an arbitrary host.
     /// </summary>
     public static PackagePublicationException TargetNotConfigured(string detail, string remediation) =>
-        new(detail, ExitCodes.Failure, "publication-target-not-configured", remediation);
+        new(ErrorCodes.Package.PublicationTargetNotConfigured, detail, ExitCodes.Failure, "publication-target-not-configured", remediation);
 
     /// <summary>The configured publication endpoint is not one an authorization header may be sent to.</summary>
     public static PackagePublicationException EndpointNotUsable(string detail, string remediation) =>
-        new(detail, ExitCodes.Failure, "endpoint-untrusted", remediation);
+        new(ErrorCodes.Package.PublicationEndpointNotUsable, detail, ExitCodes.Failure, "endpoint-untrusted", remediation);
 
     /// <summary>The supplied package could not be read for sending.</summary>
     public static PackagePublicationException PackageReadFailed(string packagePath, Exception innerException) =>
         new(
+            ErrorCodes.Package.PublicationPackageReadFailed,
             $"The supplied agent package could not be read from '{packagePath}'.",
             ExitCodes.Failure,
             "package-read-failed",
@@ -57,6 +59,7 @@ public sealed class PackagePublicationException : AgentHostingException
     /// </summary>
     public static PackagePublicationException LocalDigestChanged(string builtSha256, string sentSha256) =>
         new(
+            ErrorCodes.Package.PublicationLocalDigestChanged,
             $"The built package hashed to '{builtSha256}', but the bytes read back for publication hashed to '{sentSha256}'.",
             ExitCodes.Failure,
             "package-local-digest-changed",
@@ -68,6 +71,7 @@ public sealed class PackagePublicationException : AgentHostingException
     /// </summary>
     public static PackagePublicationException RedirectRejected(int status, string configuredHost) =>
         new(
+            ErrorCodes.Package.PublicationRedirectRejected,
             $"The Agent Management Service answered HTTP {status} with a redirect, which this command does not follow. The delegated authorization header is only ever sent to the configured host '{configuredHost}'.",
             ExitCodes.Failure,
             "redirect-rejected",
@@ -82,6 +86,7 @@ public sealed class PackagePublicationException : AgentHostingException
         string clientRequestId,
         Exception innerException) =>
         new(
+            ErrorCodes.Package.PublicationRequestTimedOut,
             $"The Agent Management Service package upload for Agent '{agentId}' timed out before a response was received (clientRequestId={clientRequestId}). The upload outcome may be indeterminate.",
             ExitCodes.Failure,
             "publication-timeout",
@@ -92,6 +97,7 @@ public sealed class PackagePublicationException : AgentHostingException
         string clientRequestId,
         Exception innerException) =>
         new(
+            ErrorCodes.Package.PublicationRequestFailed,
             $"The Agent Management Service package upload failed before a response was received (clientRequestId={clientRequestId}). The upload outcome may be indeterminate.",
             ExitCodes.Failure,
             "publication-transport-failed",
@@ -107,6 +113,7 @@ public sealed class PackagePublicationException : AgentHostingException
         string clientRequestId,
         string? serviceRequestId) =>
         new(
+            ErrorCodes.Package.PublicationDurableOperationDidNotSucceed,
             $"The Agent Management Service durably recorded package upload operation '{operationId}' with status '{status}', but no Package Revision was confirmed (clientRequestId={clientRequestId}" +
             (string.IsNullOrWhiteSpace(serviceRequestId) ? ")." : $", serviceRequestId={serviceRequestId})."),
             ExitCodes.Failure,
@@ -123,6 +130,7 @@ public sealed class PackagePublicationException : AgentHostingException
         string detail,
         Exception? innerException = null) =>
         new(
+            ErrorCodes.Package.PublicationInvalidResponse,
             detail,
             ExitCodes.Failure,
             "invalid-ams-response",
@@ -135,6 +143,7 @@ public sealed class PackagePublicationException : AgentHostingException
     /// </summary>
     public static PackagePublicationException DigestMismatch(string localSha256, string remoteSha256) =>
         new(
+            ErrorCodes.Package.PublicationDigestMismatch,
             $"The Agent Management Service reported SHA-256 '{remoteSha256}', which does not match the SHA-256 '{localSha256}' of the bytes that were sent.",
             ExitCodes.Failure,
             "package-digest-mismatch",
@@ -150,6 +159,7 @@ public sealed class PackagePublicationException : AgentHostingException
         string requestedValue,
         string returnedValue) =>
         new(
+            ErrorCodes.Package.PublicationResponseIdentityMismatch,
             $"The Agent Management Service returned {field} '{returnedValue}', which does not match the requested value '{requestedValue}'.",
             ExitCodes.Failure,
             "ams-response-identity-mismatch",
@@ -165,5 +175,5 @@ public sealed class PackagePublicationException : AgentHostingException
         string message,
         int exitCode,
         string remediation) =>
-        new(message, exitCode, errorKind, remediation);
+        new(ErrorCodes.Package.PublicationServiceRejected, message, exitCode, errorKind, remediation);
 }

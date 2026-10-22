@@ -326,7 +326,9 @@ public sealed class CommandTreeBuilder
                 streamingOutputOwned = true;
                 int exitCode = await streaming.RenderAsync(
                     _renderer.Stdout, _renderer.Stderr, _renderer.Color, cancellationToken).ConfigureAwait(false);
-                telemetry.RecordOutcome(StreamingOutcome(streaming, exitCode));
+                telemetry.RecordOutcome(
+                    StreamingOutcome(streaming, exitCode),
+                    (streaming as IStreamingFailureResult)?.ErrorCode);
                 return exitCode;
             }
 
@@ -379,13 +381,14 @@ public sealed class CommandTreeBuilder
             {
                 // The streaming operation owns stdout, even when its sink fails. Never append a
                 // second JSON envelope or print an untrusted nested exception.
-                return ReportStreamingFailure(telemetry, OutcomeForFailure(failure));
+                return ReportStreamingFailure(
+                    telemetry, OutcomeForFailure(failure), (failure as AgentHostingException)?.ErrorCode);
             }
 
             int exitCode = _renderer.RenderFailure(failure, json);
             if (!renderingSuccess)
             {
-                telemetry.RecordOutcome(OutcomeForFailure(failure));
+                telemetry.RecordOutcome(OutcomeForFailure(failure), (failure as AgentHostingException)?.ErrorCode);
             }
 
             return exitCode;
@@ -401,6 +404,11 @@ public sealed class CommandTreeBuilder
         if (exitCode == ExitCodes.Success)
         {
             return CommandTelemetryOutcome.Success;
+        }
+
+        if (result is IStreamingFailureResult { IsCancellation: true })
+        {
+            return CommandTelemetryOutcome.Cancellation;
         }
 
         if (result is IPlaygroundStreamingResult playground)
@@ -419,10 +427,11 @@ public sealed class CommandTreeBuilder
 
     private int ReportStreamingFailure(
         CommandTelemetrySession telemetry,
-        CommandTelemetryOutcome outcome)
+        CommandTelemetryOutcome outcome,
+        int? errorCode = null)
     {
         _renderer.Stderr.WriteLine("The live-test result failed after output began; no second result was written.");
-        telemetry.RecordOutcome(outcome);
+        telemetry.RecordOutcome(outcome, errorCode);
         return ExitCodes.Failure;
     }
 

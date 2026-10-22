@@ -28,7 +28,8 @@ public static class ExitCodes
 }
 
 /// <summary>
-/// Base class for every typed AgentHost CLI failure. Carries the process <see cref="ExitCode"/> plus
+/// Base class for every typed AgentHost CLI failure. Carries the stable numeric <see cref="ErrorCode"/>,
+/// the process <see cref="ExitCode"/>, plus
 /// the optional, secret-free, agent-loop-actionable <see cref="ErrorKind"/> and
 /// <see cref="Remediation"/> that the JSON failure envelope surfaces. Messages, error kinds, and
 /// remediation are secret-free by construction — they name context identifiers and operations only,
@@ -41,13 +42,21 @@ public abstract class AgentHostingException : Exception
         int exitCode,
         string? errorKind = null,
         string? remediation = null,
-        Exception? innerException = null)
+        Exception? innerException = null,
+        int errorCode = ErrorCodes.General.Unknown)
         : base(message, innerException)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(errorCode, 10000);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(errorCode, 99999);
+
+        ErrorCode = errorCode;
         ExitCode = exitCode;
         ErrorKind = errorKind;
         Remediation = remediation;
     }
+
+    /// <summary>The stable five-digit error identifier, independent of the process exit code.</summary>
+    public int ErrorCode { get; }
 
     /// <summary>The process exit code this failure maps to (see <see cref="ExitCodes"/>).</summary>
     public int ExitCode { get; }
@@ -69,8 +78,8 @@ public abstract class AgentHostingException : Exception
 /// </summary>
 public sealed class UsageException : AgentHostingException
 {
-    public UsageException(string message)
-        : base(message, ExitCodes.Usage)
+    public UsageException(string message, int errorCode = ErrorCodes.General.Usage)
+        : base(message, ExitCodes.Usage, errorCode: errorCode)
     {
     }
 }
@@ -87,7 +96,8 @@ public sealed class PendingImplementationException : AgentHostingException
             $"The '{operation}' operation is not yet implemented in the C# demonstrator. " +
             "The command host and authentication are in place; Azure Bot Service behavior " +
             "arrives in a later milestone.",
-            ExitCodes.Failure)
+            ExitCodes.Failure,
+            errorCode: ErrorCodes.General.PendingImplementation)
     {
     }
 }
@@ -101,7 +111,8 @@ public sealed class TransportTimeoutException : AgentHostingException
             ExitCodes.Failure,
             "transport-timeout",
             "Retry the operation. If it can mutate remote state, check the target before retrying because the request may have completed.",
-            innerException)
+            innerException,
+            ErrorCodes.General.TransportTimeout)
     {
     }
 }

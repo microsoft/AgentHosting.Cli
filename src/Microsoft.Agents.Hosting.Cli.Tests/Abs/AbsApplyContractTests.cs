@@ -49,8 +49,9 @@ public sealed class AbsApplyContractTests
         Assert.Equal(fixture.MutationCalls, mutationCalls);
 
         using var actual = JsonDocument.Parse(stdout);
+        var comparable = AbsContractEnvelope.WithoutNumericErrorCode(actual.RootElement, fixtureFile);
         Assert.True(
-            JsonDeepEquals(fixture.GoldenJson, actual.RootElement),
+            JsonDeepEquals(fixture.GoldenJson, comparable),
             $"JSON envelope diverged from golden for {fixtureFile}.\nExpected: " +
             $"{Canonicalize(fixture.GoldenJson)}\nActual:   {Canonicalize(actual.RootElement)}");
     }

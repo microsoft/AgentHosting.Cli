@@ -165,6 +165,7 @@ public sealed class CommandTelemetryStateTests
     {
         Assert.Equal(
             [
+                "ErrorCode",
                 "HostCategory",
                 "Kind",
                 "Outcome",
