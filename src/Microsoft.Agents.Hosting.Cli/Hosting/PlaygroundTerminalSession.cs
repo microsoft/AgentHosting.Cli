@@ -12,15 +12,20 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private readonly Action<string> _openTerminal;
     private readonly TimeSpan _startupTimeout;
+    private readonly IReadOnlyDictionary<string, string>? _inheritedEnvironment;
 
     public PlaygroundTerminalSession() : this(OpenTerminal, StartupTimeout)
     {
     }
 
-    internal PlaygroundTerminalSession(Action<string> openTerminal, TimeSpan startupTimeout)
+    internal PlaygroundTerminalSession(
+        Action<string> openTerminal,
+        TimeSpan startupTimeout,
+        IReadOnlyDictionary<string, string>? inheritedEnvironment = null)
     {
         _openTerminal = openTerminal;
         _startupTimeout = startupTimeout;
+        _inheritedEnvironment = inheritedEnvironment;
     }
 
     public async Task<int> RunAsync(
@@ -29,7 +34,8 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         Action started,
         CancellationToken cancellationToken)
     {
-        _ = PlaygroundLauncher.BuildLaunchPlan(tool, connection);
+        var launchPlan = PlaygroundLauncher.BuildLaunchPlan(
+            tool, connection, inheritedEnvironment: _inheritedEnvironment);
         cancellationToken.ThrowIfCancellationRequested();
         var pipeName = $"msagent-playground-{Guid.NewGuid():N}";
         using var pipe = new NamedPipeServerStream(
@@ -47,7 +53,8 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
                 pipe,
                 new SessionRequest(
                     tool.ExecutablePath, tool.ArgumentPrefix.ToArray(), tool.SelectedPath,
-                    tool.Version.ToString(), engine?.Target, engine?.ClientId),
+                    tool.Version.ToString(), engine?.Target, engine?.ClientId,
+                    new Dictionary<string, string>(launchPlan.Environment, StringComparer.Ordinal)),
                 cancellationToken: startup.Token).ConfigureAwait(false);
             await pipe.WriteAsync(new byte[] { (byte)'\n' }, startup.Token).ConfigureAwait(false);
             await pipe.FlushAsync(startup.Token).ConfigureAwait(false);
@@ -78,6 +85,12 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
     internal static async Task<int> RunChildAsync(
         string pipeName,
         IPlaygroundLauncher launcher,
+        CancellationToken cancellationToken) =>
+        await RunChildAsync(pipeName, _ => launcher, cancellationToken).ConfigureAwait(false);
+
+    internal static async Task<int> RunChildAsync(
+        string pipeName,
+        Func<IReadOnlyDictionary<string, string>, IPlaygroundLauncher> launcherFactory,
         CancellationToken cancellationToken)
     {
         using var pipe = new NamedPipeClientStream(
@@ -93,6 +106,7 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
             var json = await reader.ReadLineAsync(startup.Token).ConfigureAwait(false);
             var request = JsonSerializer.Deserialize<SessionRequest>(
                 json ?? throw new EndOfStreamException()) ?? throw new JsonException();
+            var launcher = launcherFactory(request.Environment);
             var tool = new PlaygroundTool(
                 request.ExecutablePath, request.ArgumentPrefix, request.SelectedPath,
                 PlaygroundVersion.Parse(request.Version));
@@ -172,7 +186,47 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
             executable, arguments,
             OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux",
             FindExecutable);
-        using var process = Process.Start(info) ?? throw StartFailure();
+        StartTerminalProcess(info, redirectOutput: OperatingSystem.IsLinux());
+    }
+
+    internal static void StartTerminalProcess(ProcessStartInfo info, bool redirectOutput)
+    {
+        if (redirectOutput)
+        {
+            info.RedirectStandardOutput = true;
+            info.RedirectStandardError = true;
+        }
+
+        var process = Process.Start(info) ?? throw StartFailure();
+        if (redirectOutput)
+        {
+            _ = DrainTerminalOutputAsync(process);
+        }
+        else
+        {
+            process.Dispose();
+        }
+    }
+
+    private static async Task DrainTerminalOutputAsync(Process process)
+    {
+        try
+        {
+            var standardOutput = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
+            var standardError = process.StandardError.BaseStream.CopyToAsync(Stream.Null);
+            await Task.WhenAll(
+                process.WaitForExitAsync(),
+                standardOutput,
+                standardError).ConfigureAwait(false);
+        }
+        catch (IOException)
+        {
+            await process.WaitForExitAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            process.Dispose();
+        }
     }
 
     internal static ProcessStartInfo BuildTerminalStartInfo(
@@ -257,5 +311,6 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         string SelectedPath,
         string Version,
         LiveTestDestination? Target,
-        Guid? ClientId);
+        Guid? ClientId,
+        Dictionary<string, string> Environment);
 }

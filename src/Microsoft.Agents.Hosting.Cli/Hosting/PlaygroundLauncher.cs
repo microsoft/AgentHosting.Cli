@@ -74,11 +74,18 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
     private readonly TimeSpan _shutdownGracePeriod;
     private readonly Action<string> _deleteDirectory;
     private readonly Func<TimeSpan, Task> _delay;
+    private readonly IReadOnlyDictionary<string, string>? _inheritedEnvironment;
 
     public PlaygroundLauncher(
         IPlaygroundProcessFactory? processFactory = null,
-        TimeSpan? shutdownGracePeriod = null)
-        : this(processFactory, shutdownGracePeriod, deleteDirectory: null, delay: null)
+        TimeSpan? shutdownGracePeriod = null,
+        IReadOnlyDictionary<string, string>? inheritedEnvironment = null)
+        : this(
+            processFactory,
+            shutdownGracePeriod,
+            deleteDirectory: null,
+            delay: null,
+            inheritedEnvironment)
     {
     }
 
@@ -86,12 +93,14 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
         IPlaygroundProcessFactory? processFactory,
         TimeSpan? shutdownGracePeriod,
         Action<string>? deleteDirectory,
-        Func<TimeSpan, Task>? delay)
+        Func<TimeSpan, Task>? delay,
+        IReadOnlyDictionary<string, string>? inheritedEnvironment = null)
     {
         _processFactory = processFactory ?? new ProcessPlaygroundProcessFactory();
         _shutdownGracePeriod = shutdownGracePeriod ?? ShutdownGracePeriod;
         _deleteDirectory = deleteDirectory ?? DeleteDirectoryIfPresent;
         _delay = delay ?? (static timeout => Task.Delay(timeout));
+        _inheritedEnvironment = inheritedEnvironment;
         if (_shutdownGracePeriod < TimeSpan.Zero ||
             _shutdownGracePeriod == Timeout.InfiniteTimeSpan)
         {
@@ -335,6 +344,7 @@ public sealed class PlaygroundLauncher : IPlaygroundLauncher
                 BuildLaunchPlan(
                     tool,
                     connection,
+                    inheritedEnvironment: _inheritedEnvironment,
                     workingDirectory: invocationDirectory,
                     configPath: configPath));
             try

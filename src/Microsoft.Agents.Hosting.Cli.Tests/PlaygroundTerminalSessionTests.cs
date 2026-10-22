@@ -1,11 +1,60 @@
+using System.Diagnostics;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Playground;
 using Microsoft.Agents.Hosting.Cli.Hosting;
+using Xunit.Sdk;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 public sealed class PlaygroundTerminalSessionTests
 {
+    [Fact]
+    public async Task RunAsync_PreservesCallersScrubbedEnvironmentForNativeProcess()
+    {
+        const string callerPath = @"C:\caller\node";
+        const string callerCertificate = @"C:\certs\caller-ca.pem";
+        var callerEnvironment = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["PATH"] = callerPath,
+            ["NODE_EXTRA_CA_CERTS"] = callerCertificate,
+            ["CLIENT_SECRET"] = "must-not-be-forwarded",
+            [PlaygroundLauncher.ModernConfigPathEnvironmentVariable] = @"C:\caller\playground.yml",
+            [PlaygroundLauncher.LegacyConfigPathEnvironmentVariable] = @"C:\caller\legacy.yml",
+        };
+        var processFactory = new RecordingEnvironmentProcessFactory();
+        Task<int>? childTask = null;
+        var launcher = new PlaygroundTerminalSession(
+            pipe => childTask = PlaygroundTerminalSession.RunChildAsync(
+                pipe,
+                environment => new PlaygroundLauncher(
+                    processFactory, TimeSpan.FromMilliseconds(1), environment),
+                CancellationToken.None),
+            TimeSpan.FromSeconds(10),
+            callerEnvironment);
+
+        var result = await launcher.RunAsync(
+            Tool(), new PlaygroundConnection.DirectLine(), () => { }, CancellationToken.None);
+        Assert.NotNull(childTask);
+        Assert.Equal(0, await childTask.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        var actualEnvironment = Assert.IsType<ProcessStartInfo>(processFactory.StartInfo).Environment;
+        Assert.Equal(callerPath, actualEnvironment["PATH"]);
+        Assert.Equal(callerCertificate, actualEnvironment["NODE_EXTRA_CA_CERTS"]);
+        Assert.False(actualEnvironment.ContainsKey("CLIENT_SECRET"));
+        Assert.NotEqual(callerEnvironment[PlaygroundLauncher.ModernConfigPathEnvironmentVariable],
+            actualEnvironment[PlaygroundLauncher.ModernConfigPathEnvironmentVariable]);
+        Assert.Equal(
+            actualEnvironment[PlaygroundLauncher.ModernConfigPathEnvironmentVariable],
+            actualEnvironment[PlaygroundLauncher.LegacyConfigPathEnvironmentVariable]);
+        Assert.StartsWith(
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Microsoft", "Agents", "Playground", "sessions"),
+            actualEnvironment[PlaygroundLauncher.ModernConfigPathEnvironmentVariable],
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, result);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -205,6 +254,56 @@ public sealed class PlaygroundTerminalSessionTests
     }
 
     [Fact]
+    public async Task LinuxTerminalOutputIsDrainedWhileSessionProcessRemainsRunning()
+    {
+        var node = FindNode();
+        if (node is null)
+        {
+            throw SkipException.ForSkip("Node.js was not found on PATH.");
+        }
+
+        var directory = Directory.CreateTempSubdirectory("playground-terminal-output-");
+        var markerPath = Path.Combine(directory.FullName, "pid");
+        var stopPath = Path.Combine(directory.FullName, "stop");
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = node,
+            UseShellExecute = false,
+        };
+        startInfo.ArgumentList.Add("-e");
+        startInfo.ArgumentList.Add(
+            "const fs=require('fs');const pid=process.argv[1];const stop=process.argv[2];fs.writeFileSync(pid,String(process.pid));console.log('terminal output');const timer=setInterval(()=>{if(fs.existsSync(stop)){clearInterval(timer);process.exit(0)}},10);");
+        startInfo.ArgumentList.Add(markerPath);
+        startInfo.ArgumentList.Add(stopPath);
+
+        try
+        {
+            PlaygroundTerminalSession.StartTerminalProcess(startInfo, redirectOutput: true);
+            Assert.True(startInfo.RedirectStandardOutput);
+            Assert.True(startInfo.RedirectStandardError);
+            var pid = await WaitForPidAsync(markerPath);
+            using var process = Process.GetProcessById(pid);
+            Assert.False(process.HasExited);
+            await File.WriteAllTextAsync(stopPath, "stop");
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(0, process.ExitCode);
+        }
+        finally
+        {
+            if (File.Exists(stopPath))
+            {
+                File.Delete(stopPath);
+            }
+            else
+            {
+                await File.WriteAllTextAsync(stopPath, "stop");
+            }
+
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public void MacLaunch_EscapesBothShellAndAppleScriptMetacharacters()
     {
         var info = PlaygroundTerminalSession.BuildTerminalStartInfo(
@@ -226,6 +325,58 @@ public sealed class PlaygroundTerminalSessionTests
         [Path.Combine(Path.GetTempPath(), "playground & test", "cli.js")],
         Path.Combine(Path.GetTempPath(), "agentsplayground"),
         PlaygroundVersion.Parse("0.2.29"));
+
+    private static string? FindNode()
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        return path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Select(directory => Path.Combine(
+                directory, OperatingSystem.IsWindows() ? "node.exe" : "node"))
+            .FirstOrDefault(File.Exists);
+    }
+
+    private static async Task<int> WaitForPidAsync(string path)
+    {
+        var timeoutAt = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < timeoutAt)
+        {
+            if (File.Exists(path) && int.TryParse(await File.ReadAllTextAsync(path), out var pid))
+            {
+                return pid;
+            }
+
+            await Task.Delay(25);
+        }
+
+        throw new XunitException("The terminal fixture did not publish its process id.");
+    }
+
+    private sealed class RecordingEnvironmentProcessFactory : IPlaygroundProcessFactory
+    {
+        public ProcessStartInfo? StartInfo { get; private set; }
+
+        public IPlaygroundProcess Start(ProcessStartInfo startInfo)
+        {
+            StartInfo = startInfo;
+            return new ExitedProcess();
+        }
+    }
+
+    private sealed class ExitedProcess : IPlaygroundProcess
+    {
+        public int Id => 1;
+        public bool HasExited => true;
+        public int ExitCode => 0;
+        public Task WaitForExitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public void SendInterrupt() { }
+        public void KillTree() { }
+        public void Dispose() { }
+    }
 
     private sealed class HoldingLauncher : IPlaygroundLauncher
     {

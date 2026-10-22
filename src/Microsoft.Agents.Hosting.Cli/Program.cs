@@ -60,7 +60,9 @@ internal static class Program
             try
             {
                 return await PlaygroundTerminalSession.RunChildAsync(
-                    args[1], new PlaygroundLauncher(), cancellation.Token);
+                    args[1],
+                    environment => new PlaygroundLauncher(inheritedEnvironment: environment),
+                    cancellation.Token);
             }
             finally
             {

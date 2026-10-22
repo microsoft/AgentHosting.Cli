@@ -186,6 +186,9 @@ not hand it tokens or secrets. The command reports the selected
 the process starts. The package owns authentication timing; `msagent` does not
 wait for the package's authentication, and process start is not proof that authentication
 succeeded.
+The native process receives the caller's scrubbed Playground environment
+(including its selected `PATH` and TLS certificate settings); child-owned
+disposable config paths take precedence over caller config overrides.
 
 #### Direct Line connection
 
