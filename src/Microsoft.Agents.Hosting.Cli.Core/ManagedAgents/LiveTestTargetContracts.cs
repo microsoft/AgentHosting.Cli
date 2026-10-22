@@ -13,16 +13,6 @@ public enum LiveTestTargetSource
     Explicit,
 }
 
-/// <summary>The explicitly selected runtime behind a live agent target.</summary>
-public enum LiveTestAgentType
-{
-    /// <summary>A standard published Copilot Studio agent.</summary>
-    Standard,
-
-    /// <summary>A GitHub Copilot Harness agent served by the agentic runtime endpoint.</summary>
-    GitHubCopilot,
-}
-
 /// <summary>Selectors and assertions used to resolve one live-test destination.</summary>
 public sealed record LiveTestTargetRequest
 {
@@ -50,9 +40,6 @@ public sealed record LiveTestTargetRequest
     /// <summary>The destination tenant identifier.</summary>
     public string? TenantId { get; init; }
 
-    /// <summary>The runtime selected for the target.</summary>
-    public LiveTestAgentType AgentType { get; init; } = LiveTestAgentType.Standard;
-
     /// <summary>The Power Platform cloud. Live MCS targets currently support public cloud only.</summary>
     public CloudInstance Cloud { get; init; } = CloudInstance.Public;
 }
@@ -77,12 +64,6 @@ public sealed record ResolvedMcsTarget
 
     /// <summary>The MCS schema name.</summary>
     public required string SchemaName { get; init; }
-
-    /// <summary>The explicitly selected runtime.</summary>
-    public LiveTestAgentType AgentType { get; init; } = LiveTestAgentType.Standard;
-
-    /// <summary>The start/query conversations endpoint derived from the validated target.</summary>
-    public required Uri Endpoint { get; init; }
 
     /// <summary>The selected managed-agent record, or <see langword="null"/> for an explicit target.</summary>
     public ManagedAgentRecord? Agent { get; init; }

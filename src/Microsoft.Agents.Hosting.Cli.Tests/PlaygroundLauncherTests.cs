@@ -39,14 +39,13 @@ public sealed class PlaygroundLauncherTests
     }
 
     [Theory]
-    [InlineData(LiveTestAgentType.Standard, "https://example.test/standard")]
-    [InlineData(LiveTestAgentType.GitHubCopilot, "https://example.test/github")]
+    [InlineData("https://example.test/standard")]
+    [InlineData("https://example.test/github")]
     public void BuildLaunchPlan_UsesTheNativeDirectEngineArguments(
-        LiveTestAgentType agentType,
         string endpoint)
     {
         var tool = Tool();
-        var target = Target(agentType, endpoint);
+        var target = Target(endpoint);
 
         var plan = PlaygroundLauncher.BuildLaunchPlan(tool, target, ClientId);
 
@@ -105,7 +104,7 @@ public sealed class PlaygroundLauncherTests
         var info = PlaygroundLauncher.BuildStartInfo(
             PlaygroundLauncher.BuildLaunchPlan(
                 Tool(),
-                Target(LiveTestAgentType.Standard, "https://example.test/standard"),
+                Target("https://example.test/standard"),
                 ClientId));
 
         Assert.False(info.UseShellExecute);
@@ -256,7 +255,7 @@ public sealed class PlaygroundLauncherTests
 
         var plan = PlaygroundLauncher.BuildLaunchPlan(
             Tool(),
-            Target(LiveTestAgentType.Standard, "https://example.test/standard"),
+            Target("https://example.test/standard"),
             ClientId,
             inherited);
 
@@ -300,7 +299,7 @@ public sealed class PlaygroundLauncherTests
         var error = await Assert.ThrowsAsync<PlaygroundLaunchException>(() =>
             launcher.RunAsync(
                 Tool(),
-                Target(LiveTestAgentType.Standard, endpoint),
+                Target(endpoint),
                 ClientId,
                 () => { },
                 CancellationToken.None));
@@ -310,7 +309,7 @@ public sealed class PlaygroundLauncherTests
     }
 
     [Fact]
-    public async Task RunAsync_RejectsUndefinedHarnessBeforeStartingAProcess()
+    public async Task RunAsync_RejectsUndiscoveredEndpointBeforeStartingAProcess()
     {
         var factory = new RecordingProcessFactory();
         var launcher = new PlaygroundLauncher(factory, TimeSpan.FromMilliseconds(1));
@@ -318,7 +317,7 @@ public sealed class PlaygroundLauncherTests
         var error = await Assert.ThrowsAsync<PlaygroundLaunchException>(() =>
             launcher.RunAsync(
                 Tool(),
-                Target((LiveTestAgentType)99, "https://example.test/agent"),
+                Target("https://example.test/agent") with { Endpoint = null },
                 ClientId,
                 () => { },
                 CancellationToken.None));
@@ -333,7 +332,7 @@ public sealed class PlaygroundLauncherTests
         var error = Assert.Throws<PlaygroundLaunchException>(() =>
             PlaygroundLauncher.BuildLaunchPlan(
                 Tool(),
-                Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                Target("https://example.test/agent"),
                 Guid.Empty));
 
         Assert.Equal(PlaygroundLaunchFailureKind.InvalidClientId, error.Kind);
@@ -348,7 +347,6 @@ public sealed class PlaygroundLauncherTests
             Guid.Empty.ToString("D"),
             "Bot01",
             "explicit",
-            LiveTestAgentType.Standard,
             new Uri("https://example.test/agent"));
 
         var error = Assert.Throws<PlaygroundLaunchException>(() =>
@@ -415,7 +413,7 @@ public sealed class PlaygroundLauncherTests
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             launcher.RunAsync(
                 Tool(),
-                Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                Target("https://example.test/agent"),
                 ClientId,
                 () => throw callbackFailure,
                 CancellationToken.None));
@@ -439,7 +437,7 @@ public sealed class PlaygroundLauncherTests
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             launcher.RunAsync(
                 Tool(),
-                Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                Target("https://example.test/agent"),
                 ClientId,
                 () => { },
                 CancellationToken.None));
@@ -461,7 +459,7 @@ public sealed class PlaygroundLauncherTests
         var error = await Assert.ThrowsAsync<PlaygroundLaunchException>(() =>
             launcher.RunAsync(
                 Tool(),
-                Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                Target("https://example.test/agent"),
                 ClientId,
                 cancellation.Cancel,
                 cancellation.Token));
@@ -514,7 +512,7 @@ public sealed class PlaygroundLauncherTests
 
         var exitCode = await launcher.RunAsync(
             Tool(),
-            Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+            Target("https://example.test/agent"),
             ClientId,
             () => { },
             CancellationToken.None);
@@ -546,7 +544,7 @@ public sealed class PlaygroundLauncherTests
             var error = await Assert.ThrowsAsync<PlaygroundLaunchException>(() =>
                 launcher.RunAsync(
                     Tool(),
-                    Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                    Target("https://example.test/agent"),
                     ClientId,
                     () => { },
                     CancellationToken.None));
@@ -586,7 +584,7 @@ public sealed class PlaygroundLauncherTests
             var error = await Assert.ThrowsAsync<PlaygroundLaunchException>(() =>
                 launcher.RunAsync(
                     Tool(),
-                    Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                    Target("https://example.test/agent"),
                     ClientId,
                     () => { },
                     CancellationToken.None));
@@ -638,7 +636,7 @@ public sealed class PlaygroundLauncherTests
                     [fixture, pidFile],
                     node,
                     PlaygroundVersion.Parse("0.2.29")),
-                Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                Target("https://example.test/agent"),
                 ClientId,
                 () => { },
                 cancellation.Token);
@@ -683,7 +681,7 @@ public sealed class PlaygroundLauncherTests
                     TimeSpan.FromMilliseconds(1))
                 .RunAsync(
                     Tool(),
-                    Target(LiveTestAgentType.Standard, "https://example.test/agent"),
+                    Target("https://example.test/agent"),
                     ClientId,
                     () => { },
                     cancellation.Token);
@@ -759,7 +757,7 @@ public sealed class PlaygroundLauncherTests
         directLine
             ? new PlaygroundConnection.DirectLine()
             : new PlaygroundConnection.DirectEngine(
-                Target(LiveTestAgentType.Standard, "https://example.test/standard"), ClientId);
+                Target("https://example.test/standard"), ClientId);
 
     private static string HostPath(params string[] parts) =>
         Path.Combine([Path.GetTempPath(), "msagent playground & tests", .. parts]);
@@ -775,8 +773,8 @@ public sealed class PlaygroundLauncherTests
             PlaygroundVersion.Parse("0.2.29"));
     }
 
-    private static LiveTestDestination Target(LiveTestAgentType agentType, string endpoint) =>
-        new(EnvironmentId, TenantId, "Bot01", "explicit", agentType, new Uri(endpoint));
+    private static LiveTestDestination Target(string endpoint) =>
+        new(EnvironmentId, TenantId, "Bot01", "explicit", new Uri(endpoint));
 
     private static string? FindNode()
     {

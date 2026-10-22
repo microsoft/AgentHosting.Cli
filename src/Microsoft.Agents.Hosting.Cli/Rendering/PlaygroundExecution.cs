@@ -32,12 +32,13 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
     private const string LiveEffectsWarning =
         "Warning: this launches a live playground session; actions can have real effects against the selected agent.";
     private const string DeviceCodeDisclosure =
-        "The native playground owns sign-in. If it asks for a device code, follow its instructions in this terminal.";
+        "Endpoint discovery uses the selected CLI account; the native playground owns its session sign-in. If it asks for a device code, follow its instructions in this terminal.";
     private const string DirectLineDisclosure =
         "Enter the MCS token endpoint or Direct Line secret only in the native playground's masked terminal prompt. Do not put credentials in command arguments or chat.";
 
     private readonly PlaygroundRequest _request;
     private readonly Func<LiveTestRequest, LiveTestDestination> _resolve;
+    private readonly Func<LiveTestDestination, bool, CancellationToken, Task<LiveTestDestination>> _discover;
     private readonly IPlaygroundToolLocator _locator;
     private readonly IPlaygroundGlobalInstaller _installer;
     private readonly IPlaygroundLauncher _launcher;
@@ -51,6 +52,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
     internal PlaygroundExecution(
         PlaygroundRequest request,
         Func<LiveTestRequest, LiveTestDestination> resolve,
+        Func<LiveTestDestination, bool, CancellationToken, Task<LiveTestDestination>> discover,
         IPlaygroundToolLocator locator,
         IPlaygroundGlobalInstaller installer,
         IPlaygroundLauncher launcher,
@@ -62,6 +64,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
     {
         _request = request ?? throw new ArgumentNullException(nameof(request));
         _resolve = resolve ?? throw new ArgumentNullException(nameof(resolve));
+        _discover = discover ?? throw new ArgumentNullException(nameof(discover));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _installer = installer ?? throw new ArgumentNullException(nameof(installer));
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
@@ -253,6 +256,37 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
 
             errorCategory = PlaygroundErrorCategory.None;
             version = tool.Version.ToString();
+            if (connection is PlaygroundConnection.DirectEngine directEngine)
+            {
+                try
+                {
+                    connection = directEngine with
+                    {
+                        Target = await _discover(directEngine.Target, _request.NonInteractive, cancellationToken).ConfigureAwait(false),
+                    };
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    errorCategory = PlaygroundErrorCategory.Cancellation;
+                    _semanticOutcome = PlaygroundSemanticOutcome.Cancellation;
+                    await WriteErrorAsync(stderr, "Playground endpoint discovery was cancelled.").ConfigureAwait(false);
+                    return 130;
+                }
+                catch (AgentHostingException failure)
+                {
+                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                    return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Failure).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                    await WriteErrorAsync(stderr,
+                        "The playground endpoint could not be discovered. Check the selected CLI account, delegated Copilot Studio permissions, and published agent before retrying.")
+                        .ConfigureAwait(false);
+                    return ExitCodes.Failure;
+                }
+            }
+
             await WriteLineAsync(stdout, LiveEffectsWarning).ConfigureAwait(false);
             await WriteLineAsync(stdout, isDirectLine ? DirectLineDisclosure : DeviceCodeDisclosure).ConfigureAwait(false);
             await WriteLineAsync(stdout, $"Playground tool: {SafeValue(tool.SelectedPath)} (version {SafeValue(version)}).")
@@ -349,13 +383,10 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
 
         if (!isDirectLine)
         {
-            return string.IsNullOrWhiteSpace(_request.AgentType)
-                ? "--agent-harness is required for DirectEngine. Choose standard or github-copilot."
-                : null;
+            return null;
         }
 
-        if (_request.AgentType is not null ||
-            _request.Project is not null ||
+        if (_request.Project is not null ||
             _request.AgentId is not null ||
             _request.AgentName is not null ||
             _request.SchemaName is not null ||
@@ -364,7 +395,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
             _request.EnvironmentId is not null ||
             _request.Tenant is not null)
         {
-            return "Direct Line does not accept --agent-harness, --project, --agent-id, --agent-name, --schema-name, --deployment-id, --deployment-name, --environment-id, or --tenant. Remove these options or select --target directengine.";
+            return "Direct Line does not accept --project, --agent-id, --agent-name, --schema-name, --deployment-id, --deployment-name, --environment-id, or --tenant. Remove these options or select --target directengine.";
         }
 
         if (_request.NonInteractive)

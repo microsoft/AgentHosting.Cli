@@ -4,6 +4,7 @@ using Microsoft.Agents.Hosting.Cli.Commands.Common;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.Agents.Hosting.Cli.CopilotStudio.AskClient;
 using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Copilot;
@@ -123,20 +124,7 @@ internal static class Program
             powerPlatformApiTarget,
             claimsValidator: sp.GetRequiredService<PpapiTokenClaimsValidator>()));
 
-        // Package upload and deploy resolve configured AMS-DP/AMS-CMP targets independently. Record creation uses the
-        // environment-specific Power Platform API endpoint; its optional target is a direct-island
-        // Dev override resolved only by that command.
-        services.AddSingleton(new AgentHostingServiceTargets
-        {
-            DataPlaneEndpoint = Environment.GetEnvironmentVariable(
-                AgentHostingServiceTargets.DataPlaneEndpointVariableName),
-            ControlPlaneEndpoint = Environment.GetEnvironmentVariable(
-                AgentHostingServiceTargets.ControlPlaneEndpointVariableName),
-        });
-        services.AddSingleton(new AgentCreationTarget
-        {
-            Endpoint = Environment.GetEnvironmentVariable(AgentCreationTarget.EndpointVariableName),
-        });
+        services.AddSingleton<AgentCreationTarget>();
 
         // Automatic redirect following is disabled at client construction — before any authorization
         // header exists — so a host-changing redirect can never cause the delegated bearer token to be
@@ -201,6 +189,20 @@ internal static class Program
             ICommandHandler<PlaygroundRequest, ILiveTestStreamingResult>>(
             sp => new PlaygroundCommandHandler(
                 sp.GetRequiredService<LiveTestTargetResolver>().Resolve,
+                async (target, nonInteractive, cancellationToken) =>
+                {
+                    await sp.GetRequiredService<MsalLiveTestTokenProvider>()
+                        .AcquireDelegatedTokenAsync(target.TenantId, nonInteractive, cancellationToken)
+                        .ConfigureAwait(false);
+                    await using var session = new McsLiveTestSession(
+                        new McsLiveTestTarget(target.EnvironmentId, target.TenantId, target.SchemaName),
+                        sp.GetRequiredService<ITokenProvider>(),
+                        cancellationToken: cancellationToken);
+                    return target with
+                    {
+                        Endpoint = await session.DiscoverEndpointAsync(cancellationToken).ConfigureAwait(false),
+                    };
+                },
                 sp.GetRequiredService<IPlaygroundToolLocator>(),
                 sp.GetRequiredService<IPlaygroundGlobalInstaller>(),
                 sp.GetRequiredService<IPlaygroundLauncher>(),

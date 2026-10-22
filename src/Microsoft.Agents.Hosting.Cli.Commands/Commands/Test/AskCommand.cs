@@ -14,7 +14,6 @@ public sealed class AskCommand : CommandBase<LiveTestRequest, ILiveTestStreaming
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
         OptionCatalog.Value("--query", "Literal query to send. May enter shell history, and live actions are not rolled back."),
-        OptionCatalog.Value("--agent-harness", "Agent harness: standard or github-copilot.", required: true),
         OptionCatalog.Value("--project", "Local project directory holding agent.config.json."),
         OptionCatalog.Value("--agent-id", "Managed-agent record id."),
         OptionCatalog.Value("--agent-name", "Managed-agent record name."),
@@ -30,7 +29,6 @@ public sealed class AskCommand : CommandBase<LiveTestRequest, ILiveTestStreaming
     protected override LiveTestRequest Bind(ICommandInput input) => new()
     {
         Query = input.GetString("--query"),
-        AgentType = input.GetString("--agent-harness")!,
         Project = input.GetString("--project"),
         AgentId = input.GetString("--agent-id"),
         AgentName = input.GetString("--agent-name"),

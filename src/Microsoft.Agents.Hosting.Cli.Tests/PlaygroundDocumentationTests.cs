@@ -12,7 +12,9 @@ public sealed class PlaygroundDocumentationTests
             "| `msagent test playground [--target directline\\|directengine]` |",
             readme,
             StringComparison.Ordinal);
-        Assert.Contains("`msagent test playground --agent-harness standard|github-copilot`", section, StringComparison.Ordinal);
+        Assert.Contains("`msagent test playground`", section, StringComparison.Ordinal);
+        Assert.Contains("discovery service", section, StringComparison.Ordinal);
+        Assert.DoesNotContain("--agent-harness", readme, StringComparison.Ordinal);
         Assert.Contains("same agent selectors as `test ask`", section, StringComparison.Ordinal);
         Assert.Contains("Neither mode accepts `--query` or `--conversation-id`", section, StringComparison.Ordinal);
         Assert.Contains("`msagent test playground --target directline`", section, StringComparison.Ordinal);

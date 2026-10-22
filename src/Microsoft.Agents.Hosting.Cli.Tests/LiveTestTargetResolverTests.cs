@@ -35,13 +35,6 @@ public sealed class LiveTestTargetResolverTests
         Assert.Equal("operator-label", target.DeploymentId);
         Assert.Null(target.Agent);
         Assert.Null(target.Deployment);
-        Assert.Equal(
-            "a47151cf4f34488fb377ebe84e17b4.78.environment.api.powerplatform.com",
-            target.Endpoint.Host);
-        Assert.Equal(
-            "/copilotstudio/dataverse-backed/authenticated/bots/Bot01/conversations",
-            target.Endpoint.AbsolutePath);
-        Assert.Equal("api-version=2022-03-01-preview", target.Endpoint.Query.TrimStart('?'));
 
         var targetByName = resolver.Resolve(new LiveTestTargetRequest
         {
@@ -53,76 +46,6 @@ public sealed class LiveTestTargetResolverTests
 
         Assert.Equal(LiveTestTargetSource.Explicit, targetByName.Source);
         Assert.Equal("operator-label", targetByName.DeploymentName);
-        Assert.Equal(0, agents.Reads);
-    }
-
-    [Fact]
-    public void GitHubCopilotTypeSelectsAgenticRuntimeEndpointWithoutChangingEnvironmentHost()
-    {
-        var agents = new ThrowingRegistry();
-        var resolver = new LiveTestTargetResolver(agents, agents, new AgentConfigLocator());
-
-        var target = resolver.Resolve(new LiveTestTargetRequest
-        {
-            SchemaName = "Bot01",
-            EnvironmentId = "A47151CF-4F34-488F-B377-EBE84E17B478",
-            TenantId = TenantGuid,
-            DeploymentId = "operator-label",
-            AgentType = LiveTestAgentType.GitHubCopilot,
-        });
-
-        Assert.Equal(LiveTestAgentType.GitHubCopilot, target.AgentType);
-        Assert.Equal(
-            "a47151cf4f34488fb377ebe84e17b4.78.environment.api.powerplatform.com",
-            target.Endpoint.Host);
-        Assert.Equal(
-            "/copilotstudio/agenticruntime/3p/dataverse-backed/authenticated/bots/Bot01/conversations",
-            target.Endpoint.AbsolutePath);
-        Assert.Equal("api-version=1", target.Endpoint.Query.TrimStart('?'));
-        Assert.Equal(0, agents.Reads);
-    }
-
-    [Theory]
-    [InlineData("harness")]
-    [InlineData("")]
-    public void UnknownAgentTypeIsRejectedBeforeConfigurationOrAuthentication(string agentType)
-    {
-        var agents = new ThrowingRegistry();
-        var resolver = new LiveTestTargetResolver(agents, agents, new AgentConfigLocator());
-
-        var error = Assert.Throws<LiveTestTargetResolutionException>(() => resolver.Resolve(new LiveTestRequest
-        {
-            SchemaName = "Bot01",
-            EnvironmentId = "A47151CF-4F34-488F-B377-EBE84E17B478",
-            Tenant = TenantGuid,
-            DeploymentId = "operator-label",
-            AgentType = agentType,
-        }));
-
-        Assert.Equal("invalid-input", error.ErrorKind);
-        Assert.Contains("--agent-harness", error.Message);
-        Assert.Contains("--agent-harness", error.Remediation);
-        Assert.Equal(0, agents.Reads);
-    }
-
-    [Fact]
-    public void UndefinedAgentHarnessValueUsesCommandOptionNameInValidationError()
-    {
-        var agents = new ThrowingRegistry();
-        var resolver = new LiveTestTargetResolver(agents, agents, new AgentConfigLocator());
-
-        var error = Assert.Throws<LiveTestTargetResolutionException>(() => resolver.Resolve(new LiveTestTargetRequest
-        {
-            SchemaName = "Bot01",
-            EnvironmentId = "A47151CF-4F34-488F-B377-EBE84E17B478",
-            TenantId = TenantGuid,
-            DeploymentId = "operator-label",
-            AgentType = (LiveTestAgentType)int.MaxValue,
-        }));
-
-        Assert.Equal("invalid-input", error.ErrorKind);
-        Assert.Contains("--agent-harness", error.Message);
-        Assert.Contains("--agent-harness", error.Remediation);
         Assert.Equal(0, agents.Reads);
     }
 
@@ -435,7 +358,8 @@ public sealed class LiveTestTargetResolverTests
             HomeEnvironmentId = "home-environment",
         });
 
-        var failure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(store, store, new AgentConfigLocator()).Resolve(new LiveTestTargetRequest
+        var resolver = new LiveTestTargetResolver(store, store, new AgentConfigLocator());
+        var failure = Assert.Throws<LiveTestTargetResolutionException>(() => resolver.Resolve(new LiveTestTargetRequest
         {
             Project = project.Root,
             AgentId = "agent-1",
@@ -443,6 +367,16 @@ public sealed class LiveTestTargetResolverTests
 
         Assert.Equal("invalid-configuration", failure.ErrorKind);
         Assert.Contains("default", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("--deployment-name", failure.Remediation, StringComparison.Ordinal);
+
+        var target = resolver.Resolve(new LiveTestRequest
+        {
+            Project = project.Root,
+            DeploymentName = "dev",
+        });
+
+        Assert.Equal("target-environment", target.EnvironmentId);
+        Assert.Equal("schema-one", target.SchemaName);
     }
 
     [Fact]
