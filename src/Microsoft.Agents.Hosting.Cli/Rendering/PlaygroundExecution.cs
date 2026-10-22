@@ -25,7 +25,7 @@ internal interface IPlaygroundStreamingResult : ILiveTestStreamingResult
 }
 
 /// <summary>Owns the lazy playground state machine and all human output for one invocation.</summary>
-internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
+internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreamingFailureResult
 {
     private const string PackageSpecifier = "@microsoft/m365agentsplayground@latest";
     private const string JsonUnsupportedMessage = "--json is not yet supported for playground.";
@@ -48,6 +48,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
     private readonly Func<bool> _isOutputRedirected;
     private readonly Action<PlaygroundTelemetryDetails> _recordTelemetry;
     private PlaygroundSemanticOutcome _semanticOutcome;
+    private int? _errorCode;
+
+    int? IStreamingFailureResult.ErrorCode => _errorCode;
 
     internal PlaygroundExecution(
         PlaygroundRequest request,
@@ -178,8 +181,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
                 await WriteErrorAsync(stderr, "The playground tool check timed out. Check PATH and try again.").ConfigureAwait(false);
                 return ExitCodes.Failure;
             }
-            catch (Exception)
+            catch (Exception failure)
             {
+                _errorCode = (failure as AgentHostingException)?.ErrorCode;
                 errorCategory = PlaygroundErrorCategory.ToolNotFound;
                 await WriteErrorAsync(stderr, "The playground tool could not be checked safely. Check PATH and try again.").ConfigureAwait(false);
                 return ExitCodes.Failure;
@@ -234,8 +238,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
                         .ConfigureAwait(false);
                     return ExitCodes.Failure;
                 }
-                catch (Exception)
+                catch (Exception failure)
                 {
+                    _errorCode = (failure as AgentHostingException)?.ErrorCode;
                     installResult = PlaygroundInstallResult.Failed;
                     errorCategory = PlaygroundErrorCategory.InstallFailed;
                     await WriteErrorAsync(stderr,
@@ -333,8 +338,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
                 await WriteErrorAsync(stderr, $"{failure.Message} {failure.Remediation}").ConfigureAwait(false);
                 return ExitCodes.Failure;
             }
-            catch (Exception)
+            catch (Exception failure)
             {
+                _errorCode = (failure as AgentHostingException)?.ErrorCode;
                 errorCategory = PlaygroundErrorCategory.LaunchFailed;
                 await WriteErrorAsync(stderr,
                     "The playground process could not be started or stopped safely. Verify the installation and try again.")
@@ -349,8 +355,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
             await WriteErrorAsync(stderr, "Playground startup was cancelled.").ConfigureAwait(false);
             return 130;
         }
-        catch (Exception)
+        catch (Exception failure)
         {
+            _errorCode = (failure as AgentHostingException)?.ErrorCode;
             errorCategory = PlaygroundErrorCategory.LaunchFailed;
             await WriteErrorAsync(stderr, "The playground command could not complete safely. Verify the target and installation, then try again.")
                 .ConfigureAwait(false);
@@ -434,8 +441,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception failure)
         {
+            _errorCode = (failure as AgentHostingException)?.ErrorCode;
             await WriteErrorAsync(stderr, "The playground installation prompt could not be completed. Re-run the command and try again.")
                 .ConfigureAwait(false);
             return false;
@@ -453,13 +461,14 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
             ? PlaygroundErrorCategory.Unsupported
             : PlaygroundErrorCategory.None;
 
-    private static async Task<int> WriteKnownFailureAsync(
+    private async Task<int> WriteKnownFailureAsync(
         TextWriter stderr,
         Exception failure,
         int fallbackExitCode)
     {
         if (failure is AgentHostingException typed)
         {
+            _errorCode = typed.ErrorCode;
             await WriteErrorAsync(stderr, $"{typed.Message}{(string.IsNullOrWhiteSpace(typed.Remediation) ? string.Empty : $" {typed.Remediation}")}")
                 .ConfigureAwait(false);
             return typed.ExitCode;

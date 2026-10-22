@@ -272,12 +272,12 @@ public sealed class ManagedAgentCreateService
     {
         if (_agents.List(projectDirectory).FirstOrDefault(agent => string.Equals(agent.DisplayName, name, StringComparison.OrdinalIgnoreCase)) is { } duplicate)
         {
-            throw new UsageException($"An agent named '{duplicate.DisplayName}' is already registered in {_locator.ConfigFilePath(projectDirectory)}.");
+            throw ManagedAgentException.AlreadyRegistered(duplicate.DisplayName, duplicate.AgentId, _locator.ConfigFilePath(projectDirectory));
         }
 
         if (Directory.Exists(workspaceDirectory) && Directory.EnumerateFileSystemEntries(workspaceDirectory).Any())
         {
-            throw new UsageException($"'{workspaceDirectory}' already has content. Choose a different --agent-name, or a --project directory that does not hold a folder by that name.");
+            throw ManagedAgentException.WorkspaceNotEmpty(workspaceDirectory);
         }
     }
 

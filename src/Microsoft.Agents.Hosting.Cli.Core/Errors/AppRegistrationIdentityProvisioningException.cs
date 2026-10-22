@@ -16,7 +16,8 @@ public sealed class AppRegistrationIdentityProvisioningException : AgentHostingE
             cause.ExitCode,
             cause.ErrorKind,
             cause.Remediation,
-            cause)
+            cause,
+            cause.ErrorCode)
     {
         ArgumentNullException.ThrowIfNull(partialReport);
         if (partialReport.Configuration is not null)

@@ -222,8 +222,8 @@ public sealed class AgentDeploymentConnectionRemoveService
         throw Unserved(request, target, resolution, connectionId);
     }
 
-    private static UsageException Unserved(AgentDeploymentConnectionRemoveRequest request, ConnectionTarget target, ConnectorResolution resolution, string connectionId) =>
-        new($"Connector {resolution.Connector.InternalId} serves no connection {connectionId} in {target.Environment.EnvironmentId}. Run `{ConnectionCommandHints.ListConnections(request)}` to see which connector holds it.");
+    private static ManagedAgentException Unserved(AgentDeploymentConnectionRemoveRequest request, ConnectionTarget target, ConnectorResolution resolution, string connectionId) =>
+        ManagedAgentException.ConnectionNotServed(resolution.Connector.InternalId, connectionId, target.Environment.EnvironmentId, ConnectionCommandHints.ListConnections(request));
 
     private async Task<(string ConnectorId, string ConnectionId)> DeleteConnectionAsync(AgentDeploymentConnectionRemoveRequest request, ConnectionTarget target, (string ConnectorId, string ConnectionId) deletion, string? removedReference, bool referenceRemoved, CancellationToken cancellationToken)
     {

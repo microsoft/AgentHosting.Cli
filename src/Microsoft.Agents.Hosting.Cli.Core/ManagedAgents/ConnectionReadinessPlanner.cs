@@ -291,30 +291,18 @@ public static class ConnectionReadinessPlanner
     /// <param name="connectionId">The connection the request named.</param>
     /// <param name="subject">What the connection has to satisfy, named for the rejection message.</param>
     /// <returns>The connection the id names, carrying the id the service reports for it.</returns>
-    /// <exception cref="UsageException">There is no such connection, or it is not connected.</exception>
+    /// <exception cref="ManagedAgentException">There is no such connection.</exception>
+    /// <exception cref="UsageException">The connection is not connected.</exception>
     public static CopilotConnectionCandidate RequireConnected(IReadOnlyList<CopilotConnectionCandidate> candidates, string connectionId, string subject)
     {
         ArgumentNullException.ThrowIfNull(candidates);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionId);
 
         var chosen = candidates.FirstOrDefault(candidate => candidate.ConnectionId.Equals(connectionId, StringComparison.OrdinalIgnoreCase))
-            ?? throw NotACandidate(candidates, connectionId, subject);
+            ?? throw ManagedAgentException.ConnectionNotACandidate(connectionId, subject, [.. candidates.Select(candidate => candidate.ConnectionId)]);
 
         return IsConnected(chosen)
             ? chosen
             : throw new UsageException($"Connection '{connectionId}' is {chosen.Status}, so it cannot satisfy {subject}. Choose a Connected connection.");
-    }
-
-    /// <summary>
-    /// Rejects an unknown connection locally, naming what would have worked, so a typo costs no
-    /// network round trip.
-    /// </summary>
-    private static UsageException NotACandidate(IReadOnlyList<CopilotConnectionCandidate> candidates, string connectionId, string subject)
-    {
-        var offered = candidates.Count == 0
-            ? "no connections exist for its connector"
-            : $"valid connections are: {string.Join(", ", candidates.Select(candidate => candidate.ConnectionId))}";
-
-        return new UsageException($"Connection '{connectionId}' is not a candidate for {subject} — {offered}.");
     }
 }

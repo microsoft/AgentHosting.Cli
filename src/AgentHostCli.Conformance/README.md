@@ -14,6 +14,11 @@ It contains three things:
 
 The C# contract runner (from plan node cN5 onward) consumes the **same** `fixtures/*.json` documents.
 
+**C# error-code extension:** C# JSON failure envelopes additionally include an integer `errorCode`.
+The C# contract runners assert the expected numeric code for each failure, then exclude only that
+field when comparing with the frozen TypeScript golden. Success envelopes and all other failure
+fields, human output, exit codes, and mutation assertions remain unchanged.
+
 ---
 
 ## What the oracle proves
@@ -214,4 +219,3 @@ after the fact. Both runners were executed **twice** and produced no diff (and t
   `agenthost_cli_amh` mN3 oracle. cN7 closes cross-language parity against the **pinned TS**; the mN3
   reconciliation (and any resulting fixture re-provenance) is completed in **cN11**. The demonstrator
   does not block on mN3.
-

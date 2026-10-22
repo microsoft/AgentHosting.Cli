@@ -4,20 +4,22 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
 public sealed class AgentCreationException : AgentHostingException
 {
     private AgentCreationException(
+        int errorCode,
         string message,
         int exitCode,
         string errorKind,
         string remediation,
         Exception? innerException = null)
-        : base(message, exitCode, errorKind, remediation, innerException)
+        : base(message, exitCode, errorKind, remediation, innerException, errorCode)
     {
     }
 
     public static AgentCreationException EndpointNotUsable(string detail, string remediation) =>
-        new(detail, ExitCodes.Failure, "endpoint-untrusted", remediation);
+        new(ErrorCodes.ManagedAgent.CreationEndpointNotUsable, detail, ExitCodes.Failure, "endpoint-untrusted", remediation);
 
     public static AgentCreationException RedirectRejected(int status, string configuredHost) =>
         new(
+            ErrorCodes.ManagedAgent.CreationRedirectRejected,
             $"The Agent Management Service answered HTTP {status} with a redirect, which this command does not follow. The delegated authorization header is only ever sent to the configured host '{configuredHost}'.",
             ExitCodes.Failure,
             "redirect-rejected",
@@ -28,6 +30,7 @@ public sealed class AgentCreationException : AgentHostingException
         string idempotencyKey,
         Exception innerException) =>
         new(
+            ErrorCodes.ManagedAgent.CreationTimedOut,
             $"The Agent Management Service create request timed out before a response was received (clientRequestId={clientRequestId}). The create outcome may be indeterminate.",
             ExitCodes.Failure,
             "agent-create-timeout",
@@ -38,6 +41,7 @@ public sealed class AgentCreationException : AgentHostingException
         string idempotencyKey,
         Exception innerException) =>
         new(
+            ErrorCodes.ManagedAgent.CreationCanceled,
             "The Agent Management Service create operation was canceled while its transport was in progress. If AMS received the request, the create outcome may be indeterminate.",
             ExitCodes.Failure,
             "agent-create-canceled",
@@ -48,6 +52,7 @@ public sealed class AgentCreationException : AgentHostingException
         string idempotencyKey,
         Exception innerException) =>
         new(
+            ErrorCodes.ManagedAgent.CreationTransportFailed,
             "The Agent Management Service create transport failed before a response was received. If AMS received the request, the create outcome may be indeterminate.",
             ExitCodes.Failure,
             "agent-create-transport-failed",
@@ -59,6 +64,7 @@ public sealed class AgentCreationException : AgentHostingException
         string idempotencyKey,
         Exception innerException) =>
         new(
+            ErrorCodes.ManagedAgent.CreationResponseDecodingFailed,
             $"The Agent Management Service answered the create request, but its response could not be decoded (clientRequestId={clientRequestId}). The create outcome may be indeterminate.",
             ExitCodes.Failure,
             "agent-create-response-unreadable",
@@ -69,6 +75,7 @@ public sealed class AgentCreationException : AgentHostingException
         AgentHostingException failure,
         string idempotencyKey) =>
         new(
+            failure.ErrorCode,
             failure.Message,
             failure.ExitCode,
             failure.ErrorKind ?? "agent-create-failed",
@@ -79,6 +86,7 @@ public sealed class AgentCreationException : AgentHostingException
 
     public static AgentCreationException InvalidResponse() =>
         new(
+            ErrorCodes.ManagedAgent.CreationInvalidResponse,
             "The Agent Management Service returned a success response that did not contain the required agent and repository fields.",
             ExitCodes.Failure,
             "invalid-ams-response",
@@ -86,6 +94,7 @@ public sealed class AgentCreationException : AgentHostingException
 
     public static AgentCreationException ResponseMismatch(string field, string requestedValue, string returnedValue) =>
         new(
+            ErrorCodes.ManagedAgent.CreationResponseMismatch,
             $"The Agent Management Service returned {field} '{returnedValue}', which does not match the requested value '{requestedValue}'.",
             ExitCodes.Failure,
             "ams-response-identity-mismatch",
@@ -96,7 +105,7 @@ public sealed class AgentCreationException : AgentHostingException
         string message,
         int exitCode,
         string remediation) =>
-        new(message, exitCode, errorKind, remediation);
+        new(ErrorCodes.ManagedAgent.CreationServiceRejected, message, exitCode, errorKind, remediation);
 
     private static string RecoveryKeyGuidance(string idempotencyKey) =>
         $"Preserve this exact idempotency key value for the create attempt: {idempotencyKey}. If retrying the same create request, pass it through `--idempotency-key` so AMS resumes the durable reservation instead of minting another agent; quote or escape it for your shell.";
