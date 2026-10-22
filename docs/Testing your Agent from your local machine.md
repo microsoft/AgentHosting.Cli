@@ -72,7 +72,7 @@ msagent test ask --agent-harness <standard|github-copilot> [--query "<your quest
 Example:
 
 ```
-msagent test ask --agent-harness github-copilot --agent-name agentname --deployment-name dev --query "What is your return policy?"
+msagent test ask --agent-harness github-copilot --agent-name agentname --deployment-name develop --query "What is your return policy?"
 ```
 
 Expect a browser to open if this is the first time you have used this to agree to using your credentials to run the copilot studio agent.

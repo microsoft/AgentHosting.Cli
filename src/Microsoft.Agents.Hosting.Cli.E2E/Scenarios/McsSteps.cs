@@ -79,7 +79,7 @@ public static class McsSteps
     }
 
     /// <summary>Initialises, creates a slot, and deploys — the preamble most cloud scenarios need.</summary>
-    public static async Task<(Workspace Workspace, ManagedAgentDeployResult Deployed)> DeployedCliAgentAsync(ScenarioContext context, string deploymentName = "e2e", string? label = null)
+    public static async Task<(Workspace Workspace, ManagedAgentDeployResult Deployed)> DeployedCliAgentAsync(ScenarioContext context, string deploymentName = "e2e-dev", string? label = null)
     {
         var workspace = context.Workspaces.CliAgent(context.ScenarioId, label);
         await GuardSchemaNameAsync(context, workspace, context.DevEnvironmentId).ConfigureAwait(false);
@@ -90,7 +90,7 @@ public static class McsSteps
     }
 
     /// <summary>The classic-shape equivalent, used by the knowledge, prompt, and conflict scenarios.</summary>
-    public static async Task<(Workspace Workspace, ManagedAgentDeployResult Deployed)> DeployedClassicAgentAsync(ScenarioContext context, string deploymentName = "e2e", string? label = null)
+    public static async Task<(Workspace Workspace, ManagedAgentDeployResult Deployed)> DeployedClassicAgentAsync(ScenarioContext context, string deploymentName = "e2e-dev", string? label = null)
     {
         var workspace = context.Workspaces.ClassicAgent(context.ScenarioId, label);
         await GuardSchemaNameAsync(context, workspace, context.DevEnvironmentId).ConfigureAwait(false);
@@ -187,7 +187,7 @@ public static class McsSteps
     }
 
     /// <summary>The deployment slot every session agent uses.</summary>
-    public const string SessionDeploymentName = "e2e";
+    public const string SessionDeploymentName = "e2e-dev";
 
     private static string SessionLabel(SessionAgentKind kind) => kind switch
     {

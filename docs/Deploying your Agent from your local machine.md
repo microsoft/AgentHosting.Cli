@@ -5,18 +5,18 @@ Once you are ready with your agent definition from your local machine, you are r
 
 ## 1. Create a deployment slot (first time only)
 
-Your local agent is only a definition on your machine. A deployment is the named target (for example `dev`) that tells the CLI which Copilot Studio environment and agent to send that definition to, and it keeps track of what has been deployed there. This is why a deployment must exist before you can deploy, and it lets you deploy the same local agent to more than one target.
+Your local agent is only a definition on your machine. A deployment is the named target (for example `develop`) that tells the CLI which Copilot Studio environment and agent to send that definition to, and it keeps track of what has been deployed there. This is why a deployment must exist before you can deploy, and it lets you deploy the same local agent to more than one target.
 
 Before deploying, a named deployment slot must exist for your agent:
 
 ```
-msagent deployment create --deployment-name "dev" --deployment-type dev
+msagent deployment create --deployment-name "develop" --deployment-type dev
 ```
 
 ## 2. Deploy
 
 ```
-msagent agent deploy --agent-name "name" --deployment-name "dev" --publish
+msagent agent deploy --agent-name "name" --deployment-name "develop" --publish
 ```
 
 This sends the agent definition you have created or modified locally into the connected environment. Once completed, the agent can be seen on copilotstudio.microsoft.com.
@@ -32,7 +32,7 @@ When you deploy, the CLI checks the sync state to detect drift. If the agent in 
 To replace the cloud version with your local definition, run the deploy again with the `--overwrite` flag (`-ow`):
 
 ```
-msagent agent deploy --agent-name "name" --deployment-name "dev" --overwrite --publish
+msagent agent deploy --agent-name "name" --deployment-name "develop" --overwrite --publish
 ```
 
 Be careful with `--overwrite`:

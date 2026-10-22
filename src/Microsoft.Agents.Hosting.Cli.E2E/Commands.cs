@@ -62,6 +62,11 @@ public static class Commands
         environment.Run.Reporter.Summary(report, environment.Run.Ledger.Entries);
         Reporter.Persist(environment.Run.RunDirectory, report, environment.Run.Ledger.Entries);
 
+        if (environment.Run.Standalone is { } standalone)
+        {
+            await standalone.FinishAsync(environment.Run.RunSuffix, cancellationToken).ConfigureAwait(false);
+        }
+
         Console.WriteLine();
         Console.WriteLine($"  {environment.Run.RunDirectory}");
 
@@ -73,7 +78,7 @@ public static class Commands
     /// <param name="cancellationToken">Cancels the operation.</param>
     private static async Task<IReadOnlyList<LedgerEntry>> ReleaseResourcesAsync(HarnessEnvironment environment, CancellationToken cancellationToken)
     {
-        var cleanup = new Cleanup(environment.Run.Msagent, environment.Run.Azure, environment.Run.Cloud, environment.Run.Transcript);
+        var cleanup = new Cleanup(environment.Run.Msagent, environment.Run.Azure, environment.Run.Cloud, environment.Run.Transcript, environment.Run.Standalone);
 
         return await cleanup.RunAsync(environment.Run.Ledger, cancellationToken).ConfigureAwait(false);
     }
@@ -101,7 +106,8 @@ public static class Commands
 
         var msagent = new MsagentCli(binary, transcript, CrashDumps.DirectoryFor(runDirectory));
         var azure = new AzureCli(transcript);
-        var cleanup = new Cleanup(msagent, azure, new CloudProbe(msagent, azure), transcript);
+        var standalone = await StandaloneForCleanupAsync(ledger, config, runDirectory, transcript, cancellationToken).ConfigureAwait(false);
+        var cleanup = new Cleanup(msagent, azure, new CloudProbe(msagent, azure), transcript, standalone);
         var orphans = await cleanup.RunAsync(ledger, cancellationToken).ConfigureAwait(false);
 
         new Reporter(!options.NoColour).Summary(
@@ -110,6 +116,22 @@ public static class Commands
 
         _ = config;
         return orphans.Count > 0 ? 3 : 0;
+    }
+
+    private static async Task<StandaloneServices?> StandaloneForCleanupAsync(Ledger ledger, E2EConfig config, string runDirectory, Transcript transcript, CancellationToken cancellationToken)
+    {
+        if (!ledger.Outstanding.Any(entry => entry.Kind is ResourceKind.StandaloneWorkflow or ResourceKind.StandaloneConnectionReference))
+        {
+            return null;
+        }
+
+        var standalone = new StandaloneServices(config, runDirectory, transcript, Path.Combine(HarnessEnvironment.ProjectDirectory, "fixtures", Capabilities.StandaloneFixturesFolder));
+        var probed = await standalone.ProbeAsync(
+            Capabilities.Resolve(config, Path.Combine(HarnessEnvironment.ProjectDirectory, "fixtures"), signedIn: true, "signed in", AzureCli.IsPresent()),
+            cancellationToken).ConfigureAwait(false);
+
+        Console.WriteLine($"Standalone-workflow oracle: {probed.Reason(Capability.StandaloneOracle)}");
+        return standalone;
     }
 
     /// <summary>Re-prints a previous run from its persisted report.</summary>
@@ -148,7 +170,9 @@ public static class Commands
         Console.WriteLine();
         Console.WriteLine("Capabilities");
 
-        foreach (var state in environment.Run.Capabilities.All)
+        var standaloneScheduled = environment.Run.Standalone is not null;
+
+        foreach (var state in environment.Run.Capabilities.All.Where(state => standaloneScheduled || !IsStandalone(state.Capability)))
         {
             var mark = state.Available ? "yes" : "NO ";
             Console.WriteLine($"  {Name(state.Capability),-18} {mark}   {state.Detail}");
@@ -249,8 +273,14 @@ public static class Commands
         Capability.AzureRead => "azure.read",
         Capability.AzureCreate => "azure.create",
         Capability.AzureExistingBot => "azure.existingBot",
+        Capability.StandaloneFixtures => "sw.fixtures",
+        Capability.StandaloneOracle => "sw.oracle",
+        Capability.StandaloneFlowRuns => "sw.flowRuns",
         _ => capability.ToString().ToLowerInvariant(),
     };
+
+    private static bool IsStandalone(Capability capability) =>
+        capability is Capability.StandaloneFixtures or Capability.StandaloneOracle or Capability.StandaloneFlowRuns;
 
     private static string Truncate(string value, int length) => value.Length <= length ? value : value[..(length - 1)] + "…";
 }

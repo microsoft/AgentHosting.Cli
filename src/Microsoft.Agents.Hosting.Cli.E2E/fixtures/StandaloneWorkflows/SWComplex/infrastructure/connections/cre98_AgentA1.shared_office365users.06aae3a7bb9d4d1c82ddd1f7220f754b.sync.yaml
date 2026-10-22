@@ -1,0 +1,3 @@
+connectionReferences:
+  - connectionReferenceLogicalName: cre98_AgentA1.shared_office365users.06aae3a7bb9d4d1c82ddd1f7220f754b
+    connectorId: /providers/Microsoft.PowerApps/apis/shared_office365users

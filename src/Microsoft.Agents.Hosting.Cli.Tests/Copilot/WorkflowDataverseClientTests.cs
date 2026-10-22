@@ -105,6 +105,17 @@ internal sealed class RecordingWorkflowClient : RecordingConnectionReferenceClie
         return Task.FromResult(Cloud.TryGetValue(workflowId, out var metadata) ? metadata : null);
     }
 
+    public HashSet<Guid> Drafts { get; } = [];
+
+    public List<Guid> DraftChecks { get; } = [];
+
+    public override Task<bool> HasUnpublishedDraftAsync(Guid workflowId, CancellationToken cancellationToken)
+    {
+        DraftChecks.Add(workflowId);
+
+        return Task.FromResult(Drafts.Contains(workflowId));
+    }
+
     public override Task<SyncDataverseClient.WorkflowSummary[]> ListWorkflowsAsync(string? nameFilter, int? maximumCount, CancellationToken cancellationToken)
     {
         Calls.Add($"list:{nameFilter ?? "*"}:{maximumCount?.ToString() ?? "*"}");
@@ -127,6 +138,17 @@ internal sealed class RecordingWorkflowClient : RecordingConnectionReferenceClie
         Deleted.Add(workflowId);
 
         return Task.FromResult(Cloud.Remove(workflowId));
+    }
+
+    public Dictionary<Guid, IReadOnlyList<string>> AgentNames { get; } = [];
+
+    public Exception? AgentNamesThrows { get; init; }
+
+    public override Task<IReadOnlyList<string>> GetAgentsUsingWorkflowAsync(Guid workflowId, CancellationToken cancellationToken)
+    {
+        Calls.Add($"agents:{workflowId}");
+
+        return AgentNamesThrows is not null ? Task.FromException<IReadOnlyList<string>>(AgentNamesThrows) : Task.FromResult(AgentNames.GetValueOrDefault(workflowId, []));
     }
 }
 
@@ -853,6 +875,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
         var result = await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
 
         Assert.Equal(WorkflowStateProjection.Draft, result.Workflow.State);
+        Assert.Equal(["new_weather"], result.UnboundConnectionReferences);
     }
 
     [Fact]
@@ -869,6 +892,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
         var result = await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
 
         Assert.Equal(WorkflowStateProjection.Activated, result.Workflow.State);
+        Assert.Empty(result.UnboundConnectionReferences);
     }
 
     [Fact]
@@ -1044,23 +1068,103 @@ public sealed class WorkflowDataverseClientTests : IDisposable
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(client).DownloadAsync(Environment(), workflowId, _root, CancellationToken.None));
 
         Assert.Equal("workflow-local-changes-would-be-lost", failure.ErrorKind);
+        Assert.Equal($"'{WorkflowWorkspace.FindAll(_root).Single().FolderName}' has conflict local changes, and a pull would replace them.", failure.Message);
         Assert.Equal("{}", File.ReadAllText(WorkflowWorkspace.FindAll(_root).Single().DefinitionPath));
     }
 
     [Fact]
-    public async Task Download_WhenThePortalRenamedTheWorkflow_MovesTheFolder()
+    public async Task RequireNoUnpulledChanges_WhenTheEnvironmentChangedTheWorkflowSinceTheLastDeploy_IsRefusedWithoutWriting()
+    {
+        var workflowId = WriteWorkflow();
+        var client = new RecordingWorkflowClient();
+
+        await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
+        client.Cloud[workflowId].Description = "Edited in the portal";
+        client.Calls.Clear();
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(client).RequireNoUnpulledChangesAsync(Environment(), _root, CancellationToken.None));
+
+        Assert.Equal("workflow-cloud-changes-would-be-lost", failure.ErrorKind);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal($"'{WorkflowWorkspace.FindAll(_root).Single().FolderName}' has conflict remote change, and a deploy would replace them.", failure.Message);
+        Assert.Equal([$"get:{workflowId}"], client.Calls);
+        Assert.Equal("Edited in the portal", client.Cloud[workflowId].Description);
+    }
+
+    [Fact]
+    public async Task RequireNoUnpulledChanges_AllowsALocalEditWhenOnlyThisWorkspaceChangedTheEnvironment()
+    {
+        var workflowId = WriteWorkflow();
+        var client = new RecordingWorkflowClient();
+
+        await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
+        File.WriteAllText(WorkflowWorkspace.FindAll(_root).Single().DefinitionPath, "{\"properties\":{\"definition\":{\"triggers\":{}}}}");
+
+        await Create(client).RequireNoUnpulledChangesAsync(Environment(), _root, CancellationToken.None);
+
+        Assert.Contains($"get:{workflowId}", client.Calls);
+    }
+
+    [Fact]
+    public async Task Upsert_WhenTheEnvironmentHoldsAnUnpublishedDraft_IsRefusedAsAUsageFailureWithoutWriting()
+    {
+        var workflowId = WriteWorkflow();
+        var client = new RecordingWorkflowClient();
+
+        await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
+        File.WriteAllText(WorkflowWorkspace.FindAll(_root).Single().DefinitionPath, "{\"properties\":{\"definition\":{\"triggers\":{}}}}");
+        client.Drafts.Add(workflowId);
+        client.Calls.Clear();
+        client.DraftChecks.Clear();
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(client).UpsertAsync(Environment(), _root, CancellationToken.None));
+
+        Assert.Equal("workflow-unpublished-draft", failure.ErrorKind);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("'WF Hook 2' has a draft version that was saved in Copilot Studio but not published, and the environment refuses a deploy while it exists.", failure.Message);
+        Assert.Equal("Publish the draft in Copilot Studio, then run `msagent agent pull` to get it, or deploy again with --overwrite to replace it.", failure.Remediation);
+        Assert.Equal([$"get:{workflowId}"], client.Calls);
+        Assert.Equal([workflowId], client.DraftChecks);
+        Assert.DoesNotContain("triggers", client.Cloud[workflowId].ClientData!, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Download_WarnsOnlyWhenTheEnvironmentHoldsAnUnpublishedDraft(bool draft)
+    {
+        var workflowId = Guid.NewGuid();
+        var client = new RecordingWorkflowClient();
+        client.Cloud[workflowId] = new SyncDataverseClient.WorkflowMetadata { WorkflowId = workflowId, Name = "Cloud Flow", StateCode = 1, ClientData = "{}" };
+
+        if (draft)
+        {
+            client.Drafts.Add(workflowId);
+        }
+
+        var downloaded = await Create(client).DownloadAsync(Environment(), workflowId, _root, CancellationToken.None);
+
+        Assert.True(downloaded.Changed);
+        Assert.Equal(draft ? ["'Cloud Flow' also has a draft in env-1 that was saved in the designer but not published, so only the published version was written. Publish the draft in the designer to get it."] : Array.Empty<string>(), downloaded.Warnings);
+    }
+
+    [Fact]
+    public async Task Download_WhenThePortalRenamedTheWorkflow_MovesTheFolderAndReportsTheOneItLeft()
     {
         var workflowId = Guid.NewGuid();
         var client = new RecordingWorkflowClient();
         client.Cloud[workflowId] = new SyncDataverseClient.WorkflowMetadata { WorkflowId = workflowId, Name = "Before", StateCode = 1, ClientData = "{}" };
 
-        await Create(client).DownloadAsync(Environment(), workflowId, _root, CancellationToken.None);
+        var first = await Create(client).DownloadAsync(Environment(), workflowId, _root, CancellationToken.None);
         client.Cloud[workflowId].Name = "After";
 
         var downloaded = await Create(client).DownloadAsync(Environment(), workflowId, _root, CancellationToken.None);
 
         Assert.Equal($"After-{workflowId}", WorkflowWorkspace.FindAll(_root).Single().FolderName);
         Assert.True(downloaded.Changed);
+        Assert.Null(first.PreviousFolder);
+        Assert.Equal(Path.Combine(WorkflowWorkspace.WorkflowsDirectory(_root), $"Before-{workflowId}"), downloaded.PreviousFolder);
+        Assert.Equal(Path.Combine(WorkflowWorkspace.WorkflowsDirectory(_root), $"After-{workflowId}"), downloaded.FolderPath);
     }
 
     [Fact]
@@ -1070,6 +1174,82 @@ public sealed class WorkflowDataverseClientTests : IDisposable
             Create(new RecordingWorkflowClient()).DownloadAsync(Environment(), Guid.NewGuid(), _root, CancellationToken.None));
 
         Assert.Contains("No workflow with id", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("get")]
+    [InlineData("download")]
+    [InlineData("pull")]
+    public async Task AManagedFlow_FailsAsWorkflowManagedAndWritesNothing(string operation)
+    {
+        var workflowId = Guid.NewGuid();
+        var client = new RecordingWorkflowClient();
+        var store = Create(client);
+
+        client.Cloud[workflowId] = new SyncDataverseClient.WorkflowMetadata { WorkflowId = workflowId, Name = "Payroll Approvals", ClientData = "{}", IsManaged = true };
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => operation switch
+        {
+            "get" => store.GetAsync(Environment(), workflowId, CancellationToken.None),
+            "download" => store.DownloadAsync(Environment(), workflowId, _root, CancellationToken.None),
+            _ => store.DownloadAsync(Environment(), workflowId, _root, CancellationToken.None, overwriteLocalChanges: true),
+        });
+
+        Assert.Equal("workflow-managed", failure.ErrorKind);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Contains("'Payroll Approvals'", failure.Message, StringComparison.Ordinal);
+        Assert.Empty(Directory.Exists(_root) ? Directory.GetFiles(_root, "*", SearchOption.AllDirectories) : []);
+    }
+
+    [Fact]
+    public async Task AgentUseWarning_NamesTheAgentsTheSyncLibraryFoundInOneRead()
+    {
+        var workflowId = Guid.NewGuid();
+        var client = new RecordingWorkflowClient();
+        client.AgentNames[workflowId] = ["Agent A", "NB1"];
+
+        var warning = await Create(client).GetAgentUseWarningAsync(Environment(), workflowId, CancellationToken.None);
+
+        Assert.Equal("Copilot Studio agents 'Agent A' and 'NB1' use this workflow and lose it when the workflow is deleted.", warning);
+        Assert.Equal([$"agents:{workflowId}"], client.Calls);
+    }
+
+    [Fact]
+    public async Task AgentUseWarning_IsEmptyWhenNoAgentUsesTheWorkflow()
+    {
+        Assert.Equal(string.Empty, await Create(new RecordingWorkflowClient()).GetAgentUseWarningAsync(Environment(), Guid.NewGuid(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AgentUseWarning_WhenTheServiceRefusesTheRead_Fails()
+    {
+        var client = new RecordingWorkflowClient { AgentNamesThrows = new DataverseRequestException(System.Net.HttpStatusCode.Forbidden, "{\"error\":{\"message\":\"denied\"}}") };
+
+        var failure = await Assert.ThrowsAsync<DataverseRequestException>(() => Create(client).GetAgentUseWarningAsync(Environment(), Guid.NewGuid(), CancellationToken.None));
+
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, failure.StatusCode);
+    }
+
+    [Fact]
+    public async Task Upsert_WhenTheMetadataNamesAWorkflowDataverseWouldRefuse_FailsAsWorkflowNameInvalidBeforeWriting()
+    {
+        WriteWorkflow(name: new string('a', 101));
+        var client = new RecordingWorkflowClient();
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(client).UpsertAsync(Environment(), _root, CancellationToken.None));
+
+        Assert.Equal("workflow-name-invalid", failure.ErrorKind);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.DoesNotContain(client.Calls, call => call.StartsWith("insert:", StringComparison.Ordinal) || call.StartsWith("update:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Scaffold_WhenTheNameIsOneDataverseWouldRefuse_FailsAsWorkflowNameInvalid()
+    {
+        var failure = Assert.Throws<ManagedAgentException>(() => new EmbeddedWorkflowScaffolder().Scaffold(_root, "bad\tname", Guid.NewGuid()));
+
+        Assert.Equal("workflow-name-invalid", failure.ErrorKind);
+        Assert.Null(new EmbeddedWorkflowScaffolder().ValidateName("Order intake"));
     }
 
     [Fact]

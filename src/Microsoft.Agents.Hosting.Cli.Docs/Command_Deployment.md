@@ -83,6 +83,10 @@ Supplying an option for the other agent type is a usage error. Blank values are 
 ### Create rules
 
 - `--deployment-name` and `--deployment-type` are required. The type is case-insensitive.
+- The name may use only `-`, `a-z`, `A-Z`, `0-9`, and `_`, and is 4-42 characters for every agent type. A
+  clone registers its home slot as `develop`. A name outside the rule is a usage error and nothing is
+  written. The rule applies only when a slot is created or renamed, so a record whose name predates it,
+  such as the `dev` slot an earlier clone registered, still resolves.
 - A `test` or `prod` deployment requires `--environment-id`; a `dev` deployment defaults to the agent's home environment.
 - The name must be unique per agent, compared case-insensitively.
 - An MCS agent can have at most one deployment per environment, whatever the type. Creating a second
@@ -181,7 +185,7 @@ msagent deployment update (--deployment-id <id> | --deployment-name <name> [--ag
 | `--deployment-name` | `-dn` | String | All agents | The deployment name, used with the agent id to resolve the deployment. |
 | `--agent-id` | `-aid` | String | All agents | The owning agent id. |
 | `--agent-name` | `-an` | String | **MCS-specific** | The owning agent name, used when the agent id is omitted. |
-| `--new-name` | `-nn` | String | **MCS-specific** | The deployment's new name, unique among the agent's deployments. |
+| `--new-name` | `-nn` | String | **MCS-specific** | The deployment's new name, unique among the agent's deployments: 4-42 characters from `-`, `a-z`, `A-Z`, `0-9`, and `_`. |
 | `--resource-group` | `-rg` | String | CodeAgent only (**Gated**) | Target resource group. |
 | `--subscription` | `-sub` | GUID | CodeAgent only (**Gated**) | Target subscription id. |
 | `--tenant` | `-t` | GUID | CodeAgent only (**Gated**) | Target tenant id. |
@@ -225,6 +229,9 @@ requires `--agent-id`, `--deployment-id`, and `--package-revision`. It cannot be
   ambiguous; with `--agent-id` or `--agent-name` the search is limited to that agent.
 - Names are unique per agent, compared case-insensitively; renaming to a taken name is rejected when the
   configuration is written. Renaming to the identical name changes nothing.
+- A new name outside the naming rule (4-42 characters from `-`, `a-z`, `A-Z`, `0-9`, and `_`) is a usage
+  error. The rule applies only to a name that changes, so a slot whose existing name predates the rule
+  can still be selected and renamed.
 - MCS: `--new-name` is required, and a non-empty `--endpoint-url` is an error. Any CodeAgent-only option is a
   usage error, and so is `--new-name` on a CodeAgent. The result reports the previous and new name, type, environment,
   and configuration path.

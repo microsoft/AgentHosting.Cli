@@ -19,6 +19,10 @@ internal static class WorkflowFailureTranslation
         StandaloneWorkflowFailure.ReplaceLostTheCloudCopy => ManagedAgentException.WorkflowReplaceLostTheCloudCopy(failure.Subject ?? string.Empty, failure.EnvironmentId ?? string.Empty, failure.Reason ?? string.Empty, failure.RestoreFailure ?? string.Empty),
         StandaloneWorkflowFailure.ProjectHoldsUnpushedChanges => ManagedAgentException.WorkflowProjectHoldsUnpushedChanges(failure.Subject ?? string.Empty),
         StandaloneWorkflowFailure.WorkspaceHoldsUnpushedChanges => ManagedAgentException.WorkflowLocalChangesWouldBeLost(failure.Subject ?? string.Empty),
+        StandaloneWorkflowFailure.EnvironmentHoldsUnpulledChanges => ManagedAgentException.WorkflowCloudChangesWouldBeLost(failure.Subject ?? string.Empty),
+        StandaloneWorkflowFailure.EnvironmentHoldsUnpublishedDraft => ManagedAgentException.WorkflowUnpublishedDraft(failure.Subject ?? string.Empty),
+        StandaloneWorkflowFailure.InvalidName => ManagedAgentException.WorkflowNameInvalid(failure.Message),
+        StandaloneWorkflowFailure.Managed => ManagedAgentException.WorkflowManaged(failure.Message),
         _ => ManagedAgentException.WorkflowPushFailed(failure.Subject ?? string.Empty, failure.EnvironmentId ?? string.Empty, failure.Reason ?? failure.Message),
     };
 

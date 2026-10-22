@@ -59,6 +59,9 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     public bool IsWorkspace(string directory) => _synchronizer.IsSyncInfoAvailable(ToDirectoryPath(directory));
 
     /// <inheritdoc />
+    public string ProjectFolderName(string displayName) => WorkspaceFolderNames.ForProject(displayName);
+
+    /// <inheritdoc />
     public async Task<CopilotWorkspaceInfo> ReadWorkspaceInfoAsync(string directory, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -106,7 +109,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
             {
                 var isAgent = operationContext is AuthoringOperationContext;
                 var displayName = isAgent ? agentDisplayName : DisplayNameFor(agentInfo, operationContext);
-                var folderName = isAgent && !string.IsNullOrWhiteSpace(command.AgentFolderName) ? command.AgentFolderName : AgentConfigLocator.WorkspaceFolderName(displayName);
+                var folderName = isAgent && !string.IsNullOrWhiteSpace(command.AgentFolderName) ? command.AgentFolderName : ProjectFolderName(displayName);
                 var path = Path.Combine(command.WorkspacePath, folderName);
 
                 if (Directory.Exists(path) && HoldsWorkspaceContent(path))

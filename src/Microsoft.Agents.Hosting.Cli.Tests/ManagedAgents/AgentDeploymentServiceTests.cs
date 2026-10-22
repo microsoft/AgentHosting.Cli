@@ -37,7 +37,7 @@ public sealed class AgentDeploymentCreateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
 
         var result = await Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None);
 
         Assert.Equal("env-1", result.EnvironmentId);
@@ -54,7 +54,7 @@ public sealed class AgentDeploymentCreateServiceTests
         var before = store.Add(workspace.Root, ManagedAgentFixtures.Agent());
 
         await Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None);
 
         Assert.Equal(before, store.Read(workspace.Root).ManagedAgents[0]);
@@ -72,7 +72,7 @@ public sealed class AgentDeploymentCreateServiceTests
             EnvironmentFixtures.Environment("env-2", instanceUrl: CopilotTestFixtures.DataverseOrganization));
 
         var result = await Create(store, resolver).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "dev", EnvironmentId = "env-2" },
+            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop", EnvironmentId = "env-2" },
             CancellationToken.None);
 
         Assert.Equal("env-2", result.TargetEnvironmentId);
@@ -88,7 +88,7 @@ public sealed class AgentDeploymentCreateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
 
         var result = await Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "dev", EnvironmentId = "env-1" },
+            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop", EnvironmentId = "env-1" },
             CancellationToken.None);
 
         Assert.Equal("env-1", result.EnvironmentId);
@@ -106,6 +106,66 @@ public sealed class AgentDeploymentCreateServiceTests
         await Assert.ThrowsAsync<UsageException>(() => Create(store).CreateAsync(
             new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "prod", DeploymentName = "prod" },
             CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("a/bcd")]
+    [InlineData("has space")]
+    [InlineData("abc.d")]
+    [InlineData("ab")]
+    [InlineData("a234567890123456789012345678901234567890123")]
+    public async Task Create_RejectsANameOutsideTheRuleBeforeWritingAnything(string deploymentName)
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, WorkflowFixtures.Record());
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store).CreateAsync(
+            new AgentDeploymentCreateRequest { AgentId = "wf-1", DeploymentType = "dev", DeploymentName = deploymentName },
+            CancellationToken.None));
+
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("--deployment-name must be between 4 and 42 characters in length and can only contain the characters -, a-z, A-Z, 0-9, and _.", failure.Message);
+        Assert.Empty(store.Read(workspace.Root).AgentDeployments);
+    }
+
+    [Theory]
+    [InlineData("agent-1")]
+    [InlineData("wf-1")]
+    public async Task Create_RejectsAThreeCharacterNameForAnMcsAgentOrWorkflow(string agentId)
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent());
+        store.Add(workspace.Root, WorkflowFixtures.Record(agentLocation: "flows"));
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store).CreateAsync(
+            new AgentDeploymentCreateRequest { AgentId = agentId, DeploymentType = "dev", DeploymentName = "dev" },
+            CancellationToken.None));
+
+        Assert.Equal("--deployment-name must be between 4 and 42 characters in length and can only contain the characters -, a-z, A-Z, 0-9, and _.", failure.Message);
+        Assert.Empty(store.Read(workspace.Root).AgentDeployments);
+    }
+
+    [Theory]
+    [InlineData("agent-1")]
+    [InlineData("wf-1")]
+    public async Task Create_AcceptsATrimmedFourCharacterNameForAnMcsAgentOrWorkflow(string agentId)
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent());
+        store.Add(workspace.Root, WorkflowFixtures.Record(agentLocation: "flows"));
+
+        var result = await Create(store).CreateAsync(
+            new AgentDeploymentCreateRequest { AgentId = agentId, DeploymentType = "dev", DeploymentName = " abcd " },
+            CancellationToken.None);
+
+        Assert.Equal("abcd", result.DeploymentName);
+        Assert.Equal("abcd", store.Read(workspace.Root).AgentDeployments.Single().DeploymentName);
     }
 
     [Fact]
@@ -130,7 +190,7 @@ public sealed class AgentDeploymentCreateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
 
         await Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None);
 
         Assert.Single(store.Read(workspace.Root).AgentDeployments);
@@ -145,7 +205,7 @@ public sealed class AgentDeploymentCreateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
 
         var result = await Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None);
 
         Assert.Equal("con_agent", result.SchemaName);
@@ -161,7 +221,7 @@ public sealed class AgentDeploymentCreateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
 
         var result = await Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None);
 
         Assert.Equal("con_agent", result.SchemaName);
@@ -177,7 +237,7 @@ public sealed class AgentDeploymentCreateServiceTests
         File.Delete(Path.Combine(workspace.Root, AgentConfigLocator.ProjectSettingsFileName));
 
         await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None));
     }
 
@@ -190,7 +250,7 @@ public sealed class AgentDeploymentCreateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
         var service = Create(store);
 
-        await service.CreateAsync(new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "dev" }, CancellationToken.None);
+        await service.CreateAsync(new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop" }, CancellationToken.None);
 
         await Assert.ThrowsAsync<ManagedAgentException>(() => service.CreateAsync(
             new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "dev-two" },
@@ -225,7 +285,7 @@ public sealed class AgentDeploymentCreateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
 
         await Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None);
 
         var deployment = store.Read(workspace.Root).AgentDeployments.Single();
@@ -281,7 +341,7 @@ public sealed class AgentDeploymentCreateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
 
         var result = await Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None);
 
         Assert.Equal("agent-1", result.AgentId);
@@ -296,7 +356,7 @@ public sealed class AgentDeploymentCreateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
 
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentId = "agent-9", DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { AgentId = "agent-9", DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None));
 
         Assert.Equal("agent-id-conflict", failure.ErrorKind);
@@ -313,7 +373,7 @@ public sealed class AgentDeploymentCreateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Agent(agentId: "agent-2", displayName: "Second") with { AgentLocation = "second" });
 
         var result = await Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentName = "Second", DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { AgentName = "Second", DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None);
 
         Assert.Equal("agent-2", result.AgentId);
@@ -329,7 +389,7 @@ public sealed class AgentDeploymentCreateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
 
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store).CreateAsync(
-            new AgentDeploymentCreateRequest { AgentName = "Nobody", DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { AgentName = "Nobody", DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None));
 
         Assert.Equal("agent-not-found", failure.ErrorKind);
@@ -342,7 +402,7 @@ public sealed class AgentDeploymentCreateServiceTests
         using var scope = new CurrentDirectoryScope(workspace.Root);
 
         await Assert.ThrowsAsync<ManagedAgentException>(() => Create(ManagedAgentFixtures.Store()).CreateAsync(
-            new AgentDeploymentCreateRequest { DeploymentType = "dev", DeploymentName = "dev" },
+            new AgentDeploymentCreateRequest { DeploymentType = "dev", DeploymentName = "develop" },
             CancellationToken.None));
     }
 }
@@ -553,12 +613,84 @@ public sealed class AgentDeploymentUpdateServiceTests
         using var scope = new CurrentDirectoryScope(workspace.Root);
 
         var result = await Create(store).UpdateAsync(
-            new AgentDeploymentUpdateRequest { AgentId = "agent-1", DeploymentName = "dev", NewName = "Shared development" },
+            new AgentDeploymentUpdateRequest { AgentId = "agent-1", DeploymentName = "dev", NewName = "Shared-development" },
             CancellationToken.None);
 
         Assert.Equal("dev", result.PreviousDeploymentName);
-        Assert.Equal("Shared development", result.DeploymentName);
-        Assert.Equal("Shared development", store.Read(workspace.Root).AgentDeployments.Single().DeploymentName);
+        Assert.Equal("Shared-development", result.DeploymentName);
+        Assert.Equal("Shared-development", store.Read(workspace.Root).AgentDeployments.Single().DeploymentName);
+    }
+
+    [Theory]
+    [InlineData("a/bcd")]
+    [InlineData("has space")]
+    [InlineData("abc.d")]
+    [InlineData("abc")]
+    [InlineData("DEV")]
+    [InlineData("a234567890123456789012345678901234567890123")]
+    public async Task Update_ToANameOutsideTheRule_IsAUsageError(string newName)
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store).UpdateAsync(
+            new AgentDeploymentUpdateRequest { AgentId = "agent-1", DeploymentName = "dev", NewName = newName },
+            CancellationToken.None));
+
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("--new-name must be between 4 and 42 characters in length and can only contain the characters -, a-z, A-Z, 0-9, and _.", failure.Message);
+        Assert.Equal("dev", store.Read(workspace.Root).AgentDeployments.Single().DeploymentName);
+    }
+
+    [Fact]
+    public async Task Update_ToAThreeCharacterName_IsAUsageErrorForAWorkflow()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, WorkflowFixtures.Record());
+        store.Add(workspace.Root, WorkflowFixtures.Deployment());
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store).UpdateAsync(
+            new AgentDeploymentUpdateRequest { AgentId = "wf-1", DeploymentName = "devwf", NewName = "abc" },
+            CancellationToken.None));
+
+        Assert.Equal("--new-name must be between 4 and 42 characters in length and can only contain the characters -, a-z, A-Z, 0-9, and _.", failure.Message);
+        Assert.Equal("devwf", store.Read(workspace.Root).AgentDeployments.Single().DeploymentName);
+    }
+
+    [Fact]
+    public async Task Update_RenamesAWorkflowSlotAnEarlierCloneNamedDev()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, WorkflowFixtures.Record());
+        store.Add(workspace.Root, WorkflowFixtures.Deployment(deploymentName: "dev"));
+
+        var result = await Create(store).UpdateAsync(
+            new AgentDeploymentUpdateRequest { AgentId = "wf-1", DeploymentName = "dev", NewName = "develop" },
+            CancellationToken.None);
+
+        Assert.Equal("dev", result.PreviousDeploymentName);
+        Assert.Equal("develop", store.Read(workspace.Root).AgentDeployments.Single().DeploymentName);
+    }
+
+    [Fact]
+    public async Task Update_StillResolvesASlotWhoseNameTheRuleNowRejects()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent());
+        store.Add(workspace.Root, ManagedAgentFixtures.Deployment(name: "x y"));
+
+        var result = await Create(store).UpdateAsync(
+            new AgentDeploymentUpdateRequest { AgentId = "agent-1", DeploymentName = "x y", NewName = "x y" },
+            CancellationToken.None);
+
+        Assert.Equal("x y", result.DeploymentName);
     }
 
     [Fact]
@@ -601,11 +733,11 @@ public sealed class AgentDeploymentUpdateServiceTests
         store.Add(workspace.Root, ManagedAgentFixtures.Deployment("slot-2", name: "test", stage: DeploymentStages.Test, environmentId: "env-test"));
 
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store).UpdateAsync(
-            new AgentDeploymentUpdateRequest { AgentId = "agent-1", DeploymentId = "slot-2", NewName = "DEV" },
+            new AgentDeploymentUpdateRequest { AgentId = "agent-1", DeploymentId = "slot-1", NewName = "TEST" },
             CancellationToken.None));
 
         Assert.Equal("deployment-already-exists", failure.ErrorKind);
-        Assert.Equal("test", store.Read(workspace.Root).AgentDeployments.Single(deployment => deployment.DeploymentId == "slot-2").DeploymentName);
+        Assert.Equal("dev", store.Read(workspace.Root).AgentDeployments.Single(deployment => deployment.DeploymentId == "slot-1").DeploymentName);
     }
 
     [Fact]

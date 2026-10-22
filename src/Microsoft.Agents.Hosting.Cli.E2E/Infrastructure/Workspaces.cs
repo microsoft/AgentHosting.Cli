@@ -1,6 +1,3 @@
-using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
-using Microsoft.CopilotStudio.Sync;
-
 namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 
 /// <summary>An isolated copy of a fixture, owned by one scenario.</summary>
@@ -60,11 +57,10 @@ public sealed class Workspaces
     public Workspace Workflow(string scenarioId, string? label = null)
     {
         var destination = Path.Combine(_workspaceRoot, Name(scenarioId, label), WorkflowFixture);
-        CopyDirectory(Source(scenarioId, _config.Mcs.Workspaces.Workflow, WorkflowFixture), destination);
-
         var displayName = $"ahe2e-{scenarioId}-{_runSuffix}";
         var workflowId = Guid.NewGuid();
-        Reidentify(WorkflowWorkspace.WorkflowsDirectory(destination), displayName, workflowId);
+
+        FixtureCopies.CopyWorkflow(Source(scenarioId, _config.Mcs.Workspaces.Workflow, WorkflowFixture), destination, displayName, workflowId, keepLocalState: true);
 
         return new Workspace
         {
@@ -76,30 +72,6 @@ public sealed class Workspaces
             WorkflowId = workflowId.ToString(),
         };
     }
-
-    /// <summary>
-    /// Gives the copied workflow a new identifier and name, so two scenarios never address one cloud
-    /// flow. A workflow is adopted by its identifier, so sharing one would make the second scenario
-    /// overwrite the first's flow — and cleanup would then delete it twice.
-    /// </summary>
-    private static void Reidentify(string workflowsDirectory, string displayName, Guid workflowId)
-    {
-        var folderName = WorkflowWorkspace.FolderNameFor(displayName, workflowId);
-        var renamed = Path.Combine(workflowsDirectory, folderName);
-
-        Directory.Move(Directory.EnumerateDirectories(workflowsDirectory).Single(), renamed);
-
-        var metadataPath = Path.Combine(renamed, WorkflowWorkspace.MetadataFileName);
-
-        File.WriteAllLines(metadataPath, File.ReadAllLines(metadataPath).Select(line => Reidentified(line, folderName, displayName, workflowId)));
-    }
-
-    private static string Reidentified(string line, string folderName, string displayName, Guid workflowId) =>
-        line.StartsWith("workflowId:", StringComparison.Ordinal) ? $"workflowId: {workflowId}"
-        : line.StartsWith("name:", StringComparison.Ordinal) ? $"name: {displayName}"
-        : line.StartsWith("jsonFileName:", StringComparison.Ordinal)
-            ? $"jsonFileName: {WorkflowWorkspace.WorkflowsFolderName}/{folderName}/{WorkflowWorkspace.DefinitionFileName}"
-            : line;
 
     /// <summary>Creates an empty directory, for scenarios asserting behaviour where no workspace exists.</summary>
     public string EmptyDirectory(string scenarioId, string? label = null)
@@ -117,34 +89,16 @@ public sealed class Workspaces
     {
         var root = Path.Combine(_workspaceRoot, $"{scenarioId}-copy");
         var destination = Path.Combine(root, Path.GetFileName(source.ProjectDirectory));
-        CopyDirectory(source.ProjectDirectory, destination);
-        RemoveLocalState(destination);
+        FixtureCopies.CopyTree(source.ProjectDirectory, destination, keepLocalState: false);
 
         return source with { ScenarioId = scenarioId, Root = root, ProjectDirectory = destination };
-    }
-
-    /// <summary>
-    /// Drops the copied workspace's own records and sync cache, so it registers and deploys as a
-    /// separate local project rather than inheriting the source's identity.
-    /// </summary>
-    private static void RemoveLocalState(string directory)
-    {
-        foreach (var state in new[] { ".config", ".mcs" })
-        {
-            var path = Path.Combine(directory, state);
-
-            if (Directory.Exists(path))
-            {
-                Directory.Delete(path, recursive: true);
-            }
-        }
     }
 
     private Workspace Copy(string scenarioId, string? label, string? configured, string fixtureName)
     {
         var root = Path.Combine(_workspaceRoot, Name(scenarioId, label));
         var destination = Path.Combine(root, fixtureName);
-        CopyDirectory(Source(scenarioId, configured, fixtureName), destination);
+        FixtureCopies.CopyTree(Source(scenarioId, configured, fixtureName), destination, keepLocalState: true);
 
         var uniqueName = UniqueAgentName(fixtureName, scenarioId);
         Rebrand(destination, fixtureName, uniqueName);
@@ -224,19 +178,4 @@ public sealed class Workspaces
         Path.GetExtension(file).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".gif" or ".ico" or ".zip" or ".dll" or ".exe";
 
     private static string Name(string scenarioId, string? label) => label is { Length: > 0 } ? $"{scenarioId}-{label}" : scenarioId;
-
-    private static void CopyDirectory(string source, string destination)
-    {
-        Directory.CreateDirectory(destination);
-
-        foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
-        {
-            Directory.CreateDirectory(directory.Replace(source, destination, StringComparison.Ordinal));
-        }
-
-        foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
-        {
-            File.Copy(file, file.Replace(source, destination, StringComparison.Ordinal), overwrite: true);
-        }
-    }
 }

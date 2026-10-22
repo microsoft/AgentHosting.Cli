@@ -5,7 +5,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 
-/// <summary><c>msagent agent deploy</c> for a standalone workflow, which always overrides the cloud copy.</summary>
+/// <summary><c>msagent agent deploy</c> for a standalone workflow.</summary>
 public sealed class WorkflowDeployService
 {
     private readonly WorkflowProjectResolver _resolver;
@@ -53,6 +53,11 @@ public sealed class WorkflowDeployService
 
         var (target, deployment, environment) = await _resolver.ResolveDeploymentAsync(request.Project, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName, "msagent agent deploy", cancellationToken, requireExplicitDeployment: true).ConfigureAwait(false);
 
+        if (!request.Overwrite && deployment.DeploymentType == DeploymentStages.Dev)
+        {
+            await _workflows.RequireNoUnpulledChangesAsync(environment, target.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
+        }
+
         _workflowStates.Invalidate(target.WorkspaceRoot, environment.EnvironmentId);
 
         var upserted = await _workflows.UpsertAsync(environment, target.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
@@ -63,6 +68,7 @@ public sealed class WorkflowDeployService
 
         var running = activating && activation.Activated.Contains(upserted.Workflow.Name, StringComparer.OrdinalIgnoreCase);
         var observedState = running ? WorkflowStateProjection.Activated : upserted.Workflow.State;
+        var reportedByActivation = activation.Reported.Count > 0;
 
         var deployedOn = _clock.UtcNow;
         var deployedBy = await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false);
@@ -83,6 +89,7 @@ public sealed class WorkflowDeployService
             DisplayName = target.Agent.DisplayName,
             AgentType = target.Agent.AgentType,
             McsWorkflowId = target.WorkflowId.ToString(),
+            WorkflowName = upserted.Workflow.Name,
             DeploymentId = deployment.DeploymentId,
             DeploymentName = deployment.DeploymentName,
             DeploymentType = deployment.DeploymentType,
@@ -92,10 +99,10 @@ public sealed class WorkflowDeployService
             WorkflowState = WorkflowStateProjection.ToPortalLabel(observedState),
             Published = observedState == WorkflowStateProjection.Activated,
             PublishedOn = observedState == WorkflowStateProjection.Activated ? deployedOn : null,
-            UnboundConnectionCount = activation.UnboundConnectionCount,
+            UnboundConnectionCount = reportedByActivation ? activation.UnboundConnectionCount : upserted.UnboundConnectionReferences.Count,
             PushedComponentCount = 1,
             DeployedOn = deployedOn,
-            Warnings = [.. DeclaredConnectionReferenceWarnings(upserted.CreatedConnectionReferences), .. PushWarnings(upserted, running), .. activation.Warnings],
+            Warnings = [.. DeclaredConnectionReferenceWarnings(upserted.CreatedConnectionReferences), .. PushWarnings(upserted, running), .. activation.Warnings, .. (reportedByActivation ? [] : UnboundConnectionReferenceWarnings(upserted))],
         };
     }
 
@@ -106,4 +113,11 @@ public sealed class WorkflowDeployService
         created.Count == 0
             ? []
             : [$"Declared {created.Count} connection reference(s) the environment did not have, so the workflow could land: {string.Join(", ", created)}. They are unbound until `msagent deployment connection update` binds them."];
+
+    private static IEnumerable<string> UnboundConnectionReferenceWarnings(WorkflowUpsertOutcome upserted)
+    {
+        var unbound = upserted.UnboundConnectionReferences.Except(upserted.CreatedConnectionReferences, StringComparer.OrdinalIgnoreCase).ToArray();
+
+        return unbound.Length == 0 ? [] : [$"{unbound.Length} connection reference(s) have no connection: {string.Join(", ", unbound)}. Run `msagent deployment connection update` to bind them."];
+    }
 }

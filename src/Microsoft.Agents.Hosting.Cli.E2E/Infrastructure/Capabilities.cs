@@ -14,6 +14,12 @@ public enum Capability
     AzureCreate,
     AzureExistingBot,
     Ams,
+
+    StandaloneFixtures,
+
+    StandaloneOracle,
+
+    StandaloneFlowRuns,
 }
 
 /// <summary>How much a scenario can disturb, used for scheduling and for the plan summary.</summary>
@@ -105,6 +111,28 @@ public sealed class Capabilities
 
         var ams = ConfigValues.Text(config.Ams.Endpoint, "ams.endpoint", value => value);
         Add(Capability.Ams, ams.Supplied, ams.Detail);
+
+        var standaloneFixtures = Path.Combine(fixturesDirectory, StandaloneFixturesFolder);
+        var standaloneFixturesExist = Directory.Exists(standaloneFixtures);
+        Add(Capability.StandaloneFixtures, standaloneFixturesExist,
+            standaloneFixturesExist ? $"fixtures/{StandaloneFixturesFolder} (bundled)" : $"fixtures not found at {standaloneFixtures}");
+
+        Add(Capability.StandaloneOracle, false, NotProbed);
+        Add(Capability.StandaloneFlowRuns, false, NotProbed);
+
+        return new Capabilities(states);
+    }
+
+    public const string StandaloneFixturesFolder = "StandaloneWorkflows";
+
+    private const string NotProbed = "not probed: no mcs-standaloneworkflow scenario is scheduled";
+
+    public Capabilities With(Capability capability, bool available, string detail)
+    {
+        var states = new Dictionary<Capability, CapabilityState>(_states)
+        {
+            [capability] = new CapabilityState(capability, available, detail),
+        };
 
         return new Capabilities(states);
     }

@@ -60,7 +60,7 @@ msagent deployement update connection
 Once you are ready with your agent definition from your local machine, you are ready to deploy this to the copilot studio runtime, so you can see it at copilotstudio.microsoft.com
 
 ```
-msagent agent deploy --agent-name "name" --deployment-name "dev" --publish --json
+msagent agent deploy --agent-name "name" --deployment-name "develop" --publish --json
 ```
 
 # Testing your agent (coming soon)

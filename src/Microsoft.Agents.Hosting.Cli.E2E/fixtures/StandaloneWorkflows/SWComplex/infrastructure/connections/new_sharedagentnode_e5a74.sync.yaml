@@ -1,0 +1,3 @@
+connectionReferences:
+  - connectionReferenceLogicalName: new_sharedagentnode_e5a74
+    connectorId: /providers/Microsoft.PowerApps/apis/shared_agentnode

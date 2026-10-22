@@ -22,7 +22,7 @@ public sealed class DeploymentUpdateCommand : CommandBase<AgentDeploymentUpdateR
         OptionCatalog.Value("--package-revision", "Existing immutable AMS package revision id.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
         OptionCatalog.Value("--environment-id", "AMS agent home environment. Defaults to the active environment.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
         OptionCatalog.Value("--deployment-type", "New stage: dev, test, or prod. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
-        OptionCatalog.Value("--new-name", "New deployment name, unique within the agent. MCS only."),
+        OptionCatalog.Value("--new-name", "New deployment name, unique within the agent. 4-42 characters from -, a-z, A-Z, 0-9 and _. MCS only."),
         OptionCatalog.Value("--sku", "New SKU: F0 or S1. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
         OptionCatalog.Value("--display-name", "New deployment display name. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
         OptionCatalog.Value("--description", "New deployment description. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },

@@ -46,6 +46,10 @@ public sealed class WorkflowPullService
             Mode = "pull",
             Changes = downloaded.Changed ? [new CopilotChange { Kind = "updated", ComponentType = "workflow", SchemaName = target.WorkflowId.ToString(), DisplayName = downloaded.Workflow.Name }] : [],
             ChangeCount = downloaded.Changed ? 1 : 0,
+            WorkflowName = downloaded.Workflow.Name,
+            WorkflowFolder = downloaded.FolderPath,
+            PreviousFolder = downloaded.PreviousFolder,
+            Warnings = downloaded.Warnings,
         };
     }
 

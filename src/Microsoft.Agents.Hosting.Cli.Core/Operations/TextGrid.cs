@@ -49,6 +49,18 @@ public static class TextGrid
     public static string DescribePrincipal(PrincipalReference? principal) =>
         principal is null ? Dash : $"{principal.ObjectId} ({principal.ObjectType})";
 
+    /// <summary>Names a standalone workflow by its Dataverse name and by the managed-agent record that holds it.</summary>
+    /// <param name="workflowName">The workflow's Dataverse name, when it is known.</param>
+    /// <param name="displayName">The record's name.</param>
+    /// <returns>Both names quoted, or the record's name alone when the workflow's name is not known.</returns>
+    public static string DescribeWorkflow(string? workflowName, string displayName) => string.IsNullOrWhiteSpace(workflowName) ? $"'{displayName}'" : $"'{workflowName}' (record '{displayName}')";
+
+    /// <summary>Formats a warning line whose label is padded to the width the other labels at that indent use.</summary>
+    /// <param name="indent">The spaces the line starts with.</param>
+    /// <param name="warning">The warning to show.</param>
+    /// <returns>The line.</returns>
+    public static string WarningLine(string indent, string warning) => $"{indent}warning      {warning}";
+
     private static int[] ColumnWidths(string[] headers, IReadOnlyList<string[]> rows)
     {
         var columnWidths = new int[headers.Length];

@@ -18,7 +18,7 @@ public sealed class WorkflowReviewFixTests : IDisposable
     public void Dispose() => _workspace.Dispose();
 
     private WorkflowCreateService CreateService(JsonAgentConfigStore store) =>
-        new(ManagedAgentFixtures.Resolver(), store, store, _store, _scaffold, new AgentConfigLocator(), ManagedAgentFixtures.Principals(), new FakeWorkflowWorkspacePort());
+        new(ManagedAgentFixtures.Resolver(), store, new HomeDeploymentRegistrar(store, store), _store, _scaffold, new AgentConfigLocator(), ManagedAgentFixtures.Principals(), new FakeWorkflowWorkspacePort());
 
     [Theory]
     [InlineData("settings.mcs.yml")]
@@ -29,7 +29,7 @@ public sealed class WorkflowReviewFixTests : IDisposable
     [InlineData("collection.mcs.yaml")]
     public async Task CreateRefusesADestinationThatAlreadyHoldsAnAgentProject(string agentFileName)
     {
-        var destination = Path.Combine(_workspace.Root, AgentConfigLocator.WorkspaceFolderName("WF Hook 2"));
+        var destination = Path.Combine(_workspace.Root, new WorkflowWorkspaceAdapter().ProjectFolderName("WF Hook 2"));
 
         Directory.CreateDirectory(destination);
         File.WriteAllText(Path.Combine(destination, agentFileName), "kind: GptComponentMetadata\n");

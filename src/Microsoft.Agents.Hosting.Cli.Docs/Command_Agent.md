@@ -52,6 +52,12 @@ msagent agent create --agent-type MCSAgent --agent-name <name> --description <de
 msagent agent create [--agent-type MCSAgent] \
   (--mcs-clone-agent-id <id> | --mcs-clone-agent-schemaname <schema-name>) [options]
 
+# New standalone workflow
+msagent agent create --agent-type MCSWorkflow --agent-name <name> [options]
+
+# Clone a standalone workflow
+msagent agent create --agent-type MCSWorkflow --mcs-clone-workflow-id <id> [options]
+
 # CodeAgent (Gated)
 msagent agent create --agent-type CodeAgent --agent-name <name> \
   --language <language> --language-version <version> [options]
@@ -70,7 +76,8 @@ msagent agent create --agent-type CodeAgent --agent-name <name> \
 | `--initial-prompt` | `-ip` | String | **MCS-specific** | Instructions scaffolded into the project. Required for a new MCS agent. |
 | `--mcs-clone-agent-schemaname` | `-mcas` | String | **MCS-specific** | Clone the agent with this schema name instead of scaffolding. |
 | `--mcs-clone-agent-id` | `-mcaid` | String | **MCS-specific** | Clone the agent with this id instead of scaffolding. |
-| `--mcs-clone-environment-id` | `-mceid` | String | **MCS-specific** | The environment holding the clone source. Defaults to `--environment-id`, then the active environment. |
+| `--mcs-clone-workflow-id` | `-mcwid` | String | `MCSWorkflow` only | Clone the workflow with this id instead of scaffolding. |
+| `--mcs-clone-environment-id` | `-mceid` | String | **MCS-specific** (agents and workflows) | The environment holding the agent or workflow to clone. Defaults to `--environment-id`, then the active environment. |
 | `--language` | `-lang` | `dotnet`, `python`, or `node` | CodeAgent only (**Gated**) | Runtime language. Required for a CodeAgent. |
 | `--language-version` | `-lv` | String | CodeAgent only (**Gated**) | Runtime language version. Required for a CodeAgent. |
 | `--idempotency-key` | `-ik` | String | CodeAgent only (**Gated**) | Opaque create-retry key. A new value is generated when omitted. |
@@ -130,6 +137,18 @@ msagent agent create --mcs-clone-agent-id <agent-id> \
   --environment-id <target-environment-id> --project <directory>
 ```
 
+### Creating or cloning a standalone workflow
+
+`--agent-type MCSWorkflow` creates a standalone cloud flow: a new one from `--agent-name`, or a copy of
+an existing flow from `--mcs-clone-workflow-id`, read from `--mcs-clone-environment-id`, then
+`--environment-id`, then the active environment.
+
+```text
+msagent agent create --agent-type MCSWorkflow --agent-name "Invoice approval" --project <directory>
+msagent agent create --agent-type MCSWorkflow --mcs-clone-workflow-id <workflow-id> \
+  --mcs-clone-environment-id <source-environment-id> --project <directory>
+```
+
 ### Creating a CodeAgent (Gated)
 
 > **Gated.** Available only when `AmsFeatures` is enabled.
@@ -156,17 +175,20 @@ msagent agent init --agent-name <name> [--mcs-agent-source <directory>]
 
 ## `msagent agent list` - MCS-specific
 
-Lists the MCS agents in an environment or across the tenant. An agent that has never been deployed
-is not listed.
+Lists the MCS agents or standalone workflows in an environment or across the tenant. An agent that has
+never been deployed is not listed.
 
 ```text
 msagent agent list [--environment-id <id> | --tenant-wide] [--limit <number>] [--project <directory>]
+msagent agent list --agent-type MCSWorkflow [--filter <text>] [--environment-id <id> | --tenant-wide] [--limit <number>]
 ```
 
 | Option | Shortcut | Value | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--project` | `-p` | Directory path | Current directory | The project directory to act on. |
 | `--environment-id` | `-eid` | String | Active environment | List this environment instead of the active one. |
+| `--agent-type` | `-at` | `MCSAgent` or `MCSWorkflow` | `MCSAgent` | What to list. `MCSWorkflow` lists cloud flows. |
+| `--filter` | `-flt` | String | None | Show only workflows whose name contains this text, taken literally: `%` and `_` match themselves. `MCSWorkflow` only. |
 | `--tenant-wide` | `-tw` | Flag | Off | List every environment the signed-in account can reach. |
 | `--limit` | `-lim` | Whole number | `20` | Maximum rows to return. |
 

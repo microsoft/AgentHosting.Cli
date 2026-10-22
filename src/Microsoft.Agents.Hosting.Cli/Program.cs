@@ -212,6 +212,7 @@ internal static class Program
                 () => Console.IsOutputRedirected,
                 details => sp.GetRequiredService<CommandTelemetrySessionAccessor>().Current.RecordPlaygroundDetails(details)));
         services.AddSingleton<ManagedAgentCloneMaterialiser>();
+        services.AddSingleton<HomeDeploymentRegistrar>();
         services.AddSingleton<ManagedAgentCreateService>();
         services.AddSingleton<ManagedAgentInitService>();
         services.AddSingleton<ManagedAgentListService>();

@@ -1,0 +1,31 @@
+jsonFileName: workflows/SWButtonNoop-5b1d7c2e-0f4a-4c3b-9e1d-2a6f8b9c0d11/workflow.json
+workflowId: 5b1d7c2e-0f4a-4c3b-9e1d-2a6f8b9c0d11
+name: SW Button Noop
+type: 1
+description: A manually triggered no-op flow the e2e suite runs to prove a deployed flow actually executes.
+subprocess: false
+category: 5
+mode: 0
+scope: 4
+onDemand: false
+triggerOnCreate: false
+triggerOnDelete: false
+asyncAutodelete: false
+syncWorkflowLogOnFailure: false
+stateCode: 1
+statusCode: 2
+runAs: 1
+isTransacted: true
+introducedVersion: 1.0
+isCustomizable:
+  value: true
+  canBeChanged: true
+  managedPropertyLogicalName: iscustomizableanddeletable
+businessProcessType: 0
+isCustomProcessingStepAllowedForOtherPublishers:
+  value: true
+  canBeChanged: true
+  managedPropertyLogicalName: canbedeleted
+modernFlowType: 1
+primaryEntity: none
+connectionReferences: []

@@ -34,6 +34,8 @@ public sealed class RunContext
 
     public required Reporter Reporter { get; init; }
 
+    public StandaloneServices? Standalone { get; init; }
+
     /// <summary>Builds the context one scenario sees.</summary>
     public ScenarioContext ContextFor(Scenario scenario, Assertions assertions, CancellationToken cancellationToken) => new()
     {
@@ -48,5 +50,6 @@ public sealed class RunContext
         Transcript = Transcript,
         RunSuffix = RunSuffix,
         CancellationToken = cancellationToken,
+        Standalone = Standalone,
     };
 }

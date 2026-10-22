@@ -343,6 +343,16 @@ public sealed class ManagedAgentException : AgentHostingException
         "workflow-connections-not-ready",
         "Run `msagent deployment connection update` to bind the connections, then deploy again.");
 
+    /// <summary>Carries the sync library's report that the workflow is managed, so it cannot be cloned or pulled.</summary>
+    /// <param name="message">The sync library's message, which names the workflow and its environment.</param>
+    /// <returns>The failure.</returns>
+    public static ManagedAgentException WorkflowManaged(string message) => new(message, ExitCodes.Usage, "workflow-managed", "Clone the flow from the environment where its solution is unmanaged, or pick a workflow `msagent agent list --agent-type MCSWorkflow` shows.");
+
+    /// <summary>A workflow name is one Dataverse would refuse or no folder name could carry.</summary>
+    /// <param name="reason">Why the name cannot be used.</param>
+    /// <returns>The failure.</returns>
+    public static ManagedAgentException WorkflowNameInvalid(string reason) => new(reason, ExitCodes.Usage, "workflow-name-invalid", "Choose another --agent-name, or correct the name in the workflow's metadata.yml, then run the command again.");
+
     /// <summary>The workflow on disk is not the workflow the record addresses.</summary>
     /// <param name="displayName">The record that was selected.</param>
     /// <param name="registeredWorkflowId">The workflow the record addresses.</param>
@@ -379,10 +389,22 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="folderName">The workflow folder that would have been replaced.</param>
     /// <returns>The failure.</returns>
     public static ManagedAgentException WorkflowLocalChangesWouldBeLost(string folderName) => new(
-        $"'{folderName}' holds changes the environment has not seen, and a pull would replace them.",
+        $"'{folderName}' has conflict local changes, and a pull would replace them.",
         ExitCodes.Usage,
         "workflow-local-changes-would-be-lost",
         "Run `msagent agent deploy` to push them, or pull again with --overwrite to discard them.");
+
+    public static ManagedAgentException WorkflowCloudChangesWouldBeLost(string folderName) => new(
+        $"'{folderName}' has conflict remote change, and a deploy would replace them.",
+        ExitCodes.Usage,
+        "workflow-cloud-changes-would-be-lost",
+        "Run `msagent agent pull` to get them, or deploy again with --overwrite to replace them.");
+
+    public static ManagedAgentException WorkflowUnpublishedDraft(string workflowName) => new(
+        $"'{workflowName}' has a draft version that was saved in Copilot Studio but not published, and the environment refuses a deploy while it exists.",
+        ExitCodes.Usage,
+        "workflow-unpublished-draft",
+        "Publish the draft in Copilot Studio, then run `msagent agent pull` to get it, or deploy again with --overwrite to replace it.");
 
     /// <summary>The supplied <c>--role</c> names no known access level.</summary>
     /// <param name="supplied">The value that was supplied.</param>

@@ -30,4 +30,7 @@ public sealed class WorkflowWorkspaceAdapter : IWorkflowWorkspacePort
 
     /// <inheritdoc />
     public bool HasAgentProject(string directory) => Directory.Exists(directory) && WorkflowWorkspace.HasAgentProject(WorkflowWorkspace.OpenWorkspace(directory));
+
+    /// <inheritdoc />
+    public string ProjectFolderName(string displayName) => WorkspaceFolderNames.ForProject(displayName);
 }

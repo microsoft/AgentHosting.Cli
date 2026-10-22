@@ -15,7 +15,7 @@ here runs unless you run it.
 
 ## What it covers
 
-**154 scenarios** across six features. Every one drives the packaged binary through a real command
+**210 scenarios** across seven features. Every one drives the packaged binary through a real command
 line and asserts on exit code, stdout, and — where it matters — the cloud state afterwards.
 
 | Feature | Ids | Count | Pack | What it pins |
@@ -26,6 +26,7 @@ line and asserts on exit code, stdout, and — where it matters — the cloud st
 | `abs` | `AB-01`–`AB-09` | 9 | `azure` | `abs preview` planning, `abs apply --force` create/update/no-op, and the refusal paths |
 | `identity` | `ID-01`–`ID-05` | 5 | `azure` | `identity create app/blueprint --dry-run` and argument validation |
 | `mcs-eval` | `EV-01`–`EV-28` | 28 | `eval` | `agent eval` conversation test sets, CSV import and export, generated conversations, project-based agent resolution for both workspace shapes, and the scored runs — start, list, show, cancel, delete and `--watch` |
+| `mcs-standaloneworkflow` | `SW-A01`–`SW-X03` | 56 | `swf` | The aggressive standalone-workflow suite: every fixture shape deployed as draft and activated, with full, partial and missing connections; clone/pull round trips against a second operator; listing, delete and slot rules; refusals checked for side effects; every report checked against a read-only Dataverse oracle. See [Standalone-workflow suite](#standalone-workflow-suite-swf) |
 
 Each scenario carries a **safety tier**, which is what the confirmation prompt counts:
 
@@ -113,9 +114,9 @@ dotnet run --project . -- run --only MA-2*
 
 | Option | Effect |
 |---|---|
-| `--packs core,azure,eval` | include the scenarios that create Azure resources, that spend Copilot Credits, or both. Default is `core` |
-| `--feature <names>` | `mcs-agent`, `mcs-workflow`, `code-agent`, `abs`, `identity`, `mcs-eval` |
-| `--only <patterns>` | `MA-18`, `MA-2*`, `AB-07`, `EV-01` |
+| `--packs core,azure,eval` | include the scenarios that create Azure resources, that spend Copilot Credits, or both. Default is `core`. `swf` adds the standalone-workflow suite |
+| `--feature <names>` | `mcs-agent`, `mcs-workflow`, `mcs-standaloneworkflow`, `code-agent`, `abs`, `identity`, `mcs-eval` |
+| `--only <patterns>` | `MA-18`, `MA-2*`, `AB-07`, `EV-01`, `SW-B0*` |
 | `--smoke` | the fast subset |
 | `--msagent-path <file>` | drive an existing binary instead of packing one (`--ah-path` is still accepted) |
 | `--yes` | skip the confirmation prompt |
@@ -247,3 +248,35 @@ Two agent workspaces are bundled under `fixtures/` and used by default:
 They are checked in and known to deploy cleanly. Point `mcs.workspaces` at your own only when you are
 specifically testing your own content — schema names are rewritten per run, so a fixture is never
 deployed under a name that could collide with another operator's run.
+
+---
+
+## Standalone-workflow suite (`swf`)
+
+`mcs-standaloneworkflow` drives standalone workflows (`--agent-type MCSWorkflow`) hard: happy paths,
+expected failures, and messy orders, against one or two environments. It is opt-in because it deploys
+and deletes dozens of flows:
+
+```pwsh
+dotnet run --project . -- run --packs swf --feature mcs-standaloneworkflow
+dotnet run --project . -- run --packs swf --only SW-B0*
+```
+
+It needs `tenantId` and `mcs.devEnvironmentId`; `mcs.testEnvironmentId` unlocks the cross-environment
+scenarios. `az` signed in to the same tenant unlocks the DV read — without it, the scenarios that
+need it are skipped.
+
+| Group | Ids | What it drives |
+|---|---|---|
+| A | `SW-A01`–`SW-A10` | scaffold, `--project`, awkward names, duplicates, `agent init` refusals, multi-record projects, slot rules |
+| B | `SW-B01`–`SW-B21` | the deploy matrix — shape × draft/activated × `--publish` × full/partial/missing connections — each deployed, redeployed unchanged and redeployed edited; a missing connection or connector still deploys, as a draft; transitions, external deactivation, option validation, a cross-environment slot, inflated definitions, and a real run |
+| D | `SW-D01`–`SW-D12` | clone parity and refusals (a managed flow included), a clone of a flow made outside the CLI, pull against a second operator's edit, rename and delete, a dev deploy refusing a second operator's unpulled edit, corrupt JSON |
+| E | `SW-E01`–`SW-E05` | listing states, the record join, `--filter` injection safety, `--limit`, every unmanaged flow including agent flows (never managed flows), `--tenant-wide` |
+| F | `SW-F01`–`SW-F12` | delete of each state, typed-confirmation variants, already-deleted flows, per-environment delete, slot-first delete, and `--non-interactive` |
+| X | `SW-X01`–`SW-X03` | agent-only and code-agent-only commands and options aimed at a workflow |
+
+**Fixtures** live under `fixtures/StandaloneWorkflows/`: `SWComplex` (35 actions, five connectors),
+`SWCliNative` (three connectors), `SWClassicAgentFlow` (one), `SWDataverse` (one with no connection in
+a typical environment), and `SWButtonNoop` (no connector; the only flow the suite runs), plus the bundled
+`MCSWorkflow`. Every copy is re-identified — a new workflow id, an `ahe2e-SW-<id>-<run>` name, and
+connection reference names unique to the run.

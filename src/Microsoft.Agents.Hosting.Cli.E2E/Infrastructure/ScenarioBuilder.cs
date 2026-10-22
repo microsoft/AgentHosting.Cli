@@ -14,7 +14,8 @@ public sealed class ScenarioBuilder
         IReadOnlyList<Capability> requires,
         SafetyTier tier,
         Func<ScenarioContext, Task> run,
-        bool smoke = false) => new()
+        bool smoke = false,
+        string? pack = null) => new()
         {
             Id = id,
             Title = title,
@@ -22,6 +23,7 @@ public sealed class ScenarioBuilder
             Requires = requires,
             Tier = tier,
             Smoke = smoke,
+            Pack = pack,
             Run = run,
         };
 }
