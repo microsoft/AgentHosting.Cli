@@ -4,6 +4,47 @@ Once your agent has been deployed as published and made accessible to the copilo
 
 *Note, at the time of BUG BASH and initial PRIVATE PREVIEW testing may not be available as an ```msagent``` command. Locally testing your agent is still possible, with specific instructions which will be provided to you. 
 
+## Billing and channel IDs in usage telemetry
+
+**Testing through the CLI invokes the real Copilot Studio service and incurs
+billable usage.** Running from a local terminal, GitHub Copilot, Claude, or another
+automated runner does not make the interaction free or turn it into a simulation.
+Agent responses and any actions triggered during testing can consume Copilot
+Credits and may incur other applicable service charges. Live actions are not
+rolled back.
+
+For direct invocation of a published agent through `msagent test ask`, usage is
+currently attributed to the channel ID **`pva-published-engine-direct`** in billing
+and consumption telemetry surfaced through the **Power Platform admin center
+(PPAC)**. This is a service invocation identifier, not a customer-facing channel
+you need to configure.
+
+Copilot Studio **evaluations are also billable**, including evaluations started
+with `msagent agent eval run`. Evaluation activity can appear under the following
+channel IDs, depending on which stages the evaluation uses:
+
+| Channel ID | Usage category |
+|---|---|
+| `pva-eval-generation` | Evaluation test/conversation generation. |
+| `pva-maker-evaluation` | Evaluation execution against the agent. |
+| `pva-eval-evaluator` | Evaluation grading. |
+
+For example, running an existing test set does not necessarily require generating
+new test conversations, so do not expect every evaluation run to produce all three
+channel IDs. Direct-invoke testing and evaluation activity can both appear when
+you use both features.
+
+**These are not the only Copilot Studio channel IDs.** Other features have their
+own identifiers; workflows, for example, have their own set. Review all relevant
+usage categories for the features your agent and tests exercise rather than
+filtering only to the four IDs above. A channel ID identifies a usage path; it
+does not by itself establish the total cost of a test or evaluation.
+
+Channel attribution described here reflects the current PPAC reporting behavior
+as of October 21, 2026 and may change. Review your environment's consumption,
+applicable licensing, and current Copilot Studio billing guidance before running
+large test batches, repeated evaluations, or unattended test loops.
+
 ## Interactive testing
 
 If you want to test it yourself with a UX, you can use the Agent Playground which has been updated to support copilot studio agents using either directline or copilot studio client connectivity (direct)

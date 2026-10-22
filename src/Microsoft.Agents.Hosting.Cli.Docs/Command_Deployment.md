@@ -11,12 +11,13 @@
 | [`msagent deployment update`](#msagent-deployment-update) | Rename an MCS deployment, update a CodeAgent deployment, or update a package revision. |
 | [`msagent deployment delete`](#msagent-deployment-delete) | Delete a CodeAgent or MCS agent deployment record, and optionally the MCS cloud agent. |
 | [`msagent deployment show`](#msagent-deployment-show) | Get an existing CodeAgent or MCS agent deployment. |
+| [`msagent deployment channel`](#msagent-deployment-channel---codeagent-specific) | **CodeAgent-specific.** Group: `create`, `update`, `delete`, `show`, and `list`. Manage Azure Bot Service channels. |
 | [`msagent deployment connection`](Command_Deployment_Connection.md) | **MCS-specific.** Group: `list`, `add`, `update`, `remove`, and `connectors`. Inspect and bind connection references and create connections. See [Command_Deployment_Connection.md](Command_Deployment_Connection.md) for details. |
 | [`msagent deployment oauth`](Command_Deployment_OAuth.md) | **CodeAgent-specific.** Group: `create`, `delete`, `list`, `list-providers`, `show`, and `update`. Manage OAuth connection settings. See [Command_Deployment_OAuth.md](Command_Deployment_OAuth.md) for details. |
 
 `msagent deployment create`, `list`, `show`, `update`, and `delete` apply to CodeAgent and Microsoft
-Copilot Studio agents unless an option says otherwise. The `connection` group is **MCS-specific** and
-the `oauth` group is **CodeAgent-specific**. The `connection` group replaces the former
+Copilot Studio agents and standalone MCS workflows unless an option says otherwise. The `connection` group is **MCS-specific** and
+the `channel` and `oauth` groups are **CodeAgent-specific**. The `connection` group replaces the former
 `deployment update connection` command.
 
 > **Gated.** Items tagged **Gated** may or may not be available, depending on the feature gates
@@ -29,10 +30,20 @@ the `oauth` group is **CodeAgent-specific**. The `connection` group replaces the
 >   deployment create, show, update, and delete fail with a message that the capability is
 >   disabled.
 > - The `--package-revision` and `--environment-id` options on `update` are gated by `AmsFeatures`.
+> - The `channel`, `connection`, and `oauth` groups have no feature gate of their own. Channel and
+>   OAuth deployment operations still require an existing local CodeAgent deployment record.
 >
 > Gated features are enabled through the `AH_CLI_FEATURES` environment variable.
 
-MCS deployment records are stored locally in the project's `agent.config.json`. Environment resolution for create uses the signed-in session; reselecting the environment refreshes older selections.
+Deployment records for both agent types are stored locally in the project's `.config\agent.config.json`.
+Environment resolution for MCS create uses the signed-in session; reselecting the environment refreshes older selections.
+
+CodeAgent lifecycle, channel, and OAuth mutations contact Azure before saving their local result.
+A later local-save failure does not roll back the cloud change. Inspect the deployment or connection
+before retrying. CodeAgent `show`, channel `show`/`list`, and OAuth `show`/`list` also refresh local
+records; they are not read-only local inspections. With `--debug`, these deployment results are written
+as a summary or redacted ARM response to stderr instead of the normal human/JSON success payload,
+even when `--json` is supplied.
 
 ## Resolving the agent and project
 
@@ -45,11 +56,11 @@ and fail when it does not exist. The agent is resolved in this order:
    several is "ambiguous".
 3. Otherwise the single agent in the configuration. No agent is "not found"; more than one is "ambiguous".
 
-The agent must be an MCS agent for the MCS routes; a CodeAgent is rejected with a not-an-MCS-agent error.
+The MCS routes accept MCS agents and standalone MCS workflows; a CodeAgent is rejected.
 ## `msagent deployment create`
 
 Creates a named deployment record. An MCS agent's record is stored in the local project configuration
-(`agent.config.json`) and nothing in the cloud is touched. A CodeAgent deployment provisions an Azure
+(`agent.config.json`); it resolves the environment through the signed-in session but does not mutate the cloud. A CodeAgent deployment provisions an Azure
 Bot Service resource and is **Gated**. The route is chosen from the resolved agent type.
 
 ```text
@@ -59,14 +70,14 @@ msagent deployment create [--agent-id <id> | --agent-name <name>] --deployment-t
 
 | Option | Shortcut | Value | Required | Default | Applies to | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | `-p` | Directory path | No | Current directory | MCS only until the stores converge | The project directory holding the agent. |
+| `--project` | `-p` | Directory path | No | Current directory | All agents | The project directory holding the configuration. |
 | `--agent-id` | `-aid` | String | Conditional | The project's agent (MCS) | All agents | The owning agent id. Required for a CodeAgent deployment (a GUID). |
 | `--agent-name` | `-an` | String | Conditional | None | **MCS-specific** | The owning agent name, used when the agent id is omitted. |
-| `--deployment-name` | `-dn` | String | Yes | None | All agents | Deployment name, unique within the agent. 4-42 characters; only `-`, `a-z`, `A-Z`, `0-9`, and `_`. |
+| `--deployment-name` | `-dn` | String | Yes | None | All agents | Deployment name, unique within the agent: 4-42 characters from `-`, `a-z`, `A-Z`, `0-9`, and `_`, after trimming. |
 | `--deployment-type` | `-dt` | `dev`, `test`, or `prod` | Yes | None | All agents | The stage. Values are case-insensitive. |
 | `--environment-id` | `-eid` | String | Conditional | The agent's home environment | **MCS-specific** | Target environment. Required for `test` and `prod`. |
 | `--entra-id` | `-ent` | GUID | Yes (CodeAgent) | None | CodeAgent only (**Gated**) | The Entra application (client) id the deployment binds to. |
-| `--entra-id-type` | `-eit` | `appReg`, `blueprint`, or `default` | Yes (CodeAgent) | None | CodeAgent only (**Gated**) | Entra identity kind. Only `appReg` is currently supported. |
+| `--entra-id-type` | `-eit` | `appReg` | Yes (CodeAgent) | None | CodeAgent only (**Gated**) | Entra identity kind. `blueprint` and `default` are not supported. |
 | `--sku` | `-sku` | `F0` or `S1` | No | `F0` | CodeAgent only (**Gated**) | Deployment SKU. |
 | `--location` | `-loc` | String | No | `global` | CodeAgent only (**Gated**) | Azure region. |
 | `--resource-group` | `-rg` | String | No | Auto-resolved when the subscription has exactly one | CodeAgent only (**Gated**) | Target resource group. |
@@ -77,7 +88,8 @@ msagent deployment create [--agent-id <id> | --agent-name <name>] --deployment-t
 | `--description` | `-d` | String | No | None | CodeAgent only (**Gated**) | Description. |
 | `--default` | `-def` | Flag | No | `false` | CodeAgent only (**Gated**) | Mark the deployment as the agent's default. |
 
-Supplying an option for the other agent type is a usage error. Blank values are rejected.
+CodeAgent creation rejects MCS-only options; MCS creation rejects CodeAgent-only values.
+CodeAgent value-bearing options reject explicitly blank values.
 
 
 ### Create rules
@@ -101,6 +113,7 @@ home environment unless `--environment-id` is given; `test` and `prod` require `
 target environment is resolved through the signed-in session. The command adds a record (generated
 deployment ID, type, environment, creator) to `agent.config.json` and returns the deployment ID,
 name, type, environment and schema name. No cloud agent is created or adopted.
+For a standalone workflow, no Copilot project schema is required and the schema name is omitted.
 
 ```text
 msagent deployment create --deployment-type dev --deployment-name "Development"
@@ -114,7 +127,9 @@ msagent deployment create --agent-id <agent-id> --deployment-type test \
 Requires `AzureBotServiceFeatures`. Requires `--agent-id`, `--deployment-name`, `--deployment-type`,
 `--entra-id`, and `--entra-id-type`; `--environment-id` and `--agent-name` are rejected. The deployment ID is derived from the
 agent ID and name, so repeating the command adopts the existing bot instead of provisioning a duplicate.
-The result is written to the local project configuration.
+The result is written to the local project configuration. A retry with an existing record reuses that
+record's subscription, resource group, and tenant rather than resolving new coordinates. If the bot
+already exists, supplied create settings do not update it; use `deployment update` for changes.
 
 ```text
 msagent deployment create --agent-id <agent-id> --deployment-type dev \
@@ -127,7 +142,7 @@ MCS: on success the record is added to `agent.config.json` and the command retur
 name, type, environment, and schema name. It fails, writing nothing, when the configuration or agent
 cannot be resolved, the agent is not an MCS agent, `--deployment-type` is not `dev`, `test`, or `prod`,
 `--deployment-name` is missing, a `test`/`prod` deployment has no `--environment-id`, the environment cannot be resolved, the
-project does not declare a schema name, the name is already used by the agent, or the agent already has a
+MCS agent project does not declare a schema name, the name is already used by the agent, or the agent already has a
 deployment in that environment. A CodeAgent-only option on an MCS agent (or an MCS-only option such as
 `--environment-id` or `--agent-name` on a CodeAgent) is a usage error. When the project holds a configuration but nothing in it
 identifies the agent — no matching deployment record, and no single agent — `create` does not fall back to
@@ -203,6 +218,8 @@ msagent deployment update (--deployment-id <id> | --deployment-name <name> [--ag
 A rename is the only mutation. `--new-name` is required, and the deployment type and environment cannot
 be changed. The command updates the record in `agent.config.json` and changes nothing in the cloud.
 `--endpoint-url` is an error for an MCS agent.
+The deployment selector can be omitted when exactly one deployment remains in the selected agent's
+scope (or the project when no owning agent selector is supplied); otherwise selection is ambiguous.
 
 ```text
 msagent deployment update --deployment-name "Development" --new-name "Shared-dev"
@@ -216,12 +233,21 @@ is either `--deployment-id` alone or both `--agent-id` and `--deployment-name` (
 `--sku`, `--display-name`, `--description`, and `--endpoint-url` change the Azure Bot Service resource;
 `--deployment-type` and `--default` update only the local record. `--endpoint-url` must be an absolute
 HTTPS URL.
+Omitted fields are preserved; blank strings cannot clear bot fields. Setting a new default clears the
+previous default for the same agent. Metadata-only updates require an existing local record; they do
+not discover or import a bot from Azure.
 
 ### Updating a deployment's package revision (Gated)
 
 Requires `AmsFeatures`. Providing `--package-revision` or `--environment-id` selects this route, which
 requires `--agent-id`, `--deployment-id`, and `--package-revision`. It cannot be combined with
 `--project`, `--agent-name`, `--deployment-name`, the Azure options, or any other update option.
+The agent ID, deployment ID, and package revision ID must be GUIDs. This route reads the current
+revision, then conditionally updates the existing AMS deployment; it neither uploads a package nor
+updates the local deployment registry. The result reports `agent-deployment-updated` with deployment
+and package details. A concurrency conflict is not retried. A lost or malformed response after the
+update may leave the outcome indeterminate: retain the reported correlation IDs and inspect service
+state before retrying.
 
 ### Update rules and errors
 
@@ -266,6 +292,9 @@ For an MCS agent, the command resolves the deployment from the selectors. With n
 you to type the deployment name (or the agent's display name when several are targeted) to confirm.
 The global `--non-interactive` option skips the prompt and proceeds. A declined or mismatched answer
 deletes nothing.
+When deleting several deployments, each is removed in turn; a later failure does not restore earlier
+deletions. Re-list the surviving records before retrying. For a standalone workflow,
+`--delete-deployed-mcs-agent` is rejected: the deployment has no Copilot Studio agent to delete.
 
 By default only the records are removed from `agent.config.json`; the agent record is kept and the
 Copilot Studio agent is left in place. With `--delete-deployed-mcs-agent`, the Copilot Studio agent in the
@@ -280,9 +309,11 @@ msagent deployment delete --deployment-id <id> --delete-deployed-mcs-agent
 ### Deleting a CodeAgent deployment (Gated)
 
 Requires `AzureBotServiceFeatures`. Deletes the Azure Bot Service resource and then the local record.
-The delete is idempotent: when neither a local record nor a bot exists, it succeeds. The deployment is
+An already absent Azure bot is treated as deleted. The deployment is
 selected by `--deployment-id` alone or by `--agent-id` with `--deployment-name`. `--delete-deployed-mcs-agent`
-is an error.
+is an error. Unlike MCS delete, this route does not ask for confirmation.
+After the local record is removed, retry with the agent-ID/name address if needed: an unknown
+deployment ID alone is rejected by command routing because it no longer identifies a local target.
 ### Delete rules and errors
 
 - Selection follows the same rules as `update`. When no deployment selector is given for an MCS agent, every deployment
@@ -298,6 +329,8 @@ is an error.
 
 Gets an existing deployment. The deployment is selected by `--deployment-id`, or by
 `--deployment-name` together with an owning agent (`--agent-id`, or `--agent-name` for MCS agents).
+For MCS, a unique name needs no owner selector, and omitting a deployment selector resolves the sole
+deployment in scope. Several candidates are ambiguous.
 
 ```text
 msagent deployment show (--deployment-id <id> | --deployment-name <name> [--agent-id <id> | --agent-name <name>]) \
@@ -315,9 +348,67 @@ msagent deployment show (--deployment-id <id> | --deployment-name <name> [--agen
 | `--subscription` | `-sub` | String | CodeAgent only (**Gated**) | Target subscription id; auto-resolved from the signed-in account when omitted. |
 | `--tenant` | `-t` | String | CodeAgent only (**Gated**) | Target tenant id; taken from the resolved subscription when omitted. |
 
+MCS `show` reads only the local deployment record, including its enabled/quarantined state, home and
+target environments, and last-deployed time. CodeAgent `show` reads the bot from Azure and saves the
+refreshed snapshot locally; with an agent ID and deployment name it can import an unrecorded bot.
+An Azure 404 removes a stale local record and reports not found. Existing CodeAgent records pin the
+Azure coordinates, so `--resource-group`, `--subscription`, and `--tenant` are used for discovery only
+when no local record supplies them.
+
+## `msagent deployment channel` - CodeAgent-specific
+
+Manages channels on an existing locally recorded CodeAgent deployment. This group is not feature-gated
+and is singular (`channel`, not `channels`). Invoking the group without a leaf command is a usage error.
+All leaves accept `--project` (`-p`, current directory), and either `--deployment-id` (`-did`, GUID)
+alone or `--agent-id` (`-aid`, GUID) with `--deployment-name` (`-dn`). They do not accept Azure address
+overrides or `--agent-name`; the backing bot coordinates come from the local record.
+
+| Command | Required options beyond the deployment selector | Behavior |
+| --- | --- | --- |
+| `msagent deployment channel create` | `--channel` | Enable a channel. Returns the existing channel without applying changes if it already exists. Required create parameters are still validated first. |
+| `msagent deployment channel update` | `--channel`, `--parameters` | Read the live channel, merge supplied settings, and PUT the result. Fails if the channel does not exist. |
+| `msagent deployment channel delete` | `--channel` | Delete the channel and remove its local snapshot. An already absent channel is treated as deleted. No confirmation prompt. |
+| `msagent deployment channel show` | `--channel` | Read a live channel and refresh its local snapshot. |
+| `msagent deployment channel list` | None | Read live channels and replace the local channel snapshots. Does not accept `--channel` or `--parameters`. |
+
+`--channel` has **no short alias**. Values are case-insensitive: `directline`, `m365extensions`,
+`msteams`, `slack`, or `webchat`. `create` and `update` accept repeatable `--parameters` (`-par`)
+with one or more `Key=Value` assignments per occurrence. Quote an assignment containing spaces.
+Parameter names are case-insensitive; unknown or duplicate keys, invalid booleans, and read-only
+parameters are rejected. Create rejects blank values; update permits `Key=` to clear an optional
+parameter, but required parameters cannot be cleared.
+
+### Channel parameters and restrictions
+
+Use `msagent deployment channel create --channel <name> --help` (or `update`) for the channel-specific
+parameter schema. These are assignments, not separate typed command options.
+
+| Channel | Parameters |
+| --- | --- |
+| `directline` | Required on create: `siteName`. Optional strings: `appId`, `tenantId`, `trustedOrigins` (comma-separated). Booleans: `isBlockUserUploadEnabled`, `isDetailedLoggingEnabled`, `isEnabled` (create default `true`), `isEndpointParametersEnabled`, `isNoStorageEnabled`, `isSecureSiteEnabled`, `isTokenEnabled`, `isV3Enabled`. `isV1Enabled` is read-only. |
+| `webchat` | Required on create: `siteName`. Optional strings: `appId`, `tenantId`. Booleans: `isBlockUserUploadEnabled`, `isDetailedLoggingEnabled`, `isEnabled` (create default `true`), `isEndpointParametersEnabled`, `isNoStorageEnabled`, `isTokenEnabled`, `isWebchatPreviewEnabled`. |
+| `msteams` | Strings: `callingWebhook`, `deploymentEnvironment` (create default `CommercialDeployment`), `incomingCallRoute`. Booleans: `acceptedTerms`, `enableCalling`, `isEnabled` (create default `true`). |
+| `slack` | Required on create: `clientId`, `clientSecret`, `verificationToken`. Optional strings: `landingPageUrl`, `scopes`, `signingSecret`. Booleans: `isEnabled`, `registerBeforeOAuthFlow` (both create defaults `true`). Secrets are masked in results and local records. |
+| `m365extensions` | No parameters. Create, show, list, and delete are supported; update is not. |
+
+Direct Line and Web Chat are automatically created channels and cannot be deleted through this CLI.
+**Their updates replace the entire sites array with one site**, merging from the first live site;
+additional sites are not preserved and there is no site-selector option. Channel updates preserve safe
+readable settings but do not replay masked secrets; resupply credentials when changing them.
+
+```text
+msagent deployment channel create --deployment-id <id> --channel msteams
+msagent deployment channel update --deployment-id <id> --channel msteams --parameters enableCalling=true
+msagent deployment channel list --deployment-id <id>
+```
+
+Create/update/show results contain a channel snapshot, list contains channel snapshots, and delete
+reports deletion without a channel payload. Successful operations refresh the local aggregate after
+the Azure call; a local-save failure is not a rollback.
+
 ## Selecting a deployment and project
 
-The [`connection`](Command_Deployment_Connection.md) and [`oauth`](Command_Deployment_OAuth.md) commands, like `show`, `update`, and `delete`, share the same
+The [`connection`](Command_Deployment_Connection.md), [`channel`](#msagent-deployment-channel---codeagent-specific), and [`oauth`](Command_Deployment_OAuth.md) commands, like `show`, `update`, and `delete`, use
 deployment selectors: `--deployment-id` (`-did`), or `--deployment-name` (`-dn`) with `--agent-id`
 (`-aid`). MCS commands also accept `--agent-name` (`-an`). `--project` (`-p`) is the project
 directory holding the configuration and defaults to the current directory.
@@ -332,4 +423,7 @@ Nothing in this project matches --agent-id 'agent-missing'. Run `msagent deploym
 The one exception is an address Azure can resolve on its own: `--agent-id` together with
 `--deployment-name` is a complete Azure Bot Service address, so when `AzureBotServiceFeatures` is
 enabled those verbs still reach Azure and import a bot this project has no record of. With the
-control off there is no Azure route to take, so the same input is rejected as above.
+control off there is no Azure route to take, so the same input is rejected as above. This import
+behavior does not apply to channel/OAuth operations or metadata-only CodeAgent updates, which require
+an existing local record. MCS name selection can omit an agent selector when the deployment name is
+unique across the project; an ambiguous name requires an owning agent selector.

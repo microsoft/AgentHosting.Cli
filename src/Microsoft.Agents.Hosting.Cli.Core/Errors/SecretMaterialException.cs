@@ -12,7 +12,7 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
 public sealed class SecretMaterialException : AgentHostingException
 {
     public SecretMaterialException(string message)
-        : base(message, ExitCodes.Failure)
+        : base(message, ExitCodes.Failure, errorCode: ErrorCodes.Provisioning.SecretMaterial)
     {
     }
 }

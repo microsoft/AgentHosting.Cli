@@ -1085,6 +1085,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(client).RequireNoUnpulledChangesAsync(Environment(), _root, CancellationToken.None));
 
         Assert.Equal("workflow-cloud-changes-would-be-lost", failure.ErrorKind);
+        Assert.Equal(ErrorCodes.ManagedAgent.WorkflowCloudChangesWouldBeLost, failure.ErrorCode);
         Assert.Equal(ExitCodes.Usage, failure.ExitCode);
         Assert.Equal($"'{WorkflowWorkspace.FindAll(_root).Single().FolderName}' has conflict remote change, and a deploy would replace them.", failure.Message);
         Assert.Equal([$"get:{workflowId}"], client.Calls);
@@ -1120,6 +1121,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(client).UpsertAsync(Environment(), _root, CancellationToken.None));
 
         Assert.Equal("workflow-unpublished-draft", failure.ErrorKind);
+        Assert.Equal(ErrorCodes.ManagedAgent.WorkflowUnpublishedDraft, failure.ErrorCode);
         Assert.Equal(ExitCodes.Usage, failure.ExitCode);
         Assert.Equal("'WF Hook 2' has a draft version that was saved in Copilot Studio but not published, and the environment refuses a deploy while it exists.", failure.Message);
         Assert.Equal("Publish the draft in Copilot Studio, then run `msagent agent pull` to get it, or deploy again with --overwrite to replace it.", failure.Remediation);
@@ -1196,6 +1198,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
         });
 
         Assert.Equal("workflow-managed", failure.ErrorKind);
+        Assert.Equal(ErrorCodes.ManagedAgent.WorkflowManaged, failure.ErrorCode);
         Assert.Equal(ExitCodes.Usage, failure.ExitCode);
         Assert.Contains("'Payroll Approvals'", failure.Message, StringComparison.Ordinal);
         Assert.Empty(Directory.Exists(_root) ? Directory.GetFiles(_root, "*", SearchOption.AllDirectories) : []);
@@ -1239,6 +1242,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(client).UpsertAsync(Environment(), _root, CancellationToken.None));
 
         Assert.Equal("workflow-name-invalid", failure.ErrorKind);
+        Assert.Equal(ErrorCodes.ManagedAgent.WorkflowNameInvalid, failure.ErrorCode);
         Assert.Equal(ExitCodes.Usage, failure.ExitCode);
         Assert.DoesNotContain(client.Calls, call => call.StartsWith("insert:", StringComparison.Ordinal) || call.StartsWith("update:", StringComparison.Ordinal));
     }

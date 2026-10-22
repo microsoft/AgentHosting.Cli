@@ -73,31 +73,24 @@ public static class ConnectorCatalogQuery
     /// <param name="environmentId">The environment that was read.</param>
     /// <param name="listCommand">The command that lists the connectors on offer.</param>
     /// <returns>The rejection, naming the closest alternatives when there are any.</returns>
-    public static UsageException NotServed(IReadOnlyList<CopilotConnectorInfo> connectors, string connectorId, string environmentId, string listCommand)
+    public static ManagedAgentException NotServed(IReadOnlyList<CopilotConnectorInfo> connectors, string connectorId, string environmentId, string listCommand)
     {
         ArgumentNullException.ThrowIfNull(connectors);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectorId);
 
-        return new UsageException($"Environment '{environmentId}' serves no connector '{ConnectionConsentLink.NormalizeResourceId(connectorId)}'.{Suggestions(connectors, connectorId, listCommand)}");
+        var internalId = ConnectionConsentLink.NormalizeResourceId(connectorId);
+
+        return ManagedAgentException.ConnectorNotServed(internalId, environmentId, NearMatches(connectors, internalId), listCommand);
     }
 
-    private static string Suggestions(IReadOnlyList<CopilotConnectorInfo> connectors, string connectorId, string listCommand)
-    {
-        var target = ConnectionConsentLink.NormalizeResourceId(connectorId);
-
-        string[] closest =
+    private static string[] NearMatches(IReadOnlyList<CopilotConnectorInfo> connectors, string connectorId) =>
         [
             .. connectors
-                .Where(candidate => Contains(candidate.InternalId, target) || Contains(candidate.DisplayName, target))
+                .Where(candidate => Contains(candidate.InternalId, connectorId) || Contains(candidate.DisplayName, connectorId))
                 .OrderBy(candidate => candidate.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .Take(SuggestionCount)
                 .Select(candidate => candidate.InternalId),
         ];
-
-        return closest.Length == 0
-            ? $" Run `{listCommand}` to find it."
-            : $" Did you mean: {string.Join(", ", closest)}?";
-    }
 
     private static bool Identifies(CopilotConnectorInfo candidate, string connectorId) =>
         !string.IsNullOrWhiteSpace(connectorId)

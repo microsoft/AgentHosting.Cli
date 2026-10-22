@@ -166,19 +166,19 @@ public sealed class WorkflowCreateService
     {
         if (_agents.List(projectDirectory).FirstOrDefault(agent => string.Equals(agent.DisplayName, displayName, StringComparison.OrdinalIgnoreCase)) is { } duplicate)
         {
-            throw new UsageException($"An agent named '{duplicate.DisplayName}' is already registered in {_locator.ConfigFilePath(projectDirectory)}.");
+            throw ManagedAgentException.AlreadyRegistered(duplicate.DisplayName, duplicate.AgentId, _locator.ConfigFilePath(projectDirectory));
         }
 
         var workspaceRoot = Path.Combine(projectDirectory, folderName);
 
         if (_workspace.FindAll(workspaceRoot).Count > 0)
         {
-            throw new UsageException($"'{workspaceRoot}' already holds a workflow. Choose a different --agent-name, or a --project directory that does not hold a folder by that name.");
+            throw ManagedAgentException.WorkspaceNotEmpty(workspaceRoot, "a workflow");
         }
 
         if (_workspace.HasAgentProject(workspaceRoot))
         {
-            throw new UsageException($"'{workspaceRoot}' already holds an agent project. Choose a different --agent-name, or a --project directory that does not hold a folder by that name.");
+            throw ManagedAgentException.WorkspaceNotEmpty(workspaceRoot, "an agent project");
         }
 
         Directory.CreateDirectory(workspaceRoot);

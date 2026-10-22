@@ -13,7 +13,7 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
 public sealed class EndpointTrustException : AgentHostingException
 {
     public EndpointTrustException(string message, string? remediation = null)
-        : base(message, ExitCodes.Failure, errorKind: "endpoint-untrusted", remediation: remediation)
+        : base(message, ExitCodes.Failure, errorKind: "endpoint-untrusted", remediation: remediation, errorCode: ErrorCodes.Environment.EndpointTrust)
     {
     }
 }
@@ -26,7 +26,7 @@ public sealed class EndpointTrustException : AgentHostingException
 public sealed class CloudRetargetedException : AgentHostingException
 {
     public CloudRetargetedException(string message, string? remediation = null)
-        : base(message, ExitCodes.Usage, errorKind: "cloud-retargeted", remediation: remediation)
+        : base(message, ExitCodes.Usage, errorKind: "cloud-retargeted", remediation: remediation, errorCode: ErrorCodes.Environment.CloudRetargeted)
     {
     }
 }
@@ -42,7 +42,7 @@ public sealed class EnvironmentNotSelectedException : AgentHostingException
             message,
             ExitCodes.Usage,
             errorKind: "environment-not-selected",
-            remediation: remediation ?? "Run `msagent env list` to see the environments available to the signed-in account, then `msagent env select <environment-id>`.")
+            remediation: remediation ?? "Run `msagent env list` to see the environments available to the signed-in account, then `msagent env select <environment-id>`.", errorCode: ErrorCodes.Environment.EnvironmentNotSelected)
     {
     }
 }
@@ -58,7 +58,7 @@ public sealed class EnvironmentNotFoundException : AgentHostingException
             message,
             ExitCodes.Usage,
             errorKind: "environment-not-found",
-            remediation: remediation ?? "Run `msagent env list` to see the environments available to the signed-in account.")
+            remediation: remediation ?? "Run `msagent env list` to see the environments available to the signed-in account.", errorCode: ErrorCodes.Environment.EnvironmentNotFound)
     {
     }
 }
@@ -71,7 +71,7 @@ public sealed class EnvironmentNotFoundException : AgentHostingException
 public sealed class EnvironmentTenantMismatchException : AgentHostingException
 {
     public EnvironmentTenantMismatchException(string message, string? remediation = null)
-        : base(message, ExitCodes.Usage, errorKind: "tenant-mismatch", remediation: remediation)
+        : base(message, ExitCodes.Usage, errorKind: "tenant-mismatch", remediation: remediation, errorCode: ErrorCodes.Environment.EnvironmentTenantMismatch)
     {
     }
 }
@@ -84,7 +84,7 @@ public sealed class EnvironmentTenantMismatchException : AgentHostingException
 public sealed class AgentHostingStateException : AgentHostingException
 {
     public AgentHostingStateException(string message, string? remediation = null)
-        : base(message, ExitCodes.Failure, errorKind: "state-unusable", remediation: remediation)
+        : base(message, ExitCodes.Failure, errorKind: "state-unusable", remediation: remediation, errorCode: ErrorCodes.Environment.AgentHostingState)
     {
     }
 }
@@ -114,13 +114,23 @@ public enum TokenClaimFailure
 public sealed class TokenClaimException : AgentHostingException
 {
     public TokenClaimException(string message, TokenClaimFailure failure, string? remediation = null)
-        : base(message, ToExitCode(failure), ToErrorKind(failure), remediation)
+        : base(message, ToExitCode(failure), ToErrorKind(failure), remediation, errorCode: ToErrorCode(failure))
     {
         Failure = failure;
     }
 
     /// <summary>The classified claim rejection.</summary>
     public TokenClaimFailure Failure { get; }
+
+    private static int ToErrorCode(TokenClaimFailure failure) => failure switch
+    {
+        TokenClaimFailure.Malformed => ErrorCodes.Authentication.TokenClaimMalformed,
+        TokenClaimFailure.WrongAudience => ErrorCodes.Authentication.TokenClaimWrongAudience,
+        TokenClaimFailure.WrongApplication => ErrorCodes.Authentication.TokenClaimWrongApplication,
+        TokenClaimFailure.WrongTenant => ErrorCodes.Authentication.TokenClaimWrongTenant,
+        TokenClaimFailure.MissingPermission => ErrorCodes.Authentication.TokenClaimMissingPermission,
+        _ => ErrorCodes.Authentication.TokenClaimMissingPermission,
+    };
 
     private static int ToExitCode(TokenClaimFailure failure) => failure switch
     {

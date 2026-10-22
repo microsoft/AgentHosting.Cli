@@ -34,10 +34,12 @@ public sealed class WorkflowReviewFixTests : IDisposable
         Directory.CreateDirectory(destination);
         File.WriteAllText(Path.Combine(destination, agentFileName), "kind: GptComponentMetadata\n");
 
-        await Assert.ThrowsAsync<UsageException>(() => CreateService(ManagedAgentFixtures.Store()).CreateAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => CreateService(ManagedAgentFixtures.Store()).CreateAsync(
             new ManagedAgentCreateRequest { Name = "WF Hook 2", AgentType = AgentTypes.McsWorkflow, Project = _workspace.Root },
             CancellationToken.None));
 
+        Assert.Equal("workspace-not-empty", failure.ErrorKind);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
         Assert.Empty(_scaffold.Calls);
         Assert.False(Directory.Exists(Path.Combine(destination, WorkflowWorkspace.WorkflowsFolderName)));
     }

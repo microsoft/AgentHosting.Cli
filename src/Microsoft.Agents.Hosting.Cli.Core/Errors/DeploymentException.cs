@@ -4,14 +4,15 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
 
 public sealed class DeploymentException : AgentHostingException
 {
-    private DeploymentException(string message, int exitCode, string errorKind, string? remediation = null, System.Exception? innerException = null)
-        : base(message, exitCode, errorKind, remediation, innerException)
+    private DeploymentException(int errorCode, string message, int exitCode, string errorKind, string? remediation = null, System.Exception? innerException = null)
+        : base(message, exitCode, errorKind, remediation, innerException, errorCode)
     {
     }
 
     /// <summary>The deployment not found locally or its backing Azure Bot Service returned <c>404 Not Found</c>.</summary>
     public static DeploymentException NotFound(string deploymentId, TargetRequestException? ex = null) =>
         new(
+            ErrorCodes.Deployment.DeploymentNotFound,
             $"No deployment found with id '{deploymentId}': {ex?.ServiceMessage ?? ex?.Message}",
             ExitCodes.Usage,
             "deployment-not-found",
@@ -20,6 +21,7 @@ public sealed class DeploymentException : AgentHostingException
     /// <summary>Retrieve the deployment failed for a reason other than <c>404 Not Found</c>.</summary>
     public static DeploymentException ReadFailed(string deploymentId, TargetRequestException ex) =>
         new(
+            ErrorCodes.Deployment.DeploymentReadFailed,
             $"Deployment with id '{deploymentId}' exists but could not be read from Azure Bot Service: {ex.ServiceMessage ?? ex.Message}",
             ex.ExitCode,
             "deployment-read-failed",
@@ -29,6 +31,7 @@ public sealed class DeploymentException : AgentHostingException
     /// <summary>Azure Bot Service resource for the deployment is invalid or missing.</summary>
     public static DeploymentException InvalidBotResource(string? deploymentId = null) =>
         new(
+            ErrorCodes.Deployment.DeploymentInvalidBotResource,
             deploymentId is null
                 ? "The Azure Bot Service resource id is invalid or missing."
                 : $"Azure Bot Service resource for the deployment '{deploymentId}' is invalid or missing.",
@@ -38,6 +41,7 @@ public sealed class DeploymentException : AgentHostingException
 
     public static DeploymentException OAuthConnectionNotFound(string deploymentId, string connectionName) =>
         new(
+            ErrorCodes.Deployment.DeploymentOAuthConnectionNotFound,
             $"The OAuth connection named '{connectionName}' is not configured on deployment '{deploymentId}'.",
             ExitCodes.Usage,
             "oauth-connection-not-found",
@@ -45,6 +49,7 @@ public sealed class DeploymentException : AgentHostingException
 
     public static DeploymentException OAuthServiceProviderNotFound(string serviceProvider) =>
         new(
+            ErrorCodes.Deployment.DeploymentOAuthServiceProviderNotFound,
             $"The OAuth service provider '{serviceProvider}' was not found in the Azure Bot Service provider catalogue.",
             ExitCodes.Usage,
             "oauth-service-provider-not-found",
@@ -52,6 +57,7 @@ public sealed class DeploymentException : AgentHostingException
 
     public static DeploymentException ChannelNotFound(string deploymentId, string channelName) =>
         new(
+            ErrorCodes.Deployment.DeploymentChannelNotFound,
             $"The {channelName} channel is not configured on deployment '{deploymentId}'.",
             ExitCodes.Usage,
             "channel-not-found",
@@ -59,6 +65,7 @@ public sealed class DeploymentException : AgentHostingException
 
     public static DeploymentException ChannelDefinitionNotFound(string channelName) =>
         new(
+            ErrorCodes.Deployment.DeploymentChannelDefinitionNotFound,
             $"The channel definition for '{channelName}' does not exist.",
             ExitCodes.Usage,
             "channel-definition-not-found",
@@ -66,6 +73,7 @@ public sealed class DeploymentException : AgentHostingException
 
     public static DeploymentException ChannelOperationNotSupported(string channelName, string operation) =>
         new(
+            ErrorCodes.Deployment.DeploymentChannelOperationNotSupported,
             $"{channelName} does not support {operation}.",
             ExitCodes.Usage,
             "channel-operation-not-supported");
@@ -77,7 +85,7 @@ public sealed class DeploymentException : AgentHostingException
         string? guidance = null) =>
         new(WithGuidance(
             $"{OptionFor(parameterName, useOAuthOption)} is not declared by '{definitionName}'.",
-            guidance));
+            guidance), ErrorCodes.Deployment.DeploymentParameterNotDeclared);
 
     public static UsageException RequiredParameter(
         string parameterName,
@@ -86,12 +94,12 @@ public sealed class DeploymentException : AgentHostingException
         string? guidance = null) =>
         new(WithGuidance(
             $"{OptionFor(parameterName, useOAuthOption)} is required for '{definitionName}'.",
-            guidance));
+            guidance), ErrorCodes.Deployment.DeploymentRequiredParameter);
 
     public static UsageException ReadOnlyParameter(
         string parameterName,
         string definitionName) =>
-        new($"{OptionFor(parameterName, useOAuthOption: false)} is read-only for '{definitionName}' and cannot be created or updated.");
+        new($"{OptionFor(parameterName, useOAuthOption: false)} is read-only for '{definitionName}' and cannot be created or updated.", ErrorCodes.Deployment.DeploymentReadOnlyParameter);
 
     public static UsageException CannotClearRequiredParameter(
         string parameterName,
@@ -100,7 +108,7 @@ public sealed class DeploymentException : AgentHostingException
         string? guidance = null) =>
         new(WithGuidance(
             $"{OptionFor(parameterName, useOAuthOption)} is required for '{definitionName}' and cannot be cleared.",
-            guidance));
+            guidance), ErrorCodes.Deployment.DeploymentCannotClearRequiredParameter);
 
     public static UsageException InvalidParameterValue(
         string parameterName,
@@ -109,7 +117,7 @@ public sealed class DeploymentException : AgentHostingException
         string? guidance = null) =>
         new(WithGuidance(
             $"{OptionFor(parameterName, useOAuthOption)} for '{definitionName}' must be true or false.",
-            guidance));
+            guidance), ErrorCodes.Deployment.DeploymentInvalidParameterValue);
 
     private static string OptionFor(
         string parameterName,

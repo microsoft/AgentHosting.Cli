@@ -1,6 +1,6 @@
 # MSAgent CLI command reference
 
-Last updated: 2026-10-07
+Last updated: 2026-10-21
 
 This document describes the MSAgent CLI command surface. The packaged executable is named
 `msagent`, and the CLI project is `Microsoft.Agents.Hosting.Cli`.
@@ -11,12 +11,16 @@ msagent [command] [options]
 
 The reference is derived from the command host in `Microsoft.Agents.Hosting.Cli`, command
 definitions in `Microsoft.Agents.Hosting.Cli.Commands`, and validation performed by
-`Microsoft.Agents.Hosting.Cli.Core` on `main`. It documents command-line arguments and options
+`Microsoft.Agents.Hosting.Cli.Core`. It documents command-line arguments and options
 only; host configuration environment variables are documented in
 [README.md](../Microsoft.Agents.Hosting.Cli/README.md#configuration-host-environment).
 
-Commands or options labeled **MCS-specific** apply only to Microsoft Copilot Studio agents. Unlabeled
-commands either apply to all agent types or retain their existing CodeAgent behavior.
+Commands or options labeled **MCS-specific** apply to Microsoft Copilot Studio. Agent
+`create`, `init`, `list`, `pull`, `delete`, and `deploy` also support standalone workflows
+(`MCSWorkflow`); sharing and evaluation are **MCSAgent-only**. Unlabeled commands either
+apply to all agent types or retain their existing CodeAgent behavior.
+
+For error meanings, causes, and recovery steps, see the [error code reference](ErrorCodes.md).
 
 ## Global options
 
@@ -27,8 +31,8 @@ command; version is available only at the root.
 | --- | --- | --- | --- |
 | `-j`, `--json` | Boolean flag | `false` | Emit machine-readable JSON output. |
 | `-dbg`, `--debug` | Boolean flag | `false` | Display debugging information, such as redacted API responses, on stderr. |
-| `-nc`, `--no-color` | Boolean flag | `false` | Disable colored output. Color is also disabled when `NO_COLOR` is set or both stdout and stderr are redirected. |
-| `-ni`, `--non-interactive` | Boolean flag | `false` | Do not open a browser or WAM sign-in, fail instead. Connection commands have command-specific non-interactive behavior; see their help for details. |
+| `-nc`, `--no-color` | Boolean flag | `false` | Disable colored output. Color is also disabled when `NO_COLOR` is nonempty or both stdout and stderr are redirected. |
+| `-ni`, `--non-interactive` | Boolean flag | `false` | Request non-interactive operation. Commands have specific limits: some connection commands still read stdin, and the external playground can still require sign-in. See the command reference. |
 | `-?`, `-h`, `--help` | Boolean flag | `false` | Show help and usage information for the current command. |
 | `-v`, `--version` | Boolean flag | `false` | Show version information. Available only at the root (`msagent --version`). |
 
@@ -40,25 +44,49 @@ connection to choose from. The update command lists connectors and reads selecti
 Invoking `msagent` with no command, including when only global options are supplied, displays root
 help.
 
+## Output and exit codes
+
+Most commands write human-readable results to stdout and failures with recovery guidance to
+stderr. With `--json`, ordinary command results use a JSON envelope on stdout: successful
+results contain `success: true`, while failures contain `success: false`, `exitCode`,
+the five-digit integer `errorCode`, and `errorMessage`. `errorKind` and `remediation` are
+included when available; some failures also include a partial result. A usage error need not
+have an `errorKind`. Error codes identify conditions and are not process exit codes.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | The command completed successfully. |
+| `1` | The operation failed. |
+| `2` | Invalid usage, configuration, context, or a conflicting operation. |
+| `3` | Sign-in or user interaction is required. |
+
+Live-test commands have their own output contract: `test ask --json` streams one activity/result
+document, not the ordinary envelope, and `test playground` rejects `--json`. Playground
+cancellation can return `130`, and a launched playground's nonzero exit status can be propagated.
+See [live testing](Command_Test.md). Deployment `--debug` output can replace the ordinary success
+payload with diagnostic output on stderr; do not combine it with `--json` when expecting a
+normal success envelope.
+
 ## Command modules
 
 | Module | Subcommands | Description |
 | --- | --- | --- |
 | [`msagent auth`](Command_Auth.md) | `login`, `status`, `switch`, `logout` | Authenticate operators and manage stored accounts. |
 | [`msagent env`](Command_Env.md) | `list`, `select` | List and select Power Platform environments. |
-| [`msagent agent`](Command_Agent.md) | `create`, `init` (**MCS-specific**), `list` (**MCS-specific**), `show`, `pull` (**MCS-specific**), `delete` (**MCS-specific**), `deploy`, `share` (**MCS-specific**), `share show` (**MCS-specific**), `unshare` (**MCS-specific**), `package upload` (**Gated**), [`eval`](Command_Agent_Eval.md) {`run`, `list`, `show`, `cancel`, `delete`, `generate`, `testset`} (**MCS-specific**) | Create, list, inspect, and delete hosted agents; initialize or pull MCS source; deploy agents; manage MCS agent sharing; run MCS evaluations; and upload agent packages. |
-| [`msagent deployment`](Command_Deployment.md) | `create`, `list`, `show`, `update`, `delete`, [`connection`](Command_Deployment_Connection.md) {`list`, `add`, `update`, `remove`, `connectors`} (**MCS-specific**), [`oauth`](Command_Deployment_OAuth.md) {`create`, `delete`, `list`, `list-providers`, `show`, `update`} (**CodeAgent-specific**) | Create, list, inspect, update, and delete CodeAgent or MCS deployment records; manage MCS deployment connections; and manage CodeAgent OAuth connection settings. |
+| [`msagent agent`](Command_Agent.md) | `create`, `init` (**MCS-specific**), `list` (**MCS-specific**), `show`, `pull` (**MCS-specific**), `delete` (**MCS-specific**), `deploy`, `share` (**MCSAgent-only**), `share show` (**MCSAgent-only**), `unshare` (**MCSAgent-only**), `package upload` (**Gated**), [`eval`](Command_Agent_Eval.md) {`run`, `list`, `show`, `cancel`, `delete`, `generate`, `testset`} (**Gated**, **MCSAgent-only**) | Create, list, inspect, and delete hosted agents or standalone workflows; initialize or pull MCS source; deploy agents and workflows; manage MCS agent sharing; run MCS evaluations; and upload agent packages. |
+| [`msagent deployment`](Command_Deployment.md) | `create`, `list`, `show`, `update`, `delete`, `channel` {`create`, `update`, `delete`, `show`, `list`} (**CodeAgent-specific**), [`connection`](Command_Deployment_Connection.md) {`list`, `add`, `update`, `remove`, `connectors`} (**MCS-specific**), [`oauth`](Command_Deployment_OAuth.md) {`create`, `delete`, `list`, `list-providers`, `show`, `update`} (**CodeAgent-specific**) | Manage deployment records, CodeAgent channels and OAuth settings, and MCS connections. |
+| [`msagent test`](Command_Test.md) (**Gated**, **MCS-specific**) | `ask`, `playground` | Send a live query or launch the M365 Agents Playground. Actions can have real effects. |
 | [`msagent abs`](Command_Abs.md) (**Gated**) | `preview`, `apply` | Preview and apply Azure Bot Service configuration. |
 | [`msagent identity`](Command_Identity.md) (**Gated**) | `create blueprint`, `create app` | Create and reconcile agent identities. |
-| `msagent telemetry` | `enable`, `disable`, `status` | Manage command telemetry collection preferences. |
+| [`msagent telemetry`](Command_Telemetry.md) | `enable`, `disable`, `status` | Manage and inspect command telemetry collection preferences. |
 
 **Gated:** commands tagged (**Gated**) may or may not be available, depending on the feature gates
 enabled for a given run. Run `msagent --help` (or `--help` on any group) to see what is currently
 available.
 
 The intermediate groups `auth`, `env`, `agent`, `agent eval`, `agent eval testset`, `deployment`,
-`deployment connection`, `deployment oauth`, `agent package`, `abs`, `identity`, `identity create`,
-and `telemetry` are navigation commands. Invoking one without a leaf command returns a usage error
+`deployment connection`, `deployment channel`, `deployment oauth`, `agent package`, `abs`, `identity`, `identity create`,
+`test`, and `telemetry` are navigation commands. Invoking one without a leaf command returns a usage error
 and lists its valid subcommands.
 
 > [!IMPORTANT]
