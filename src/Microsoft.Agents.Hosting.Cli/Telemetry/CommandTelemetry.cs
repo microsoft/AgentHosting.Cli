@@ -563,6 +563,7 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
     private readonly IClock? _clock;
     private readonly string? _cliVersion;
     private readonly TimeSpan _flushTimeout;
+    private readonly TimeProvider _timeProvider = TimeProvider.System;
     private readonly ICommandTelemetryTransport? _transport;
     private readonly CommandTelemetryTenantObserver? _tenantObserver;
     private readonly CommandTelemetryEnvironmentObserver? _environmentObserver;
@@ -606,7 +607,8 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
         CommandTelemetryEnvironmentObserver? environmentObserver = null,
         CommandTelemetryProfileContext? selectedProfile = null,
         TimeSpan? flushTimeout = null,
-        ICommandTelemetryTransport? transport = null)
+        ICommandTelemetryTransport? transport = null,
+        TimeProvider? timeProvider = null)
     {
         _destinationResolver = destinationResolver
             ?? throw new ArgumentNullException(nameof(destinationResolver));
@@ -618,6 +620,7 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
         ValidateFlushTimeout(_flushTimeout, nameof(flushTimeout));
 
         _transport = transport ?? OneDsCommandTelemetryTransport.Instance;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _tenantObserver = tenantObserver;
         _environmentObserver = environmentObserver;
         ApplySelectedProfile(selectedProfile);
@@ -1053,7 +1056,7 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
             return;
         }
 
-        var budget = new CancellationTokenSource(_flushTimeout);
+        var budget = new CancellationTokenSource(_flushTimeout, _timeProvider);
         Task flush;
         try
         {

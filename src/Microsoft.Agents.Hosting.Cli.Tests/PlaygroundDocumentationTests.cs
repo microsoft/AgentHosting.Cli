@@ -45,6 +45,11 @@ public sealed class PlaygroundDocumentationTests
         Assert.Contains("pending", section, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("not rolled back", section, StringComparison.Ordinal);
         Assert.Contains("known MVP limitation", section, StringComparison.Ordinal);
+        Assert.Contains("new terminal window", section, StringComparison.Ordinal);
+        Assert.Contains("calling terminal returns", section, StringComparison.Ordinal);
+        Assert.Contains("30 seconds", section, StringComparison.Ordinal);
+        Assert.Contains("macOS opens Terminal", section, StringComparison.Ordinal);
+        Assert.Contains("without a shell script", section, StringComparison.Ordinal);
     }
 
     private static string Section(string readme, string heading)

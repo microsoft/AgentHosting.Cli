@@ -39,7 +39,7 @@ public sealed record PlaygroundLaunchPlan(
     public string? WorkingDirectory { get; init; }
 }
 
-/// <summary>Owns the foreground playground process for the duration of one invocation.</summary>
+/// <summary>Launches a playground session and reports successful process startup.</summary>
 public interface IPlaygroundLauncher
 {
     Task<int> RunAsync(

@@ -394,6 +394,39 @@ public sealed class CommandTelemetryStateTests
     }
 
     [Fact]
+    public async Task StartedNoncooperativeTransportGetsNoRetryAfterDeadline()
+    {
+        using var transport = new BlockingTransport();
+        var timeProvider = new ManualDeadlineTimeProvider();
+        var session = CreateSession(
+            new CapturingResolver(),
+            new FixedClock(),
+            transport,
+            TimeSpan.FromMilliseconds(50),
+            timeProvider);
+        session.RecordHost(CommandTelemetryHostCategory.Help);
+
+        Task disposal = session.DisposeAsync().AsTask();
+        try
+        {
+            await transport.Started.WaitAsync(TelemetryTestBudgets.Flush);
+            Assert.False(disposal.IsCompleted);
+            timeProvider.Expire();
+            await disposal.WaitAsync(TelemetryTestBudgets.Flush);
+            Assert.True(transport.Token.IsCancellationRequested);
+            Assert.Equal(1, transport.CallCount);
+        }
+        finally
+        {
+            transport.Release();
+        }
+
+        await transport.Returned.WaitAsync(TelemetryTestBudgets.Flush);
+        await session.DisposeAsync();
+        Assert.Equal(1, transport.CallCount);
+    }
+
+    [Fact]
     public void PublicEmbeddingConstructorsRetainCurrentMainSignatures()
     {
         ConstructorInfo host = Assert.Single(
@@ -445,13 +478,15 @@ public sealed class CommandTelemetryStateTests
         CapturingResolver? resolver = null,
         IClock? clock = null,
         ICommandTelemetryTransport? transport = null,
-        TimeSpan? flushTimeout = null) =>
+        TimeSpan? flushTimeout = null,
+        TimeProvider? timeProvider = null) =>
         new(
             resolver ?? new CapturingResolver(),
             clock ?? new FixedClock(),
             "1.2.3-test",
             flushTimeout: flushTimeout ?? TelemetryTestBudgets.Flush,
-            transport: transport ?? new CapturingTransport());
+            transport: transport ?? new CapturingTransport(),
+            timeProvider: timeProvider);
 
     private static TelemetryDestination Destination() =>
         new(
@@ -561,6 +596,48 @@ public sealed class CommandTelemetryStateTests
             CallCount++;
             Payload = payload;
             return ValueTask.FromResult(HttpStatusCode.OK);
+        }
+    }
+
+    private sealed class ManualDeadlineTimeProvider : TimeProvider
+    {
+        private ManualDeadlineTimer? _timer;
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            Assert.Equal(TimeSpan.FromMilliseconds(50), dueTime);
+            Assert.Equal(Timeout.InfiniteTimeSpan, period);
+            _timer = new ManualDeadlineTimer(callback, state);
+            return _timer;
+        }
+
+        internal void Expire() =>
+            Assert.IsType<ManualDeadlineTimer>(_timer).Expire();
+
+        private sealed class ManualDeadlineTimer(TimerCallback callback, object? state) : ITimer
+        {
+            private bool _disposed;
+
+            internal void Expire()
+            {
+                Assert.False(_disposed);
+                callback(state);
+            }
+
+            public bool Change(TimeSpan dueTime, TimeSpan period) =>
+                throw new NotSupportedException();
+
+            public void Dispose() => _disposed = true;
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
         }
     }
 
