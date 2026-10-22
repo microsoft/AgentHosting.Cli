@@ -6,13 +6,26 @@ using Microsoft.Agents.Hosting.Cli.CopilotStudio.AskClient;
 
 namespace Microsoft.Agents.Hosting.Cli.Rendering;
 
+internal interface IStreamingFailureResult
+{
+    int? ErrorCode { get; }
+
+    bool IsCancellation => false;
+}
+
 /// <summary>Runs one live turn and owns its output from validation through final flush.</summary>
-public sealed class LiveTestExecution : ILiveTestStreamingResult
+public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFailureResult
 {
     private readonly LiveTestRequest _request;
     private readonly Func<LiveTestRequest, LiveTestDestination> _resolve;
     private readonly Func<LiveTestDestination, bool, CancellationToken, Task<string>> _acquireToken;
     private readonly Func<LiveTestDestination, string, CancellationToken, ILiveTestSession> _createSession;
+    private int? _errorCode;
+    private bool _isCancellation;
+
+    int? IStreamingFailureResult.ErrorCode => _errorCode;
+
+    bool IStreamingFailureResult.IsCancellation => _isCancellation;
 
     public LiveTestExecution(
         LiveTestRequest request,
@@ -42,6 +55,7 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult
             }
             catch (Exception failure)
             {
+                _errorCode = ErrorCodes.General.Unknown;
                 stderr.WriteLine(IsOutputFailure(failure)
                     ? "The live-test result output failed."
                     : "The live test could not initialize its result.");
@@ -95,6 +109,14 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult
         }
         catch (Exception failure)
         {
+            _isCancellation = cancellationToken.IsCancellationRequested;
+            _errorCode = _isCancellation ? null : failure switch
+            {
+                AgentHostingException typed => typed.ErrorCode,
+                LiveTestFailure { ExitCode: ExitCodes.Usage } => ErrorCodes.General.Usage,
+                OperationCanceledException => ErrorCodes.General.TransportTimeout,
+                _ => ErrorCodes.General.Unknown,
+            };
             (status, exitCode, errorKind, errorMessage, remediation) = Classify(failure, cancellationToken);
         }
 
@@ -114,6 +136,8 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult
         }
         catch (Exception failure)
         {
+            _errorCode = ErrorCodes.General.Unknown;
+            _isCancellation = false;
             stderr.WriteLine(IsOutputFailure(failure)
                 ? "The live-test result output failed."
                 : "The live test could not finalize its result.");
