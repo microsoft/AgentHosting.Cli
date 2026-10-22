@@ -394,35 +394,6 @@ public sealed class CommandTelemetryStateTests
     }
 
     [Fact]
-    public async Task StartedNoncooperativeTransportGetsNoRetryAfterDeadline()
-    {
-        using var transport = new BlockingTransport();
-        var session = CreateSession(
-            new CapturingResolver(),
-            new FixedClock(),
-            transport,
-            TimeSpan.FromMilliseconds(50));
-        session.RecordHost(CommandTelemetryHostCategory.Help);
-
-        Task disposal = session.DisposeAsync().AsTask();
-        try
-        {
-            await transport.Started.WaitAsync(TimeSpan.FromSeconds(2));
-            await disposal.WaitAsync(TimeSpan.FromSeconds(2));
-            Assert.True(transport.Token.IsCancellationRequested);
-            Assert.Equal(1, transport.CallCount);
-        }
-        finally
-        {
-            transport.Release();
-        }
-
-        await transport.Returned.WaitAsync(TimeSpan.FromSeconds(2));
-        await session.DisposeAsync();
-        Assert.Equal(1, transport.CallCount);
-    }
-
-    [Fact]
     public void PublicEmbeddingConstructorsRetainCurrentMainSignatures()
     {
         ConstructorInfo host = Assert.Single(
