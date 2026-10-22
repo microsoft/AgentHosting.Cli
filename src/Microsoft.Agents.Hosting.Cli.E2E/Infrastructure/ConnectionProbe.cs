@@ -47,7 +47,7 @@ public sealed class ConnectionProbe
                 usable.UnionWith(connections.EnumerateArray().Select(connection => UsableConnector(Property(connection, "properties"), signedIn)).OfType<string>());
             }
 
-            next = Text(root, "nextLink") is { Length: > 0 } link && Uri.TryCreate(link, UriKind.Absolute, out var parsed) && string.Equals(parsed.Host, PowerAppsHost, StringComparison.OrdinalIgnoreCase) ? parsed : null;
+            next = OracleHttp.NextPage(Text(root, "nextLink"), next, "Power Apps");
         }
 
         return usable;

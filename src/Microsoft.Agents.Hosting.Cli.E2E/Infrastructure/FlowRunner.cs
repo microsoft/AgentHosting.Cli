@@ -75,7 +75,7 @@ public sealed class FlowRunner
                 }
             }
 
-            next = Text(root, "nextLink") is { Length: > 0 } link && Uri.TryCreate(link, UriKind.Absolute, out var parsed) ? parsed : null;
+            next = OracleHttp.NextPage(Text(root, "nextLink"), next, "Power Automate");
         }
 
         return null;

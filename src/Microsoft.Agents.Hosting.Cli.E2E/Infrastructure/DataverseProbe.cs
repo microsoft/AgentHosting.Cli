@@ -113,6 +113,13 @@ public static class OracleHttp
         return await SendAsync(request, token, transcript, cancellationToken).ConfigureAwait(false);
     }
 
+    public static Uri? NextPage(string? nextLink, Uri currentPage, string apiName) =>
+        nextLink is not { Length: > 0 }
+            ? null
+            : Uri.TryCreate(nextLink, UriKind.Absolute, out var next) && next.Scheme == Uri.UriSchemeHttps && next.IsDefaultPort && next.UserInfo.Length == 0 && string.Equals(next.Host, currentPage.Host, StringComparison.OrdinalIgnoreCase)
+                ? next
+                : throw new E2EException($"The {apiName} API returned an untrusted pagination URL.");
+
     internal static async Task<OracleResponse> PostFlowRunAsync(Uri uri, string token, Transcript? transcript, CancellationToken cancellationToken)
     {
         if (!string.Equals(uri.Host, FlowApiHost, StringComparison.OrdinalIgnoreCase)
