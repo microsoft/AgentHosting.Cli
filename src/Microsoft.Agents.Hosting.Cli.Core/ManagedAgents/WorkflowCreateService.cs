@@ -181,6 +181,8 @@ public sealed class WorkflowCreateService
             throw ManagedAgentException.WorkspaceNotEmpty(workspaceRoot, "an agent project");
         }
 
+        WorkspaceDirectoryGuard.RequireEmpty(workspaceRoot);
+
         Directory.CreateDirectory(workspaceRoot);
 
         return workspaceRoot;

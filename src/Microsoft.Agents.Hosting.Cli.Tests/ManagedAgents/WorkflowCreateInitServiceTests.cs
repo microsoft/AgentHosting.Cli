@@ -186,6 +186,55 @@ public sealed class WorkflowCreateServiceTests : IDisposable
         Assert.Empty(_scaffold.Calls);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScaffoldRefusesAWorkspaceFolderHoldingUnrelatedContentBeforeWritingAnything(bool unrelatedFolder)
+    {
+        var store = ManagedAgentFixtures.Store();
+        var workspaceRoot = Path.Combine(_workspace.Root, "WF");
+        var unrelated = Path.Combine(workspaceRoot, "notes");
+
+        Directory.CreateDirectory(workspaceRoot);
+        if (unrelatedFolder)
+        {
+            Directory.CreateDirectory(unrelated);
+        }
+        else
+        {
+            File.WriteAllText(unrelated, "mine");
+        }
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service(store).CreateAsync(
+            new ManagedAgentCreateRequest { Name = "WF", AgentType = AgentTypes.McsWorkflow, Project = _workspace.Root },
+            CancellationToken.None));
+
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("workspace-not-empty", failure.ErrorKind);
+        Assert.Equal(ErrorCodes.Workspace.WorkspaceNotEmpty, failure.ErrorCode);
+        Assert.Contains(workspaceRoot, failure.Message, StringComparison.Ordinal);
+        Assert.Equal([unrelated], Directory.EnumerateFileSystemEntries(workspaceRoot));
+        Assert.Empty(store.List(_workspace.Root));
+        Assert.Empty(_scaffold.Calls);
+        Assert.Empty(_store.DeclarationWrites);
+    }
+
+    [Fact]
+    public async Task ScaffoldUsesAnExistingEmptyWorkspaceFolder()
+    {
+        var store = ManagedAgentFixtures.Store();
+        var workspaceRoot = Path.Combine(_workspace.Root, "WF");
+
+        Directory.CreateDirectory(workspaceRoot);
+
+        var result = await Service(store).CreateAsync(
+            new ManagedAgentCreateRequest { Name = "WF", AgentType = AgentTypes.McsWorkflow, Project = _workspace.Root },
+            CancellationToken.None);
+
+        Assert.StartsWith(workspaceRoot + Path.DirectorySeparatorChar, result.WorkflowFolder, StringComparison.Ordinal);
+        Assert.Single(store.List(_workspace.Root));
+    }
+
     [Fact]
     public async Task CloneDownloadsTheWorkflowAndRecordsAHomeDeployment()
     {
@@ -247,6 +296,33 @@ public sealed class WorkflowCreateServiceTests : IDisposable
         Assert.Equal("workflow-name-invalid", failure.ErrorKind);
         Assert.False(Directory.Exists(project));
         Assert.DoesNotContain($"download:{workflowId}", _store.Calls);
+    }
+
+    [Fact]
+    public async Task CloneRefusesAWorkspaceFolderHoldingAnUnrelatedFileBeforeDownloading()
+    {
+        var workflowId = Guid.NewGuid();
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = WorkflowStateProjection.Activated };
+        var store = ManagedAgentFixtures.Store();
+        var workspaceRoot = Path.Combine(_workspace.Root, WorkspaceFolderNames.ForProject("Remote Flow"));
+        var unrelated = Path.Combine(workspaceRoot, "notes.txt");
+
+        Directory.CreateDirectory(workspaceRoot);
+        File.WriteAllText(unrelated, "mine");
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service(store).CreateAsync(
+            new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), Project = _workspace.Root },
+            CancellationToken.None));
+
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("workspace-not-empty", failure.ErrorKind);
+        Assert.Equal(ErrorCodes.Workspace.WorkspaceNotEmpty, failure.ErrorCode);
+        Assert.Contains(workspaceRoot, failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain($"download:{workflowId}", _store.Calls);
+        Assert.Equal([unrelated], Directory.EnumerateFileSystemEntries(workspaceRoot));
+        Assert.Equal("mine", File.ReadAllText(unrelated));
+        Assert.Empty(store.List(_workspace.Root));
+        Assert.Empty(ListDeployments(store));
     }
 
     [Fact]

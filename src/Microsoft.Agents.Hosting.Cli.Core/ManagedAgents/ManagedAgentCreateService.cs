@@ -253,10 +253,7 @@ public sealed class ManagedAgentCreateService
             throw ManagedAgentException.AlreadyRegistered(duplicate.DisplayName, duplicate.AgentId, _locator.ConfigFilePath(projectDirectory));
         }
 
-        if (Directory.Exists(workspaceDirectory) && Directory.EnumerateFileSystemEntries(workspaceDirectory).Any())
-        {
-            throw ManagedAgentException.WorkspaceNotEmpty(workspaceDirectory);
-        }
+        WorkspaceDirectoryGuard.RequireEmpty(workspaceDirectory);
     }
 
     private static IReadOnlyList<string> IgnoredCloneOptions(ManagedAgentCreateRequest request)
