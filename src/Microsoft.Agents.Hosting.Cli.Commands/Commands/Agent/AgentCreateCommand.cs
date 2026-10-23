@@ -59,7 +59,7 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
         OptionCatalog.Value("--mcs-clone-agent-schemaname", "Clone this schema name instead of scaffolding. MCS only."),
         OptionCatalog.Value("--mcs-clone-agent-id", "Clone this agent id instead of scaffolding. MCS only."),
         OptionCatalog.Value("--mcs-clone-workflow-id", "Clone this workflow id instead of scaffolding. MCSWorkflow only."),
-        OptionCatalog.Value("--mcs-clone-environment-id", "Clone source environment. Defaults to --environment-id, then the active one. MCS only."),
+        OptionCatalog.Value("--mcs-clone-environment-id", "Environment to clone the MCS agent or workflow from. Defaults to --environment-id, then the active one."),
     ];
 
     /// <inheritdoc />
@@ -74,6 +74,8 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
     [
         new("--agent-type MCSAgent", "--agent-name", "--description", "--initial-prompt") { Summary = "Scaffold a new MCS agent" },
         new("[--agent-type MCSAgent]", "(--mcs-clone-agent-id <id> | --mcs-clone-agent-schemaname <schema-name>)") { Summary = "Clone an existing MCS agent" },
+        new("--agent-type MCSWorkflow", "--agent-name") { Summary = "Scaffold a new standalone workflow" },
+        new("--agent-type MCSWorkflow", "--mcs-clone-workflow-id <id>") { Summary = "Clone an existing standalone workflow" },
         new("--agent-type CodeAgent", "--agent-name", "--language", "--language-version")
         {
             Summary = "Create a CodeAgent",

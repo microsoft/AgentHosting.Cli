@@ -147,7 +147,7 @@ Cloning requires a clone selector, `--mcs-clone-agent-id` or `--mcs-clone-agent-
 `--environment-id`, then the active environment. The target/home environment is `--environment-id`
 when supplied, otherwise the source environment.
 
-Cloning downloads content immediately and registers a `dev` deployment; it does not duplicate the
+Cloning downloads content immediately and registers a `develop` deployment; it does not duplicate the
 cloud agent until deployment. A same-environment clone remains associated with the source agent.
 `--schema-name` is rejected in clone mode. `--mcs-agent-type`, `--init-template`, and
 `--initial-prompt` are ignored with warnings because the source supplies the content.
@@ -168,7 +168,7 @@ Use explicit `--agent-type MCSWorkflow`. A new workflow requires only a display 
 environment (explicit or active); description is optional. It scaffolds files and a managed record,
 not a cloud flow. A clone requires a non-empty workflow GUID and inherits the source name unless
 overridden. Source/target environment selection follows the agent clone rules above, and a clone
-also registers a `dev` deployment.
+also registers a `develop` deployment.
 
 ```text
 msagent agent create --agent-type MCSWorkflow --name "Approval flow" --project <directory>
@@ -230,7 +230,7 @@ msagent agent list [--environment-id <id> | --tenant-wide] [--limit <number>] [-
 | `--project` | `-p` | Directory path | Enclosing project, else current directory | The project directory used to annotate matching cloud rows. |
 | `--environment-id` | `-eid` | String | Active environment | List this environment instead of the active one. |
 | `--agent-type` | `-at` | `MCSAgent` (alias `mcs`) or `MCSWorkflow` | `MCSAgent` | Select agents or standalone cloud flows. |
-| `--filter` | `-flt` | String | None | Show workflows whose name contains this text. Rejected for MCSAgent. |
+| `--filter` | `-flt` | String | None | Show workflows whose name contains this text, taken literally: `%` and `_` match themselves. Rejected for MCSAgent. |
 | `--tenant-wide` | `-tw` | Flag | Off | List every environment the signed-in account can reach. |
 | `--limit` | `-lim` | Whole number | `20` | Maximum rows to return across the selected scope. Must be positive. |
 

@@ -479,20 +479,20 @@ public static class McsAgentScenarios
             var workspace = context.Workspaces.CliAgent(context.ScenarioId);
             await McsSteps.InitAsync(context, workspace).ConfigureAwait(false);
 
-            var result = await McsSteps.CreateSlotAsync(context, workspace, "e2e", context.DevEnvironmentId).ConfigureAwait(false);
+            var result = await McsSteps.CreateSlotAsync(context, workspace, "e2e-dev", context.DevEnvironmentId).ConfigureAwait(false);
             context.Assert.ExitZero(result);
-            context.Assert.Equal("e2e", result.Json<AgentDeploymentCreateResult>().DeploymentName, "the slot is named");
-            context.Assert.FileContains(workspace.ConfigPath, "e2e", "the slot persists locally");
+            context.Assert.Equal("e2e-dev", result.Json<AgentDeploymentCreateResult>().DeploymentName, "the slot is named");
+            context.Assert.FileContains(workspace.ConfigPath, "e2e-dev", "the slot persists locally");
         });
 
         yield return Builder.Make("MA-38", "deployment create rejects a duplicate name", WorkspaceCli, SafetyTier.ReadOnly, run: async context =>
         {
             var workspace = context.Workspaces.CliAgent(context.ScenarioId);
             await McsSteps.InitAsync(context, workspace).ConfigureAwait(false);
-            await McsSteps.CreateSlotAsync(context, workspace, "e2e", context.DevEnvironmentId).ConfigureAwait(false);
+            await McsSteps.CreateSlotAsync(context, workspace, "e2e-dev", context.DevEnvironmentId).ConfigureAwait(false);
 
             context.Assert.NonZero(
-                await McsSteps.CreateSlotAsync(context, workspace, "e2e", context.DevEnvironmentId).ConfigureAwait(false),
+                await McsSteps.CreateSlotAsync(context, workspace, "e2e-dev", context.DevEnvironmentId).ConfigureAwait(false),
                 "a duplicate slot name is refused");
         });
 
@@ -513,7 +513,7 @@ public static class McsAgentScenarios
             await McsSteps.InitAsync(context, workspace).ConfigureAwait(false);
 
             context.Assert.ExitCode(
-                await McsSteps.CreateSlotAsync(context, workspace, "e2e", "not-a-guid").ConfigureAwait(false),
+                await McsSteps.CreateSlotAsync(context, workspace, "e2e-dev", "not-a-guid").ConfigureAwait(false),
                 2,
                 "a malformed environment id is a usage error");
         });
@@ -544,12 +544,12 @@ public static class McsAgentScenarios
         {
             var workspace = context.Workspaces.CliAgent(context.ScenarioId);
             await McsSteps.InitAsync(context, workspace).ConfigureAwait(false);
-            await McsSteps.CreateSlotAsync(context, workspace, "e2e", context.DevEnvironmentId).ConfigureAwait(false);
+            await McsSteps.CreateSlotAsync(context, workspace, "e2e-dev", context.DevEnvironmentId).ConfigureAwait(false);
 
             var result = await context.Msagent.RunAsync(["deployment", "list", "--non-interactive"], workspace.ProjectDirectory).ConfigureAwait(false);
 
             context.Assert.ExitZero(result, "an omitted selector lists every agent rather than failing");
-            context.Assert.Contains(result, "e2e", "the slot is listed");
+            context.Assert.Contains(result, "e2e-dev", "the slot is listed");
             context.Assert.Contains(result, "AGENT ID", "the unscoped listing names the owning agent");
         });
 
@@ -658,10 +658,10 @@ public static class McsAgentScenarios
         {
             var workspace = context.Workspaces.CliAgent(context.ScenarioId);
             await McsSteps.InitAsync(context, workspace).ConfigureAwait(false);
-            await McsSteps.CreateSlotAsync(context, workspace, "e2e", context.DevEnvironmentId).ConfigureAwait(false);
+            await McsSteps.CreateSlotAsync(context, workspace, "e2e-dev", context.DevEnvironmentId).ConfigureAwait(false);
 
             context.Assert.NonZero(
-                await UpdateConnectionAsync(context, workspace, "e2e").ConfigureAwait(false),
+                await UpdateConnectionAsync(context, workspace, "e2e-dev").ConfigureAwait(false),
                 "an absent cloud agent is reported");
         });
 
@@ -681,8 +681,8 @@ public static class McsAgentScenarios
             var workspace = context.Workspaces.CliAgent(context.ScenarioId);
             await McsSteps.InitAsync(context, workspace).ConfigureAwait(false);
 
-            var trailing = await context.Msagent.RunAsync(["deployment", "connection", "update", "--deployment-name", "e2e", "--sku", "F0", "--non-interactive"], workspace.ProjectDirectory).ConfigureAwait(false);
-            var leading = await context.Msagent.RunAsync(["deployment", "update", "--sku", "F0", "connection", "--deployment-name", "e2e", "--non-interactive"], workspace.ProjectDirectory).ConfigureAwait(false);
+            var trailing = await context.Msagent.RunAsync(["deployment", "connection", "update", "--deployment-name", "e2e-dev", "--sku", "F0", "--non-interactive"], workspace.ProjectDirectory).ConfigureAwait(false);
+            var leading = await context.Msagent.RunAsync(["deployment", "update", "--sku", "F0", "connection", "--deployment-name", "e2e-dev", "--non-interactive"], workspace.ProjectDirectory).ConfigureAwait(false);
 
             context.Assert.NonZero(trailing, "--sku after the subcommand is rejected");
             context.Assert.NonZero(leading, "--sku before the subcommand is rejected");

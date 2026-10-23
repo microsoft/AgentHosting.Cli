@@ -1,0 +1,153 @@
+{
+  "properties": {
+    "connectionReferences": {
+      "shared_commondataserviceforapps": {
+        "api": {
+          "name": "shared_commondataserviceforapps"
+        },
+        "connection": {
+          "connectionReferenceLogicalName": "cre98_AgentA1.shared_commondataserviceforapps.787379aebbb2450a96f20e20d71bfd30"
+        },
+        "runtimeSource": "embedded"
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        },
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        }
+      },
+      "triggers": {
+        "manual": {
+          "type": "Request",
+          "kind": "Skills",
+          "inputs": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "description": "Text 1 description",
+                  "title": "Text",
+                  "type": "string",
+                  "x-ms-content-hint": "TEXT",
+                  "x-ms-dynamically-added": true
+                }
+              },
+              "required": [
+                "text"
+              ]
+            }
+          },
+          "metadata": {
+            "operationMetadataId": "7dff11e0-11ba-5a38-9516-d5753326676b",
+            "flowSystemMetadata": {
+              "flowKind": "Stateful"
+            }
+          }
+        }
+      },
+      "actions": {
+        "List_rows": {
+          "type": "OpenApiConnection",
+          "inputs": {
+            "parameters": {
+              "entityName": "accounts"
+            },
+            "host": {
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps",
+              "operationId": "ListRecords",
+              "connectionName": "shared_commondataserviceforapps"
+            }
+          },
+          "runAfter": {}
+        },
+        "Condition": {
+          "type": "If",
+          "expression": {
+            "and": [
+              {
+                "equals": [
+                  1,
+                  1
+                ]
+              }
+            ]
+          },
+          "actions": {
+            "Scope": {
+              "type": "Scope",
+              "actions": {
+                "Scope_1": {
+                  "type": "Scope",
+                  "actions": {
+                    "Scope_2": {
+                      "type": "Scope",
+                      "actions": {
+                        "Respond_to_the_agent": {
+                          "type": "Response",
+                          "kind": "Skills",
+                          "inputs": {
+                            "schema": {
+                              "type": "object",
+                              "properties": {
+                                "outputnum1": {
+                                  "title": "OutputNum1",
+                                  "description": "",
+                                  "type": "number",
+                                  "x-ms-content-hint": "NUMBER",
+                                  "x-ms-dynamically-added": true
+                                },
+                                "outputtext1": {
+                                  "title": "OutputText1",
+                                  "description": "",
+                                  "type": "string",
+                                  "x-ms-content-hint": "TEXT",
+                                  "x-ms-dynamically-added": true
+                                }
+                              },
+                              "additionalProperties": {}
+                            },
+                            "statusCode": 200,
+                            "body": {
+                              "outputnum1": 123
+                            }
+                          },
+                          "metadata": {
+                            "operationMetadataId": "5ac4e7b7-4714-5469-adc5-223b34bd7ef2"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "actions": {
+              "Scope_3": {
+                "type": "Scope",
+                "actions": {}
+              }
+            }
+          },
+          "runAfter": {
+            "List_rows": [
+              "SUCCEEDED"
+            ]
+          }
+        }
+      },
+      "outputs": {},
+      "description": "When an agent calls the flow and send back a response."
+    }
+  },
+  "schemaVersion": "1.0.0.0"
+}

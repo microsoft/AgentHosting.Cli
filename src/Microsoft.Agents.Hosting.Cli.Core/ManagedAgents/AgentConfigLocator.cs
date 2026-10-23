@@ -171,16 +171,6 @@ public sealed partial class AgentConfigLocator
     private static bool HoldsProjectFile(string directory) =>
         File.Exists(Path.Combine(directory, ProjectSettingsFileName)) || File.Exists(Path.Combine(directory, ClassicProjectFileName));
 
-    /// <summary>Turns a display name into the folder name its workspace occupies.</summary>
-    /// <param name="displayName">The workspace's display name.</param>
-    /// <returns>A folder name safe on this file system.</returns>
-    public static string WorkspaceFolderName(string displayName)
-    {
-        var sanitized = new string([.. displayName.Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '-' : character)]).Trim();
-
-        return sanitized.Any(char.IsLetterOrDigit) ? sanitized : "agent";
-    }
-
     /// <summary>The component-collection workspaces an agent's workspace declares, in declaration order.</summary>
     /// <param name="agentWorkspaceDirectory">The directory holding the agent's workspace.</param>
     /// <param name="projectDirectory">The project root the collections must stay beneath.</param>

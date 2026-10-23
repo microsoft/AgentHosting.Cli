@@ -1,5 +1,6 @@
 using Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 using Microsoft.Agents.Hosting.Cli.E2E.Scenarios;
+using Microsoft.Agents.Hosting.Cli.E2E.Scenarios.StandaloneWorkflow;
 
 namespace Microsoft.Agents.Hosting.Cli.E2E;
 
@@ -94,6 +95,15 @@ public sealed class HarnessEnvironment
             capabilities = Capabilities.Resolve(config, Path.Combine(ProjectDirectory, "fixtures"), signedIn, signedInDetail, azureCliPresent, armConsentGranted: false);
         }
 
+        var scheduled = ScenarioCatalogue.Select(options.Filters).ToArray();
+        StandaloneServices? standalone = null;
+
+        if (scheduled.Any(scenario => string.Equals(scenario.Feature, StandaloneWorkflowScenarios.Feature, StringComparison.OrdinalIgnoreCase)))
+        {
+            standalone = new StandaloneServices(config, runDirectory, transcript, Path.Combine(ProjectDirectory, "fixtures", Capabilities.StandaloneFixturesFolder));
+            capabilities = await standalone.ProbeAsync(capabilities, cancellationToken).ConfigureAwait(false);
+        }
+
         var run = new RunContext
         {
             RunId = runId,
@@ -111,9 +121,10 @@ public sealed class HarnessEnvironment
             Session = new SessionResources(),
             Transcript = transcript,
             Reporter = new Reporter(!options.NoColour),
+            Standalone = standalone,
         };
 
-        return new HarnessEnvironment(run, [.. ScenarioCatalogue.Select(options.Filters)]);
+        return new HarnessEnvironment(run, scheduled);
     }
 
     private static void AnnounceCreatedConfig()

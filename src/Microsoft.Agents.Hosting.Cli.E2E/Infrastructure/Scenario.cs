@@ -16,6 +16,8 @@ public sealed record Scenario
     /// <summary>Whether the smoke preset includes it.</summary>
     public bool Smoke { get; init; }
 
+    public string? Pack { get; init; }
+
     public required Func<ScenarioContext, Task> Run { get; init; }
 }
 
@@ -46,6 +48,8 @@ public sealed class ScenarioContext
 
     /// <summary>The token bounding this scenario, cancelled when it exceeds the runner's timeout.</summary>
     public required CancellationToken CancellationToken { get; init; }
+
+    public StandaloneServices? Standalone { get; init; }
 
     /// <summary>The dev environment, which every cloud scenario targets unless it says otherwise.</summary>
     public string DevEnvironmentId => Config.Mcs.DevEnvironmentId

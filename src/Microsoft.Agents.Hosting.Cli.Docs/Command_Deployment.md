@@ -73,7 +73,7 @@ msagent deployment create [--agent-id <id> | --agent-name <name>] --deployment-t
 | `--project` | `-p` | Directory path | No | Current directory | All agents | The project directory holding the configuration. |
 | `--agent-id` | `-aid` | String | Conditional | The project's agent (MCS) | All agents | The owning agent id. Required for a CodeAgent deployment (a GUID). |
 | `--agent-name` | `-an` | String | Conditional | None | **MCS-specific** | The owning agent name, used when the agent id is omitted. |
-| `--deployment-name` | `-dn` | String | Yes | None | All agents | Deployment name, unique within the agent. CodeAgent names must be 4-42 characters; only `-`, `a-z`, `A-Z`, `0-9`, and `_`. MCS names are trimmed and must be nonblank. |
+| `--deployment-name` | `-dn` | String | Yes | None | All agents | Deployment name, unique within the agent: 4-42 characters from `-`, `a-z`, `A-Z`, `0-9`, and `_`, after trimming. |
 | `--deployment-type` | `-dt` | `dev`, `test`, or `prod` | Yes | None | All agents | The stage. Values are case-insensitive. |
 | `--environment-id` | `-eid` | String | Conditional | The agent's home environment | **MCS-specific** | Target environment. Required for `test` and `prod`. |
 | `--entra-id` | `-ent` | GUID | Yes (CodeAgent) | None | CodeAgent only (**Gated**) | The Entra application (client) id the deployment binds to. |
@@ -95,6 +95,10 @@ CodeAgent value-bearing options reject explicitly blank values.
 ### Create rules
 
 - `--deployment-name` and `--deployment-type` are required. The type is case-insensitive.
+- The name may use only `-`, `a-z`, `A-Z`, `0-9`, and `_`, and is 4-42 characters for every agent type. A
+  clone registers its home slot as `develop`. A name outside the rule is a usage error and nothing is
+  written. The rule applies only when a slot is created or renamed, so a record whose name predates it,
+  such as the `dev` slot an earlier clone registered, still resolves.
 - A `test` or `prod` deployment requires `--environment-id`; a `dev` deployment defaults to the agent's home environment.
 - The name must be unique per agent, compared case-insensitively.
 - An MCS agent can have at most one deployment per environment, whatever the type. Creating a second
@@ -196,7 +200,7 @@ msagent deployment update (--deployment-id <id> | --deployment-name <name> [--ag
 | `--deployment-name` | `-dn` | String | All agents | The deployment name, used with the agent id to resolve the deployment. |
 | `--agent-id` | `-aid` | String | All agents | The owning agent id. |
 | `--agent-name` | `-an` | String | **MCS-specific** | The owning agent name, used when the agent id is omitted. |
-| `--new-name` | `-nn` | String | **MCS-specific** | The deployment's new name, unique among the agent's deployments. |
+| `--new-name` | `-nn` | String | **MCS-specific** | The deployment's new name, unique among the agent's deployments: 4-42 characters from `-`, `a-z`, `A-Z`, `0-9`, and `_`. |
 | `--resource-group` | `-rg` | String | CodeAgent only (**Gated**) | Target resource group. |
 | `--subscription` | `-sub` | GUID | CodeAgent only (**Gated**) | Target subscription id. |
 | `--tenant` | `-t` | GUID | CodeAgent only (**Gated**) | Target tenant id. |
@@ -251,6 +255,9 @@ state before retrying.
   ambiguous; with `--agent-id` or `--agent-name` the search is limited to that agent.
 - Names are unique per agent, compared case-insensitively; renaming to a taken name is rejected when the
   configuration is written. Renaming to the identical name changes nothing.
+- A new name outside the naming rule (4-42 characters from `-`, `a-z`, `A-Z`, `0-9`, and `_`) is a usage
+  error. The rule applies only to a name that changes, so a slot whose existing name predates the rule
+  can still be selected and renamed.
 - MCS: `--new-name` is required, and a non-empty `--endpoint-url` is an error. Any CodeAgent-only option is a
   usage error, and so is `--new-name` on a CodeAgent. The result reports the previous and new name, type, environment,
   and configuration path.

@@ -360,4 +360,26 @@ public sealed class DeploymentRequestValidatorTests
 
         Assert.Equal("--endpoint must be a valid HTTPS URL.", exception.Message);
     }
+
+    [Theory]
+    [InlineData(" abcd ", "abcd")]
+    [InlineData("A-b_9", "A-b_9")]
+    [InlineData("a23456789012345678901234567890123456789012", "a23456789012345678901234567890123456789012")]
+    public void DeploymentNameRule_AcceptsAndTrimsANameOfFourToFortyTwoAllowedCharacters(string value, string expected)
+    {
+        Assert.Equal(expected, DeploymentNameRule.Validate("--deployment-name", value));
+    }
+
+    [Theory]
+    [InlineData("abc")]
+    [InlineData(" dev ")]
+    [InlineData("a234567890123456789012345678901234567890123")]
+    [InlineData("has space")]
+    [InlineData("abc.d")]
+    public void DeploymentNameRule_RejectsANameOutsideTheRuleAndNamesTheOption(string value)
+    {
+        var exception = Assert.Throws<UsageException>(() => DeploymentNameRule.Validate("--new-name", value));
+
+        Assert.Equal("--new-name must be between 4 and 42 characters in length and can only contain the characters -, a-z, A-Z, 0-9, and _.", exception.Message);
+    }
 }

@@ -86,6 +86,10 @@ public static class ErrorCodes
         public const int ConnectionNotServed = 11051;
         public const int SharePrincipalAmbiguous = 11052;
         public const int SharePrincipalLookupFailed = 11053;
+        public const int WorkflowManaged = 11054;
+        public const int WorkflowNameInvalid = 11055;
+        public const int WorkflowCloudChangesWouldBeLost = 11056;
+        public const int WorkflowUnpublishedDraft = 11057;
     }
 
     /// <summary>Error identifiers for the Authentication area (prefix 12).</summary>

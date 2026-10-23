@@ -51,6 +51,11 @@ public interface IWorkflowWorkspacePort
     /// <summary>Whether a directory holds an agent project of its own.</summary>
     /// <param name="directory">The directory to test.</param>
     bool HasAgentProject(string directory);
+
+    /// <summary>The folder name a project of this display name occupies.</summary>
+    /// <param name="displayName">The project's display name.</param>
+    /// <returns>A folder name every supported file system accepts.</returns>
+    string ProjectFolderName(string displayName);
 }
 
 /// <summary>What writing a workflow to Dataverse achieved.</summary>
@@ -79,6 +84,9 @@ public sealed record WorkflowUpsertOutcome
 
     /// <summary>What the push could not finish, or an empty string when it finished entirely.</summary>
     public string Warning { get; init; } = string.Empty;
+
+    /// <summary>The connection references the workflow uses that have no connection after the push, empty once the workflow is running.</summary>
+    public IReadOnlyList<string> UnboundConnectionReferences { get; init; } = [];
 }
 
 /// <summary>What downloading a workflow wrote to disk.</summary>
@@ -90,8 +98,13 @@ public sealed record WorkflowDownloadOutcome
     /// <summary>The absolute folder the content was written to.</summary>
     public required string FolderPath { get; init; }
 
+    /// <summary>The absolute folder a rename moved the workflow out of, or <see langword="null"/> when the folder kept its name.</summary>
+    public string? PreviousFolder { get; init; }
+
     /// <summary>Whether anything on disk changed.</summary>
     public bool Changed { get; init; }
+
+    public IReadOnlyList<string> Warnings { get; init; } = [];
 }
 
 /// <summary>Reads and writes standalone workflows, in Dataverse and on disk.</summary>
@@ -110,7 +123,7 @@ public interface IWorkflowStorePort
     /// <returns>The workflow, or <see langword="null"/> when no such row exists.</returns>
     Task<WorkflowDocument?> GetAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken);
 
-    /// <summary>Lists the cloud flows an environment holds.</summary>
+    /// <summary>Lists the unmanaged cloud flows an environment holds, including the ones Copilot Studio agents use.</summary>
     /// <param name="environment">The environment to read.</param>
     /// <param name="nameFilter">Returns only workflows whose name contains this text, when supplied.</param>
     /// <param name="maximumCount">The most rows to return, or <see langword="null"/> for every row.</param>
@@ -134,6 +147,8 @@ public interface IWorkflowStorePort
     /// <returns>What was written.</returns>
     Task<WorkflowUpsertOutcome> UpsertAsync(CopilotEnvironmentContext environment, string workspaceRoot, CancellationToken cancellationToken);
 
+    Task RequireNoUnpulledChangesAsync(CopilotEnvironmentContext environment, string workspaceRoot, CancellationToken cancellationToken);
+
     /// <summary>Writes the connection reference declaration the workspace's workflow definition implies.</summary>
     /// <param name="workspaceRoot">The workflow workspace root.</param>
     void WriteConnectionReferenceDeclaration(string workspaceRoot);
@@ -144,11 +159,23 @@ public interface IWorkflowStorePort
     /// <param name="cancellationToken">Cancels the deletion.</param>
     /// <returns><see langword="false"/> when the row was already absent.</returns>
     Task<bool> DeleteAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken);
+
+    /// <summary>Reads the warning a delete shows about the Copilot Studio agents that use a workflow.</summary>
+    /// <param name="environment">The environment holding the workflow.</param>
+    /// <param name="workflowId">The workflow to look up.</param>
+    /// <param name="cancellationToken">Cancels the read.</param>
+    /// <returns>The warning naming those agents, or an empty string when no agent uses the workflow.</returns>
+    Task<string> GetAgentUseWarningAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken);
 }
 
 /// <summary>Writes a new local workflow from the built-in template.</summary>
 public interface IWorkflowScaffoldPort
 {
+    /// <summary>Explains why a name cannot be a workflow's name, before anything is written.</summary>
+    /// <param name="name">The name to check.</param>
+    /// <returns>The reason the name is refused, or <see langword="null"/> when it can be used.</returns>
+    string? ValidateName(string name);
+
     /// <summary>Scaffolds a workflow into a workspace root.</summary>
     /// <param name="workspaceRoot">The workspace root to write beneath.</param>
     /// <param name="name">The workflow's Dataverse name.</param>

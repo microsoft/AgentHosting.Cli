@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
+using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -218,9 +219,11 @@ public sealed class AgentWorkspaceLayoutTests : IDisposable
     [InlineData("  padded  ", "padded")]
     [InlineData("///", "agent")]
     [InlineData("", "agent")]
+    [InlineData("CON", "CON_")]
+    [InlineData("trailing.", "trailing")]
     public void WorkspaceFolderName_IsSafeOnDisk(string displayName, string expected)
     {
-        Assert.Equal(expected, AgentConfigLocator.WorkspaceFolderName(displayName));
+        Assert.Equal(expected, new WorkflowWorkspaceAdapter().ProjectFolderName(displayName));
     }
 
     [Fact]

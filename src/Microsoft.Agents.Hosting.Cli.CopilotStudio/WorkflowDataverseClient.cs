@@ -30,49 +30,35 @@ public sealed class WorkflowDataverseClient : IWorkflowStorePort
         TranslateAsync(async () => Describe(await _synchronizer.ReadLocalAsync(Workspace(workspaceRoot), cancellationToken).ConfigureAwait(false)));
 
     /// <inheritdoc />
-    public Task<WorkflowDocument?> GetAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) =>
-        TranslateAsync(async () =>
-        {
-            Connect(environment);
-
-            return await _synchronizer.GetAsync(workflowId, cancellationToken).ConfigureAwait(false) is { } workflow ? Describe(workflow) : null;
-        });
+    public Task<WorkflowDocument?> GetAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) => ConnectedAsync(environment, async () => await _synchronizer.GetAsync(workflowId, cancellationToken).ConfigureAwait(false) is { } workflow ? Describe(workflow) : null);
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<WorkflowDocument>> ListAsync(CopilotEnvironmentContext environment, string? nameFilter, int? maximumCount, CancellationToken cancellationToken) =>
-        TranslateAsync(async () =>
-        {
-            Connect(environment);
-
-            return (IReadOnlyList<WorkflowDocument>)[.. (await _synchronizer.ListAsync(nameFilter, maximumCount, cancellationToken).ConfigureAwait(false)).Select(Describe)];
-        });
+    public Task<IReadOnlyList<WorkflowDocument>> ListAsync(CopilotEnvironmentContext environment, string? nameFilter, int? maximumCount, CancellationToken cancellationToken) => ConnectedAsync(environment, async () => (IReadOnlyList<WorkflowDocument>)[.. (await _synchronizer.ListAsync(nameFilter, maximumCount, cancellationToken).ConfigureAwait(false)).Select(Describe)]);
 
     /// <inheritdoc />
     public Task<WorkflowDownloadOutcome> DownloadAsync(CopilotEnvironmentContext environment, Guid workflowId, string workspaceRoot, CancellationToken cancellationToken, bool overwriteLocalChanges = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceRoot);
 
-        return TranslateAsync(async () =>
+        return ConnectedAsync(environment, async () =>
         {
-            Connect(environment);
-
             var download = await _synchronizer.DownloadAsync(workflowId, Workspace(workspaceRoot), environment.EnvironmentId, cancellationToken, new StandaloneWorkflowDownloadOptions { OverwriteLocalChanges = overwriteLocalChanges }).ConfigureAwait(false);
 
             return new WorkflowDownloadOutcome
             {
                 Workflow = Describe(download.Workflow),
                 FolderPath = Path.GetFullPath(Path.Combine(workspaceRoot, download.Folder)),
+                PreviousFolder = download.PreviousFolder is { } previousFolder ? Path.GetFullPath(Path.Combine(workspaceRoot, previousFolder)) : null,
                 Changed = download.Changed,
+                Warnings = download.Warning.Length == 0 ? [] : [download.Warning],
             };
         });
     }
 
     /// <inheritdoc />
     public Task<WorkflowUpsertOutcome> UpsertAsync(CopilotEnvironmentContext environment, string workspaceRoot, CancellationToken cancellationToken) =>
-        TranslateAsync(async () =>
+        ConnectedAsync(environment, async () =>
         {
-            Connect(environment);
-
             var upsert = await _synchronizer.UpsertAsync(Workspace(workspaceRoot), environment.EnvironmentId, cancellationToken).ConfigureAwait(false);
 
             return new WorkflowUpsertOutcome
@@ -84,30 +70,38 @@ public sealed class WorkflowDataverseClient : IWorkflowStorePort
                 ActivationRequested = upsert.ActivationRequested,
                 DraftedForConnections = upsert.DraftedForConnections,
                 Warning = upsert.Warning,
+                UnboundConnectionReferences = upsert.UnboundConnectionReferences,
             };
+        });
+
+    public Task RequireNoUnpulledChangesAsync(CopilotEnvironmentContext environment, string workspaceRoot, CancellationToken cancellationToken) =>
+        ConnectedAsync(environment, async () =>
+        {
+            await _synchronizer.RequireNoUnpulledChangesAsync(Workspace(workspaceRoot), environment.EnvironmentId, cancellationToken).ConfigureAwait(false);
+
+            return true;
         });
 
     /// <inheritdoc />
     public void WriteConnectionReferenceDeclaration(string workspaceRoot) => WorkflowDefinitionFile.WriteConnectionReferenceDeclaration(workspaceRoot);
 
     /// <inheritdoc />
-    public Task<bool> DeleteAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) =>
-        TranslateAsync(async () =>
-        {
-            Connect(environment);
+    public Task<bool> DeleteAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) => ConnectedAsync(environment, () => _synchronizer.DeleteAsync(workflowId, null, cancellationToken));
 
-            return await _synchronizer.DeleteAsync(workflowId, null, cancellationToken).ConfigureAwait(false);
-        });
+    /// <inheritdoc />
+    public Task<string> GetAgentUseWarningAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) => ConnectedAsync(environment, async () => (await _synchronizer.GetAgentUseAsync(workflowId, cancellationToken).ConfigureAwait(false)).Warning);
 
     private static IFileAccessor Workspace(string workspaceRoot) => WorkflowWorkspace.OpenWorkspace(workspaceRoot);
 
     private static Task<T> TranslateAsync<T>(Func<Task<T>> operation) => WorkflowFailureTranslation.TranslateAsync(operation);
 
-    private void Connect(CopilotEnvironmentContext environment)
+    private Task<T> ConnectedAsync<T>(CopilotEnvironmentContext environment, Func<Task<T>> operation) => TranslateAsync(async () =>
     {
         ArgumentNullException.ThrowIfNull(environment);
         DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, environment);
-    }
+
+        return await operation().ConfigureAwait(false);
+    });
 
     private static WorkflowDocument Describe(StandaloneWorkflowDocument workflow) => new()
     {

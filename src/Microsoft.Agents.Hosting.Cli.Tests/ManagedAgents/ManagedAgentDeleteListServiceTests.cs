@@ -465,6 +465,56 @@ public sealed class ManagedAgentListServiceTests
     }
 
     [Fact]
+    public async Task List_TenantScope_ReadsUpToFourEnvironmentsAtOnceAndKeepsTheirOrder()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var environmentIds = Enumerable.Range(1, 6).Select(number => $"env-{number}").ToArray();
+        var catalog = Catalog();
+
+        foreach (var environmentId in environmentIds)
+        {
+            catalog.AgentsByEnvironment[environmentId] = [.. Catalog($"agent_{environmentId}").Agents];
+            catalog.ListDelays[environmentId] = TimeSpan.FromMilliseconds(environmentId == "env-1" ? 200 : 20);
+        }
+
+        var result = await Create(ManagedAgentFixtures.Store(), catalog, [.. environmentIds.Select(environmentId => new PowerPlatformEnvironmentSpec(environmentId, CopilotTestFixtures.DataverseOrganization))])
+            .ListAsync(new ManagedAgentListRequest { Tenant = true, Limit = 50 }, CancellationToken.None);
+
+        Assert.Equal(4, catalog.MaximumConcurrentLists);
+        Assert.Equal(environmentIds, result.Agents.Select(agent => agent.EnvironmentId));
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public async Task List_TenantScope_StopsAtTheLimitInEnvironmentOrderAndReportsOnlyTheFailuresBeforeIt()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var catalog = Catalog();
+        catalog.AgentsByEnvironment["env-1"] = [.. Catalog("a_first", "b_first").Agents];
+        catalog.AgentsByEnvironment["env-3"] = [.. Catalog("a_third", "b_third").Agents];
+        catalog.ListDelays["env-1"] = TimeSpan.FromMilliseconds(100);
+        catalog.ListThrowsFor["env-2"] = new InvalidOperationException("env-2 is unavailable");
+        catalog.ListThrowsFor["env-4"] = new InvalidOperationException("env-4 is unavailable");
+
+        var result = await Create(
+            ManagedAgentFixtures.Store(),
+            catalog,
+            new PowerPlatformEnvironmentSpec("env-1", CopilotTestFixtures.DataverseOrganization),
+            new PowerPlatformEnvironmentSpec("env-2", CopilotTestFixtures.DataverseOrganization),
+            new PowerPlatformEnvironmentSpec("env-3", CopilotTestFixtures.DataverseOrganization),
+            new PowerPlatformEnvironmentSpec("env-4", CopilotTestFixtures.DataverseOrganization))
+            .ListAsync(new ManagedAgentListRequest { Tenant = true, Limit = 3 }, CancellationToken.None);
+
+        Assert.Equal(["a_first", "b_first", "a_third"], result.Agents.Select(agent => agent.SchemaName));
+        Assert.True(result.Truncated);
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal("env-2", diagnostic.EnvironmentId);
+        Assert.Equal("env-2 is unavailable", diagnostic.Message);
+    }
+
+    [Fact]
     public async Task List_AnnotatesOnlyTheEnvironmentTheRecordBelongsTo()
     {
         using var workspace = new TemporaryWorkspace();

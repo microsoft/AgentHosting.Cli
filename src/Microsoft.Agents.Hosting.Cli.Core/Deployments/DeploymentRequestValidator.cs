@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
@@ -19,12 +18,9 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
 /// </summary>
 public static class DeploymentRequestValidator
 {
-    private const int MinNameLength = 4;
-    private const int MaxNameLength = 42;
     private static readonly string[] DeploymentTypes = ["Dev", "Test", "Prod"];
     private static readonly string[] Skus = ["F0", "S1"];
     private static readonly string[] SupportedEntraIdTypes = ["AppReg"];
-    private static readonly Regex NamePattern = new("^[A-Za-z0-9_-]+$", RegexOptions.Compiled);
 
     public static DeploymentRequest Validate(DeploymentRequest request)
     {
@@ -57,7 +53,7 @@ public static class DeploymentRequestValidator
             }
 
             agentId = OptionalGuid("--agent-id", request.AgentId);
-            deploymentName = ValidateDeploymentName(request.DeploymentName);
+            deploymentName = DeploymentNameRule.Validate("--deployment-name", request.DeploymentName);
         }
 
         return request with
@@ -78,7 +74,7 @@ public static class DeploymentRequestValidator
         return request with
         {
             AgentId = RequiredGuid("--agent-id", request.AgentId),
-            DeploymentName = ValidateDeploymentName(request.DeploymentName),
+            DeploymentName = DeploymentNameRule.Validate("--deployment-name", request.DeploymentName),
             EntraId = RequiredGuid("--entra-id", request.EntraId),
             EntraIdType = RequiredEnum("--entra-id-type", request.EntraIdType, SupportedEntraIdTypes),
             DeploymentType = RequiredEnum("--deployment-type", request.DeploymentType, DeploymentTypes),
@@ -234,19 +230,4 @@ public static class DeploymentRequestValidator
 
         return normalized;
     }
-
-    private static string ValidateDeploymentName(string? value)
-    {
-        var trimmed = Required("--deployment-name", value);
-
-        if (trimmed.Length is < MinNameLength or > MaxNameLength || !NamePattern.IsMatch(trimmed))
-        {
-            throw new UsageException(
-                $"--deployment-name must be between {MinNameLength} and {MaxNameLength} " +
-                "characters in length and can only contain the characters -, a-z, A-Z, 0-9, and _.");
-        }
-
-        return trimmed;
-    }
-
 }

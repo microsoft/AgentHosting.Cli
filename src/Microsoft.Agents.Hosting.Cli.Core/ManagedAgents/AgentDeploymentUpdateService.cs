@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -52,10 +53,7 @@ public sealed class AgentDeploymentUpdateService
         var (owner, deployment) = _resolver.ResolveAgentDeployment(projectDirectory, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName);
         var agent = ManagedAgentResolver.RequireMcsAgentOrWorkflow(owner, "msagent deployment update");
         var newName = request.NewName.Trim();
-
-        var updated = string.Equals(deployment.DeploymentName, newName, StringComparison.Ordinal)
-            ? deployment
-            : _deployments.Update(projectDirectory, deployment with { DeploymentName = newName });
+        var updated = string.Equals(deployment.DeploymentName, newName, StringComparison.Ordinal) ? deployment : _deployments.Update(projectDirectory, deployment with { DeploymentName = DeploymentNameRule.Validate("--new-name", newName) });
 
         return Task.FromResult(new AgentDeploymentUpdateResult
         {

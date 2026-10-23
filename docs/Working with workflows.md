@@ -74,3 +74,15 @@ Running `deployment connection add`/`update` for a connector *before* the workfl
 referencing it has been deployed can also silently delete local `workflows/*` source
 folders that the CLI considers already cloud-synced. Keep backups of anything
 authored but not yet deployed.
+
+## Standalone workflows (`--agent-type MCSWorkflow`)
+
+A standalone workflow is a cloud flow registered on its own, not as a component of an agent.
+
+```text
+msagent agent create --agent-type MCSWorkflow --agent-name <name>
+msagent agent create --agent-type MCSWorkflow --mcs-clone-workflow-id <id> [--mcs-clone-environment-id <source>]
+msagent agent deploy --deployment-name <name> [--publish] [--overwrite]
+msagent agent pull --deployment-name <name> [--overwrite]
+msagent agent list --agent-type MCSWorkflow [--filter <text>] [--tenant-wide]
+```

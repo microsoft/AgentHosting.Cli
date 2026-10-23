@@ -1,0 +1,34 @@
+jsonFileName: workflows/S5D1WF1-0528a52e-8ee0-5387-8c17-0f15e702af88/workflow.json
+workflowId: 0528a52e-8ee0-5387-8c17-0f15e702af88
+name: S5D1 WF 1
+type: 1
+description: 
+subprocess: false
+category: 5
+mode: 0
+scope: 4
+onDemand: false
+triggerOnCreate: false
+triggerOnDelete: false
+asyncAutodelete: false
+syncWorkflowLogOnFailure: false
+stateCode: 1
+statusCode: 2
+runAs: 1
+isTransacted: true
+introducedVersion: 1.0
+isCustomizable:
+  value: true
+  canBeChanged: true
+  managedPropertyLogicalName: iscustomizableanddeletable
+businessProcessType: 0
+isCustomProcessingStepAllowedForOtherPublishers:
+  value: true
+  canBeChanged: true
+  managedPropertyLogicalName: canbedeleted
+modernFlowType: 1
+primaryEntity: none
+connectionReferences:
+- new_sharedteams_aa643948
+- new_sharedmsnweather_2a0bcba7
+- new_sharedadvancedapprovals_24af7c3f

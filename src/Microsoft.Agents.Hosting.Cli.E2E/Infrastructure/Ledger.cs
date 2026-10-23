@@ -13,6 +13,10 @@ public enum ResourceKind
     EvaluationTestSet,
     EvaluationRun,
     McsWorkflow,
+
+    StandaloneWorkflow,
+
+    StandaloneConnectionReference,
 }
 
 /// <summary>Where a resource stands: created and still present, removed, or left behind.</summary>
@@ -53,6 +57,10 @@ public sealed record CleanupPlan
     public string? SubscriptionId { get; init; }
 
     public string? PriorValue { get; init; }
+
+    public string? WorkflowId { get; init; }
+
+    public string? ConnectorId { get; init; }
 }
 
 /// <summary>One resource the run created or changed, recorded before the call that creates it.</summary>
@@ -235,6 +243,26 @@ public sealed class Ledger
             ProjectDirectory = projectDirectory,
             EnvironmentId = environmentId,
             AgentId = agentId,
+        });
+
+    public LedgerEntry RecordStandaloneWorkflow(string workflowId, string environmentId, string? displayName, string projectDirectory, string? agentId, string? deploymentName, string scenarioId) =>
+        Record(ResourceKind.StandaloneWorkflow, $"{workflowId}@{environmentId}", displayName, scenarioId, new CleanupPlan
+        {
+            Via = "agent delete through the record, else a clone of the flow",
+            ProjectDirectory = projectDirectory,
+            EnvironmentId = environmentId,
+            AgentId = agentId,
+            DeploymentName = deploymentName,
+            WorkflowId = workflowId,
+        });
+
+    public LedgerEntry RecordStandaloneConnectionReference(string logicalName, string connectorId, string environmentId, string scenarioId) =>
+        Record(ResourceKind.StandaloneConnectionReference, $"{logicalName}@{environmentId}", logicalName, scenarioId, new CleanupPlan
+        {
+            Via = "deployment connection remove --connection-reference --force",
+            EnvironmentId = environmentId,
+            Correlation = logicalName,
+            ConnectorId = connectorId,
         });
 
     /// <summary>Records an Azure bot, with the subscription it was created in.</summary>

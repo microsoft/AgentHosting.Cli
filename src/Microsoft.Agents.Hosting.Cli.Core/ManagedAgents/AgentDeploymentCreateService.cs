@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.Copilot;
+using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -52,6 +53,7 @@ public sealed class AgentDeploymentCreateService
 
         var projectDirectory = _resolver.ResolveProjectDirectory(request.Project);
         var agent = ManagedAgentResolver.RequireMcsAgentOrWorkflow(_resolver.ResolveAgent(projectDirectory, request.AgentId, request.AgentName), "msagent deployment create");
+        var deploymentName = DeploymentNameRule.Validate("--deployment-name", request.DeploymentName);
 
         if (stage != DeploymentStages.Dev && string.IsNullOrWhiteSpace(request.EnvironmentId))
         {
@@ -67,7 +69,7 @@ public sealed class AgentDeploymentCreateService
             DeploymentId = Guid.NewGuid().ToString(),
             AgentId = agent.AgentId,
             AgentType = agent.AgentType,
-            DeploymentName = request.DeploymentName.Trim(),
+            DeploymentName = deploymentName,
             DeploymentType = stage,
             TenantId = agent.TenantId,
             HomeEnvironmentId = agent.EnvironmentId,

@@ -44,7 +44,7 @@ MCS routes and shared authentication/environment commands remain enabled by defa
 | `msagent env select <environment-id>` | Select the active environment used by agent commands. |
 | `msagent agent create` | Create an agent: a CodeAgent record and repository, or a local MCS project registered for deployment. |
 | `msagent agent init` | Register an MCS project that already exists on disk. Creates no files and nothing in Copilot Studio. |
-| `msagent agent list` | List the MCS agents in an environment or across the tenant. An agent that has never been deployed is not listed. |
+| `msagent agent list` | List the MCS agents or standalone workflows in an environment or across the tenant. An agent that has never been deployed is not listed. Workflows listed are every unmanaged cloud flow, including the flows agents use, never a flow a managed solution installed. |
 | `msagent agent show` | Show the managed-agent records this project holds. Reads the local configuration; contacts nothing. |
 | `msagent agent pull` | Bring the remote MCS agent's content into the project, taking every component collection beside it. |
 | `msagent agent delete` | Delete an MCS agent's cloud resources and every record for it. Local files are never touched. Asks you to type the agent's name first, unless `--non-interactive` supplies that consent. |

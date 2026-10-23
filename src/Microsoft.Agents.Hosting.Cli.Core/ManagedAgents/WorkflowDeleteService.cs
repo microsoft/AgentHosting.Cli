@@ -24,7 +24,7 @@ public sealed class WorkflowDeleteService
     /// <param name="workflowResolver">Resolves the project directory.</param>
     /// <param name="agents">The managed-agent table.</param>
     /// <param name="environmentResolver">Resolves the environment the target lives in.</param>
-    /// <param name="workflows">Deletes the cloud workflow.</param>
+    /// <param name="workflows">Reads which Copilot Studio agents use the cloud workflow, and deletes it.</param>
     /// <param name="confirmations">Confirms the delete with the operator.</param>
     public WorkflowDeleteService(ManagedAgentResolver resolver, WorkflowProjectResolver workflowResolver, IManagedAgentRegistry agents, CopilotEnvironmentResolver environmentResolver, IWorkflowStorePort workflows, IConfirmationPrompt confirmations)
     {
@@ -53,8 +53,9 @@ public sealed class WorkflowDeleteService
         var environment = await _environmentResolver.ResolveAsync(ManagedAgentResolver.TargetEnvironmentId(agent, deployment), cancellationToken).ConfigureAwait(false);
 
         var orphaned = OrphanedBy(agent, deployments, environment.EnvironmentId);
+        var agentUseWarning = await _workflows.GetAgentUseWarningAsync(environment, workflowId, cancellationToken).ConfigureAwait(false);
 
-        var outcome = await ConfirmationPolicy.ConfirmAsync(_confirmations, request.NonInteractive, Describe(agent, workflowId, environment.EnvironmentId, deployments.Count, orphaned), agent.DisplayName, cancellationToken).ConfigureAwait(false);
+        var outcome = await ConfirmationPolicy.ConfirmAsync(_confirmations, request.NonInteractive, Describe(agent, workflowId, environment.EnvironmentId, deployments.Count, orphaned, agentUseWarning), agent.DisplayName, cancellationToken).ConfigureAwait(false);
 
         if (outcome != ConfirmationOutcome.Confirmed)
         {
@@ -96,6 +97,7 @@ public sealed class WorkflowDeleteService
             McsAgentAlreadyAbsent = !deleted,
             RemovedAgentDeployments = removed,
             OrphanedTargets = orphaned,
+            Warnings = agentUseWarning.Length == 0 ? [] : [agentUseWarning],
         };
     }
 
@@ -151,7 +153,7 @@ public sealed class WorkflowDeleteService
         return [.. orphaned];
     }
 
-    private static string Describe(ManagedAgentRecord agent, Guid workflowId, string environmentId, int deploymentCount, ManagedAgentOrphanedTarget[] orphaned)
+    private static string Describe(ManagedAgentRecord agent, Guid workflowId, string environmentId, int deploymentCount, ManagedAgentOrphanedTarget[] orphaned, string agentUseWarning)
     {
         var lines = new List<string>
         {
@@ -160,6 +162,11 @@ public sealed class WorkflowDeleteService
             $"  cloud flow   {workflowId} in {environmentId}",
             $"  records      1 ManagedAgent + {deploymentCount} AgentDeployment row(s)",
         };
+
+        if (agentUseWarning.Length > 0)
+        {
+            lines.Add(TextGrid.WarningLine("  ", agentUseWarning));
+        }
 
         if (orphaned.Length > 0)
         {

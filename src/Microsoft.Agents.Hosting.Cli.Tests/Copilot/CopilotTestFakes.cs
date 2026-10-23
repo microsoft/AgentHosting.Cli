@@ -40,11 +40,46 @@ internal sealed class FakeCopilotCatalogPort : ICopilotCatalogPort
 
     public List<string> ResolvedValues { get; } = [];
 
-    public Task<IReadOnlyList<CopilotAgentSummary>> ListAgentsAsync(CopilotEnvironmentContext environment, int? maximumCount, CancellationToken cancellationToken)
-    {
-        RequestedMaximumCounts.Add(maximumCount);
+    public Dictionary<string, List<CopilotAgentSummary>> AgentsByEnvironment { get; } = [];
 
-        return Task.FromResult<IReadOnlyList<CopilotAgentSummary>>(maximumCount > 0 ? [.. Agents.Take(maximumCount.Value)] : Agents);
+    public Dictionary<string, Exception> ListThrowsFor { get; } = [];
+
+    public Dictionary<string, TimeSpan> ListDelays { get; } = [];
+
+    public int MaximumConcurrentLists { get; private set; }
+
+    private readonly Lock _listGate = new();
+
+    private int _concurrentLists;
+
+    public async Task<IReadOnlyList<CopilotAgentSummary>> ListAgentsAsync(CopilotEnvironmentContext environment, int? maximumCount, CancellationToken cancellationToken)
+    {
+        lock (_listGate)
+        {
+            RequestedMaximumCounts.Add(maximumCount);
+            MaximumConcurrentLists = Math.Max(MaximumConcurrentLists, ++_concurrentLists);
+        }
+
+        try
+        {
+            await Task.Delay(ListDelays.TryGetValue(environment.EnvironmentId, out var delay) ? delay : TimeSpan.Zero, cancellationToken);
+
+            if (ListThrowsFor.TryGetValue(environment.EnvironmentId, out var failure))
+            {
+                throw failure;
+            }
+
+            var agents = AgentsByEnvironment.TryGetValue(environment.EnvironmentId, out var listed) ? listed : Agents;
+
+            return maximumCount > 0 ? [.. agents.Take(maximumCount.Value)] : agents;
+        }
+        finally
+        {
+            lock (_listGate)
+            {
+                _concurrentLists--;
+            }
+        }
     }
 
     public Task<string?> ResolveAgentIdAsync(CopilotEnvironmentContext environment, string botIdOrSchemaName, CancellationToken cancellationToken)
@@ -93,6 +128,8 @@ internal sealed class FakeCopilotCatalogPort : ICopilotCatalogPort
 internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
 {
     public bool WorkspaceExists { get; set; } = true;
+
+    public string ProjectFolderName(string displayName) => WorkspaceFolderNames.ForProject(displayName);
 
     public string EnvironmentIdReturns { get; init; } = "env-1";
 

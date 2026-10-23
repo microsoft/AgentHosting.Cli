@@ -117,6 +117,10 @@ mean a change partially completed or its result is uncertain.
 | [11051](ErrorCodes/11051.md) | The selected connector does not serve the connection requested for removal. |
 | [11052](ErrorCodes/11052.md) | The recipient email address matches more than one user in the tenant directory. |
 | [11053](ErrorCodes/11053.md) | Microsoft Graph could not resolve the recipient to a usable Entra user identity. |
+| [11054](ErrorCodes/11054.md) | The workflow belongs to a managed solution, so it cannot be cloned or pulled. |
+| [11055](ErrorCodes/11055.md) | The workflow name would be refused by Dataverse or cannot be used as a folder name. |
+| [11056](ErrorCodes/11056.md) | Deploying would overwrite workflow changes made in the environment. |
+| [11057](ErrorCodes/11057.md) | An unpublished draft saved in Copilot Studio blocks deploying the workflow. |
 
 ## Authentication
 

@@ -9,6 +9,8 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
 internal static class WorkflowFixtures
 {
+    public const string AgentUseWarning = "Copilot Studio agent 'NB1' uses this workflow and loses it when the workflow is deleted.";
+
     public static Guid Write(string workspaceRoot, string name, bool activated = true, Guid? workflowId = null, string? definition = null)
     {
         var id = workflowId ?? Guid.NewGuid();
@@ -33,12 +35,12 @@ internal static class WorkflowFixtures
         EntityTag = string.Empty,
     };
 
-    public static AgentDeploymentRecord Deployment(string agentId = "wf-1", string deploymentName = "devwf", string environmentId = "env-1", string deploymentId = "dep-1", string homeEnvironmentId = "env-1") => new()
+    public static AgentDeploymentRecord Deployment(string agentId = "wf-1", string deploymentName = "devwf", string environmentId = "env-1", string deploymentId = "dep-1", string homeEnvironmentId = "env-1", string deploymentType = DeploymentStages.Dev) => new()
     {
         DeploymentId = deploymentId,
         AgentId = agentId,
         AgentType = AgentTypes.McsWorkflow,
-        DeploymentType = DeploymentStages.Dev,
+        DeploymentType = deploymentType,
         DeploymentName = deploymentName,
         TenantId = EnvironmentFixtures.ContosoTenant,
         HomeEnvironmentId = homeEnvironmentId,
@@ -64,6 +66,8 @@ internal static class WorkflowFixtures
 internal sealed class FakeWorkflowScaffoldPort : IWorkflowScaffoldPort
 {
     public List<(string WorkspaceRoot, string Name, Guid WorkflowId)> Calls { get; } = [];
+
+    public string? ValidateName(string name) => new CopilotStudio.EmbeddedWorkflowScaffolder().ValidateName(name);
 
     public IReadOnlyList<string> Scaffold(string workspaceRoot, string name, Guid workflowId)
     {
@@ -99,6 +103,8 @@ internal sealed class FakeWorkflowWorkspacePort : IWorkflowWorkspacePort
     public bool IsStandaloneWorkspace(string directory) => WorkflowWorkspace.IsStandaloneWorkspace(directory);
 
     public bool HasAgentProject(string directory) => new CopilotStudio.WorkflowWorkspaceAdapter().HasAgentProject(directory);
+
+    public string ProjectFolderName(string displayName) => new CopilotStudio.WorkflowWorkspaceAdapter().ProjectFolderName(displayName);
 }
 
 internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
@@ -152,10 +158,11 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
             throw ManagedAgentException.WorkflowLocalChangesWouldBeLost(tracked.FolderName);
         }
 
-        if (WorkflowWorkspace.FindAll(workspaceRoot).FirstOrDefault(candidate => candidate.WorkflowId == workflowId) is { } existing
-            && !string.Equals(existing.FolderPath, folderPath, StringComparison.OrdinalIgnoreCase))
+        var previousFolder = WorkflowWorkspace.FindAll(workspaceRoot).FirstOrDefault(candidate => candidate.WorkflowId == workflowId && !string.Equals(candidate.FolderPath, folderPath, StringComparison.OrdinalIgnoreCase))?.FolderPath;
+
+        if (previousFolder is not null)
         {
-            Directory.Move(existing.FolderPath, folderPath);
+            Directory.Move(previousFolder, folderPath);
         }
 
         Directory.CreateDirectory(folderPath);
@@ -170,8 +177,10 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
         File.WriteAllText(metadataPath, metadata);
         LastSynced[workflowId] = definition;
 
-        return Task.FromResult(new WorkflowDownloadOutcome { Workflow = document, FolderPath = folderPath, Changed = changed });
+        return Task.FromResult(new WorkflowDownloadOutcome { Workflow = document, FolderPath = folderPath, PreviousFolder = previousFolder, Changed = changed, Warnings = WarningsOnDownload });
     }
+
+    public IReadOnlyList<string> WarningsOnDownload { get; set; } = [];
 
     public Dictionary<Guid, string> LastSynced { get; } = [];
 
@@ -198,8 +207,20 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
         CloudDefinition[folder.WorkflowId] = File.ReadAllText(folder.DefinitionPath);
         LastSynced[folder.WorkflowId] = File.ReadAllText(folder.DefinitionPath);
 
-        return Task.FromResult(new WorkflowUpsertOutcome { Workflow = document, Created = created, CreatedConnectionReferences = DeclaredConnectionReferences, ActivationRequested = activationRequested, DraftedForConnections = DraftedForConnectionsOnPush, Warning = WarningOnPush });
+        return Task.FromResult(new WorkflowUpsertOutcome { Workflow = document, Created = created, CreatedConnectionReferences = DeclaredConnectionReferences, ActivationRequested = activationRequested, DraftedForConnections = DraftedForConnectionsOnPush, Warning = WarningOnPush, UnboundConnectionReferences = UnboundConnectionReferencesOnPush });
     }
+
+    public HashSet<Guid> UnpulledChanges { get; } = [];
+
+    public Task RequireNoUnpulledChangesAsync(CopilotEnvironmentContext environment, string workspaceRoot, CancellationToken cancellationToken)
+    {
+        var folder = Single(workspaceRoot);
+        Calls.Add($"unpulled:{folder.WorkflowId}");
+
+        return UnpulledChanges.Contains(folder.WorkflowId) ? Task.FromException(ManagedAgentException.WorkflowCloudChangesWouldBeLost(folder.FolderName)) : Task.CompletedTask;
+    }
+
+    public List<string> UnboundConnectionReferencesOnPush { get; } = [];
 
     public string WarningOnPush { get; set; } = string.Empty;
 
@@ -231,6 +252,19 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
         CloudDefinition.Remove(workflowId);
 
         return Task.FromResult(true);
+    }
+
+    public Dictionary<Guid, string> AgentUseWarnings { get; } = [];
+
+    public List<(string EnvironmentId, Guid WorkflowId)> AgentUseReads { get; } = [];
+
+    public Exception? AgentUseThrows { get; set; }
+
+    public Task<string> GetAgentUseWarningAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken)
+    {
+        AgentUseReads.Add((environment.EnvironmentId, workflowId));
+
+        return AgentUseThrows is not null ? Task.FromException<string>(AgentUseThrows) : Task.FromResult(AgentUseWarnings.GetValueOrDefault(workflowId, string.Empty));
     }
 
     private static WorkflowFolder Single(string workspaceRoot) => WorkflowWorkspace.FindAll(workspaceRoot).Single();
