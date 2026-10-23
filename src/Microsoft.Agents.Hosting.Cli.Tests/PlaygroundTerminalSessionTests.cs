@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Playground;
 using Microsoft.Agents.Hosting.Cli.Hosting;
@@ -262,9 +265,8 @@ public sealed class PlaygroundTerminalSessionTests
             throw SkipException.ForSkip("Node.js was not found on PATH.");
         }
 
-        var directory = Directory.CreateTempSubdirectory("playground-terminal-output-");
-        var markerPath = Path.Combine(directory.FullName, "pid");
-        var stopPath = Path.Combine(directory.FullName, "stop");
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
         var startInfo = new ProcessStartInfo
         {
             FileName = node,
@@ -272,34 +274,41 @@ public sealed class PlaygroundTerminalSessionTests
         };
         startInfo.ArgumentList.Add("-e");
         startInfo.ArgumentList.Add(
-            "const fs=require('fs');const pid=process.argv[1];const stop=process.argv[2];fs.writeFileSync(pid,String(process.pid));console.log('terminal output');const timer=setInterval(()=>{if(fs.existsSync(stop)){clearInterval(timer);process.exit(0)}},10);");
-        startInfo.ArgumentList.Add(markerPath);
-        startInfo.ArgumentList.Add(stopPath);
+            """
+            const net = require('net');
+            const socket = net.createConnection(Number(process.argv[1]), '127.0.0.1', () => {
+                socket.write(`${process.pid}\n`);
+                const output = Buffer.alloc(1024 * 1024, 'x');
+                let pending = 2;
+                const written = () => {
+                    if (--pending === 0) socket.write('drained\n');
+                };
+                process.stdout.write(output, written);
+                process.stderr.write(output, written);
+            });
+            socket.on('end', () => process.exit(0));
+            """);
+        startInfo.ArgumentList.Add(
+            ((IPEndPoint)listener.LocalEndpoint).Port.ToString(CultureInfo.InvariantCulture));
+
+        PlaygroundTerminalSession.StartTerminalProcess(startInfo, redirectOutput: true);
+        using var client = await listener.AcceptTcpClientAsync();
+        using var reader = new StreamReader(client.GetStream());
+        var pid = await reader.ReadLineAsync();
+        Assert.NotNull(pid);
+        using var process = Process.GetProcessById(int.Parse(pid, CultureInfo.InvariantCulture));
 
         try
         {
-            PlaygroundTerminalSession.StartTerminalProcess(startInfo, redirectOutput: true);
             Assert.True(startInfo.RedirectStandardOutput);
             Assert.True(startInfo.RedirectStandardError);
-            var pid = await WaitForPidAsync(markerPath);
-            using var process = Process.GetProcessById(pid);
+            Assert.Equal("drained", await reader.ReadLineAsync());
             Assert.False(process.HasExited);
-            await File.WriteAllTextAsync(stopPath, "stop");
-            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.Equal(0, process.ExitCode);
         }
         finally
         {
-            if (File.Exists(stopPath))
-            {
-                File.Delete(stopPath);
-            }
-            else
-            {
-                await File.WriteAllTextAsync(stopPath, "stop");
-            }
-
-            directory.Delete(recursive: true);
+            client.Dispose();
+            await process.WaitForExitAsync();
         }
     }
 
@@ -338,22 +347,6 @@ public sealed class PlaygroundTerminalSessionTests
             .Select(directory => Path.Combine(
                 directory, OperatingSystem.IsWindows() ? "node.exe" : "node"))
             .FirstOrDefault(File.Exists);
-    }
-
-    private static async Task<int> WaitForPidAsync(string path)
-    {
-        var timeoutAt = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < timeoutAt)
-        {
-            if (File.Exists(path) && int.TryParse(await File.ReadAllTextAsync(path), out var pid))
-            {
-                return pid;
-            }
-
-            await Task.Delay(25);
-        }
-
-        throw new XunitException("The terminal fixture did not publish its process id.");
     }
 
     private sealed class RecordingEnvironmentProcessFactory : IPlaygroundProcessFactory
