@@ -203,7 +203,7 @@ internal static class Program
         services.AddSingleton<IManagedAgentRegistry>(sp => sp.GetRequiredService<JsonAgentConfigStore>());
         services.AddSingleton<IAgentDeploymentRegistry>(sp => sp.GetRequiredService<JsonAgentConfigStore>());
         services.AddSingleton<IDeploymentStore, ProjectDeploymentStore>();
-        services.AddSingleton<IConfirmationPrompt>(_ => new ConsoleConfirmationPrompt(progressSpinner.WrapInput(Console.In), progressSpinner.Error));
+        services.AddSingleton<IConfirmationPrompt>(_ => new ConsoleConfirmationPrompt(PromptInput(progressSpinner), progressSpinner.Error));
         services.AddSingleton<ManagedAgentPrincipalResolver>();
         services.AddSingleton<ManagedAgentResolver>();
         services.AddSingleton<LiveTestTargetResolver>();
@@ -288,7 +288,7 @@ internal static class Program
         services.AddSingleton<ConnectorResolver>();
         services.AddSingleton<WorkflowStateCache>();
         services.AddSingleton<WorkflowActivationPass>();
-        services.AddSingleton<IConnectionSelectionPrompt>(_ => new ConsoleConnectionSelectionPrompt(progressSpinner.WrapInput(Console.In), progressSpinner.Error));
+        services.AddSingleton<IConnectionSelectionPrompt>(_ => new ConsoleConnectionSelectionPrompt(PromptInput(progressSpinner), progressSpinner.Error));
         services.AddSingleton<ConnectionCreationFlow>();
         services.AddSingleton<ConnectionBindingCoordinator>();
         services.AddSingleton(sp => new AgentDeploymentConnectionService(
@@ -453,6 +453,8 @@ internal static class Program
             return 0;
         }
     }
+
+    private static TextReader PromptInput(ProgressSpinner progressSpinner) => progressSpinner.WrapInput(Console.In, echoed: !Console.IsInputRedirected);
 
     /// <summary>
     /// Resolves the Power Platform API ring from the ring the active sign-in records, before the

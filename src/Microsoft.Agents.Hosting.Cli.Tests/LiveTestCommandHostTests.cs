@@ -104,7 +104,7 @@ public sealed class LiveTestCommandHostTests
         var handler = new TestHandler { OnHandle = () => time.Advance(TimeSpan.FromSeconds(1)) };
         var output = new StringWriter();
         var error = new StringWriter();
-        var cli = new AgentHostCli(new FakeOperations(), telemetryFactory: null, services: new HandlerProvider(handler), featureFlags: new TestFeatureFlags(FeatureName.LiveTestFeatures), progressSpinner: new ProgressSpinner(error, enabled: true, color: false, time, () => 80));
+        var cli = new AgentHostCli(new FakeOperations(), telemetryFactory: null, services: new HandlerProvider(handler), featureFlags: new TestFeatureFlags(FeatureName.LiveTestFeatures), progressSpinner: new ProgressSpinner(error, enabled: true, ansi: false, time, () => 80));
 
         var exit = await cli.InvokeAsync(["test", "ask", "--query", "hello"], output, error, color: false);
 

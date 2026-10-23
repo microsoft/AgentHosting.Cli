@@ -1217,7 +1217,7 @@ public class CommandHostTests
         var (exitCode, output) = RunWithSpinner(operations, time, "agent", "deploy", "--deployment-name", "dev");
 
         Assert.Equal(ExitCodes.Success, exitCode);
-        Assert.StartsWith($"\r\u280B Deploying agent (0s)\r{new string(' ', 22)}\rDeployed cr_agent to dev (dev) in env-1.", output);
+        Assert.StartsWith($"\r\u280B Deploying agent (0s)\r\r{new string(' ', 22)}\rDeployed cr_agent to dev (dev) in env-1.", output);
     }
 
     [Fact]
@@ -1248,7 +1248,7 @@ public class CommandHostTests
         var (exitCode, output) = RunWithSpinner(SlowEnvironmentList(time, TimeSpan.FromMilliseconds(500)), time, "env", "list");
 
         Assert.Equal(ExitCodes.Success, exitCode);
-        Assert.StartsWith($"\r\u280B Running env list (0s)\r{new string(' ', 23)}\r", output);
+        Assert.StartsWith($"\r\u280B Running env list (0s)\r\r{new string(' ', 23)}\r", output);
     }
 
     [Theory]
@@ -1280,7 +1280,7 @@ public class CommandHostTests
         var (exitCode, output) = RunWithSpinner(operations, time, "env", "list");
 
         Assert.Equal(ExitCodes.Failure, exitCode);
-        Assert.Equal($"\r\u280B Running env list (0s)\r{new string(' ', 23)}\rInvalidOperationException: The service is unavailable.{Environment.NewLine}", output);
+        Assert.Equal($"\r\u280B Running env list (0s)\r\r{new string(' ', 23)}\rInvalidOperationException: The service is unavailable.{Environment.NewLine}", output);
     }
 
     [Fact]
@@ -1301,7 +1301,7 @@ public class CommandHostTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => SpinnerHost(operations, time, output).InvokeAsync(["auth", "status"], output, output, color: false, cancellation.Token));
 
-        Assert.Equal($"\r\u280B Running auth status (0s)\r{new string(' ', 26)}\r", output.ToString());
+        Assert.Equal($"\r\u280B Running auth status (0s)\r\r{new string(' ', 26)}\r", output.ToString());
     }
 
     private static (int ExitCode, string Output) RunWithSpinner(FakeOperations operations, ManualTimeProvider time, params string[] args)
@@ -1312,7 +1312,7 @@ public class CommandHostTests
     }
 
     private static AgentHostCli SpinnerHost(FakeOperations operations, ManualTimeProvider time, TextWriter terminal) =>
-        new(operations, telemetryFactory: null, featureFlags: TestFeatureFlags.AllProductSurfaces, progressSpinner: new ProgressSpinner(terminal, enabled: true, color: false, time, () => 80));
+        new(operations, telemetryFactory: null, featureFlags: TestFeatureFlags.AllProductSurfaces, progressSpinner: new ProgressSpinner(terminal, enabled: true, ansi: false, time, () => 80));
 
     private static FakeOperations SlowEnvironmentList(ManualTimeProvider time, TimeSpan duration) => new()
     {
