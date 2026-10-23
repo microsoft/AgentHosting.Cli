@@ -97,6 +97,23 @@ public sealed class LiveTestCommandHostTests
         Assert.DoesNotContain("secret response body", result.Error, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task StreamingCommandNeverShowsTheProgressSpinner()
+    {
+        var time = new ManualTimeProvider();
+        var handler = new TestHandler { OnHandle = () => time.Advance(TimeSpan.FromSeconds(1)) };
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var cli = new AgentHostCli(new FakeOperations(), telemetryFactory: null, services: new HandlerProvider(handler), featureFlags: new TestFeatureFlags(FeatureName.LiveTestFeatures), progressSpinner: new ProgressSpinner(error, enabled: true, ansi: false, time, () => 80));
+
+        var exit = await cli.InvokeAsync(["test", "ask", "--query", "hello"], output, error, color: false);
+
+        Assert.Equal(0, exit);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal("""{"streaming":true}""", output.ToString());
+        Assert.Empty(error.ToString());
+    }
+
     private static async Task<(int Exit, string Output, string Error)> Invoke(
         IFeatureFlags flags, TestHandler handler, params string[] args)
     {
@@ -121,11 +138,13 @@ public sealed class LiveTestCommandHostTests
         public int Exit { get; init; }
         public LiveTestRequest? Request { get; private set; }
         public Func<LiveTestRequest, ILiveTestStreamingResult>? ResultFactory { get; init; }
+        public Action? OnHandle { get; init; }
 
         public Task<ILiveTestStreamingResult> HandleAsync(LiveTestRequest request, CancellationToken cancellationToken)
         {
             Calls++;
             Request = request;
+            OnHandle?.Invoke();
             return Task.FromResult(ResultFactory?.Invoke(request) ?? (ILiveTestStreamingResult)new TestResult(Exit));
         }
     }

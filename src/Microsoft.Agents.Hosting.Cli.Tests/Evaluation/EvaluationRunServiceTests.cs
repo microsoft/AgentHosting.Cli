@@ -18,7 +18,7 @@ public sealed class EvaluationRunServiceTests
     private readonly RecordingMessagePresenter _presenter = new();
     private readonly AdvancingTestClock _clock = new();
 
-    private EvaluationRunService Create()
+    private EvaluationRunService Create(IProgressStatus? progress = null)
     {
         var lookup = new EvaluationTestSetLookup(_port);
         var conversations = new EvaluationConversationProvider(_port, _files);
@@ -29,7 +29,7 @@ public sealed class EvaluationRunServiceTests
             _delays.Add(delay);
             _clock.Advance(delay);
             return Task.CompletedTask;
-        });
+        }, progress);
     }
 
     [Fact]
@@ -434,6 +434,45 @@ public sealed class EvaluationRunServiceTests
                 "  Completed.",
             ],
             _presenter.Messages);
+    }
+
+    [Fact]
+    public async Task RunAsync_WatchShowsProgressOnTheStatusLineInsteadOfPrintingIt()
+    {
+        var progress = new RecordingProgressStatus(shown: true);
+        EnqueueWatchedRun();
+
+        await Create(progress).RunAsync(new EvaluationRunRequest { TestSet = "Nightly", Watch = true }, CancellationToken.None);
+
+        Assert.Equal(["Evaluation run run-1 started against test set 'Nightly'. Waiting for results."], _presenter.Messages);
+        Assert.Equal(["Queued", "InProgress: 1 of 2 conversation(s) evaluated", "Completed: 2 of 2 conversation(s) evaluated"], progress.Reports);
+    }
+
+    [Fact]
+    public async Task RunAsync_WatchPrintsProgressWhenNoStatusLineShowsIt()
+    {
+        var progress = new RecordingProgressStatus(shown: false);
+        EnqueueWatchedRun();
+
+        await Create(progress).RunAsync(new EvaluationRunRequest { TestSet = "Nightly", Watch = true }, CancellationToken.None);
+
+        Assert.Equal(["Queued", "InProgress: 1 of 2 conversation(s) evaluated", "Completed: 2 of 2 conversation(s) evaluated"], progress.Reports);
+        Assert.Equal(
+            [
+                "Evaluation run run-1 started against test set 'Nightly'. Waiting for results.",
+                "  Queued.",
+                "  InProgress: 1 of 2 conversation(s) evaluated.",
+                "  Completed: 2 of 2 conversation(s) evaluated.",
+            ],
+            _presenter.Messages);
+    }
+
+    private void EnqueueWatchedRun()
+    {
+        _port.TestSets.Add(EvaluationScenarios.TestSet("testset-7", "Nightly", 2));
+        _port.RunDetails.Enqueue(EvaluationScenarios.RunDetail(EvaluationRunStates.Queued));
+        _port.RunDetails.Enqueue(EvaluationScenarios.RunDetail(EvaluationRunStates.InProgress, testCases: [Case("Pass"), Case(null)]));
+        _port.RunDetails.Enqueue(EvaluationScenarios.RunDetail(EvaluationRunStates.Completed, testCases: [Case("Pass"), Case("Fail")]));
     }
 
     private static EvaluationTestCaseResult Case(string? evaluationResult) =>

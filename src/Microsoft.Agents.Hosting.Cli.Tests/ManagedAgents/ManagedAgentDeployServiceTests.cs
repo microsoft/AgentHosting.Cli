@@ -12,7 +12,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 [Collection("CurrentDirectory")]
 public sealed class ManagedAgentDeployServiceTests
 {
-    private static ManagedAgentDeployService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces, RecordingAttachPort attach, FakeCopilotCatalogPort? catalog = null, WorkflowActivationPass? activation = null)
+    private static ManagedAgentDeployService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces, RecordingAttachPort attach, FakeCopilotCatalogPort? catalog = null, WorkflowActivationPass? activation = null, IProgressStatus? progress = null)
     {
         var resolvedCatalog = catalog ?? new FakeCopilotCatalogPort();
         var environments = ManagedAgentFixtures.Resolver();
@@ -32,7 +32,8 @@ public sealed class ManagedAgentDeployServiceTests
             new CopilotCatalogService(resolvedCatalog, environments, locator, new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
             ManagedAgentFixtures.Principals(),
             activation ?? ManagedAgentFixtures.ActivationPass(),
-            new FixedClock(ManagedAgentFixtures.Now));
+            new FixedClock(ManagedAgentFixtures.Now),
+            progress);
     }
 
     [Fact]
@@ -1178,6 +1179,47 @@ public sealed class ManagedAgentDeployServiceTests
 
         Assert.True(result.Published);
         Assert.Equal(1, catalog.PublishCalls);
+    }
+
+    [Theory]
+    [InlineData(false, new[] { "Pushing changes" })]
+    [InlineData(true, new[] { "Pushing changes", "Publishing" })]
+    public async Task Deploy_ReportsEachStepOnTheStatusLine(bool publish, string[] expected)
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        store.Update(workspace.Root, store.List(workspace.Root).Single() with { McsAgentId = "11111111-1111-1111-1111-111111111111" });
+        var catalog = new FakeCopilotCatalogPort { ResolveReturns = "11111111-1111-1111-1111-111111111111" };
+        catalog.PublishedOnSequence.Enqueue(null);
+        catalog.PublishedOnSequence.Enqueue(ManagedAgentFixtures.Now);
+        var progress = new RecordingProgressStatus(shown: true);
+
+        await Create(store, Fresh(out var workspaces), Connecting(workspaces), catalog, progress: progress).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev", Publish = publish },
+            CancellationToken.None);
+
+        Assert.Equal(expected, progress.Reports);
+    }
+
+    [Fact]
+    public async Task Deploy_AWithheldPublishIsNeverReportedAsAStep()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent());
+        store.Add(workspace.Root, ManagedAgentFixtures.Deployment());
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true };
+        workspaces.PushWarnings.Add("A component was refused: ExportKeyInvalidCreate on cre98_AgentC1.cr.WX3p-EQ4");
+        var progress = new RecordingProgressStatus(shown: true);
+
+        await Assert.ThrowsAsync<ManagedAgentException>(() =>
+            Create(store, workspaces, Connecting(workspaces), progress: progress).DeployAsync(
+                new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev", Publish = true },
+                CancellationToken.None));
+
+        Assert.Equal(["Pushing changes"], progress.Reports);
     }
 
     [Fact]

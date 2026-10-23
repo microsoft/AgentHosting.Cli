@@ -10,10 +10,16 @@ namespace Microsoft.Agents.Hosting.Cli.Auth;
 /// </summary>
 public sealed class ConsoleInteractiveMessagePresenter : IInteractiveMessagePresenter
 {
+    private readonly TextWriter _output;
+
+    /// <summary>Creates a presenter that writes to <paramref name="output"/>.</summary>
+    /// <param name="output">The standard-error writer messages are written to.</param>
+    public ConsoleInteractiveMessagePresenter(TextWriter output) => _output = output ?? throw new ArgumentNullException(nameof(output));
+
     /// <inheritdoc />
     public Task PresentAsync(string message, CancellationToken cancellationToken)
     {
-        Console.Error.WriteLine(message);
+        _output.WriteLine(message);
         return Task.CompletedTask;
     }
 }

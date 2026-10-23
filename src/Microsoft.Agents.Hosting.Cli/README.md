@@ -1116,6 +1116,7 @@ environment itself:
 | `AH_CLI_AMS_ENDPOINT` | Agent Management Service **control plane** endpoint, used by deploy. Absolute HTTPS; deployment-configured, not settable per command. |
 | `AH_CLI_AMSDP_ENDPOINT` | Agent Management Service **data plane** endpoint, used by package upload and by `agent create` as a direct Dev-island override. Absolute HTTPS. |
 | `NO_COLOR` | Disable colored output (same effect as `--no-color`). |
+| `CI` | Hide the progress spinner when set to anything other than `false` or `0`, as CI systems do. |
 
 The CLI supports TLS 1.3 and TLS 1.2.
 

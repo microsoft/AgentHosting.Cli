@@ -7,7 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Auth;
 
 /// <summary><c>msagent auth login</c>.</summary>
-[Command("login", Description = "Sign in.", ParentGroup = typeof(AuthGroup), SortPriority = 10)]
+[Command("login", Description = "Sign in.", ParentGroup = typeof(AuthGroup), SortPriority = 10, SuppressProgress = true)]
 public sealed class AuthLoginCommand : CommandBase<AuthLoginRequest, AuthLoginResult>
 {
     /// <inheritdoc />

@@ -22,6 +22,12 @@ public sealed class CommandAttribute : Attribute
 
     /// <summary>Orders siblings in help; ties break on ordinal name.</summary>
     public int SortPriority { get; init; }
+
+    /// <summary>The progress spinner text shown while the command runs, such as "Deploying agent".</summary>
+    public string? ProgressLabel { get; init; }
+
+    /// <summary>Keeps the progress spinner hidden while the command runs.</summary>
+    public bool SuppressProgress { get; init; }
 }
 
 /// <summary>Marks a class as a command group — a node that owns children rather than an action.</summary>

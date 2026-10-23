@@ -21,6 +21,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Playground;
 using Microsoft.Agents.Hosting.Cli.Features;
 using Microsoft.Agents.Hosting.Cli.Hosting;
 using Microsoft.Agents.Hosting.Cli.Ports;
+using Microsoft.Agents.Hosting.Cli.Rendering;
 using Microsoft.Agents.Hosting.Cli.Telemetry;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -112,6 +113,8 @@ internal static class Program
             outputRedirected: Console.IsOutputRedirected,
             errorRedirected: Console.IsErrorRedirected);
 
+        var progressSpinner = new ProgressSpinner(Console.Error, ConsoleProgressPolicy.ShouldShowProgress(Console.IsErrorRedirected, Environment.GetEnvironmentVariable("CI")), color, TimeProvider.System, ConsoleWidth);
+
         var options = new AgentHostAuthOptions
         {
             ClientId = Environment.GetEnvironmentVariable("AH_CLI_CLIENT_ID"),
@@ -124,10 +127,12 @@ internal static class Program
             Cloud = powerPlatformApiTarget.Cloud,
             InteractionAllowed = !GlobalOptions.IsPresent(args, "--non-interactive"),
             DebugOutput = GlobalOptions.IsPresent(args, "--debug") ? Console.Error : null,
+            MessageOutput = progressSpinner.Error,
         };
 
         var services = new ServiceCollection();
         services.AddSingleton<IClock, SystemClock>();
+        services.AddSingleton<IProgressStatus>(progressSpinner);
         services.AddSingleton<IFeatureFlags>(featureFlags);
         services.AddSingleton<CommandTelemetrySessionAccessor>();
         services.AddSingleton<CommandTelemetryTenantObserver>();
@@ -177,7 +182,7 @@ internal static class Program
             sp => new CommandTelemetryProfileContextSource(
                 sp.GetRequiredService<IAuthProfileTelemetryStore>(),
                 sp.GetRequiredService<AuthSessionContext>()));
-        services.AddAgentHostCopilotStudio(Console.Error, powerPlatformApiTarget, debugRequested);
+        services.AddAgentHostCopilotStudio(progressSpinner.Error, powerPlatformApiTarget, debugRequested);
         services.AddSingleton<IEnvironmentGeographyClient>(
             sp => new PowerPlatformApiEnvironmentGeographyClient(
                 new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
@@ -198,7 +203,7 @@ internal static class Program
         services.AddSingleton<IManagedAgentRegistry>(sp => sp.GetRequiredService<JsonAgentConfigStore>());
         services.AddSingleton<IAgentDeploymentRegistry>(sp => sp.GetRequiredService<JsonAgentConfigStore>());
         services.AddSingleton<IDeploymentStore, ProjectDeploymentStore>();
-        services.AddSingleton<IConfirmationPrompt>(_ => new ConsoleConfirmationPrompt(Console.In, Console.Error));
+        services.AddSingleton<IConfirmationPrompt>(_ => new ConsoleConfirmationPrompt(PromptInput(progressSpinner), progressSpinner.Error));
         services.AddSingleton<ManagedAgentPrincipalResolver>();
         services.AddSingleton<ManagedAgentResolver>();
         services.AddSingleton<LiveTestTargetResolver>();
@@ -283,7 +288,7 @@ internal static class Program
         services.AddSingleton<ConnectorResolver>();
         services.AddSingleton<WorkflowStateCache>();
         services.AddSingleton<WorkflowActivationPass>();
-        services.AddSingleton<IConnectionSelectionPrompt>(_ => new ConsoleConnectionSelectionPrompt(Console.In, Console.Error));
+        services.AddSingleton<IConnectionSelectionPrompt>(_ => new ConsoleConnectionSelectionPrompt(PromptInput(progressSpinner), progressSpinner.Error));
         services.AddSingleton<ConnectionCreationFlow>();
         services.AddSingleton<ConnectionBindingCoordinator>();
         services.AddSingleton(sp => new AgentDeploymentConnectionService(
@@ -333,7 +338,8 @@ internal static class Program
             sp.GetRequiredService<IAgentEvaluationPort>(),
             sp.GetRequiredService<ICopilotFileSystem>(),
             sp.GetRequiredService<IInteractiveMessagePresenter>(),
-            sp.GetRequiredService<IClock>()));
+            sp.GetRequiredService<IClock>(),
+            progress: sp.GetRequiredService<IProgressStatus>()));
         services.AddSingleton<EvaluationServices>();
 
         var telemetryPreferences =
@@ -382,7 +388,8 @@ internal static class Program
             provider.GetRequiredService<CommandTelemetrySessionFactory>(),
             new CompositeHandlerProvider(new FacadeHandlerProvider(operations), provider),
             featureFlags,
-            provider.GetRequiredService<CommandTelemetrySessionAccessor>());
+            provider.GetRequiredService<CommandTelemetrySessionAccessor>(),
+            progressSpinner: progressSpinner);
 
         using var lifetime = new CancellationTokenSource();
 
@@ -434,6 +441,20 @@ internal static class Program
         Console.Error.WriteLine(message);
         return ExitCodes.Failure;
     }
+
+    private static int ConsoleWidth()
+    {
+        try
+        {
+            return Console.WindowWidth;
+        }
+        catch (Exception failure) when (failure is IOException or PlatformNotSupportedException)
+        {
+            return 0;
+        }
+    }
+
+    private static TextReader PromptInput(ProgressSpinner progressSpinner) => progressSpinner.WrapInput(Console.In, echoed: !Console.IsInputRedirected);
 
     /// <summary>
     /// Resolves the Power Platform API ring from the ring the active sign-in records, before the
