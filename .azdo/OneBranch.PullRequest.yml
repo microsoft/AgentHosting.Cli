@@ -146,6 +146,31 @@ extends:
               isOfficialBuild: false
               OutputDirectoryRoot: '$(OUTPUTROOT)'
 
+          - task: PowerShell@2
+            displayName: Repeat terminal output drain test 50 times
+            condition: succeededOrFailed()
+            inputs:
+              targetType: inline
+              workingDirectory: $(Build.SourcesDirectory)
+              script: |
+                $project = "src\Microsoft.Agents.Hosting.Cli.Tests\Microsoft.Agents.Hosting.Cli.Tests.csproj"
+                $filter = "FullyQualifiedName~LinuxTerminalOutputIsDrainedWhileSessionProcessRemainsRunning"
+                $configuration = if (Test-Path "src\Microsoft.Agents.Hosting.Cli.Tests\bin\release\net10.0\Microsoft.Agents.Hosting.Cli.Tests.dll") { "release" } else { "debug" }
+                Write-Host "Using configuration: $configuration"
+                $failures = 0
+                for ($iteration = 1; $iteration -le 50; $iteration++) {
+                  $output = dotnet test $project --no-build --no-restore -c $configuration --filter $filter 2>&1 | Out-String
+                  if ($LASTEXITCODE -ne 0 -or $output -notmatch "Passed:\s+1,\s+Skipped:\s+0") {
+                    $failures++
+                    Write-Host "##vso[task.logissue type=error]Iteration $iteration failed or was skipped."
+                    Write-Host $output
+                  }
+                  else {
+                    Write-Host "Iteration $iteration passed."
+                  }
+                }
+                Write-Host "Failures: $failures / 50"
+                if ($failures -gt 0) { exit 1 }
           - task: CopyFiles@2
             displayName: "Copy Files for 'Publish packages (Debug)' publish task"
             inputs:
