@@ -139,7 +139,7 @@ public static class OptionCatalog
     /// <param name="description">Command-specific help text.</param>
     /// <param name="required">Whether the parser requires a value.</param>
     public static CommandOption Value(string name, string description, bool required = false) =>
-        new(name, description) { ShortAlias = Alias(name), ValueType = typeof(string), IsRequired = required };
+        new(name, description) { ShortAlias = Alias(name), ExtraAliases = LongAliases(name), ValueType = typeof(string), IsRequired = required };
 
     /// <summary>Creates a bare flag.</summary>
     /// <param name="name">The option name, including leading dashes.</param>
@@ -151,7 +151,7 @@ public static class OptionCatalog
     /// <param name="name">The option name.</param>
     /// <param name="description">Help text.</param>
     public static CommandOption Recursive(string name, string description) =>
-        new(name, description) { ShortAlias = Alias(name), ValueType = typeof(string), Recursive = true };
+        new(name, description) { ShortAlias = Alias(name), ExtraAliases = LongAliases(name), ValueType = typeof(string), Recursive = true };
 
     /// <summary>Creates a flag every descendant of the owning command also accepts.</summary>
     /// <param name="name">The option name.</param>
@@ -187,4 +187,7 @@ public static class OptionCatalog
     public static string Alias(string name) => Aliases.TryGetValue(name, out var alias)
         ? alias
         : throw new CommandConfigurationException($"Option '{name}' has no entry in OptionCatalog. Add its alias there so one name means one alias everywhere.");
+
+    private static IReadOnlyList<string> LongAliases(string name) =>
+        name == "--tenant" ? ["--tenant-id"] : [];
 }

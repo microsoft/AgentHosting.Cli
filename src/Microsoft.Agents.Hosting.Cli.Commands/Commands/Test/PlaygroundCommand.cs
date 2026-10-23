@@ -7,7 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Test;
 
 /// <summary>Launches the M365 Agents Playground against a selected Copilot Studio runtime.</summary>
-[Command("playground", Description = "Launch the M365 Agents Playground using DirectEngine or Direct Line. Live actions can have real effects. Direct Line requires an interactive terminal and native masked credential entry. DirectEngine browser/device-code sign-in may still require user action even with --non-interactive; --json is unsupported in this MVP.", ParentGroup = typeof(TestGroup), SortPriority = 20)]
+[Command("playground", Description = "Launch the M365 Agents Playground in a new terminal window using DirectEngine or Direct Line, returning after startup. Live actions can have real effects. Direct Line requires an interactive terminal and native masked credential entry. DirectEngine browser/device-code sign-in may still require user action even with --non-interactive; --json is unsupported in this MVP.", ParentGroup = typeof(TestGroup), SortPriority = 20)]
 [RequiredFeatureFlag(FeatureName.LiveTestFeatures)]
 public sealed class PlaygroundCommand : CommandBase<PlaygroundRequest, ILiveTestStreamingResult>
 {
