@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Playground;
 using Microsoft.Agents.Hosting.Cli.Hosting;
@@ -262,9 +265,9 @@ public sealed class PlaygroundTerminalSessionTests
             throw SkipException.ForSkip("Node.js was not found on PATH.");
         }
 
-        var directory = Directory.CreateTempSubdirectory("playground-terminal-output-");
-        var markerPath = Path.Combine(directory.FullName, "pid");
-        var stopPath = Path.Combine(directory.FullName, "stop");
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var startInfo = new ProcessStartInfo
         {
             FileName = node,
@@ -272,34 +275,64 @@ public sealed class PlaygroundTerminalSessionTests
         };
         startInfo.ArgumentList.Add("-e");
         startInfo.ArgumentList.Add(
-            "const fs=require('fs');const pid=process.argv[1];const stop=process.argv[2];fs.writeFileSync(pid,String(process.pid));console.log('terminal output');const timer=setInterval(()=>{if(fs.existsSync(stop)){clearInterval(timer);process.exit(0)}},10);");
-        startInfo.ArgumentList.Add(markerPath);
-        startInfo.ArgumentList.Add(stopPath);
+            """
+            const net = require('net');
+            const deadline = setTimeout(() => process.exit(2), 120000);
+            const socket = net.createConnection(Number(process.argv[1]), '127.0.0.1', () => {
+                socket.write(`${process.pid}\n`);
+                const output = Buffer.alloc(1024 * 1024, 'x');
+                let pending = 2;
+                const written = () => {
+                    if (--pending === 0) socket.write('drained\n');
+                };
+                process.stdout.write(output, written);
+                process.stderr.write(output, written);
+            });
+            socket.on('end', () => {
+                clearTimeout(deadline);
+                process.exit(0);
+            });
+            """);
+        startInfo.ArgumentList.Add(
+            ((IPEndPoint)listener.LocalEndpoint).Port.ToString(CultureInfo.InvariantCulture));
+
+        TcpClient? client = null;
+        StreamReader? reader = null;
+        Process? process = null;
 
         try
         {
             PlaygroundTerminalSession.StartTerminalProcess(startInfo, redirectOutput: true);
+            client = await listener.AcceptTcpClientAsync(startup.Token);
+            reader = new StreamReader(client.GetStream());
+            var pid = await reader.ReadLineAsync(startup.Token);
+            Assert.NotNull(pid);
+            process = Process.GetProcessById(int.Parse(pid, CultureInfo.InvariantCulture));
             Assert.True(startInfo.RedirectStandardOutput);
             Assert.True(startInfo.RedirectStandardError);
-            var pid = await WaitForPidAsync(markerPath);
-            using var process = Process.GetProcessById(pid);
+            Assert.Equal("drained", await reader.ReadLineAsync(startup.Token));
             Assert.False(process.HasExited);
-            await File.WriteAllTextAsync(stopPath, "stop");
-            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.Equal(0, process.ExitCode);
         }
         finally
         {
-            if (File.Exists(stopPath))
+            reader?.Dispose();
+            client?.Dispose();
+            if (process is not null)
             {
-                File.Delete(stopPath);
-            }
-            else
-            {
-                await File.WriteAllTextAsync(stopPath, "stop");
-            }
+                try
+                {
+                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch (TimeoutException)
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
 
-            directory.Delete(recursive: true);
+                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                }
+            }
         }
     }
 
@@ -338,22 +371,6 @@ public sealed class PlaygroundTerminalSessionTests
             .Select(directory => Path.Combine(
                 directory, OperatingSystem.IsWindows() ? "node.exe" : "node"))
             .FirstOrDefault(File.Exists);
-    }
-
-    private static async Task<int> WaitForPidAsync(string path)
-    {
-        var timeoutAt = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < timeoutAt)
-        {
-            if (File.Exists(path) && int.TryParse(await File.ReadAllTextAsync(path), out var pid))
-            {
-                return pid;
-            }
-
-            await Task.Delay(25);
-        }
-
-        throw new XunitException("The terminal fixture did not publish its process id.");
     }
 
     private sealed class RecordingEnvironmentProcessFactory : IPlaygroundProcessFactory
