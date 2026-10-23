@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.CopilotStudio.Sync" />
+    <PackageReference Include="Microsoft.Agents.CopilotStudio.Sync" />
   </ItemGroup>
 
   <ItemGroup>
