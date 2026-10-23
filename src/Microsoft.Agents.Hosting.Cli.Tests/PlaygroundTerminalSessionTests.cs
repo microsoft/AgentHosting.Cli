@@ -267,6 +267,7 @@ public sealed class PlaygroundTerminalSessionTests
 
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
+        using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var startInfo = new ProcessStartInfo
         {
             FileName = node,
@@ -276,6 +277,7 @@ public sealed class PlaygroundTerminalSessionTests
         startInfo.ArgumentList.Add(
             """
             const net = require('net');
+            const deadline = setTimeout(() => process.exit(2), 120000);
             const socket = net.createConnection(Number(process.argv[1]), '127.0.0.1', () => {
                 socket.write(`${process.pid}\n`);
                 const output = Buffer.alloc(1024 * 1024, 'x');
@@ -286,29 +288,51 @@ public sealed class PlaygroundTerminalSessionTests
                 process.stdout.write(output, written);
                 process.stderr.write(output, written);
             });
-            socket.on('end', () => process.exit(0));
+            socket.on('end', () => {
+                clearTimeout(deadline);
+                process.exit(0);
+            });
             """);
         startInfo.ArgumentList.Add(
             ((IPEndPoint)listener.LocalEndpoint).Port.ToString(CultureInfo.InvariantCulture));
 
-        PlaygroundTerminalSession.StartTerminalProcess(startInfo, redirectOutput: true);
-        using var client = await listener.AcceptTcpClientAsync();
-        using var reader = new StreamReader(client.GetStream());
-        var pid = await reader.ReadLineAsync();
-        Assert.NotNull(pid);
-        using var process = Process.GetProcessById(int.Parse(pid, CultureInfo.InvariantCulture));
+        TcpClient? client = null;
+        StreamReader? reader = null;
+        Process? process = null;
 
         try
         {
+            PlaygroundTerminalSession.StartTerminalProcess(startInfo, redirectOutput: true);
+            client = await listener.AcceptTcpClientAsync(startup.Token);
+            reader = new StreamReader(client.GetStream());
+            var pid = await reader.ReadLineAsync(startup.Token);
+            Assert.NotNull(pid);
+            process = Process.GetProcessById(int.Parse(pid, CultureInfo.InvariantCulture));
             Assert.True(startInfo.RedirectStandardOutput);
             Assert.True(startInfo.RedirectStandardError);
-            Assert.Equal("drained", await reader.ReadLineAsync());
+            Assert.Equal("drained", await reader.ReadLineAsync(startup.Token));
             Assert.False(process.HasExited);
         }
         finally
         {
-            client.Dispose();
-            await process.WaitForExitAsync();
+            reader?.Dispose();
+            client?.Dispose();
+            if (process is not null)
+            {
+                try
+                {
+                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch (TimeoutException)
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+
+                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                }
+            }
         }
     }
 
