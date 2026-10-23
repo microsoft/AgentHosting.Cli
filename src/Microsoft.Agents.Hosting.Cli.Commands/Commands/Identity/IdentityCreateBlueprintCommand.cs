@@ -5,7 +5,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Identity;
 
 /// <summary><c>msagent identity create blueprint</c>.</summary>
-[Command("blueprint", Description = "Create or reconcile an Entra Agent Identity Blueprint.", ParentGroup = typeof(IdentityCreateGroup), SortPriority = 10)]
+[Command("blueprint", Description = "Create or reconcile an Entra Agent Identity Blueprint.", ParentGroup = typeof(IdentityCreateGroup), SortPriority = 10, ProgressLabel = "Creating identity")]
 public sealed class IdentityCreateBlueprintCommand : CommandBase<BlueprintIdentityRequest, BlueprintIdentityReport>
 {
     /// <inheritdoc />

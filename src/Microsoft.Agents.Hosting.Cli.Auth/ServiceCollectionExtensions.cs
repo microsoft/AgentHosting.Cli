@@ -99,7 +99,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ArmScopedTokenProvider>();
 
         services.AddSingleton<IInteractionPolicy>(new StaticInteractionPolicy(options.InteractionAllowed));
-        services.AddSingleton<IInteractiveMessagePresenter, ConsoleInteractiveMessagePresenter>();
+        services.AddSingleton<IInteractiveMessagePresenter>(_ => new ConsoleInteractiveMessagePresenter(options.MessageOutput ?? Console.Error));
 
         services.AddSingleton(_ => new AuthSessionContext
         {

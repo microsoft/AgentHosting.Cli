@@ -6,7 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent pull</c>.</summary>
-[Command("pull", Description = "Bring the remote MCS agent's content into the project, taking every component collection beside it.", ParentGroup = typeof(AgentGroup), SortPriority = 50)]
+[Command("pull", Description = "Bring the remote MCS agent's content into the project, taking every component collection beside it.", ParentGroup = typeof(AgentGroup), SortPriority = 50, ProgressLabel = "Pulling agent")]
 public sealed class AgentPullCommand : CommandBase<ManagedAgentPullRequest, ManagedAgentPullResult>
 {
     /// <inheritdoc />

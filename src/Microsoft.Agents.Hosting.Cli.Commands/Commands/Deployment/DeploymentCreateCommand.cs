@@ -8,7 +8,7 @@ using DeploymentModel = Microsoft.Agents.Hosting.Cli.Core.Deployments.CodeAgentD
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
 /// <summary><c>msagent deployment create</c>, routed on the resolved agent type.</summary>
-[Command("create", Description = "Create a deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 10)]
+[Command("create", Description = "Create a deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 10, ProgressLabel = "Creating deployment")]
 public sealed class DeploymentCreateCommand : CommandBase<AgentDeploymentCreateRequest, AgentDeploymentCreateResult>
 {
     /// <inheritdoc />

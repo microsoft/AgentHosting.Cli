@@ -7,7 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent package upload</c>.</summary>
-[Command("upload", Description = "Upload exact package bytes and confirm a durable AMS Package Revision.", ParentGroup = typeof(AgentPackageGroup), SortPriority = 10)]
+[Command("upload", Description = "Upload exact package bytes and confirm a durable AMS Package Revision.", ParentGroup = typeof(AgentPackageGroup), SortPriority = 10, ProgressLabel = "Uploading package")]
 [RequiredFeatureFlag(FeatureName.AmsFeatures)]
 public sealed class AgentPackageUploadCommand : CommandBase<AgentPackageUploadRequest, AgentPackageUploadResult>
 {

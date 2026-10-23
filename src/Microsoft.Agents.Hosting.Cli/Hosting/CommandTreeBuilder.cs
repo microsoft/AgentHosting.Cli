@@ -26,6 +26,7 @@ public sealed class CommandTreeBuilder
     private readonly Option<bool> _nonInteractive;
     private readonly CommandTelemetrySessionAccessor _telemetryAccessor;
     private readonly SystemCommandLineInputFactory _inputFactory;
+    private readonly ProgressSpinner? _progressSpinner;
     private readonly Dictionary<string, Symbol> _shared = new(StringComparer.Ordinal);
     private readonly HashSet<Command> _telemetrySuppressedCommands = [];
     private readonly HashSet<Command> _groups = [];
@@ -84,7 +85,8 @@ public sealed class CommandTreeBuilder
         Option<bool>? debug,
         Option<bool> nonInteractive,
         CommandTelemetrySessionAccessor telemetryAccessor,
-        SystemCommandLineInputFactory inputFactory)
+        SystemCommandLineInputFactory inputFactory,
+        ProgressSpinner? progressSpinner = null)
     {
         _renderer = renderer ?? throw new ArgumentNullException(nameof(renderer));
         _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -95,6 +97,7 @@ public sealed class CommandTreeBuilder
         _telemetryAccessor = telemetryAccessor
             ?? throw new ArgumentNullException(nameof(telemetryAccessor));
         _inputFactory = inputFactory ?? throw new ArgumentNullException(nameof(inputFactory));
+        _progressSpinner = progressSpinner;
     }
 
     /// <summary>The commands materialised from <see cref="CommandGroupMetadata"/> definitions.</summary>
@@ -320,7 +323,7 @@ public sealed class CommandTreeBuilder
                 throw new CommandUsageException($"{inapplicable} does not apply to `msagent {path}`. Run `msagent {path} --help` for its options.");
             }
 
-            var result = await metadata.Implementation.ExecuteAsync(input, _services, cancellationToken).ConfigureAwait(false);
+            var result = await ExecuteWithProgressAsync(metadata, path, input, json || debug, cancellationToken).ConfigureAwait(false);
             if (result is ILiveTestStreamingResult streaming)
             {
                 streamingOutputOwned = true;
@@ -394,6 +397,16 @@ public sealed class CommandTreeBuilder
             return exitCode;
         }
     }
+
+    private async Task<object> ExecuteWithProgressAsync(CommandMetadata metadata, string path, ICommandInput input, bool quiet, CancellationToken cancellationToken)
+    {
+        using (quiet || SuppressesProgress(metadata) ? null : _progressSpinner?.Start(metadata.ProgressLabel ?? $"Running {path}"))
+        {
+            return await metadata.Implementation.ExecuteAsync(input, _services, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static bool SuppressesProgress(CommandMetadata metadata) => metadata.SuppressProgress || metadata.Implementation.ResultTypes.Any(typeof(ILiveTestStreamingResult).IsAssignableFrom);
 
     internal static CommandTelemetryOutcome StreamingOutcome(
         ILiveTestStreamingResult result,

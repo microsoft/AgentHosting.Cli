@@ -55,7 +55,7 @@ public sealed class EvalTestSetShowCommand : CommandBase<EvaluationTestSetShowRe
 }
 
 /// <summary><c>msagent agent eval testset create</c>.</summary>
-[Command("create", Description = "Create an evaluation test set from a CSV or from generated conversations.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 30)]
+[Command("create", Description = "Create an evaluation test set from a CSV or from generated conversations.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 30, ProgressLabel = "Creating test set")]
 public sealed class EvalTestSetCreateCommand : CommandBase<EvaluationTestSetCreateRequest, EvaluationTestSetResult>
 {
     /// <inheritdoc />
@@ -86,7 +86,7 @@ public sealed class EvalTestSetCreateCommand : CommandBase<EvaluationTestSetCrea
 }
 
 /// <summary><c>msagent agent eval testset update</c>.</summary>
-[Command("update", Description = "Add conversations to an evaluation test set, or replace the ones it holds.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 40)]
+[Command("update", Description = "Add conversations to an evaluation test set, or replace the ones it holds.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 40, ProgressLabel = "Updating test set")]
 public sealed class EvalTestSetUpdateCommand : CommandBase<EvaluationTestSetUpdateRequest, EvaluationTestSetResult>
 {
     /// <inheritdoc />

@@ -8,7 +8,7 @@ using DeploymentModel = Microsoft.Agents.Hosting.Cli.Core.Deployments.CodeAgentD
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
 /// <summary><c>msagent deployment update</c>, routed on the resolved agent type.</summary>
-[Command("update", Description = "Update an existing deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 40)]
+[Command("update", Description = "Update an existing deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 40, ProgressLabel = "Updating deployment")]
 public sealed class DeploymentUpdateCommand : CommandBase<AgentDeploymentUpdateRequest, AgentDeploymentUpdateResult>
 {
     private static readonly string[] AmsOptions = ["--package-revision", "--environment-id"];

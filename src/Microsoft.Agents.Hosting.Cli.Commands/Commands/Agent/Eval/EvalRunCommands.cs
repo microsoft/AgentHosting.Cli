@@ -47,7 +47,7 @@ public static class EvaluationSelectorSymbols
 }
 
 /// <summary><c>msagent agent eval run</c>.</summary>
-[Command("run", Description = "Run a Copilot Studio evaluation. Uses Copilot Credits, and the cost is reported when the run finishes.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 10)]
+[Command("run", Description = "Run a Copilot Studio evaluation. Uses Copilot Credits, and the cost is reported when the run finishes.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 10, ProgressLabel = "Running evaluation")]
 public sealed class EvalRunCommand : CommandBase<EvaluationRunRequest, EvaluationRunResult>
 {
     /// <inheritdoc />
@@ -171,7 +171,7 @@ public sealed class EvalDeleteCommand : CommandBase<EvaluationDeleteRequest, Eva
 }
 
 /// <summary><c>msagent agent eval generate</c>.</summary>
-[Command("generate", Description = "Generate evaluation conversations from the agent's description. Creates no test set. Use --output to keep them.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 60)]
+[Command("generate", Description = "Generate evaluation conversations from the agent's description. Creates no test set. Use --output to keep them.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 60, ProgressLabel = "Generating conversations")]
 public sealed class EvalGenerateCommand : CommandBase<EvaluationGenerateRequest, EvaluationGenerateResult>
 {
     /// <inheritdoc />

@@ -6,7 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Identity;
 
 /// <summary><c>msagent identity create app</c>.</summary>
-[Command("app", Description = "Create or reconcile an Entra App Registration identity.", ParentGroup = typeof(IdentityCreateGroup), SortPriority = 20)]
+[Command("app", Description = "Create or reconcile an Entra App Registration identity.", ParentGroup = typeof(IdentityCreateGroup), SortPriority = 20, ProgressLabel = "Creating identity")]
 public sealed class IdentityCreateAppCommand : CommandBase<AppRegistrationIdentityRequest, AppRegistrationIdentityReport>
 {
     /// <inheritdoc />

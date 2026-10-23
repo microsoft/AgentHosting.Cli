@@ -24,6 +24,7 @@ public sealed class ManagedAgentDeployService
     private readonly ManagedAgentPrincipalResolver _principals;
     private readonly WorkflowActivationPass _workflowActivation;
     private readonly IClock _clock;
+    private readonly IProgressStatus _progress;
 
     /// <summary>Creates the service.</summary>
     /// <param name="resolver">Resolves records from selectors.</param>
@@ -39,7 +40,8 @@ public sealed class ManagedAgentDeployService
     /// <param name="principals">Resolves the signed-in operator recorded as the deployer.</param>
     /// <param name="workflowActivation">Activates the workflows the push left as drafts.</param>
     /// <param name="clock">Timestamps the deploy.</param>
-    public ManagedAgentDeployService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, CopilotEnvironmentResolver environmentResolver, CopilotWorkspaceLocator workspaceLocator, CopilotWorkspaceService workspaces, CopilotProjectIdentityReader projectIdentities, ICopilotWorkspaceAttachPort attach, ICopilotCatalogPort catalog, CopilotCatalogService catalogService, ManagedAgentPrincipalResolver principals, WorkflowActivationPass workflowActivation, IClock clock)
+    /// <param name="progress">Shows the deploy's current step while it runs.</param>
+    public ManagedAgentDeployService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, CopilotEnvironmentResolver environmentResolver, CopilotWorkspaceLocator workspaceLocator, CopilotWorkspaceService workspaces, CopilotProjectIdentityReader projectIdentities, ICopilotWorkspaceAttachPort attach, ICopilotCatalogPort catalog, CopilotCatalogService catalogService, ManagedAgentPrincipalResolver principals, WorkflowActivationPass workflowActivation, IClock clock, IProgressStatus? progress = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
@@ -54,6 +56,7 @@ public sealed class ManagedAgentDeployService
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
         _workflowActivation = workflowActivation ?? throw new ArgumentNullException(nameof(workflowActivation));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _progress = progress ?? NoProgressStatus.Instance;
     }
 
     /// <summary>
@@ -135,6 +138,7 @@ public sealed class ManagedAgentDeployService
             }
         }
 
+        _progress.Report("Pushing changes");
         var pushed = await PushAsync(projectDirectory, workspaceDirectory, deployment.DeploymentType, request.Overwrite || targetAgentCreated, target.EnvironmentId, schemaName, DescribeTarget(action, targetAgentCreated), cancellationToken).ConfigureAwait(false);
         var deployedOn = _clock.UtcNow;
         var deployedBy = await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false);
@@ -340,6 +344,8 @@ public sealed class ManagedAgentDeployService
     /// </summary>
     private async Task<ManagedAgentDeployResult> PublishAsync(ManagedAgentDeployResult result, CopilotEnvironmentContext target, string targetAgentId, CancellationToken cancellationToken)
     {
+        _progress.Report("Publishing");
+
         try
         {
             var published = await _catalogService.PublishAsync(

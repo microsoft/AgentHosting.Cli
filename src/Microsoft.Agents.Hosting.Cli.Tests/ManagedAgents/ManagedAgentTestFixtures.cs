@@ -304,6 +304,17 @@ internal sealed class RecordingMessagePresenter : IInteractiveMessagePresenter
     }
 }
 
+internal sealed class RecordingProgressStatus(bool shown) : IProgressStatus
+{
+    public List<string> Reports { get; } = [];
+
+    public bool Report(string status)
+    {
+        Reports.Add(status);
+        return shown;
+    }
+}
+
 internal sealed class ScriptedConfirmationPrompt : IConfirmationPrompt
 {
     public bool Answer { get; init; } = true;

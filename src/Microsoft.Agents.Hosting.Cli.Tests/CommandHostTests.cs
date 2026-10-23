@@ -1200,4 +1200,126 @@ public class CommandHostTests
             Assert.DoesNotContain(forbidden, token => name.Contains(token, StringComparison.OrdinalIgnoreCase));
         }
     }
+
+    [Fact]
+    public void SlowCommand_ShowsItsProgressLabelAndClearsItBeforeTheResult()
+    {
+        var time = new ManualTimeProvider();
+        var operations = new FakeOperations
+        {
+            OnManagedAgentDeploy = _ =>
+            {
+                time.Advance(TimeSpan.FromMilliseconds(500));
+                return new ManagedAgentDeployResult { AgentId = "agent-1", DisplayName = "Agent", DeploymentId = "slot-1", DeploymentName = "dev", DeploymentType = "dev", Action = "push", TargetEnvironmentId = "env-1", SchemaName = "cr_agent" };
+            },
+        };
+
+        var (exitCode, output) = RunWithSpinner(operations, time, "agent", "deploy", "--deployment-name", "dev");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.StartsWith($"\r\u280B Deploying agent (0s)\r{new string(' ', 22)}\rDeployed cr_agent to dev (dev) in env-1.", output);
+    }
+
+    [Fact]
+    public void SignIn_ShowsNoSpinner()
+    {
+        var time = new ManualTimeProvider();
+        var operations = new FakeOperations
+        {
+            OnLogin = _ =>
+            {
+                time.Advance(TimeSpan.FromSeconds(1));
+                return new AuthLoginResult { Status = "signed-in", Account = "op@contoso.com" };
+            },
+        };
+
+        var (exitCode, output) = RunWithSpinner(operations, time, "auth", "login");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.DoesNotContain("\u280B", output);
+        Assert.Contains("op@contoso.com", output);
+    }
+
+    [Fact]
+    public void CommandWithoutALabel_ShowsItsCommandPath()
+    {
+        var time = new ManualTimeProvider();
+
+        var (exitCode, output) = RunWithSpinner(SlowEnvironmentList(time, TimeSpan.FromMilliseconds(500)), time, "env", "list");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.StartsWith($"\r\u280B Running env list (0s)\r{new string(' ', 23)}\r", output);
+    }
+
+    [Theory]
+    [InlineData("--json")]
+    [InlineData("--debug")]
+    public void MachineOrDebugOutput_ShowsNoSpinner(string flag)
+    {
+        var time = new ManualTimeProvider();
+
+        var (exitCode, output) = RunWithSpinner(SlowEnvironmentList(time, TimeSpan.FromSeconds(1)), time, "env", "list", flag);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.DoesNotContain("Running env list", output);
+    }
+
+    [Fact]
+    public void FailingCommand_ClearsTheSpinnerBeforeTheError()
+    {
+        var time = new ManualTimeProvider();
+        var operations = new FakeOperations
+        {
+            OnEnvironmentList = () =>
+            {
+                time.Advance(TimeSpan.FromMilliseconds(500));
+                throw new InvalidOperationException("The service is unavailable.");
+            },
+        };
+
+        var (exitCode, output) = RunWithSpinner(operations, time, "env", "list");
+
+        Assert.Equal(ExitCodes.Failure, exitCode);
+        Assert.Equal($"\r\u280B Running env list (0s)\r{new string(' ', 23)}\rInvalidOperationException: The service is unavailable.{Environment.NewLine}", output);
+    }
+
+    [Fact]
+    public async Task CancelledCommand_ClearsTheSpinner()
+    {
+        var time = new ManualTimeProvider();
+        using var cancellation = new CancellationTokenSource();
+        var output = new StringWriter();
+        var operations = new FakeOperations
+        {
+            OnStatusAsync = token =>
+            {
+                time.Advance(TimeSpan.FromMilliseconds(500));
+                cancellation.Cancel();
+                return Task.FromCanceled<AuthStatusReport>(token);
+            },
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => SpinnerHost(operations, time, output).InvokeAsync(["auth", "status"], output, output, color: false, cancellation.Token));
+
+        Assert.Equal($"\r\u280B Running auth status (0s)\r{new string(' ', 26)}\r", output.ToString());
+    }
+
+    private static (int ExitCode, string Output) RunWithSpinner(FakeOperations operations, ManualTimeProvider time, params string[] args)
+    {
+        var output = new StringWriter();
+        var exitCode = SpinnerHost(operations, time, output).InvokeAsync(args, output, output, color: false).GetAwaiter().GetResult();
+        return (exitCode, output.ToString());
+    }
+
+    private static AgentHostCli SpinnerHost(FakeOperations operations, ManualTimeProvider time, TextWriter terminal) =>
+        new(operations, telemetryFactory: null, featureFlags: TestFeatureFlags.AllProductSurfaces, progressSpinner: new ProgressSpinner(terminal, enabled: true, color: false, time, () => 80));
+
+    private static FakeOperations SlowEnvironmentList(ManualTimeProvider time, TimeSpan duration) => new()
+    {
+        OnEnvironmentList = () =>
+        {
+            time.Advance(duration);
+            return new EnvironmentListResult { Status = "listed", Environments = [] };
+        },
+    };
 }
