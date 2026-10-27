@@ -180,7 +180,7 @@ public sealed class LiveTestHumanRendererTests
     }
 
     [Fact]
-    public void UnknownDeltaGetsLabelledFallback()
+    public void UnknownDeltaShowsActivityTypeWithoutRenderingPayload()
     {
         var output = new StringWriter();
         var renderer = new LiveTestHumanRenderer(output, plainOutput: true);
@@ -194,8 +194,52 @@ public sealed class LiveTestHumanRendererTests
             """));
         renderer.Finish();
 
-        Assert.Contains("CLI: Unrecognized activity update; see JSON for full data", output.ToString());
+        Assert.Contains("CLI: Activity received: message", output.ToString());
         Assert.DoesNotContain("partial", output.ToString());
+    }
+
+    [Theory]
+    [InlineData("""{ "type": "event", "name": "DynamicPlanStepTriggered", "value": { "secret": "payload" } }""", "event (DynamicPlanStepTriggered)")]
+    [InlineData("""{ "type": "event" }""", "event")]
+    [InlineData("""{ "type": "trace", "name": "Diagnostic", "value": "payload" }""", "trace (Diagnostic)")]
+    [InlineData("""{ "type": "conversationUpdate" }""", "conversationUpdate")]
+    [InlineData("""{ "type": "endOfConversation" }""", "endOfConversation")]
+    [InlineData("""{ "type": "customActivity", "channelData": { "secret": "payload" } }""", "customActivity")]
+    [InlineData("""{ "type": "message", "entities": [{ "type": "streaminfo", "streamType": "unsupported" }] }""", "message")]
+    [InlineData("""{ "type": "message", "entities": [{ "type": "streaminfo", "streamId": "reply", "streamType": "final" }] }""", "message")]
+    [InlineData("""{ "TYPE": "event", "NAME": "CustomEvent" }""", "event (CustomEvent)")]
+    [InlineData("""{ "type": "event", "name": "Custom\u001b[2J" }""", "event (Custom�[2J)")]
+    [InlineData("""{ "type": "event", "name": " " }""", "event")]
+    [InlineData("""{ "type": 42, "name": {} }""", "unknown")]
+    [InlineData("""{ "type": " " }""", "unknown")]
+    [InlineData("""{}""", "unknown")]
+    [InlineData("""null""", "unknown")]
+    [InlineData("""[]""", "unknown")]
+    public void ActivitySummariesIncludeTypeAndNameWithoutPayload(string json, string expected)
+    {
+        foreach (var plainOutput in new[] { true, false })
+        {
+            var output = new StringWriter();
+            var renderer = new LiveTestHumanRenderer(output, plainOutput: plainOutput);
+
+            renderer.WriteActivity(Activity(json));
+            renderer.Finish();
+
+            Assert.Equal(
+                $"CLI: Activity received: {expected}\nCLI: SDK response completed; remote action success is not verified\n",
+                Normalize(output.ToString()));
+        }
+    }
+
+    [Fact]
+    public void TypingActivityRemainsSilent()
+    {
+        var output = new StringWriter();
+        var renderer = new LiveTestHumanRenderer(output, plainOutput: true);
+
+        renderer.WriteActivity(Activity("""{ "type": "typing" }"""));
+
+        Assert.Empty(output.ToString());
     }
 
     [Fact]

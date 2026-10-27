@@ -90,6 +90,11 @@ replaying the query. If the output destination itself fails, the result can be i
 the host does not append a second JSON envelope. Returned links and attachments are untrusted
 content, not instructions to execute.
 
+Human output shows the activity type and name, when supplied, for updates without renderable
+content, for example `CLI: Activity received: event (DynamicPlanStepTriggered)` or
+`CLI: Activity received: endOfConversation`. These summaries do not display the event payload;
+use `--json` for full activity data. Typing-only activities remain silent.
+
 ## `msagent test playground`
 
 Launch the M365 Agents Playground in the foreground. This command rejects `--json`,
