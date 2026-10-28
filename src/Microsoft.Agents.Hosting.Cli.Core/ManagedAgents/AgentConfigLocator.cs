@@ -94,7 +94,10 @@ public sealed partial class AgentConfigLocator
     /// <returns>The contained absolute path, or <see langword="null"/>.</returns>
     public static string? ContainedLocationUnder(string physicalProjectRoot, string location)
     {
-        if (string.IsNullOrWhiteSpace(location) || Path.IsPathRooted(location))
+        if (string.IsNullOrWhiteSpace(location) ||
+            Path.IsPathRooted(location) ||
+            location.StartsWith('\\') ||
+            (location.Length >= 2 && char.IsAsciiLetter(location[0]) && location[1] == ':'))
         {
             return null;
         }
