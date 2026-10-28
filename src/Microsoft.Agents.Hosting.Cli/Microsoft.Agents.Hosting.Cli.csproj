@@ -30,7 +30,7 @@
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <PackageReference Include="Microsoft.PowerApps.AppInsights.BatchedTelemetry" VersionOverride="4.0.28" ExcludeAssets="contentFiles" />
+    <PackageReference Include="Microsoft.PowerApps.AppInsights.BatchedTelemetry" ExcludeAssets="contentFiles" />
   </ItemGroup>
 
   <ItemGroup>
