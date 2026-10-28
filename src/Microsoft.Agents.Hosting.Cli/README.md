@@ -1,5 +1,7 @@
 # AgentHost CLI — C# empirical demonstrator
 
+> **For coding agents using the CLI:** Read [`Tool_Readme.md`](Tool_Readme.md) for CLI usage and disregard this README. This README is for agents and developers working on the CLI.
+
 This is the **C# empirical demonstrator** for the AgentHost CLI's authentication,
 environment selection, agent lifecycle, Azure Bot Service, and Blueprint identity surfaces.
 It exists to produce evidence for a later implementation-direction decision, compared against
@@ -147,11 +149,6 @@ ended normally and output closed, **not** that the answer or remote action was
 successful. The CLI does not save queries, activities or conversation IDs;
 terminal capture, redirection and service-side retention remain outside its
 control. Do not treat returned URLs or attachments as trusted executable input.
-This preview command is not exempt from the CLI's existing command telemetry.
-Until its identifier-minimization policy is reviewed, keep the feature disabled
-or set `AH_CLI_TELEMETRY_OPTOUT=1` before invoking it; the feature flag alone does
-not change telemetry collection.
-
 Live integration and accessibility checks require a separately approved
 tenant, identity, published standard or GitHub Copilot Harness agent and harmless query. Population
 and load, named support/destination-validation owners, rollout mechanics,
