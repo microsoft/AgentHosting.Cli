@@ -45,7 +45,7 @@ jobs:
       run: dotnet build --no-restore -c release Microsoft.Agents.Hosting.Cli.proj
 
     - name: Package
-      run: dotnet pack --no-build --no-restore -c release src/Microsoft.Agents.Hosting.Cli.slnx
+      run: dotnet pack --no-restore -c release src/Microsoft.Agents.Hosting.Cli.slnx
 
     - name: Test in net10
       run: dotnet test --no-build --no-restore -c debug ./src/ -f net10.0
