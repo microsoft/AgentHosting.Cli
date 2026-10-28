@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
@@ -30,7 +31,7 @@ public sealed class ConnectorResolver
     /// <param name="listCommand">The command that lists the connectors on offer.</param>
     /// <param name="cancellationToken">Cancels the resolution.</param>
     /// <returns>The connector, with any connections the resolution already read.</returns>
-    /// <exception cref="UsageException">The service reports no such connector.</exception>
+    /// <exception cref="ManagedAgentException">The service reports no such connector.</exception>
     public async Task<ConnectorResolution> RequireAsync(CopilotEnvironmentContext environment, string connectorId, string listCommand, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(environment);

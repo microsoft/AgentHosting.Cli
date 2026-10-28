@@ -1,0 +1,36 @@
+jsonFileName: workflows/NWorkflow2-b6cf03a8-d3ee-5321-a464-e415cfc53b75/workflow.json
+workflowId: b6cf03a8-d3ee-5321-a464-e415cfc53b75
+name: NWorkflow2
+type: 1
+description: 
+subprocess: false
+category: 5
+mode: 0
+scope: 4
+onDemand: false
+triggerOnCreate: false
+triggerOnDelete: false
+asyncAutodelete: false
+syncWorkflowLogOnFailure: false
+stateCode: 0
+statusCode: 1
+runAs: 1
+isTransacted: true
+introducedVersion: 1.0
+isCustomizable:
+  value: true
+  canBeChanged: true
+  managedPropertyLogicalName: iscustomizableanddeletable
+businessProcessType: 0
+isCustomProcessingStepAllowedForOtherPublishers:
+  value: true
+  canBeChanged: true
+  managedPropertyLogicalName: canbedeleted
+modernFlowType: 1
+primaryEntity: none
+connectionReferences:
+- new_sharedagentnode_e5a74
+- cre98_AgentA1.shared_commondataserviceforapps.787379aebbb2450a96f20e20d71bfd30
+- new_sharedm365copilotv2_03415b37
+- new_sharedadvancedapprovals_275f6bca
+- cre98_AgentA1.shared_office365users.06aae3a7bb9d4d1c82ddd1f7220f754b

@@ -3,9 +3,9 @@ using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Identity;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
-using Microsoft.Agents.Hosting.Cli.Core.Packaging;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -31,8 +31,7 @@ public static class ServiceCollectionExtensions
     ///
     /// The caller must also register an <see cref="IEnvironmentClient"/>: the Power Platform API
     /// transport adapter is owned by the composition root, which decides the <see cref="HttpClient"/>
-    /// and its redirect policy. The same applies to the AMS transports and
-    /// <see cref="AgentHostingServiceTargets"/>, which the composition root reads from the process environment.
+    /// and its redirect policy. The same applies to the AMS transports.
     /// </summary>
     public static IServiceCollection AddAgentHostAuthentication(
         this IServiceCollection services,
@@ -100,7 +99,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ArmScopedTokenProvider>();
 
         services.AddSingleton<IInteractionPolicy>(new StaticInteractionPolicy(options.InteractionAllowed));
-        services.AddSingleton<IInteractiveMessagePresenter, ConsoleInteractiveMessagePresenter>();
+        services.AddSingleton<IInteractiveMessagePresenter>(_ => new ConsoleInteractiveMessagePresenter(options.MessageOutput ?? Console.Error));
 
         services.AddSingleton(_ => new AuthSessionContext
         {
@@ -115,7 +114,7 @@ public static class ServiceCollectionExtensions
         // offline-guarantee test stays green. Connection metadata is persisted per-user under the
         // config directory.
         services.AddSingleton(sp =>
-            new ArmAbsProvisioningAdapter(new HttpClient(), sp.GetRequiredService<ArmScopedTokenProvider>()));
+            new ArmAbsProvisioningAdapter(new HttpClient(TransportDefaults.CreateRedirectFollowingHandler()), sp.GetRequiredService<ArmScopedTokenProvider>()));
         services.AddSingleton<IAbsStateReader>(sp => sp.GetRequiredService<ArmAbsProvisioningAdapter>());
         services.AddSingleton<IAbsMutationPort>(sp => sp.GetRequiredService<ArmAbsProvisioningAdapter>());
         services.AddSingleton<IConnectionMetadataStore>(_ =>
@@ -127,7 +126,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(sp =>
             new IdentityRestClient(
-                new HttpClient(IdentityRestClient.CreateRedirectRejectingHandler()),
+                new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
                 sp.GetRequiredService<ITokenProvider>(),
                 graphConsentTokenProvider: null,
                 armConsentTokenProvider: sp.GetRequiredService<IArmConsentTokenProvider>()));
@@ -142,7 +141,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp =>
             new AppRegistrationIdentityService(
                 new IdentityRestClient(
-                    new HttpClient(IdentityRestClient.CreateRedirectRejectingHandler()),
+                    new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
                     sp.GetRequiredService<ITokenProvider>(),
                     sp.GetRequiredService<IGraphConsentTokenProvider>(),
                     sp.GetRequiredService<IArmConsentTokenProvider>()),
@@ -170,7 +169,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<EnvironmentSelectionService>();
 
         // AMS operations. The application services are MSAL-free Core; the concrete HTTP transports
-        // and deployment-configured targets remain owned by the composition root.
+        // remain owned by the composition root.
         services.AddSingleton<AgentCreateService>();
         services.AddSingleton<AgentPackageUploadService>();
         services.AddSingleton<AgentDeployService>();
@@ -180,11 +179,11 @@ public static class ServiceCollectionExtensions
         // reuses the deployment transport's subscription resolution for provider discovery. Channels
         // use their own adapter over the shared ARM client.
         services.AddSingleton(sp =>
-            new DeploymentAdapter(new HttpClient(), sp.GetRequiredService<ArmScopedTokenProvider>()));
+            new DeploymentAdapter(new HttpClient(TransportDefaults.CreateRedirectFollowingHandler()), sp.GetRequiredService<ArmScopedTokenProvider>()));
         services.AddSingleton(sp =>
-            new DeploymentOAuthAdapter(new HttpClient(), sp.GetRequiredService<ArmScopedTokenProvider>()));
+            new DeploymentOAuthAdapter(new HttpClient(TransportDefaults.CreateRedirectFollowingHandler()), sp.GetRequiredService<ArmScopedTokenProvider>()));
         services.AddSingleton(sp =>
-            new DeploymentChannelAdapter(new HttpClient(), sp.GetRequiredService<ArmScopedTokenProvider>()));
+            new DeploymentChannelAdapter(new HttpClient(TransportDefaults.CreateRedirectFollowingHandler()), sp.GetRequiredService<ArmScopedTokenProvider>()));
         services.AddSingleton<IDeploymentTransport>(sp => sp.GetRequiredService<DeploymentAdapter>());
         services.AddSingleton<IDeploymentOAuthTransport>(
             sp => sp.GetRequiredService<DeploymentOAuthAdapter>());

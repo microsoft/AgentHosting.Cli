@@ -665,7 +665,7 @@ internal sealed class ScriptedIdentityRestClient : IIdentityRestClient
         CancellationToken cancellationToken,
         IReadOnlyDictionary<string, string>? headers = null)
     {
-        var call = Record(method, path, body, headers, scopes);
+        var call = Record(method, path, body, headers, scopes, targetTenantId);
         return Task.FromResult(GraphOverride?.Invoke(call) ?? _graph(call));
     }
 
@@ -676,7 +676,7 @@ internal sealed class ScriptedIdentityRestClient : IIdentityRestClient
         string targetTenantId,
         CancellationToken cancellationToken)
     {
-        var call = Record(method, path, body, headers: null, scopes: null);
+        var call = Record(method, path, body, headers: null, scopes: null, targetTenantId);
         return Task.FromResult(_arm(call));
     }
 
@@ -852,7 +852,8 @@ internal sealed class ScriptedIdentityRestClient : IIdentityRestClient
         string path,
         object? body,
         IReadOnlyDictionary<string, string>? headers,
-        IReadOnlyList<string>? scopes)
+        IReadOnlyList<string>? scopes,
+        string targetTenantId)
     {
         var call = new IdentityRestCall(
             method.Method,
@@ -861,7 +862,8 @@ internal sealed class ScriptedIdentityRestClient : IIdentityRestClient
             headers is null
                 ? null
                 : new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase),
-            scopes is null ? null : [.. scopes]);
+            scopes is null ? null : [.. scopes],
+            targetTenantId);
         Calls.Add(call);
         return call;
     }
@@ -886,4 +888,5 @@ internal sealed record IdentityRestCall(
     string Path,
     string? Body,
     IReadOnlyDictionary<string, string>? Headers,
-    IReadOnlyList<string>? Scopes);
+    IReadOnlyList<string>? Scopes,
+    string? TenantId = null);

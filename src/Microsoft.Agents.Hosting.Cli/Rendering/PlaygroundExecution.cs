@@ -25,45 +25,56 @@ internal interface IPlaygroundStreamingResult : ILiveTestStreamingResult
 }
 
 /// <summary>Owns the lazy playground state machine and all human output for one invocation.</summary>
-internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
+internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreamingFailureResult
 {
     private const string PackageSpecifier = "@microsoft/m365agentsplayground@latest";
     private const string JsonUnsupportedMessage = "--json is not yet supported for playground.";
     private const string LiveEffectsWarning =
         "Warning: this launches a live playground session; actions can have real effects against the selected agent.";
     private const string DeviceCodeDisclosure =
-        "The native playground owns sign-in. If it asks for a device code, follow its instructions in this terminal.";
+        "Endpoint discovery uses the selected CLI account; the native playground owns its session sign-in. If it asks for a device code, follow its instructions in the new terminal window.";
+    private const string DirectLineDisclosure =
+        "Enter the MCS token endpoint or Direct Line secret only in the native playground's masked terminal prompt in the new terminal window. Do not put credentials in command arguments or chat.";
 
     private readonly PlaygroundRequest _request;
     private readonly Func<LiveTestRequest, LiveTestDestination> _resolve;
+    private readonly Func<LiveTestDestination, bool, CancellationToken, Task<LiveTestDestination>> _discover;
     private readonly IPlaygroundToolLocator _locator;
     private readonly IPlaygroundGlobalInstaller _installer;
     private readonly IPlaygroundLauncher _launcher;
     private readonly IConfirmationPrompt _confirmation;
     private readonly Func<AgentHostClientAppConfiguration> _clientConfiguration;
     private readonly Func<bool> _isInputRedirected;
+    private readonly Func<bool> _isOutputRedirected;
     private readonly Action<PlaygroundTelemetryDetails> _recordTelemetry;
     private PlaygroundSemanticOutcome _semanticOutcome;
+    private int? _errorCode;
+
+    int? IStreamingFailureResult.ErrorCode => _errorCode;
 
     internal PlaygroundExecution(
         PlaygroundRequest request,
         Func<LiveTestRequest, LiveTestDestination> resolve,
+        Func<LiveTestDestination, bool, CancellationToken, Task<LiveTestDestination>> discover,
         IPlaygroundToolLocator locator,
         IPlaygroundGlobalInstaller installer,
         IPlaygroundLauncher launcher,
         IConfirmationPrompt confirmation,
         Func<AgentHostClientAppConfiguration> clientConfiguration,
         Func<bool> isInputRedirected,
+        Func<bool> isOutputRedirected,
         Action<PlaygroundTelemetryDetails> recordTelemetry)
     {
         _request = request ?? throw new ArgumentNullException(nameof(request));
         _resolve = resolve ?? throw new ArgumentNullException(nameof(resolve));
+        _discover = discover ?? throw new ArgumentNullException(nameof(discover));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _installer = installer ?? throw new ArgumentNullException(nameof(installer));
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
         _confirmation = confirmation ?? throw new ArgumentNullException(nameof(confirmation));
         _clientConfiguration = clientConfiguration ?? throw new ArgumentNullException(nameof(clientConfiguration));
         _isInputRedirected = isInputRedirected ?? throw new ArgumentNullException(nameof(isInputRedirected));
+        _isOutputRedirected = isOutputRedirected ?? throw new ArgumentNullException(nameof(isOutputRedirected));
         _recordTelemetry = recordTelemetry ?? throw new ArgumentNullException(nameof(recordTelemetry));
     }
 
@@ -97,40 +108,56 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            LiveTestDestination target;
-            try
+            var isDirectLine = string.Equals(_request.Target, "directline", StringComparison.OrdinalIgnoreCase);
+            var validationError = ValidateRequest(isDirectLine);
+            if (validationError is not null)
             {
-                target = _resolve(_request.ToLiveTestRequest());
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception failure)
-            {
-                errorCategory = ResolverCategory(failure);
+                errorCategory = PlaygroundErrorCategory.Unsupported;
                 _semanticOutcome = PlaygroundSemanticOutcome.Usage;
-                return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Usage).ConfigureAwait(false);
+                await WriteErrorAsync(stderr, validationError).ConfigureAwait(false);
+                return ExitCodes.Usage;
             }
 
-            AgentHostClientAppConfiguration clientConfiguration;
-            try
+            PlaygroundConnection connection;
+            if (isDirectLine)
             {
-                // Resolve the public client before discovery, prompting, or npm mutation. A malformed
-                // client id is a local preflight failure and must not cause a global install.
-                clientConfiguration = _clientConfiguration();
+                connection = new PlaygroundConnection.DirectLine();
             }
-            catch (AgentHostingException failure)
+            else
             {
-                errorCategory = PlaygroundErrorCategory.LaunchFailed;
-                return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Failure).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                errorCategory = PlaygroundErrorCategory.LaunchFailed;
-                await WriteErrorAsync(stderr, "The playground client configuration could not be created. Configure the AgentHost public-client id and try again.")
-                    .ConfigureAwait(false);
-                return ExitCodes.Failure;
+                LiveTestDestination target;
+                try
+                {
+                    target = _resolve(_request.ToLiveTestRequest());
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception failure)
+                {
+                    errorCategory = ResolverCategory(failure);
+                    _semanticOutcome = PlaygroundSemanticOutcome.Usage;
+                    return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Usage).ConfigureAwait(false);
+                }
+
+                try
+                {
+                    // A malformed client id must fail before discovery, consent, or npm mutation.
+                    connection = new PlaygroundConnection.DirectEngine(target, _clientConfiguration().ClientId);
+                }
+                catch (AgentHostingException failure)
+                {
+                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                    return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Failure).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                    await WriteErrorAsync(stderr, "The playground client configuration could not be created. Configure the AgentHost public-client id and try again.")
+                        .ConfigureAwait(false);
+                    return ExitCodes.Failure;
+                }
             }
 
             PlaygroundTool? tool;
@@ -154,8 +181,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
                 await WriteErrorAsync(stderr, "The playground tool check timed out. Check PATH and try again.").ConfigureAwait(false);
                 return ExitCodes.Failure;
             }
-            catch (Exception)
+            catch (Exception failure)
             {
+                _errorCode = (failure as AgentHostingException)?.ErrorCode;
                 errorCategory = PlaygroundErrorCategory.ToolNotFound;
                 await WriteErrorAsync(stderr, "The playground tool could not be checked safely. Check PATH and try again.").ConfigureAwait(false);
                 return ExitCodes.Failure;
@@ -210,8 +238,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
                         .ConfigureAwait(false);
                     return ExitCodes.Failure;
                 }
-                catch (Exception)
+                catch (Exception failure)
                 {
+                    _errorCode = (failure as AgentHostingException)?.ErrorCode;
                     installResult = PlaygroundInstallResult.Failed;
                     errorCategory = PlaygroundErrorCategory.InstallFailed;
                     await WriteErrorAsync(stderr,
@@ -232,20 +261,50 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
 
             errorCategory = PlaygroundErrorCategory.None;
             version = tool.Version.ToString();
+            if (connection is PlaygroundConnection.DirectEngine directEngine)
+            {
+                try
+                {
+                    connection = directEngine with
+                    {
+                        Target = await _discover(directEngine.Target, _request.NonInteractive, cancellationToken).ConfigureAwait(false),
+                    };
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    errorCategory = PlaygroundErrorCategory.Cancellation;
+                    _semanticOutcome = PlaygroundSemanticOutcome.Cancellation;
+                    await WriteErrorAsync(stderr, "Playground endpoint discovery was cancelled.").ConfigureAwait(false);
+                    return 130;
+                }
+                catch (AgentHostingException failure)
+                {
+                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                    return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Failure).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                    await WriteErrorAsync(stderr,
+                        "The playground endpoint could not be discovered. Check the selected CLI account, delegated Copilot Studio permissions, and published agent before retrying.")
+                        .ConfigureAwait(false);
+                    return ExitCodes.Failure;
+                }
+            }
+
             await WriteLineAsync(stdout, LiveEffectsWarning).ConfigureAwait(false);
-            await WriteLineAsync(stdout, DeviceCodeDisclosure).ConfigureAwait(false);
+            await WriteLineAsync(stdout, isDirectLine ? DirectLineDisclosure : DeviceCodeDisclosure).ConfigureAwait(false);
             await WriteLineAsync(stdout, $"Playground tool: {SafeValue(tool.SelectedPath)} (version {SafeValue(version)}).")
                 .ConfigureAwait(false);
 
             Action started = _request.Plain
                 ? static () => { }
-                : () => stdout.WriteLine("Playground process started.");
+                : () => stdout.WriteLine("Playground process started in a new terminal window. This terminal is free to use; stop Playground in its own window.");
             try
             {
                 var exitCode = await _launcher.RunAsync(
                     tool,
-                    target,
-                    clientConfiguration.ClientId,
+                    connection,
                     started,
                     cancellationToken).ConfigureAwait(false);
 
@@ -279,8 +338,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
                 await WriteErrorAsync(stderr, $"{failure.Message} {failure.Remediation}").ConfigureAwait(false);
                 return ExitCodes.Failure;
             }
-            catch (Exception)
+            catch (Exception failure)
             {
+                _errorCode = (failure as AgentHostingException)?.ErrorCode;
                 errorCategory = PlaygroundErrorCategory.LaunchFailed;
                 await WriteErrorAsync(stderr,
                     "The playground process could not be started or stopped safely. Verify the installation and try again.")
@@ -295,8 +355,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
             await WriteErrorAsync(stderr, "Playground startup was cancelled.").ConfigureAwait(false);
             return 130;
         }
-        catch (Exception)
+        catch (Exception failure)
         {
+            _errorCode = (failure as AgentHostingException)?.ErrorCode;
             errorCategory = PlaygroundErrorCategory.LaunchFailed;
             await WriteErrorAsync(stderr, "The playground command could not complete safely. Verify the target and installation, then try again.")
                 .ConfigureAwait(false);
@@ -318,6 +379,40 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
                     OptionalMeasurementFailureCategory.TelemetrySerialization);
             }
         }
+    }
+
+    private string? ValidateRequest(bool isDirectLine)
+    {
+        if (!isDirectLine && !string.Equals(_request.Target, "directengine", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The --target value is not supported. Choose directline or directengine.";
+        }
+
+        if (!isDirectLine)
+        {
+            return null;
+        }
+
+        if (_request.Project is not null ||
+            _request.AgentId is not null ||
+            _request.AgentName is not null ||
+            _request.SchemaName is not null ||
+            _request.DeploymentId is not null ||
+            _request.DeploymentName is not null ||
+            _request.EnvironmentId is not null ||
+            _request.Tenant is not null)
+        {
+            return "Direct Line does not accept --project, --agent-id, --agent-name, --schema-name, --deployment-id, --deployment-name, --environment-id, or --tenant. Remove these options or select --target directengine.";
+        }
+
+        if (_request.NonInteractive)
+        {
+            return "Direct Line does not support --non-interactive. Run without that option in an interactive terminal and enter the credential at the native masked prompt.";
+        }
+
+        return _isInputRedirected() || _isOutputRedirected()
+            ? "Direct Line requires an interactive terminal for both input and output. Run without input/output redirection and enter the credential at the native masked prompt."
+            : null;
     }
 
     private async Task<bool> GetInstallConsentAsync(
@@ -346,8 +441,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception failure)
         {
+            _errorCode = (failure as AgentHostingException)?.ErrorCode;
             await WriteErrorAsync(stderr, "The playground installation prompt could not be completed. Re-run the command and try again.")
                 .ConfigureAwait(false);
             return false;
@@ -365,13 +461,14 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult
             ? PlaygroundErrorCategory.Unsupported
             : PlaygroundErrorCategory.None;
 
-    private static async Task<int> WriteKnownFailureAsync(
+    private async Task<int> WriteKnownFailureAsync(
         TextWriter stderr,
         Exception failure,
         int fallbackExitCode)
     {
         if (failure is AgentHostingException typed)
         {
+            _errorCode = typed.ErrorCode;
             await WriteErrorAsync(stderr, $"{typed.Message}{(string.IsNullOrWhiteSpace(typed.Remediation) ? string.Empty : $" {typed.Remediation}")}")
                 .ConfigureAwait(false);
             return typed.ExitCode;

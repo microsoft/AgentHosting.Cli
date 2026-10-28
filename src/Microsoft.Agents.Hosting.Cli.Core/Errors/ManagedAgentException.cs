@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
+using Microsoft.Agents.Hosting.Cli.Core.Rendering;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
 
@@ -10,15 +11,19 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
 /// </summary>
 public sealed class ManagedAgentException : AgentHostingException
 {
-    private ManagedAgentException(string message, int exitCode, string errorKind, string remediation, Exception? innerException = null)
-        : base(message, exitCode, errorKind, remediation, innerException)
+    private ManagedAgentException(int errorCode, string message, int exitCode, string errorKind, string remediation, Exception? innerException = null)
+        : base(message, exitCode, errorKind, remediation, innerException, errorCode)
     {
     }
+
+    /// <summary>Whether the message and remediation contain CLI-formatted lines.</summary>
+    public bool HasMultilineGuidance { get; private init; }
 
     /// <summary>No configuration exists in the directory the command was run from.</summary>
     /// <param name="searchedPath">The configuration path that was looked for.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ConfigNotFound(string searchedPath) => new(
+        ErrorCodes.Workspace.ConfigNotFound,
         $"No agent configuration was found at '{searchedPath}'.",
         ExitCodes.Usage,
         "config-not-found",
@@ -29,6 +34,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="reason">What is wrong with it.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ConfigInvalid(string path, string reason) => new(
+        ErrorCodes.Workspace.ConfigInvalid,
         $"The agent configuration at '{path}' is not usable: {reason}",
         ExitCodes.Usage,
         "config-invalid",
@@ -39,6 +45,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="found">The version the file declares.</param>
     /// <param name="supported">The version this build writes.</param>
     public static ManagedAgentException ConfigUnsupportedVersion(string path, int found, int supported) => new(
+        ErrorCodes.Workspace.ConfigUnsupportedVersion,
         $"The agent configuration at '{path}' declares schema version {found}, and this build reads versions {AgentConfigSchema.MinimumReadableVersion} to {supported}.",
         ExitCodes.Usage,
         "config-version-unsupported",
@@ -54,6 +61,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="innerException">The failure the service reported.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException DeploymentTargetDeleteFailed(string displayName, string deploymentName, string environmentId, string targetAgentId, Exception innerException) => new(
+        ErrorCodes.Deployment.DeploymentTargetDeleteFailed,
         $"The Copilot Studio agent {targetAgentId} in {environmentId} could not be deleted, so deployment '{deploymentName}' of {displayName} was kept: {innerException.Message}",
         ExitCodes.Failure,
         "deployment-target-delete-failed",
@@ -63,7 +71,9 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <summary>An agent selector matched nothing.</summary>
     /// <param name="selector">The supplied selector.</param>
     /// <returns>The typed failure.</returns>
-    public static ManagedAgentException AgentNotFound(string selector) => new(        $"No agent matching '{selector}' is registered here.",
+    public static ManagedAgentException AgentNotFound(string selector) => new(
+        ErrorCodes.ManagedAgent.AgentNotFound,
+        $"No agent matching '{selector}' is registered here.",
         ExitCodes.Usage,
         "agent-not-found",
         "Run `msagent agent show` to list the agents this project holds, or register this project with `msagent agent init`.");
@@ -72,6 +82,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="locations">The workspace locations that could have been meant.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException WorkspaceAmbiguous(IEnumerable<string> locations) => new(
+        ErrorCodes.Workspace.WorkspaceAmbiguous,
         $"This directory holds more than one unregistered workspace: {string.Join(", ", locations)}.",
         ExitCodes.Usage,
         "workspace-ambiguous",
@@ -83,6 +94,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="projectDirectory">The project the location is relative to.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException WorkspaceMissing(string agentId, string agentLocation, string projectDirectory) => new(
+        ErrorCodes.Workspace.WorkspaceMissing,
         $"Agent '{agentId}' records its workspace at '{agentLocation}', which holds no Copilot Studio project under {projectDirectory}.",
         ExitCodes.Usage,
         "workspace-missing",
@@ -94,6 +106,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="projectDisplayName">The name the project holds.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException AgentIdConflictsWithProject(string suppliedAgentId, string projectAgentId, string projectDisplayName) => new(
+        ErrorCodes.ManagedAgent.AgentIdConflictsWithProject,
         $"--agent-id names {suppliedAgentId}, but this project holds {projectDisplayName} ({projectAgentId}).",
         ExitCodes.Usage,
         "agent-id-conflict",
@@ -104,6 +117,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="environmentId">The environment holding it.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException TargetAgentIsReadOnly(string schemaName, string environmentId) => new(
+        ErrorCodes.Deployment.TargetAgentIsReadOnly,
         $"The agent {schemaName} in {environmentId} came from a managed solution, so it cannot be deployed to.",
         ExitCodes.Usage,
         "target-agent-read-only",
@@ -118,6 +132,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="targetAgentId">The agent that would have been adopted.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException UnverifiedAgentInTarget(string schemaName, string environmentId, string targetAgentId) => new(
+        ErrorCodes.Deployment.UnverifiedAgentInTarget,
         $"An agent named {schemaName} already exists in {environmentId} as {targetAgentId}, and nothing here shows it is this deployment's.",
         ExitCodes.Usage,
         "unverified-agent-in-target",
@@ -127,6 +142,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="candidates">The display names that could have been meant.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException AgentAmbiguous(IEnumerable<string> candidates) => new(
+        ErrorCodes.ManagedAgent.AgentAmbiguous,
         $"This directory registers more than one agent: {string.Join(", ", candidates)}.",
         ExitCodes.Usage,
         "agent-ambiguous",
@@ -137,6 +153,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="searchedPath">Where a project file was looked for.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException SchemaNameUnavailable(string agentId, string searchedPath) => new(
+        ErrorCodes.Workspace.SchemaNameUnavailable,
         $"Agent '{agentId}' has no schema name: no project was found at '{searchedPath}' and the record carries no clone source.",
         ExitCodes.Usage,
         "schema-name-unavailable",
@@ -146,16 +163,85 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="selector">The supplied selector.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException SlotNotFound(string selector) => new(
+        ErrorCodes.Deployment.SlotNotFound,
         $"No deployment matching '{selector}' is registered for this agent.",
         ExitCodes.Usage,
         "deployment-not-found",
-        "Run `msagent deployment list --agent-id <id>` to see the agent's deployments.");
+        "Run `msagent deployment list` to see the agent's deployments.");
+
+    /// <summary>Reports deployment records and next commands when a deploy target cannot be selected.</summary>
+    public static ManagedAgentException DeploymentSelectionFailed(string projectDirectory, IReadOnlyList<ManagedAgentRecord> agents, IReadOnlyList<AgentDeploymentRecord> deployments, string? selector = null)
+    {
+        var deploymentsByAgent = deployments.ToLookup(deployment => deployment.AgentId, StringComparer.OrdinalIgnoreCase);
+        var selectableDeployments = new List<AgentDeploymentRecord>();
+        var descriptions = new List<string>();
+        var commands = new List<string>();
+
+        foreach (var agent in agents)
+        {
+            var displayName = TerminalText.Sanitize(agent.DisplayName);
+
+            if (!AgentTypes.IsMcs(agent.AgentType))
+            {
+                descriptions.Add($"  {displayName} ({TerminalText.Sanitize(agent.AgentId)}): {TerminalText.Sanitize(agent.AgentType)}; use its package-revision deployment options.");
+                commands.Add($"For CodeAgent '{displayName}', see the package-revision deployment options in `msagent agent deploy --help`.");
+                continue;
+            }
+
+            var agentDeployments = deploymentsByAgent[agent.AgentId].ToArray();
+
+            selectableDeployments.AddRange(agentDeployments);
+            descriptions.Add($"  {displayName} ({TerminalText.Sanitize(agent.AgentId)}): {(agentDeployments.Length == 0 ? "no deployment records" : DeploymentNames(agentDeployments))}");
+            commands.Add(DeploymentSelectionCommands(projectDirectory, agent.AgentId, displayName, agentDeployments));
+        }
+
+        var message = agents.Count == 1
+            ? selectableDeployments.Count == 0
+                ? $"Agent '{TerminalText.Sanitize(agents[0].DisplayName)}' has no deployment records. Create a deployment before deploying."
+                : $"No deployment selected for agent '{TerminalText.Sanitize(agents[0].DisplayName)}'.{Environment.NewLine}Available deployments: {DeploymentNames(selectableDeployments)}"
+            : $"{(agents.Any(agent => deploymentsByAgent.Contains(agent.AgentId)) ? "No deployment selected." : "None of the agents in this folder has deployment records.")}{Environment.NewLine}Agents in this folder:{Environment.NewLine}{string.Join(Environment.NewLine, descriptions)}";
+
+        return new(
+            selector is not null ? ErrorCodes.Deployment.SlotNotFound : selectableDeployments.Count == 0 ? ErrorCodes.Deployment.DeploymentRecordsEmpty : ErrorCodes.Deployment.DeploymentSelectorRequired,
+            selector is null ? message : $"No deployment matching '{TerminalText.Sanitize(selector)}' is registered here.{Environment.NewLine}{message}",
+            ExitCodes.Usage,
+            selector is not null ? "deployment-not-found" : selectableDeployments.Count == 0 ? "deployment-records-empty" : "deployment-selector-required",
+            string.Join(Environment.NewLine + Environment.NewLine, commands))
+        {
+            HasMultilineGuidance = true,
+        };
+    }
+
+    private static string DeploymentSelectionCommands(string projectDirectory, string agentId, string displayName, AgentDeploymentRecord[] deployments)
+    {
+        var agentSelector = $"--project {CommandArgument(projectDirectory)} --agent-id {CommandArgument(agentId)}";
+
+        return deployments.Length == 0
+            ? $"Create a deployment for '{displayName}':{Environment.NewLine}  msagent deployment create {agentSelector} --deployment-name development --deployment-type dev{Environment.NewLine}Then deploy:{Environment.NewLine}  msagent agent deploy {agentSelector} --deployment-name development"
+            : $"Select --deployment-id or --deployment-name for '{displayName}', for example:{Environment.NewLine}  msagent agent deploy {agentSelector} --deployment-id {CommandArgument(deployments[0].DeploymentId)}";
+    }
+
+    private static string CommandArgument(string value) => OperatingSystem.IsWindows() ? PowerShellCommandArgument(value) : PosixCommandArgument(value);
+
+    internal static string PowerShellCommandArgument(string value) => QuotedCommandArgument(value, "$`\"", "''");
+
+    internal static string PosixCommandArgument(string value) => QuotedCommandArgument(value, "$`\"\\!", "'\\''");
+
+    private static string QuotedCommandArgument(string value, string doubleQuotedSpecialCharacters, string singleQuotedApostrophe)
+    {
+        var argument = TerminalText.Sanitize(value);
+
+        return argument.AsSpan().ContainsAny(doubleQuotedSpecialCharacters) ? $"'{argument.Replace("'", singleQuotedApostrophe, StringComparison.Ordinal)}'" : $"\"{argument}\"";
+    }
+
+    private static string DeploymentNames(IEnumerable<AgentDeploymentRecord> deployments) => string.Join(", ", deployments.Select(deployment => TerminalText.Sanitize(deployment.DeploymentName)));
 
     /// <summary>A deployment selector matched more than one deployment.</summary>
     /// <param name="selector">The supplied selector, or <see langword="null"/> when none was.</param>
     /// <param name="matches">The deployments that matched.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException SlotAmbiguous(string? selector, IEnumerable<string> matches) => new(
+        ErrorCodes.Deployment.SlotAmbiguous,
         selector is null
             ? $"This agent has more than one deployment: {string.Join(", ", matches)}."
             : $"More than one deployment matches '{selector}': {string.Join(", ", matches)}.",
@@ -170,6 +256,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="value">The conflicting value.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException SlotAlreadyExists(string constraint, string value) => new(
+        ErrorCodes.Deployment.SlotAlreadyExists,
         $"This agent already has a deployment with {constraint} '{value}'.",
         ExitCodes.Usage,
         "deployment-already-exists",
@@ -179,6 +266,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="recordId">The record that moved underneath the command.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ETagMismatch(string recordId) => new(
+        ErrorCodes.Workspace.ETagMismatch,
         $"Record '{recordId}' was modified by something else while this command was running.",
         ExitCodes.Failure,
         "etag-mismatch",
@@ -189,6 +277,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="verb">The verb that does not apply.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException NotAnMcsAgent(string agentId, string verb) => new(
+        ErrorCodes.ManagedAgent.NotAnMcsAgent,
         $"`{verb}` applies only to MCS agent types, and '{agentId}' is not one.",
         ExitCodes.Usage,
         "not-an-mcs-agent",
@@ -199,6 +288,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="verb">The command being run.</param>
     /// <returns>The failure.</returns>
     public static ManagedAgentException NotAnMcsWorkflow(string agentId, string verb) => new(
+        ErrorCodes.ManagedAgent.NotAnMcsWorkflow,
         $"`{verb}` applies only to MCSWorkflow records, and '{agentId}' is not one.",
         ExitCodes.Usage,
         "not-an-mcs-workflow",
@@ -209,6 +299,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="displayName">The record's name.</param>
     /// <returns>The failure.</returns>
     public static ManagedAgentException WorkflowIdMissing(string agentId, string displayName) => new(
+        ErrorCodes.ManagedAgent.WorkflowIdMissing,
         $"The record '{displayName}' ({agentId}) carries no workflow id, so there is nothing to address in Dataverse.",
         ExitCodes.Usage,
         "workflow-id-missing",
@@ -218,6 +309,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="workflowRoot">The directory that was searched.</param>
     /// <returns>The failure.</returns>
     public static ManagedAgentException WorkflowNotFound(string workflowRoot) => new(
+        ErrorCodes.ManagedAgent.WorkflowNotFound,
         $"{workflowRoot} holds no workflow. A workflow lives in workflows/<name>-<id>/ and carries both workflow.json and metadata.yml.",
         ExitCodes.Usage,
         "workflow-not-found",
@@ -227,6 +319,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="folders">The workflow folders that were found.</param>
     /// <returns>The failure.</returns>
     public static ManagedAgentException WorkflowAmbiguous(IEnumerable<string> folders) => new(
+        ErrorCodes.ManagedAgent.WorkflowAmbiguous,
         $"This directory holds more than one workflow: {string.Join(", ", folders)}.",
         ExitCodes.Usage,
         "workflow-ambiguous",
@@ -237,6 +330,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="reason">What went wrong.</param>
     /// <returns>The failure.</returns>
     public static ManagedAgentException WorkflowMetadataUnreadable(string metadataPath, string reason) => new(
+        ErrorCodes.ManagedAgent.WorkflowMetadataUnreadable,
         $"{metadataPath} could not be read as workflow metadata: {reason}",
         ExitCodes.Usage,
         "workflow-metadata-unreadable",
@@ -247,6 +341,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="environmentId">The environment that was searched.</param>
     /// <returns>The failure.</returns>
     public static ManagedAgentException WorkflowSourceNotFound(string workflowId, string environmentId) => new(
+        ErrorCodes.ManagedAgent.WorkflowSourceNotFound,
         $"No workflow with id {workflowId} exists in {environmentId}.",
         ExitCodes.Usage,
         "workflow-source-not-found",
@@ -258,6 +353,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="reason">What the service reported.</param>
     /// <returns>The failure.</returns>
     public static ManagedAgentException WorkflowPushFailed(string workflowName, string environmentId, string reason) => new(
+        ErrorCodes.ManagedAgent.WorkflowPushFailed,
         $"The workflow '{workflowName}' could not be written to {environmentId}: {reason}",
         ExitCodes.Failure,
         "workflow-push-failed",
@@ -268,10 +364,21 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="environmentId">The environment that refused it.</param>
     /// <param name="connectionReference">The connection reference the service named.</param>
     public static ManagedAgentException WorkflowConnectionsNotReady(string workflowName, string environmentId, string connectionReference) => new(
+        ErrorCodes.ManagedAgent.WorkflowConnectionsNotReady,
         $"The workflow '{workflowName}' already exists in {environmentId} and the environment will not accept a change to it while '{connectionReference}' has no usable connection.",
         ExitCodes.Failure,
         "workflow-connections-not-ready",
         "Run `msagent deployment connection update` to bind the connections, then deploy again.");
+
+    /// <summary>Carries the sync library's report that the workflow is managed, so it cannot be cloned or pulled.</summary>
+    /// <param name="message">The sync library's message, which names the workflow and its environment.</param>
+    /// <returns>The failure.</returns>
+    public static ManagedAgentException WorkflowManaged(string message) => new(ErrorCodes.ManagedAgent.WorkflowManaged, message, ExitCodes.Usage, "workflow-managed", "Clone the flow from the environment where its solution is unmanaged, or pick a workflow `msagent agent list --agent-type MCSWorkflow` shows.");
+
+    /// <summary>A workflow name is one Dataverse would refuse or no folder name could carry.</summary>
+    /// <param name="reason">Why the name cannot be used.</param>
+    /// <returns>The failure.</returns>
+    public static ManagedAgentException WorkflowNameInvalid(string reason) => new(ErrorCodes.ManagedAgent.WorkflowNameInvalid, reason, ExitCodes.Usage, "workflow-name-invalid", "Choose another --agent-name, or correct the name in the workflow's metadata.yml, then run the command again.");
 
     /// <summary>The workflow on disk is not the workflow the record addresses.</summary>
     /// <param name="displayName">The record that was selected.</param>
@@ -280,6 +387,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="folderWorkflowId">The workflow that folder holds.</param>
     /// <returns>The failure.</returns>
     public static ManagedAgentException WorkflowFolderAddressesAnotherWorkflow(string displayName, string registeredWorkflowId, string folderName, string folderWorkflowId) => new(
+        ErrorCodes.ManagedAgent.WorkflowFolderAddressesAnotherWorkflow,
         $"'{displayName}' is registered against workflow {registeredWorkflowId}, but its folder {folderName} holds workflow {folderWorkflowId}.",
         ExitCodes.Usage,
         "workflow-folder-mismatch",
@@ -291,6 +399,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="writeFailure">Why writing the new copy failed.</param>
     /// <param name="restoreFailure">Why restoring the original failed.</param>
     public static ManagedAgentException WorkflowReplaceLostTheCloudCopy(string workflowName, string environmentId, string writeFailure, string restoreFailure) => new(
+        ErrorCodes.ManagedAgent.WorkflowReplaceLostTheCloudCopy,
         $"The workflow '{workflowName}' no longer exists in {environmentId}. The environment refused an update, so it was deleted and written again, but writing it back failed ({writeFailure}) and so did restoring the original ({restoreFailure}).",
         ExitCodes.Failure,
         "workflow-replace-lost-the-cloud-copy",
@@ -300,6 +409,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="projectFolder">The folder that would have been written over.</param>
     /// <returns>The failure.</returns>
     public static ManagedAgentException WorkflowProjectHoldsUnpushedChanges(string projectFolder) => new(
+        ErrorCodes.ManagedAgent.WorkflowProjectHoldsUnpushedChanges,
         $"The folder '{projectFolder}' already holds this workflow with changes the environment has not seen.",
         ExitCodes.Usage,
         "workflow-project-holds-unpushed-changes",
@@ -309,16 +419,32 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="folderName">The workflow folder that would have been replaced.</param>
     /// <returns>The failure.</returns>
     public static ManagedAgentException WorkflowLocalChangesWouldBeLost(string folderName) => new(
-        $"'{folderName}' holds changes the environment has not seen, and a pull would replace them.",
+        ErrorCodes.ManagedAgent.WorkflowLocalChangesWouldBeLost,
+        $"'{folderName}' has conflict local changes, and a pull would replace them.",
         ExitCodes.Usage,
         "workflow-local-changes-would-be-lost",
         "Run `msagent agent deploy` to push them, or pull again with --overwrite to discard them.");
+
+    public static ManagedAgentException WorkflowCloudChangesWouldBeLost(string folderName) => new(
+        ErrorCodes.ManagedAgent.WorkflowCloudChangesWouldBeLost,
+        $"'{folderName}' has conflict remote change, and a deploy would replace them.",
+        ExitCodes.Usage,
+        "workflow-cloud-changes-would-be-lost",
+        "Run `msagent agent pull` to get them, or deploy again with --overwrite to replace them.");
+
+    public static ManagedAgentException WorkflowUnpublishedDraft(string workflowName) => new(
+        ErrorCodes.ManagedAgent.WorkflowUnpublishedDraft,
+        $"'{workflowName}' has a draft version that was saved in Copilot Studio but not published, and the environment refuses a deploy while it exists.",
+        ExitCodes.Usage,
+        "workflow-unpublished-draft",
+        "Publish the draft in Copilot Studio, then run `msagent agent pull` to get it, or deploy again with --overwrite to replace it.");
 
     /// <summary>The supplied <c>--role</c> names no known access level.</summary>
     /// <param name="supplied">The value that was supplied.</param>
     /// <param name="accepted">The spellings that are accepted.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ShareRoleInvalid(string? supplied, IEnumerable<string> accepted) => new(
+        ErrorCodes.ManagedAgent.ShareRoleInvalid,
         string.IsNullOrWhiteSpace(supplied)
             ? $"--role is required, and must be one of: {string.Join(", ", accepted)}."
             : $"'{supplied.Trim()}' is not a share role. Valid roles are: {string.Join(", ", accepted)}.",
@@ -329,6 +455,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <summary>No user was supplied to share with or revoke from.</summary>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException SharePrincipalSelectorRequired() => new(
+        ErrorCodes.ManagedAgent.SharePrincipalSelectorRequired,
         "--user is required.",
         ExitCodes.Usage,
         "share-principal-selector-required",
@@ -337,6 +464,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <summary>No agent was supplied to share, show, or revoke.</summary>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ShareAgentSelectorRequired() => new(
+        ErrorCodes.ManagedAgent.ShareAgentSelectorRequired,
         "--agent-id or --agent-name is required.",
         ExitCodes.Usage,
         "share-agent-selector-required",
@@ -346,6 +474,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="supplied">The value that was supplied.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ShareRoleNotApplicable(string? supplied) => new(
+        ErrorCodes.ManagedAgent.ShareRoleNotApplicable,
         $"--role '{supplied?.Trim()}' applies to --user. Org-wide sharing grants use access to everyone and takes no role.",
         ExitCodes.Usage,
         "share-role-not-applicable",
@@ -356,6 +485,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="differences">How the state the service reports differs from the one that was asked for.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ShareNotApplied(string displayName, IReadOnlyList<string> differences) => new(
+        ErrorCodes.ManagedAgent.ShareNotApplied,
         $"The service accepted the request but reports a different state for {displayName}, so the share cannot be confirmed: {string.Join("; ", differences)}.",
         ExitCodes.Failure,
         "share-not-applied",
@@ -367,6 +497,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="differences">How the state the service reports differs from the one that was asked for.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ShareNotRemoved(string principalName, string displayName, IReadOnlyList<string> differences) => new(
+        ErrorCodes.ManagedAgent.ShareNotRemoved,
         $"The service accepted the request to remove {principalName} from {displayName} but reports a different state, so the removal cannot be confirmed: {string.Join("; ", differences)}.",
         ExitCodes.Failure,
         "share-not-removed",
@@ -378,25 +509,53 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="environmentId">The environment that was searched.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ShareTargetNotInEnvironment(string displayName, string agentId, string environmentId) => new(
+        ErrorCodes.ManagedAgent.ShareTargetNotInEnvironment,
         $"{displayName} ({agentId}) has no Copilot Studio agent in environment '{environmentId}', which is where its most recent deployment went.",
         ExitCodes.Usage,
         "share-target-not-in-environment",
         "Run `msagent agent deploy` to deploy it there, or `msagent deployment list` to see which environments it actually reached.");
 
-    /// <summary>The user selector matched nothing the environment knows.</summary>
+    /// <summary>The user selector matched nobody in the tenant directory.</summary>
     /// <param name="selector">The value that was supplied.</param>
-    /// <param name="environmentId">The environment that was searched.</param>
+    /// <param name="tenantId">The tenant that was searched.</param>
     /// <returns>The typed failure.</returns>
-    public static ManagedAgentException SharePrincipalNotFound(string selector, string environmentId) => new(
-        $"No user matching '{selector}' has an account in environment '{environmentId}'.",
+    public static ManagedAgentException SharePrincipalNotFound(string selector, string tenantId) => new(
+        ErrorCodes.ManagedAgent.SharePrincipalNotFound,
+        $"No user with sign-in address or email address '{selector}' exists in tenant '{tenantId}'.",
         ExitCodes.Usage,
         "share-principal-not-found",
-        $"Sharing itself needs no account here, but resolving a name does. Supply the Entra object id instead — `az ad user show --id {selector} --query id -o tsv` prints it — or share from an environment where the user already has one.");
+        "Check the address for typos, or supply the user's Entra object id.");
+
+    /// <summary>The email address belongs to more than one user in the tenant directory, so it names nobody in particular.</summary>
+    /// <param name="selector">The value that was supplied.</param>
+    /// <param name="tenantId">The tenant that was searched.</param>
+    /// <param name="signInAddresses">The sign-in addresses of users it matched. The search stops once it has found two.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException SharePrincipalAmbiguous(string selector, string tenantId, IEnumerable<string> signInAddresses) => new(
+        ErrorCodes.ManagedAgent.SharePrincipalAmbiguous,
+        $"'{selector}' is the email address of more than one user in tenant '{tenantId}', including {string.Join(", ", signInAddresses)}.",
+        ExitCodes.Usage,
+        "share-principal-ambiguous",
+        "Supply the sign-in address of the user you mean or their Entra object id.");
+
+    /// <summary>The tenant directory could not answer which user an address names.</summary>
+    /// <param name="selector">The value that was supplied.</param>
+    /// <param name="detail">What the directory reported.</param>
+    /// <param name="innerException">The directory failure, when there was one.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException SharePrincipalLookupFailed(string selector, string detail, Exception? innerException = null) => new(
+        ErrorCodes.ManagedAgent.SharePrincipalLookupFailed,
+        $"Microsoft Graph could not resolve '{selector}' to an Entra object id: {detail}",
+        ExitCodes.Failure,
+        "share-principal-lookup-failed",
+        "Retry the command, or supply the Entra object id instead.",
+        innerException);
 
     /// <summary>The owner's access was targeted, which sharing cannot change.</summary>
     /// <param name="principalName">The principal that owns the agent.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ShareOwnerNotChangeable(string principalName) => new(
+        ErrorCodes.ManagedAgent.ShareOwnerNotChangeable,
         $"{principalName} owns this agent, and an owner's access cannot be granted or revoked by sharing.",
         ExitCodes.Usage,
         "share-owner-not-changeable",
@@ -407,6 +566,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="duplicates">The principals listed more than once.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ShareStateAmbiguous(string displayName, IEnumerable<string> duplicates) => new(
+        ErrorCodes.ManagedAgent.ShareStateAmbiguous,
         $"The service lists {string.Join(", ", duplicates)} more than once against {displayName}, so sharing cannot say which entry a change was meant for.",
         ExitCodes.Failure,
         "share-state-ambiguous",
@@ -416,6 +576,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="projectDirectory">The directory that was inspected.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ProjectNotFound(string projectDirectory) => new(
+        ErrorCodes.Workspace.ProjectNotFound,
         $"{projectDirectory} holds no MCS project.",
         ExitCodes.Usage,
         "project-not-found",
@@ -427,16 +588,29 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="configPath">Where the record lives.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException AlreadyRegistered(string displayName, string agentId, string configPath) => new(
+        ErrorCodes.Workspace.AlreadyRegistered,
         $"This project is already registered as {displayName} ({agentId}) in '{configPath}'.",
         ExitCodes.Usage,
         "already-registered",
         "Use the existing record, or delete it with `msagent agent delete` before registering again.");
+
+    /// <summary>The destination workspace holds content that creation must not overwrite.</summary>
+    /// <param name="workspaceDirectory">The destination directory.</param>
+    /// <param name="existingContent">The kind of content already present.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException WorkspaceNotEmpty(string workspaceDirectory, string existingContent = "content") => new(
+        ErrorCodes.Workspace.WorkspaceNotEmpty,
+        $"'{workspaceDirectory}' already holds {existingContent}.",
+        ExitCodes.Usage,
+        "workspace-not-empty",
+        "Choose a different --agent-name, or a --project directory that does not hold a folder by that name.");
 
     /// <summary>The clone source could not be found in the environment it was named in.</summary>
     /// <param name="selector">The schema name or identifier that was looked up.</param>
     /// <param name="environmentId">The environment that was searched.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException CloneSourceNotFound(string selector, string environmentId) => new(
+        ErrorCodes.ManagedAgent.CloneSourceNotFound,
         $"No agent matching '{selector}' exists in {environmentId}.",
         ExitCodes.Usage,
         "clone-source-not-found",
@@ -447,6 +621,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="environmentId">The environment that was searched.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException TargetAgentMissing(string schemaName, string environmentId) => new(
+        ErrorCodes.Deployment.TargetAgentMissing,
         $"The agent {schemaName} is expected in {environmentId} but is not there.",
         ExitCodes.Usage,
         "target-agent-missing",
@@ -457,6 +632,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="agentId">The record's identifier.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException NotDeployedYet(string displayName, string agentId) => new(
+        ErrorCodes.Deployment.NotDeployedYet,
         $"{displayName} ({agentId}) has not been deployed, so it does not exist in Copilot Studio yet.",
         ExitCodes.Usage,
         "not-deployed-yet",
@@ -467,6 +643,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="workspaceDirectory">The workspace holding the declaration.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ConnectionReferenceNotRemoved(string logicalName, string workspaceDirectory) => new(
+        ErrorCodes.ManagedAgent.ConnectionReferenceNotRemoved,
         $"Connection reference {logicalName} was not removed from {workspaceDirectory}.",
         ExitCodes.Failure,
         "connection-reference-not-removed",
@@ -479,12 +656,62 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="listCommand">The command that lists what the workspace declares.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ConnectionReferenceNotDeclared(string logicalName, string workspaceDirectory, IReadOnlyList<string> nearMatches, string listCommand) => new(
+        ErrorCodes.ManagedAgent.ConnectionReferenceNotDeclared,
         $"Connection reference {logicalName} is not declared in {workspaceDirectory}.",
         ExitCodes.Usage,
         "connection-reference-not-declared",
         nearMatches is { Count: > 0 }
             ? $"The workspace declares {string.Join(", ", nearMatches)}. Re-run with the full name."
             : $"Run `{listCommand}` to see the references the workspace declares.");
+
+    /// <summary>The environment does not serve the requested connector.</summary>
+    /// <param name="connectorId">The normalized connector identifier.</param>
+    /// <param name="environmentId">The environment that was searched.</param>
+    /// <param name="nearMatches">The closest connector identifiers in the catalog.</param>
+    /// <param name="listCommand">The command that lists the available connectors.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException ConnectorNotServed(string connectorId, string environmentId, IReadOnlyList<string> nearMatches, string listCommand) => new(
+        ErrorCodes.ManagedAgent.ConnectorNotServed,
+        $"Environment '{environmentId}' serves no connector '{connectorId}'.",
+        ExitCodes.Usage,
+        "connector-not-served",
+        nearMatches.Count == 0
+            ? $"Run `{listCommand}` to find it."
+            : $"Did you mean: {string.Join(", ", nearMatches)}?");
+
+    /// <summary>The requested connection is not among the connector's candidates.</summary>
+    /// <param name="connectionId">The connection the request named.</param>
+    /// <param name="subject">What the connection has to satisfy.</param>
+    /// <param name="candidateIds">The connection identifiers the connector serves.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException ConnectionNotACandidate(string connectionId, string subject, IReadOnlyList<string> candidateIds)
+    {
+        var offered = candidateIds.Count == 0
+            ? "no connections exist for its connector"
+            : $"valid connections are: {string.Join(", ", candidateIds)}";
+
+        return new(
+            ErrorCodes.ManagedAgent.ConnectionNotACandidate,
+            $"Connection '{connectionId}' is not a candidate for {subject} — {offered}.",
+            ExitCodes.Usage,
+            "connection-not-a-candidate",
+            candidateIds.Count == 0
+                ? "Create a connection for its connector, then retry."
+                : "Choose a Connected connection from the listed candidates.");
+    }
+
+    /// <summary>The connector does not serve the connection requested for removal.</summary>
+    /// <param name="connectorId">The connector that was searched.</param>
+    /// <param name="connectionId">The connection the request named.</param>
+    /// <param name="environmentId">The environment that was searched.</param>
+    /// <param name="listCommand">The command that lists the available connections.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException ConnectionNotServed(string connectorId, string connectionId, string environmentId, string listCommand) => new(
+        ErrorCodes.ManagedAgent.ConnectionNotServed,
+        $"Connector {connectorId} serves no connection {connectionId} in {environmentId}.",
+        ExitCodes.Usage,
+        "connection-not-served",
+        $"Run `{listCommand}` to see which connector holds it.");
 
     /// <summary>The reference was declared, but a later step failed before it could be bound.</summary>
     /// <param name="logicalName">The reference that now exists.</param>
@@ -493,6 +720,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="bindCommand">The command that would bind it.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ConnectionReferenceNotBound(string logicalName, string connectorId, Exception failure, string bindCommand) => new(
+        ErrorCodes.ManagedAgent.ConnectionReferenceNotBound,
         $"Connection reference {logicalName} was declared for {connectorId}, but binding it failed: {failure.Message}",
         ExitCodes.Failure,
         "connection-reference-not-bound",
@@ -508,6 +736,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="listCommand">The command that reports what the workspace declares.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ConnectionReferenceNotDeclared(string connectorId, string environmentId, Exception failure, string listCommand) => new(
+        ErrorCodes.ManagedAgent.ConnectionReferenceDeclarationFailed,
         $"No connection reference was declared for {connectorId} in {environmentId}: {failure.Message}",
         ExitCodes.Failure,
         "connection-reference-not-declared",
@@ -521,6 +750,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="detail">The service's own message, when it sent one.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ConnectionNotDeleted(string connectionId, string environmentId, int statusCode, string? detail) => new(
+        ErrorCodes.ManagedAgent.ConnectionNotDeleted,
         $"Connection {connectionId} in {environmentId} was not deleted: the service answered {statusCode}.{Describe(detail)}",
         ExitCodes.Failure,
         "connection-not-deleted",
@@ -533,6 +763,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="retryCommand">The command that completes the deletion on its own.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ConnectionNotDeletedAfterReferenceRemoved(string connectionId, string logicalName, Exception failure, string retryCommand) => new(
+        ErrorCodes.ManagedAgent.ConnectionNotDeletedAfterReferenceRemoved,
         failure is TimeoutException
             ? $"Connection reference {logicalName} was removed, but the request to delete connection {connectionId} timed out, so whether the service deleted it is unknown: {failure.Message}"
             : $"Connection reference {logicalName} was removed, but connection {connectionId} was not deleted: {failure.Message}",
@@ -550,6 +781,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="cause">The failure that ended the sign-in.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ConnectionNotRemoved(string connectionId, string environmentId, string detail, string reason, string removeCommand, Exception cause) => new(
+        ErrorCodes.ManagedAgent.ConnectionNotRemoved,
         $"Signing in to the new connection did not complete: {reason} Connection {connectionId} in environment {environmentId} was then not removed: {detail}",
         ExitCodes.Failure,
         "connection-not-deleted",
@@ -565,6 +797,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="bindCommand">The command that would bind one, once it exists.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ConnectionNotCreated(string connectorId, string environmentId, string reason, string bindCommand) => new(
+        ErrorCodes.ManagedAgent.ConnectionNotCreated,
         $"No connection was created for connector {connectorId} in {environmentId}: {reason}",
         ExitCodes.Failure,
         "connection-not-created",
@@ -574,6 +807,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="projectDirectory">The directory that was inspected.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException WorkspaceDisconnected(string projectDirectory) => new(
+        ErrorCodes.Workspace.WorkspaceDisconnected,
         $"{projectDirectory} holds a project that is not connected to Copilot Studio.",
         ExitCodes.Usage,
         "workspace-disconnected",
@@ -584,6 +818,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="resolvedAgentId">The agent the selector resolved to.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException WorkspaceIdentityMismatch(string workspaceAgentId, string resolvedAgentId) => new(
+        ErrorCodes.Workspace.WorkspaceIdentityMismatch,
         $"This directory is connected to agent {workspaceAgentId}, but the selector resolves to {resolvedAgentId}.",
         ExitCodes.Usage,
         "workspace-identity-mismatch",
@@ -596,6 +831,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="projectDirectory">The workspace directory.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException WorkspaceIdentityMismatch(string expectedSchemaName, string boundSchemaName, string boundAgentId, string projectDirectory) => new(
+        ErrorCodes.Workspace.WorkspaceIdentityMismatch,
         $"{projectDirectory} deploys as '{expectedSchemaName}' but its .mcs binding points at '{boundSchemaName}' ({boundAgentId}), so a push would overwrite a different agent.",
         ExitCodes.Usage,
         "workspace-identity-mismatch",
@@ -606,6 +842,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="agentLocation">The workspace folder being registered.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException WorkspaceSchemaUnreadable(string workspaceDirectory, string agentLocation) => new(
+        ErrorCodes.Workspace.WorkspaceSchemaUnreadable,
         $"The project file in {workspaceDirectory} does not supply a readable schemaName, so '{agentLocation}' cannot be registered against the agent it deploys as.",
         ExitCodes.Usage,
         "workspace-schema-unreadable",
@@ -616,6 +853,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="agentId">The record being acted on.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException WorkspaceSchemaUnknown(string workspaceDirectory, string agentId) => new(
+        ErrorCodes.Workspace.WorkspaceSchemaUnknown,
         $"{workspaceDirectory} does not record a schema name, so the cloud agent its .mcs directory points at cannot be confirmed to belong to {agentId}.",
         ExitCodes.Usage,
         "workspace-schema-unknown",
@@ -629,6 +867,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="innerException">The failure that stopped the record from being written.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException DeployRecordedNowhere(string schemaName, string environmentId, string targetAgentId, string deploymentName, Exception innerException) => new(
+        ErrorCodes.Deployment.DeployRecordedNowhere,
         $"Agent '{schemaName}' ({targetAgentId}) was pushed to {environmentId}, but deployment '{deploymentName}' could not be marked as deployed: {innerException.Message}",
         ExitCodes.Failure,
         "deploy-recorded-nowhere",
@@ -641,6 +880,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="innerException">The failure that stopped the activation.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException WorkflowActivationFailed(string agentId, string environmentId, Exception innerException) => new(
+        ErrorCodes.ManagedAgent.WorkflowActivationFailed,
         $"The connections for agent {agentId} in {environmentId} were bound, but the workflows depending on them could not be activated: {innerException.Message}",
         ExitCodes.Failure,
         "workflow-activation-failed",
@@ -652,6 +892,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="innerException">The failure that stopped the write.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException CloneNotRegistered(string displayName, Exception innerException) => new(
+        ErrorCodes.ManagedAgent.CloneNotRegistered,
         $"The clone of {displayName} could not be registered: {innerException.Message}",
         ExitCodes.Failure,
         "clone-not-registered",
@@ -665,6 +906,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="innerException">The failure that stopped the download.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException CloneNotMaterialised(string mcsAgentId, string sourceEnvironmentId, string projectDirectory, Exception innerException) => new(
+        ErrorCodes.ManagedAgent.CloneNotMaterialised,
         $"The clone of {mcsAgentId} in {sourceEnvironmentId} could not be written to {projectDirectory}: {innerException.Message}",
         ExitCodes.Failure,
         "clone-not-materialised",
@@ -676,6 +918,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="reason">Why the record write failed.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException RecordsSurvivedCloudDelete(string agentId, string environmentId, string reason) => new(
+        ErrorCodes.ManagedAgent.RecordsSurvivedCloudDelete,
         $"The cloud agent in {environmentId} was deleted, but the records for '{agentId}' could not be removed: {reason}",
         ExitCodes.Failure,
         "records-survived-cloud-delete",
@@ -685,6 +928,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="path">The configuration file.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException ConfigLocked(string path) => new(
+        ErrorCodes.Workspace.ConfigLocked,
         $"Another AgentHost command is writing {path}.",
         ExitCodes.Failure,
         "config-locked",
@@ -697,6 +941,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="reason">Why publishing failed.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException PublishFailedAfterPush(string schemaName, string environmentId, string deploymentName, string reason) => new(
+        ErrorCodes.Deployment.PublishFailedAfterPush,
         $"The agent was deployed, but publishing it failed: {reason} Agent {schemaName} in {environmentId}, deployment {deploymentName}.",
         ExitCodes.Failure,
         "publish-failed-after-push",
@@ -709,6 +954,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="warnings">What the push did not land.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException PublishWithheldAfterIncompletePush(string schemaName, string environmentId, string deploymentName, IReadOnlyList<string> warnings) => new(
+        ErrorCodes.Deployment.PublishWithheldAfterIncompletePush,
         $"The agent was deployed, but --publish was withheld because the push did not fully land: {string.Join(" ", warnings)} Agent {schemaName} in {environmentId}, deployment {deploymentName}.",
         ExitCodes.Failure,
         "publish-withheld-incomplete-push",
@@ -725,6 +971,7 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="innerException">The underlying failure.</param>
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException DeployIncomplete(string stage, string schemaName, string environmentId, string targetDescription, Exception innerException) => new(
+        ErrorCodes.Deployment.DeployIncomplete,
         $"The {stage} stage of the deploy failed. Agent {schemaName} {targetDescription} in {environmentId}. {DescribeChain(innerException)}",
         ExitCodes.Failure,
         "deploy-incomplete",

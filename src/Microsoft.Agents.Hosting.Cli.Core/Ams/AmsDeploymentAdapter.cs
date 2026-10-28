@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Security.Authentication;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
@@ -35,12 +34,6 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
         _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens));
         _claimsValidator = claimsValidator ?? new PpapiTokenClaimsValidator();
     }
-
-    public static HttpClientHandler CreateRedirectRejectingHandler() => new()
-    {
-        AllowAutoRedirect = false,
-        SslProtocols = SslProtocols.Tls13,
-    };
 
     public async Task<AmsAgentReadResult> GetAsync(
         AmsAgentReadTransportRequest request,
@@ -409,9 +402,7 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
     private static Uri BuildAgentUri(AmsAgentReadTransportRequest request)
     {
         var relativePath =
-            $"agenthosting/tenants/{Uri.EscapeDataString(request.TenantId)}/" +
-            $"environments/{Uri.EscapeDataString(request.EnvironmentId)}/" +
-            $"agents/{Uri.EscapeDataString(request.AgentId)}?api-version=1";
+            $"agenthosting/agents/{Uri.EscapeDataString(request.AgentId)}?api-version=1";
         return new Uri(EnsureTrailingSlash(request.Endpoint), relativePath);
     }
 

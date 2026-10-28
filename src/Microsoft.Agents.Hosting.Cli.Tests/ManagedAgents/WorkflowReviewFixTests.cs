@@ -18,7 +18,7 @@ public sealed class WorkflowReviewFixTests : IDisposable
     public void Dispose() => _workspace.Dispose();
 
     private WorkflowCreateService CreateService(JsonAgentConfigStore store) =>
-        new(ManagedAgentFixtures.Resolver(), store, store, _store, _scaffold, new AgentConfigLocator(), ManagedAgentFixtures.Principals(), new FakeWorkflowWorkspacePort());
+        new(ManagedAgentFixtures.Resolver(), store, new HomeDeploymentRegistrar(store, store), _store, _scaffold, new AgentConfigLocator(), ManagedAgentFixtures.Principals(), new FakeWorkflowWorkspacePort());
 
     [Theory]
     [InlineData("settings.mcs.yml")]
@@ -29,15 +29,17 @@ public sealed class WorkflowReviewFixTests : IDisposable
     [InlineData("collection.mcs.yaml")]
     public async Task CreateRefusesADestinationThatAlreadyHoldsAnAgentProject(string agentFileName)
     {
-        var destination = Path.Combine(_workspace.Root, AgentConfigLocator.WorkspaceFolderName("WF Hook 2"));
+        var destination = Path.Combine(_workspace.Root, new WorkflowWorkspaceAdapter().ProjectFolderName("WF Hook 2"));
 
         Directory.CreateDirectory(destination);
         File.WriteAllText(Path.Combine(destination, agentFileName), "kind: GptComponentMetadata\n");
 
-        await Assert.ThrowsAsync<UsageException>(() => CreateService(ManagedAgentFixtures.Store()).CreateAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => CreateService(ManagedAgentFixtures.Store()).CreateAsync(
             new ManagedAgentCreateRequest { Name = "WF Hook 2", AgentType = AgentTypes.McsWorkflow, Project = _workspace.Root },
             CancellationToken.None));
 
+        Assert.Equal("workspace-not-empty", failure.ErrorKind);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
         Assert.Empty(_scaffold.Calls);
         Assert.False(Directory.Exists(Path.Combine(destination, WorkflowWorkspace.WorkflowsFolderName)));
     }

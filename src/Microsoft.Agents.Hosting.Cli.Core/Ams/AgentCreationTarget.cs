@@ -5,13 +5,11 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 
 /// <summary>
 /// Resolves the endpoint and route mode used by <c>msagent agent create</c>. Normal operation uses the
-/// trusted environment API front door; deployment configuration may override it for direct
-/// AMSDataPlane Dev-island proof.
+/// trusted environment API front door; an embedding or test host may explicitly supply a direct
+/// AMSDataPlane endpoint.
 /// </summary>
 public sealed record AgentCreationTarget
 {
-    public const string EndpointVariableName = "AH_CLI_AMSDP_ENDPOINT";
-
     public string? Endpoint { get; init; }
 
     public AgentCreationTargetResolution Resolve(Uri environmentEndpoint)
@@ -30,22 +28,22 @@ public sealed record AgentCreationTarget
         if (!Uri.TryCreate(Endpoint.Trim(), UriKind.Absolute, out var endpoint))
         {
             throw AgentCreationException.EndpointNotUsable(
-                $"The configured Agent Management Service Data Plane endpoint ({EndpointVariableName}) is not an absolute uri.",
-                $"Set {EndpointVariableName} to an absolute https endpoint, for example https://<host>.");
+                "The supplied Agent Management Service Data Plane endpoint is not an absolute uri.",
+                "Supply an absolute https endpoint, for example https://<host>.");
         }
 
         if (!string.Equals(endpoint.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
         {
             throw AgentCreationException.EndpointNotUsable(
                 $"The configured Agent Management Service Data Plane endpoint uses scheme '{endpoint.Scheme}', and a delegated token is only ever sent over https.",
-                $"Set {EndpointVariableName} to an https endpoint.");
+                "Supply an https endpoint.");
         }
 
         if (!string.IsNullOrEmpty(endpoint.UserInfo))
         {
             throw AgentCreationException.EndpointNotUsable(
                 "The configured Agent Management Service Data Plane endpoint carries embedded user information.",
-                $"Set {EndpointVariableName} to an https endpoint with no embedded credentials.");
+                "Supply an https endpoint with no embedded credentials.");
         }
 
         return new AgentCreationTargetResolution

@@ -20,6 +20,7 @@ public sealed class EvaluationRunService
     private readonly IInteractiveMessagePresenter _presenter;
     private readonly IClock _clock;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly IProgressStatus _progress;
 
     /// <summary>Creates the service.</summary>
     /// <param name="targets">Resolves the agent being addressed.</param>
@@ -31,7 +32,8 @@ public sealed class EvaluationRunService
     /// <param name="presenter">Reports progress while <c>--watch</c> polls.</param>
     /// <param name="clock">Bounds how long polling runs.</param>
     /// <param name="delay">Waits between polls, replaced in tests.</param>
-    public EvaluationRunService(IEvaluationTargetResolver targets, EvaluationTestSetLookup testSets, EvaluationTestSetService testSetWrites, EvaluationConversationProvider conversations, IAgentEvaluationPort evaluations, ICopilotFileSystem files, IInteractiveMessagePresenter presenter, IClock clock, Func<TimeSpan, CancellationToken, Task>? delay = null)
+    /// <param name="progress">Shows progress on the status line while <c>--watch</c> polls, in place of the presenter.</param>
+    public EvaluationRunService(IEvaluationTargetResolver targets, EvaluationTestSetLookup testSets, EvaluationTestSetService testSetWrites, EvaluationConversationProvider conversations, IAgentEvaluationPort evaluations, ICopilotFileSystem files, IInteractiveMessagePresenter presenter, IClock clock, Func<TimeSpan, CancellationToken, Task>? delay = null, IProgressStatus? progress = null)
     {
         _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _testSets = testSets ?? throw new ArgumentNullException(nameof(testSets));
@@ -42,6 +44,7 @@ public sealed class EvaluationRunService
         _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _delay = delay ?? Task.Delay;
+        _progress = progress ?? NoProgressStatus.Instance;
     }
 
     /// <summary>Starts an evaluation run, creating the test set first when one was not named.</summary>
@@ -235,12 +238,16 @@ public sealed class EvaluationRunService
             detail = await _evaluations.GetRunAsync(target.Environment, target.McsAgentId, runId, cancellationToken).ConfigureAwait(false)
                 ?? throw EvaluationException.RunNotFound(runId);
 
-            var progress = DescribeProgress(detail);
+            var status = DescribeProgress(detail);
 
-            if (!string.Equals(progress, reported, StringComparison.Ordinal))
+            if (!string.Equals(status, reported, StringComparison.Ordinal))
             {
-                reported = progress;
-                await _presenter.PresentAsync(progress, cancellationToken).ConfigureAwait(false);
+                reported = status;
+
+                if (!_progress.Report(status))
+                {
+                    await _presenter.PresentAsync($"  {status}.", cancellationToken).ConfigureAwait(false);
+                }
             }
 
             if (detail.Summary.IsTerminal)
@@ -258,8 +265,8 @@ public sealed class EvaluationRunService
 
     private static string DescribeProgress(EvaluationRunDetail detail) =>
         detail.TestCases.Count == 0
-            ? $"  {detail.Summary.State}."
-            : $"  {detail.Summary.State}: {detail.EvaluatedCount} of {detail.TestCases.Count} conversation(s) evaluated.";
+            ? detail.Summary.State
+            : $"{detail.Summary.State}: {detail.EvaluatedCount} of {detail.TestCases.Count} conversation(s) evaluated";
 
     private EvaluationRunResult Complete(EvaluationTarget target, EvaluationRunDetail detail, string testSetName, string? output, bool timedOut)
     {

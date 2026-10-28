@@ -60,12 +60,11 @@ public sealed class EmbeddabilityTests
                 environments,
                 new PendingAmsAgentCreationTransport()),
             new AgentPackageUploadService(
-                new AgentHostingServiceTargets(),
                 environments,
                 new PendingAmsAgentReadTransport(),
                 new PendingAmsPackagePublicationTransport()),
             new AgentDeployService(
-                new AgentHostingServiceTargets(),
+                PowerPlatformApiTargetConfig.Public,
                 environments,
                 new PendingAmsAgentReadTransport(),
                 new PendingAmsDeploymentTransport()));

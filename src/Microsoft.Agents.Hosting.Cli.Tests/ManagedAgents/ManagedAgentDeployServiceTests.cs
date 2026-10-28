@@ -12,7 +12,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 [Collection("CurrentDirectory")]
 public sealed class ManagedAgentDeployServiceTests
 {
-    private static ManagedAgentDeployService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces, RecordingAttachPort attach, FakeCopilotCatalogPort? catalog = null, WorkflowActivationPass? activation = null)
+    private static ManagedAgentDeployService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces, RecordingAttachPort attach, FakeCopilotCatalogPort? catalog = null, WorkflowActivationPass? activation = null, IProgressStatus? progress = null)
     {
         var resolvedCatalog = catalog ?? new FakeCopilotCatalogPort();
         var environments = ManagedAgentFixtures.Resolver();
@@ -32,7 +32,8 @@ public sealed class ManagedAgentDeployServiceTests
             new CopilotCatalogService(resolvedCatalog, environments, locator, new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
             ManagedAgentFixtures.Principals(),
             activation ?? ManagedAgentFixtures.ActivationPass(),
-            new FixedClock(ManagedAgentFixtures.Now));
+            new FixedClock(ManagedAgentFixtures.Now),
+            progress);
     }
 
     [Fact]
@@ -534,13 +535,16 @@ public sealed class ManagedAgentDeployServiceTests
         return workspaces;
     }
 
-    private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) Registered(string stage = DeploymentStages.Dev, string environmentId = "env-1", bool withProjectFile = true)
+    private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) Registered(string stage = DeploymentStages.Dev, string environmentId = "env-1", bool withProjectFile = true, bool withDeployment = true)
     {
         var workspace = new TemporaryWorkspace(withProjectFile);
         var store = ManagedAgentFixtures.Store();
 
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
-        store.Add(workspace.Root, ManagedAgentFixtures.Deployment(name: stage, stage: stage, environmentId: environmentId));
+        if (withDeployment)
+        {
+            store.Add(workspace.Root, ManagedAgentFixtures.Deployment(name: stage, stage: stage, environmentId: environmentId));
+        }
 
         return (workspace, store);
     }
@@ -1177,6 +1181,47 @@ public sealed class ManagedAgentDeployServiceTests
         Assert.Equal(1, catalog.PublishCalls);
     }
 
+    [Theory]
+    [InlineData(false, new[] { "Pushing changes" })]
+    [InlineData(true, new[] { "Pushing changes", "Publishing" })]
+    public async Task Deploy_ReportsEachStepOnTheStatusLine(bool publish, string[] expected)
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        store.Update(workspace.Root, store.List(workspace.Root).Single() with { McsAgentId = "11111111-1111-1111-1111-111111111111" });
+        var catalog = new FakeCopilotCatalogPort { ResolveReturns = "11111111-1111-1111-1111-111111111111" };
+        catalog.PublishedOnSequence.Enqueue(null);
+        catalog.PublishedOnSequence.Enqueue(ManagedAgentFixtures.Now);
+        var progress = new RecordingProgressStatus(shown: true);
+
+        await Create(store, Fresh(out var workspaces), Connecting(workspaces), catalog, progress: progress).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev", Publish = publish },
+            CancellationToken.None);
+
+        Assert.Equal(expected, progress.Reports);
+    }
+
+    [Fact]
+    public async Task Deploy_AWithheldPublishIsNeverReportedAsAStep()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent());
+        store.Add(workspace.Root, ManagedAgentFixtures.Deployment());
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true };
+        workspaces.PushWarnings.Add("A component was refused: ExportKeyInvalidCreate on cre98_AgentC1.cr.WX3p-EQ4");
+        var progress = new RecordingProgressStatus(shown: true);
+
+        await Assert.ThrowsAsync<ManagedAgentException>(() =>
+            Create(store, workspaces, Connecting(workspaces), progress: progress).DeployAsync(
+                new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev", Publish = true },
+                CancellationToken.None));
+
+        Assert.Equal(["Pushing changes"], progress.Reports);
+    }
+
     [Fact]
     public async Task Deploy_OverridesTheSchemaName()
     {
@@ -1193,16 +1238,33 @@ public sealed class ManagedAgentDeployServiceTests
         Assert.Equal("foo_other", attach.LastCommand!.SchemaName);
     }
 
-    [Fact]
-    public async Task Deploy_WithoutADeploymentSelector_IsAUsageError()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Deploy_WithoutAResolvableDeployment_StopsBeforeCloudOrCacheChanges(bool hasDeployment, bool withSelector)
     {
-        var (workspace, store) = Registered();
+        var (workspace, store) = Registered(withDeployment: hasDeployment);
         using var _ = workspace;
         using var scope = new CurrentDirectoryScope(workspace.Root);
+        workspace.AddFile(Path.Combine(".mcs", "botdefinition.json"), "{\"source\":\"cloud\"}");
+        var configuration = File.ReadAllBytes(workspace.ConfigPath);
+        var cachePath = Path.Combine(workspace.Root, ".mcs", "botdefinition.json");
+        var cache = File.ReadAllBytes(cachePath);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true };
+        var attach = Connecting(workspaces);
 
-        await Assert.ThrowsAsync<UsageException>(() => Create(store, Fresh(out var workspaces, connected: true), Connecting(workspaces)).DeployAsync(
-            new ManagedAgentDeployRequest { AgentId = "agent-1" },
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, attach).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = withSelector ? "no-such-slot" : null },
             CancellationToken.None));
+
+        Assert.Equal(withSelector ? "deployment-not-found" : hasDeployment ? "deployment-selector-required" : "deployment-records-empty", failure.ErrorKind);
+        Assert.Contains(hasDeployment ? withSelector ? "no-such-slot" : "Available deployments: dev" : "no deployment records", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(0, workspaces.PushCalls);
+        Assert.Equal(0, attach.Calls);
+        Assert.Equal(configuration, File.ReadAllBytes(workspace.ConfigPath));
+        Assert.Equal(cache, File.ReadAllBytes(cachePath));
     }
 
     [Fact]

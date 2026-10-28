@@ -253,6 +253,7 @@ public sealed class TelemetryGeographyRoutingTests
             new FixedTelemetryClock(),
             "1.2.3-test",
             environmentObserver: environmentObserver,
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
         session.RecordAttempt(Path());
         using IDisposable scope = session.EnterObservationScope()!;
@@ -319,6 +320,7 @@ public sealed class TelemetryGeographyRoutingTests
             "1.2.3-test",
             tenantObserver,
             environmentObserver,
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
         session.RecordAttempt(Path());
         using IDisposable scope = session.EnterObservationScope()!;
@@ -407,6 +409,7 @@ public sealed class TelemetryGeographyRoutingTests
             resolver,
             new FixedTelemetryClock(),
             "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
         session.RecordAttempt(Path());
         session.ObserveResolvedEnvironment(Target("environment-one"));
@@ -459,6 +462,7 @@ public sealed class TelemetryGeographyRoutingTests
             new FixedTelemetryClock(),
             "1.2.3-test",
             environmentObserver: environmentObserver,
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: new CapturingTransport());
 
     private static TelemetryEnvironmentTarget ResolvedTarget(

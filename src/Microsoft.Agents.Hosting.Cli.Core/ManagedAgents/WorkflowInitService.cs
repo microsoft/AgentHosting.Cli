@@ -54,7 +54,7 @@ public sealed class WorkflowInitService
         }
 
         var folder = _workspace.RequireSingle(workspaceRoot);
-        await _workflows.ReadLocalAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
+        var local = await _workflows.ReadLocalAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
         var projectDirectory = _locator.EnclosingProjectDirectory(workspaceRoot);
         var agentLocation = Path.GetRelativePath(projectDirectory, workspaceRoot).Replace('\\', '/');
         var displayName = request.Name.Trim();
@@ -88,6 +88,7 @@ public sealed class WorkflowInitService
             DisplayName = stored.DisplayName,
             AgentType = stored.AgentType,
             McsWorkflowId = stored.McsWorkflowId,
+            WorkflowName = local.Name,
             WorkflowFolder = folder.FolderPath,
             WorkflowState = WorkflowStateProjection.NotDeployed,
             TenantId = stored.TenantId,

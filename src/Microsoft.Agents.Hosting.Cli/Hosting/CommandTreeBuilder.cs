@@ -26,6 +26,7 @@ public sealed class CommandTreeBuilder
     private readonly Option<bool> _nonInteractive;
     private readonly CommandTelemetrySessionAccessor _telemetryAccessor;
     private readonly SystemCommandLineInputFactory _inputFactory;
+    private readonly ProgressSpinner? _progressSpinner;
     private readonly Dictionary<string, Symbol> _shared = new(StringComparer.Ordinal);
     private readonly HashSet<Command> _telemetrySuppressedCommands = [];
     private readonly HashSet<Command> _groups = [];
@@ -84,7 +85,8 @@ public sealed class CommandTreeBuilder
         Option<bool>? debug,
         Option<bool> nonInteractive,
         CommandTelemetrySessionAccessor telemetryAccessor,
-        SystemCommandLineInputFactory inputFactory)
+        SystemCommandLineInputFactory inputFactory,
+        ProgressSpinner? progressSpinner = null)
     {
         _renderer = renderer ?? throw new ArgumentNullException(nameof(renderer));
         _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -95,6 +97,7 @@ public sealed class CommandTreeBuilder
         _telemetryAccessor = telemetryAccessor
             ?? throw new ArgumentNullException(nameof(telemetryAccessor));
         _inputFactory = inputFactory ?? throw new ArgumentNullException(nameof(inputFactory));
+        _progressSpinner = progressSpinner;
     }
 
     /// <summary>The commands materialised from <see cref="CommandGroupMetadata"/> definitions.</summary>
@@ -287,9 +290,7 @@ public sealed class CommandTreeBuilder
         : declared[token] is CommandOption { IsSwitch: true } ? token
         : $"{token} <{token.TrimStart('-')}>";
 
-    internal static IEnumerable<string> OptionNames(string token) =>
-        token.Split([' ', '|', '(', ')'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(part => part.StartsWith("--", StringComparison.Ordinal));
+    internal static IEnumerable<string> OptionNames(string token) => token.Split([' ', '|', '(', ')', '[', ']'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(part => part.StartsWith("--", StringComparison.Ordinal));
 
     private async Task<int> ExecuteAsync(
         CommandMetadata metadata,
@@ -322,13 +323,15 @@ public sealed class CommandTreeBuilder
                 throw new CommandUsageException($"{inapplicable} does not apply to `msagent {path}`. Run `msagent {path} --help` for its options.");
             }
 
-            var result = await metadata.Implementation.ExecuteAsync(input, _services, cancellationToken).ConfigureAwait(false);
+            var result = await ExecuteWithProgressAsync(metadata, path, input, json || debug, cancellationToken).ConfigureAwait(false);
             if (result is ILiveTestStreamingResult streaming)
             {
                 streamingOutputOwned = true;
                 int exitCode = await streaming.RenderAsync(
                     _renderer.Stdout, _renderer.Stderr, _renderer.Color, cancellationToken).ConfigureAwait(false);
-                telemetry.RecordOutcome(StreamingOutcome(streaming, exitCode));
+                telemetry.RecordOutcome(
+                    StreamingOutcome(streaming, exitCode),
+                    (streaming as IStreamingFailureResult)?.ErrorCode);
                 return exitCode;
             }
 
@@ -381,18 +384,29 @@ public sealed class CommandTreeBuilder
             {
                 // The streaming operation owns stdout, even when its sink fails. Never append a
                 // second JSON envelope or print an untrusted nested exception.
-                return ReportStreamingFailure(telemetry, OutcomeForFailure(failure));
+                return ReportStreamingFailure(
+                    telemetry, OutcomeForFailure(failure), (failure as AgentHostingException)?.ErrorCode);
             }
 
             int exitCode = _renderer.RenderFailure(failure, json);
             if (!renderingSuccess)
             {
-                telemetry.RecordOutcome(OutcomeForFailure(failure));
+                telemetry.RecordOutcome(OutcomeForFailure(failure), (failure as AgentHostingException)?.ErrorCode);
             }
 
             return exitCode;
         }
     }
+
+    private async Task<object> ExecuteWithProgressAsync(CommandMetadata metadata, string path, ICommandInput input, bool quiet, CancellationToken cancellationToken)
+    {
+        using (quiet || SuppressesProgress(metadata) ? null : _progressSpinner?.Start(metadata.ProgressLabel ?? $"Running {path}"))
+        {
+            return await metadata.Implementation.ExecuteAsync(input, _services, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static bool SuppressesProgress(CommandMetadata metadata) => metadata.SuppressProgress || metadata.Implementation.ResultTypes.Any(typeof(ILiveTestStreamingResult).IsAssignableFrom);
 
     internal static CommandTelemetryOutcome StreamingOutcome(
         ILiveTestStreamingResult result,
@@ -403,6 +417,11 @@ public sealed class CommandTreeBuilder
         if (exitCode == ExitCodes.Success)
         {
             return CommandTelemetryOutcome.Success;
+        }
+
+        if (result is IStreamingFailureResult { IsCancellation: true })
+        {
+            return CommandTelemetryOutcome.Cancellation;
         }
 
         if (result is IPlaygroundStreamingResult playground)
@@ -421,10 +440,11 @@ public sealed class CommandTreeBuilder
 
     private int ReportStreamingFailure(
         CommandTelemetrySession telemetry,
-        CommandTelemetryOutcome outcome)
+        CommandTelemetryOutcome outcome,
+        int? errorCode = null)
     {
         _renderer.Stderr.WriteLine("The live-test result failed after output began; no second result was written.");
-        telemetry.RecordOutcome(outcome);
+        telemetry.RecordOutcome(outcome, errorCode);
         return ExitCodes.Failure;
     }
 

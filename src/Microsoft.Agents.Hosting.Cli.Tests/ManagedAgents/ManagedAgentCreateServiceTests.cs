@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.Copilot;
+using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
@@ -47,11 +48,12 @@ public sealed class ManagedAgentCreateServiceTests
             environments,
             catalog,
             store,
-            deployments ?? store,
+            new HomeDeploymentRegistrar(store, deployments ?? store),
             ManagedAgentFixtures.Materialiser(workspacePort),
             new AgentConfigLocator(),
             ManagedAgentFixtures.Identities(),
-            new ManagedAgentPrincipalResolver(InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant)));
+            new ManagedAgentPrincipalResolver(InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant)),
+            workspacePort);
     }
 
     [Fact]
@@ -272,11 +274,15 @@ public sealed class ManagedAgentCreateServiceTests
         Directory.CreateDirectory(Path.Combine(workspace.Root, "Contoso Agent"));
         File.WriteAllText(Path.Combine(workspace.Root, "Contoso Agent", "notes.txt"), "taken");
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort()).CreateAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort()).CreateAsync(
             Scaffold(),
             CancellationToken.None));
 
         Assert.Contains("Contoso Agent", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("workspace-not-empty", failure.ErrorKind);
+        Assert.Contains("--agent-name", failure.Remediation, StringComparison.Ordinal);
+        Assert.Equal("taken", File.ReadAllText(Path.Combine(workspace.Root, "Contoso Agent", "notes.txt")));
     }
 
     [Fact]
@@ -343,12 +349,19 @@ public sealed class ManagedAgentCreateServiceTests
         var store = ManagedAgentFixtures.Store();
         var scaffolder = new RecordingScaffoldPort();
 
-        store.Add(workspace.Root, ManagedAgentFixtures.Agent(displayName: "Contoso Agent"));
+        var existing = store.Add(workspace.Root, ManagedAgentFixtures.Agent(displayName: "Contoso Agent"));
 
-        await Assert.ThrowsAsync<UsageException>(() => Create(store, new FakeCopilotCatalogPort(), scaffolder).CreateAsync(
-            Scaffold(),
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, new FakeCopilotCatalogPort(), scaffolder).CreateAsync(
+            Scaffold() with { Name = "contoso agent" },
             CancellationToken.None));
 
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("already-registered", failure.ErrorKind);
+        Assert.Contains(existing.DisplayName, failure.Message, StringComparison.Ordinal);
+        Assert.Contains(existing.AgentId, failure.Message, StringComparison.Ordinal);
+        Assert.Contains(new AgentConfigLocator().ConfigFilePath(workspace.Root), failure.Message, StringComparison.Ordinal);
+        Assert.Contains("msagent agent delete", failure.Remediation, StringComparison.Ordinal);
+        Assert.Single(store.List(workspace.Root));
         Assert.Null(scaffolder.LastCommand);
     }
 
@@ -422,7 +435,7 @@ public sealed class ManagedAgentCreateServiceTests
 
         await service.CreateAsync(Scaffold(), CancellationToken.None);
 
-        await Assert.ThrowsAsync<UsageException>(() => service.CreateAsync(Scaffold(), CancellationToken.None));
+        await Assert.ThrowsAsync<ManagedAgentException>(() => service.CreateAsync(Scaffold(), CancellationToken.None));
     }
 
     [Fact]
@@ -595,6 +608,7 @@ public sealed class ManagedAgentCreateServiceTests
         var deployment = Assert.Single(store.Read(workspace.Root).AgentDeployments);
 
         Assert.Equal(DeploymentStages.Dev, deployment.DeploymentType);
+        Assert.Equal("develop", deployment.DeploymentName);
         Assert.Equal(deployment.DeploymentId, result.DeploymentId);
         Assert.Equal("env-1", deployment.EnvironmentId);
     }
@@ -892,4 +906,26 @@ internal sealed class UnwritableDeploymentRegistry : IAgentDeploymentRegistry
     public AgentDeploymentRecord Update(string projectDirectory, AgentDeploymentRecord record) => _inner.Update(projectDirectory, record);
 
     public void Remove(string projectDirectory, string deploymentId, string expectedETag) => _inner.Remove(projectDirectory, deploymentId, expectedETag);
+}
+
+public sealed class HomeDeploymentRegistrarTests : IDisposable
+{
+    private readonly TemporaryWorkspace _workspace = new(withProjectFile: false);
+    private readonly JsonAgentConfigStore _store = ManagedAgentFixtures.Store();
+
+    public void Dispose() => _workspace.Dispose();
+
+    [Fact]
+    public void AWorkflowGetsAHomeDevelopSlotThatFollowsTheNameRule()
+    {
+        var agent = _store.Add(_workspace.Root, WorkflowFixtures.Record());
+
+        var deployment = new HomeDeploymentRegistrar(_store, _store).Register(_workspace.Root, agent, "env-2");
+
+        Assert.Equal("develop", deployment.DeploymentName);
+        Assert.Equal(deployment.DeploymentName, DeploymentNameRule.Validate("--deployment-name", deployment.DeploymentName));
+        Assert.Equal(DeploymentStages.Dev, deployment.DeploymentType);
+        Assert.Equal("env-2", deployment.EnvironmentId);
+        Assert.Equal(AgentTypes.McsWorkflow, Assert.Single(((IAgentDeploymentRegistry)_store).List(_workspace.Root)).AgentType);
+    }
 }

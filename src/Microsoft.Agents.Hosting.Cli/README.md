@@ -21,6 +21,11 @@ TypeScript proposal.
 > that ship `off` (for example `abs`, `identity`, AMS package upload/CodeAgent creation, or
 > `test ask`). When a flag's shipped default changes to `on`, add its documentation to
 > `Tool_Readme.md`; when it changes to `off`, remove it.
+>
+> **Error-code maintenance:** Any addition or change to an error code, its meaning, triggering
+> conditions, or recovery guidance must update the [error code directory](../Microsoft.Agents.Hosting.Cli.Docs/ErrorCodes.md)
+> and the affected [per-code troubleshooting pages](../Microsoft.Agents.Hosting.Cli.Docs/ErrorCodes/)
+> in the same change. Keep the directory complete and the guidance user-facing.
 
 ## Command surface
 
@@ -39,7 +44,7 @@ MCS routes and shared authentication/environment commands remain enabled by defa
 | `msagent env select <environment-id>` | Select the active environment used by agent commands. |
 | `msagent agent create` | Create an agent: a CodeAgent record and repository, or a local MCS project registered for deployment. |
 | `msagent agent init` | Register an MCS project that already exists on disk. Creates no files and nothing in Copilot Studio. |
-| `msagent agent list` | List the MCS agents in an environment or across the tenant. An agent that has never been deployed is not listed. |
+| `msagent agent list` | List the MCS agents or standalone workflows in an environment or across the tenant. An agent that has never been deployed is not listed. Workflows listed are every unmanaged cloud flow, including the flows agents use, never a flow a managed solution installed. |
 | `msagent agent show` | Show the managed-agent records this project holds. Reads the local configuration; contacts nothing. |
 | `msagent agent pull` | Bring the remote MCS agent's content into the project, taking every component collection beside it. |
 | `msagent agent delete` | Delete an MCS agent's cloud resources and every record for it. Local files are never touched. Asks you to type the agent's name first, unless `--non-interactive` supplies that consent. |
@@ -47,7 +52,7 @@ MCS routes and shared authentication/environment commands remain enabled by defa
 | `msagent agent deploy --agent-id … --package-revision …` | Create explicit AMS Deployment state selecting an existing Package Revision and await the current target-routed AHRG projection. Provisional fN13j notation. |
 | `msagent agent deploy --deployment-id …` / `--deployment-name …` | Push an MCS workspace to an existing MCS deployment, with optional agent selectors, `--publish`, and `--overwrite`. |
 | `msagent test ask --query <text>` | Send one live query to a selected standard or GitHub Copilot Harness agent. Requires `LiveTestFeatures`; may perform real actions. |
-| `msagent test playground --agent-harness <agent-harness>` | Launch the M365 Agents Playground for a selected live agent. Requires `LiveTestFeatures`; may perform real actions. |
+| `msagent test playground [--target directline\|directengine]` | Launch the M365 Agents Playground for a live agent. DirectEngine discovers its endpoint; Direct Line prompts for a credential. Requires `LiveTestFeatures`; may perform real actions. |
 | `msagent agent eval run` | Run a Copilot Studio evaluation against an MCS agent: run a saved test set with `--testset`, or create one from `--from-csv` / `--generate` plus `--name`. `--watch` polls until it finishes, `--published` targets the published agent, and `--output` writes the finished run as JSON once `--watch` has waited for it. Uses Copilot Credits; the cost is reported when the run finishes. |
 | `msagent agent eval list` | List the agent's evaluation runs, newest first. `--limit` bounds the listing (default 20). |
 | `msagent agent eval show --run-id <run-id>` | Show one run with its score, credits and per-conversation grader results. `--transcript` adds every conversation's questions and answers, shortened; `--conversation <n>` adds just one; `--output <file>` writes the full, untruncated run (`.json` writes JSON, any other name writes Markdown). |
@@ -104,18 +109,23 @@ specified environment and shared with that account. Public cloud is the
 supported target; CodeAgent/AHRG is not.
 
 ```text
-msagent test ask --query "Explain this policy" --agent-harness standard --project <project> --agent-name <agent> --deployment-name <deployment>
-msagent test ask --query "Hello" --agent-harness github-copilot --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label>
-msagent test ask --query "Clarify" --agent-harness standard --conversation-id <returned-id> --json --agent-id <agent-id>
-msagent test ask --query "Hello" --agent-harness standard --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label> --plain
+msagent test ask --query "Explain this policy" --project <project> --agent-name <agent> --deployment-name <deployment>
+msagent test ask --query "Hello" --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label>
+msagent test ask --query "Clarify" --conversation-id <returned-id> --json --agent-id <agent-id>
+msagent test ask --query "Hello" --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label> --plain
 ```
 
-`--agent-harness` is required and accepts `standard` or `github-copilot`.
-`github-copilot` explicitly selects the agentic-runtime route on the same
-environment host; the command never falls back between runtime endpoints.
+The beta Copilot Studio client uses the discovery service to resolve the runtime
+endpoints from the environment and schema name. No harness selection is needed.
+Discovery failure stops the invocation; the command never guesses or falls back
+between runtime endpoints.
 
 The configured route reads `agent.config.json` and requires an explicit deployment
 or exactly one marked default; it never substitutes the home/current environment.
+A single deployment is not automatically a default. If target selection reports
+no configured default deployment, pass its name explicitly, for example
+`msagent test ask -dn dev -q "What can you do?"`. This validation happens before
+authentication, endpoint discovery, or any SDK request.
 The fully explicit route needs schema, environment, tenant and a deployment label;
 the label records your selection but is **not** a verified registry association.
 An omitted conversation ID starts a new conversation; reusing an ID must be
@@ -152,26 +162,70 @@ from the MCS implementation. No numerical release SLO or live baseline is claime
 
 ### M365 Agents Playground test (MVP)
 
-`msagent test playground --agent-harness standard|github-copilot` launches the
-M365 Agents Playground in the foreground for the same selected agent as `test ask`.
-It uses the same agent selectors as `test ask` and the same resolver, but does not accept `--query` or `--conversation-id`.
+`msagent test playground` launches the
+M365 Agents Playground in a new terminal window for the same selected agent as `test ask`.
+The calling terminal returns after the child confirms process startup; the new
+window owns the session and remains open while Playground is running.
+The `--target` option selects `directengine` (the default) or `directline`.
+Wherever `--tenant` is accepted, `--tenant-id` and `-t` are equivalent aliases.
+DirectEngine uses the same agent selectors as `test ask` and the same resolver.
+Neither mode accepts `--query` or `--conversation-id`.
 The command is gated by the existing
 `LiveTestFeatures` flag, which is off by default; enabling that flag also enables
 this command, with no separate playground flag.
 
 ```text
-msagent test playground --agent-harness standard --project <project> --agent-name <agent> --deployment-name <deployment>
-msagent test playground --agent-harness github-copilot --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label>
+msagent test playground --project <project> --agent-name <agent> --deployment-name <deployment>
+msagent test playground --schema-name <schema> --environment-id <environment> --tenant <tenant> --deployment-name <selected-label>
+msagent test playground --target directline
 ```
 
-Both harnesses are launched against the resolved DirectEngine endpoint with the
-public client configuration needed by the package. The package owns device-code
-or browser authentication in the attached foreground console; `msagent` does
+For DirectEngine, the CLI uses the selected signed-in account and delegated
+`CopilotStudio.Copilots.Invoke` permission to query the discovery service, without
+starting a conversation. It passes the discovered DirectEngine endpoint and
+public client configuration to the package. Discovery failure prevents launch.
+The package owns device-code
+or browser authentication in the new terminal window; `msagent` does
 not hand it tokens or secrets. The command reports the selected
 `agentsplayground` path and version. Readiness is established immediately when
 the process starts. The package owns authentication timing; `msagent` does not
-wait for authentication, and process start is not proof that authentication
+wait for the package's authentication, and process start is not proof that authentication
 succeeded.
+The native process receives the caller's scrubbed Playground environment
+(including its selected `PATH` and TLS certificate settings); child-owned
+disposable config paths take precedence over caller config overrides.
+
+#### Direct Line connection
+
+`msagent test playground --target directline` requires an interactive terminal
+with both input and output attached. It rejects `--non-interactive`, including
+when `--install-playground` is supplied. It also rejects the DirectEngine-only
+options `--project`, `--agent-id`, `--agent-name`,
+`--schema-name`, `--deployment-id`, `--deployment-name`, `--environment-id`, and
+`--tenant`. It does not resolve local project/deployment configuration, sign
+the CLI into Entra ID, or load the AgentHost public-client configuration.
+
+Publish the Copilot Studio agent with **no authentication** and enable its
+global public-cloud Direct Line connectivity. At the native playground's
+**masked terminal prompt**, enter either the complete HTTPS token endpoint from
+**Channels > Mobile app**, or a raw Direct Line secret from
+**Settings > Security > Web channel security**. Do not paste credentials into
+chat, command arguments, environment variables, or configuration files.
+Empty Enter, Escape, or Ctrl+C cancels native credential setup.
+Enter credentials in the new window, not the calling terminal.
+
+The native playground owns credential validation and the connection. `msagent`
+does not acquire, save, or log the credential and uses an isolated, disposable
+working directory with no inherited playground config. The native default
+display name is used. The listener remains on `127.0.0.1`, native telemetry is
+disabled, and connection/recording overrides are removed from the child
+environment without changing the parent environment.
+
+Use Node.js 22.17.1+ LTS for Direct Line. Regional/custom/sovereign Direct Line
+endpoints, OAuth-card sign-in, file upload, headless interaction, and saved
+connections are not supported by this integration. Use DirectEngine when the
+agent requires Microsoft sign-in. Process start is not proof of a connected
+conversation; wait for Connected and an enabled composer in the owning browser.
 
 #### Playground installation and options
 
@@ -189,20 +243,33 @@ manager when a global prefix requires elevation. The user's npm registry,
 proxy, and authentication configuration is left intact.
 
 `--plain` suppresses `msagent` transient progress; the package's own console
-output is still inherited, and its authentication may require user action even
-with `--non-interactive`. `--json` is rejected in this MVP because structured
+output appears in the new terminal window. DirectEngine authentication may require user action even
+with `--non-interactive`; Direct Line rejects that option. `--json` is rejected in this MVP because structured
 playground streaming is not supported. The MVP has no optional upgrades,
-managed install store, detach, retry, or transcript feature.
+managed install store, retry, or transcript feature.
 
 #### Lifetime, effects, and limits
 
-This is a live action: effects are not rolled back. On Ctrl+C or normal exit,
-the command requests graceful shutdown, waits up to 10 seconds, then kills only
+This is a live action: effects are not rolled back. Use Ctrl+C in the Playground
+window to stop the session; closing or interrupting the calling terminal after
+startup does not stop it. The child `msagent` owns cleanup, including removal of
+the disposable invocation directory. On Ctrl+C or normal exit, that child
+requests graceful shutdown, waits up to 10 seconds, then kills only
 the child process tree and allows up to another 10 seconds for cleanup. It never
 kills by process name or port, and the user's shared browser must survive. An
-abrupt `msagent` parent crash can orphan the playground server; that is a known MVP limitation.
+abrupt child `msagent` crash or forcibly closing its window can orphan the playground
+server; that is a known MVP limitation.
 Version probes time out after 10 seconds and installation after 600 seconds.
-There is no separate readiness-timeout promise beyond process-start readiness.
+Terminal startup and the process-start handoff time out after 30 seconds.
+This is not an authentication or conversation-readiness timeout, and later
+Playground exit codes are reported only in its own terminal.
+
+A local desktop session is required. Windows opens a separate console window.
+macOS opens Terminal and may request permission to automate it. Linux requires
+GNOME Terminal, Konsole, Xfce Terminal, xterm, or `x-terminal-emulator` on `PATH`;
+the command fails explicitly if no terminal can be opened. Linux launches the
+child executable directly without a shell script. Headless/SSH hosts do not
+gain interactive or DirectEngine support from this launch mechanism.
 
 #### Manual MVP test matrix
 
@@ -211,11 +278,15 @@ not part of the offline test suite:
 
 | Area | Guidance |
 | --- | --- |
-| Native package (Windows) | The Windows native-package spike passed both harnesses on `0.2.29`. |
-| `msagent` command (Windows) | `standard` passed with user-observed connected state, two replies, Ctrl+C, browser survival, and no package process survivor. The actual `github-copilot` command was not run. |
+| Native package (Windows) | Before CLI endpoint discovery was introduced, the Windows native-package spike passed against standard and GitHub Copilot agents on `0.2.29`. This does not validate the CLI discovery flow. |
+| DirectEngine discovery (offline) | Automated tests cover discovery responses, passing the discovered endpoint to the launcher, discovery failures, and cancellation using test doubles. These are not live connection checks. |
+| DirectEngine discovery (Windows, live) | Run `msagent test playground` with the appropriate agent/deployment selectors for both standard and GitHub Copilot agents; the discovery service selects the endpoint automatically, with no harness argument. Live validation of this discovery flow remains pending. The earlier pre-discovery standard-agent run passed connected-state, two-reply, Ctrl+C, browser-survival, and owned-process-cleanup checks; it does not validate discovery. |
 | `msagent` command (POSIX) | Not run on macOS or Linux/WSL; POSIX manual validation remains pending and no full certification is claimed. |
+| Separate terminal lifecycle | A Windows synthetic process confirmed real terminal input/output, survival after the calling pipe closes, and child-owned invocation-directory cleanup. macOS/Linux desktop validation of the new launch path remains pending. |
 | Tool resolution | Cover an existing current tool, a missing tool, and an old tool; verify the version probe, consent text, `--install-playground`, npm registry/proxy/auth settings, permission failures, and network/install failures. |
 | Safety and output | Verify LiveTestFeatures opt-in, `--json` rejection, `--plain` output, native device-code/browser behavior, and the warning that live effects are not rolled back. |
+| Direct Line native contract | Installed `0.2.29` help and bundled setup code were inspected for target support, masked entry, default display name, cancellation, and isolated-config fallback. This is not a live connection check. |
+| Direct Line live validation | The user manually validated that the Direct Line connection works. Reply, Ctrl+C, browser-survival, and owned-process-cleanup checks were not separately reported; those manual checks remain pending. Do not record credentials or conversation content. |
 
 ## Command telemetry
 
@@ -225,6 +296,12 @@ The CLI uses one command-telemetry sender and one shared schema. A leaf dispatch
 the shared OneDS `event` envelope and one invocation-local batch. Outcomes distinguish success,
 usage, not-signed-in, failure, timeout, and caller cancellation. A rendering failure leaves the
 attempt without inventing an outcome. The `telemetry` control group never measures itself.
+
+Every event includes a native JSON boolean `IsFailure` inside `data.customDimensions`
+(the JSON-encoded custom dimensions object), not directly on the event data. It is `true` for usage,
+not-signed-in, failure, and timeout outcomes, and for parser rejection and group usage host
+events. It is `false` for success, caller cancellation, help, version, and command attempts;
+for attempts, `false` means no failure has been reported, not that execution has completed.
 
 After collection policy enables an invocation, normal command authentication may enrich its
 buffered events with the issuer tenant. A tenant-local Entra object id is accepted only when the
@@ -486,9 +563,7 @@ the behavior this command reports as acknowledged; there is not yet a separate p
 Deploy Operation. Deployment-create requests send the Agent language as the declared enum name
 `DotNet`, `Python`, or `Node`; responses accept both named and numeric enum values.
 
-The Agent-read and Deployment-create HTTP handler requires TLS 1.3 and rejects redirects. It does
-not fall back to older TLS versions; the configured service endpoint and local platform must support
-TLS 1.3.
+The Agent-read and Deployment-create HTTP handler supports TLS 1.3 and TLS 1.2 and rejects redirects.
 
 Deploy does not upload package bytes. The current GRS object remains the runtime package source;
 target-local package staging is deferred. Success does not prove runtime readiness, recovery, or a
@@ -1041,6 +1116,9 @@ environment itself:
 | `AH_CLI_AMS_ENDPOINT` | Agent Management Service **control plane** endpoint, used by deploy. Absolute HTTPS; deployment-configured, not settable per command. |
 | `AH_CLI_AMSDP_ENDPOINT` | Agent Management Service **data plane** endpoint, used by package upload and by `agent create` as a direct Dev-island override. Absolute HTTPS. |
 | `NO_COLOR` | Disable colored output (same effect as `--no-color`). |
+| `CI` | Hide the progress spinner when set to anything other than `false` or `0`, as CI systems do. |
+
+The CLI supports TLS 1.3 and TLS 1.2.
 
 ## Selecting a deployment ring
 

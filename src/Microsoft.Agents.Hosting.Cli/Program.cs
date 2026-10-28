@@ -4,6 +4,7 @@ using Microsoft.Agents.Hosting.Cli.Commands.Common;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.Agents.Hosting.Cli.CopilotStudio.AskClient;
 using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Copilot;
@@ -11,6 +12,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Evaluations;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -19,6 +21,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Playground;
 using Microsoft.Agents.Hosting.Cli.Features;
 using Microsoft.Agents.Hosting.Cli.Hosting;
 using Microsoft.Agents.Hosting.Cli.Ports;
+using Microsoft.Agents.Hosting.Cli.Rendering;
 using Microsoft.Agents.Hosting.Cli.Telemetry;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -43,6 +46,31 @@ internal static class Program
 
     private static async Task<int> RunAsync(string[] args)
     {
+        if (args.Length == 2 &&
+            args[0] == PlaygroundTerminalSession.ChildOption &&
+            args[1].StartsWith("msagent-playground-", StringComparison.Ordinal) &&
+            Guid.TryParseExact(args[1]["msagent-playground-".Length..], "N", out _))
+        {
+            using var cancellation = new CancellationTokenSource();
+            ConsoleCancelEventHandler cancel = (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                cancellation.Cancel();
+            };
+            Console.CancelKeyPress += cancel;
+            try
+            {
+                return await PlaygroundTerminalSession.RunChildAsync(
+                    args[1],
+                    environment => new PlaygroundLauncher(inheritedEnvironment: environment),
+                    cancellation.Token);
+            }
+            finally
+            {
+                Console.CancelKeyPress -= cancel;
+            }
+        }
+
         var configDirectory = ResolveConfigDirectory(Environment.GetEnvironmentVariable);
         InvocationTarget invocation;
 
@@ -85,6 +113,8 @@ internal static class Program
             outputRedirected: Console.IsOutputRedirected,
             errorRedirected: Console.IsErrorRedirected);
 
+        var progressSpinner = new ProgressSpinner(Console.Error, ConsoleProgressPolicy.ShouldShowProgress(Console.IsErrorRedirected, Environment.GetEnvironmentVariable("CI")), color, TimeProvider.System, ConsoleWidth);
+
         var options = new AgentHostAuthOptions
         {
             ClientId = Environment.GetEnvironmentVariable("AH_CLI_CLIENT_ID"),
@@ -97,10 +127,12 @@ internal static class Program
             Cloud = powerPlatformApiTarget.Cloud,
             InteractionAllowed = !GlobalOptions.IsPresent(args, "--non-interactive"),
             DebugOutput = GlobalOptions.IsPresent(args, "--debug") ? Console.Error : null,
+            MessageOutput = progressSpinner.Error,
         };
 
         var services = new ServiceCollection();
         services.AddSingleton<IClock, SystemClock>();
+        services.AddSingleton<IProgressStatus>(progressSpinner);
         services.AddSingleton<IFeatureFlags>(featureFlags);
         services.AddSingleton<CommandTelemetrySessionAccessor>();
         services.AddSingleton<CommandTelemetryTenantObserver>();
@@ -117,36 +149,23 @@ internal static class Program
         // redirect following is disabled so a host-changing redirect can never cause the delegated
         // bearer token to be replayed to a host the cloud map never approved.
         services.AddSingleton<IEnvironmentClient>(sp => new PowerPlatformApiEnvironmentClient(
-            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }),
+            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
             powerPlatformApiTarget,
             claimsValidator: sp.GetRequiredService<PpapiTokenClaimsValidator>()));
 
-        // Package upload and deploy resolve configured AMS-DP/AMS-CMP targets independently. Record creation uses the
-        // environment-specific Power Platform API endpoint; its optional target is a direct-island
-        // Dev override resolved only by that command.
-        services.AddSingleton(new AgentHostingServiceTargets
-        {
-            DataPlaneEndpoint = Environment.GetEnvironmentVariable(
-                AgentHostingServiceTargets.DataPlaneEndpointVariableName),
-            ControlPlaneEndpoint = Environment.GetEnvironmentVariable(
-                AgentHostingServiceTargets.ControlPlaneEndpointVariableName),
-        });
-        services.AddSingleton(new AgentCreationTarget
-        {
-            Endpoint = Environment.GetEnvironmentVariable(AgentCreationTarget.EndpointVariableName),
-        });
+        services.AddSingleton<AgentCreationTarget>();
 
         // Automatic redirect following is disabled at client construction — before any authorization
         // header exists — so a host-changing redirect can never cause the delegated bearer token to be
         // resent to a host that is not the configured one.
         var debugRequested = GlobalOptions.IsPresent(args, "--debug");
         services.AddSingleton<IAmsPackagePublicationTransport>(sp => new AmsPackagePublicationAdapter(
-            new HttpClient(AmsPackagePublicationAdapter.CreateRedirectRejectingHandler()),
+            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
             sp.GetRequiredService<PpapiTokenClaimsValidator>()));
         services.AddSingleton(sp => new AmsDeploymentAdapter(
-            new HttpClient(AmsDeploymentAdapter.CreateRedirectRejectingHandler()),
+            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
             sp.GetRequiredService<PpapiTokenClaimsValidator>()));
         services.AddSingleton<IAmsAgentReadTransport>(
@@ -154,7 +173,7 @@ internal static class Program
         services.AddSingleton<IAmsDeploymentTransport>(
             sp => sp.GetRequiredService<AmsDeploymentAdapter>());
         services.AddSingleton<IAmsAgentCreationTransport>(sp => new AmsAgentCreationAdapter(
-            new HttpClient(AmsAgentCreationAdapter.CreateRedirectRejectingHandler()),
+            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
             sp.GetRequiredService<PpapiTokenClaimsValidator>()));
 
@@ -163,11 +182,10 @@ internal static class Program
             sp => new CommandTelemetryProfileContextSource(
                 sp.GetRequiredService<IAuthProfileTelemetryStore>(),
                 sp.GetRequiredService<AuthSessionContext>()));
-        services.AddAgentHostCopilotStudio(Console.Error, powerPlatformApiTarget, debugRequested);
+        services.AddAgentHostCopilotStudio(progressSpinner.Error, powerPlatformApiTarget, debugRequested);
         services.AddSingleton<IEnvironmentGeographyClient>(
             sp => new PowerPlatformApiEnvironmentGeographyClient(
-                new HttpClient(
-                    new HttpClientHandler { AllowAutoRedirect = false }),
+                new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
                 sp.GetRequiredService<ISelectedAccountTokenProvider>(),
                 powerPlatformApiTarget,
                 sp.GetRequiredService<PpapiTokenClaimsValidator>()));
@@ -185,7 +203,7 @@ internal static class Program
         services.AddSingleton<IManagedAgentRegistry>(sp => sp.GetRequiredService<JsonAgentConfigStore>());
         services.AddSingleton<IAgentDeploymentRegistry>(sp => sp.GetRequiredService<JsonAgentConfigStore>());
         services.AddSingleton<IDeploymentStore, ProjectDeploymentStore>();
-        services.AddSingleton<IConfirmationPrompt>(_ => new ConsoleConfirmationPrompt(Console.In, Console.Error));
+        services.AddSingleton<IConfirmationPrompt>(_ => new ConsoleConfirmationPrompt(PromptInput(progressSpinner), progressSpinner.Error));
         services.AddSingleton<ManagedAgentPrincipalResolver>();
         services.AddSingleton<ManagedAgentResolver>();
         services.AddSingleton<LiveTestTargetResolver>();
@@ -196,11 +214,25 @@ internal static class Program
         services.AddSingleton<IPlaygroundToolEnvironment, SystemPlaygroundToolEnvironment>();
         services.AddSingleton<IPlaygroundToolLocator, PlaygroundToolLocator>();
         services.AddSingleton<IPlaygroundGlobalInstaller, PlaygroundGlobalInstaller>();
-        services.AddSingleton<IPlaygroundLauncher, PlaygroundLauncher>();
+        services.AddSingleton<IPlaygroundLauncher, PlaygroundTerminalSession>();
         services.AddSingleton<
             ICommandHandler<PlaygroundRequest, ILiveTestStreamingResult>>(
             sp => new PlaygroundCommandHandler(
                 sp.GetRequiredService<LiveTestTargetResolver>().Resolve,
+                async (target, nonInteractive, cancellationToken) =>
+                {
+                    await sp.GetRequiredService<MsalLiveTestTokenProvider>()
+                        .AcquireDelegatedTokenAsync(target.TenantId, nonInteractive, cancellationToken)
+                        .ConfigureAwait(false);
+                    await using var session = new McsLiveTestSession(
+                        new McsLiveTestTarget(target.EnvironmentId, target.TenantId, target.SchemaName),
+                        sp.GetRequiredService<ITokenProvider>(),
+                        cancellationToken: cancellationToken);
+                    return target with
+                    {
+                        Endpoint = await session.DiscoverEndpointAsync(cancellationToken).ConfigureAwait(false),
+                    };
+                },
                 sp.GetRequiredService<IPlaygroundToolLocator>(),
                 sp.GetRequiredService<IPlaygroundGlobalInstaller>(),
                 sp.GetRequiredService<IPlaygroundLauncher>(),
@@ -209,13 +241,16 @@ internal static class Program
                     Environment.GetEnvironmentVariable(AgentHostClientAppConfiguration.ClientIdSettingName),
                     new RuntimePlatformInfo()),
                 () => Console.IsInputRedirected,
+                () => Console.IsOutputRedirected,
                 details => sp.GetRequiredService<CommandTelemetrySessionAccessor>().Current.RecordPlaygroundDetails(details)));
         services.AddSingleton<ManagedAgentCloneMaterialiser>();
+        services.AddSingleton<HomeDeploymentRegistrar>();
         services.AddSingleton<ManagedAgentCreateService>();
         services.AddSingleton<ManagedAgentInitService>();
         services.AddSingleton<ManagedAgentListService>();
         services.AddSingleton<ManagedAgentShowService>();
         services.AddSingleton<ManagedAgentDeleteService>();
+        services.AddSingleton<ITenantUserDirectoryPort, GraphTenantUserDirectoryAdapter>();
         services.AddSingleton<ManagedAgentShareService>();
         services.AddSingleton<ManagedAgentPullService>();
         services.AddSingleton<ManagedAgentDeployService>();
@@ -253,7 +288,7 @@ internal static class Program
         services.AddSingleton<ConnectorResolver>();
         services.AddSingleton<WorkflowStateCache>();
         services.AddSingleton<WorkflowActivationPass>();
-        services.AddSingleton<IConnectionSelectionPrompt>(_ => new ConsoleConnectionSelectionPrompt(Console.In, Console.Error));
+        services.AddSingleton<IConnectionSelectionPrompt>(_ => new ConsoleConnectionSelectionPrompt(PromptInput(progressSpinner), progressSpinner.Error));
         services.AddSingleton<ConnectionCreationFlow>();
         services.AddSingleton<ConnectionBindingCoordinator>();
         services.AddSingleton(sp => new AgentDeploymentConnectionService(
@@ -303,7 +338,8 @@ internal static class Program
             sp.GetRequiredService<IAgentEvaluationPort>(),
             sp.GetRequiredService<ICopilotFileSystem>(),
             sp.GetRequiredService<IInteractiveMessagePresenter>(),
-            sp.GetRequiredService<IClock>()));
+            sp.GetRequiredService<IClock>(),
+            progress: sp.GetRequiredService<IProgressStatus>()));
         services.AddSingleton<EvaluationServices>();
 
         var telemetryPreferences =
@@ -352,7 +388,8 @@ internal static class Program
             provider.GetRequiredService<CommandTelemetrySessionFactory>(),
             new CompositeHandlerProvider(new FacadeHandlerProvider(operations), provider),
             featureFlags,
-            provider.GetRequiredService<CommandTelemetrySessionAccessor>());
+            provider.GetRequiredService<CommandTelemetrySessionAccessor>(),
+            progressSpinner: progressSpinner);
 
         using var lifetime = new CancellationTokenSource();
 
@@ -404,6 +441,20 @@ internal static class Program
         Console.Error.WriteLine(message);
         return ExitCodes.Failure;
     }
+
+    private static int ConsoleWidth()
+    {
+        try
+        {
+            return Console.WindowWidth;
+        }
+        catch (Exception failure) when (failure is IOException or PlatformNotSupportedException)
+        {
+            return 0;
+        }
+    }
+
+    private static TextReader PromptInput(ProgressSpinner progressSpinner) => progressSpinner.WrapInput(Console.In, echoed: !Console.IsInputRedirected);
 
     /// <summary>
     /// Resolves the Power Platform API ring from the ring the active sign-in records, before the

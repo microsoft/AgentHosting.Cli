@@ -1,0 +1,3 @@
+connectionReferences:
+  - connectionReferenceLogicalName: new_sharedm365copilotv2_03415b37
+    connectorId: /providers/Microsoft.PowerApps/apis/shared_m365copilotv2

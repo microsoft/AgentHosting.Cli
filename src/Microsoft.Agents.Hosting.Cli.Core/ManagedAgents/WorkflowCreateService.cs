@@ -11,7 +11,7 @@ public sealed class WorkflowCreateService
 {
     private readonly CopilotEnvironmentResolver _environmentResolver;
     private readonly IManagedAgentRegistry _agents;
-    private readonly IAgentDeploymentRegistry _deployments;
+    private readonly HomeDeploymentRegistrar _homeDeployments;
     private readonly IWorkflowStorePort _workflows;
     private readonly IWorkflowScaffoldPort _scaffold;
     private readonly AgentConfigLocator _locator;
@@ -21,17 +21,17 @@ public sealed class WorkflowCreateService
     /// <summary>Creates the service.</summary>
     /// <param name="environmentResolver">Resolves the environments the record and clone source belong to.</param>
     /// <param name="agents">The managed-agent table.</param>
-    /// <param name="deployments">The agent-deployment table, written for a clone's home slot.</param>
+    /// <param name="homeDeployments">Records a clone's home deployment.</param>
     /// <param name="workflows">Downloads a clone source.</param>
-    /// <param name="scaffold">Writes a new workflow from the template.</param>
+    /// <param name="scaffold">Checks the workflow's name and writes a new workflow from the template.</param>
     /// <param name="locator">Resolves project and configuration directories.</param>
     /// <param name="principals">Resolves the signed-in operator recorded as owner and creator.</param>
-    /// <param name="workspace">Finds the workflows a workspace holds.</param>
-    public WorkflowCreateService(CopilotEnvironmentResolver environmentResolver, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, IWorkflowStorePort workflows, IWorkflowScaffoldPort scaffold, AgentConfigLocator locator, ManagedAgentPrincipalResolver principals, IWorkflowWorkspacePort workspace)
+    /// <param name="workspace">Names the workflow's folder and finds the workflows a workspace holds.</param>
+    public WorkflowCreateService(CopilotEnvironmentResolver environmentResolver, IManagedAgentRegistry agents, HomeDeploymentRegistrar homeDeployments, IWorkflowStorePort workflows, IWorkflowScaffoldPort scaffold, AgentConfigLocator locator, ManagedAgentPrincipalResolver principals, IWorkflowWorkspacePort workspace)
     {
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
-        _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
+        _homeDeployments = homeDeployments ?? throw new ArgumentNullException(nameof(homeDeployments));
         _workflows = workflows ?? throw new ArgumentNullException(nameof(workflows));
         _scaffold = scaffold ?? throw new ArgumentNullException(nameof(scaffold));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
@@ -64,10 +64,13 @@ public sealed class WorkflowCreateService
             throw new UsageException("--mcs-clone-environment-id selects a clone source, so it needs --mcs-clone-workflow-id.");
         }
 
-        var environment = await _environmentResolver.ResolveAsync(request.EnvironmentId, cancellationToken).ConfigureAwait(false);
         var displayName = request.Name.Trim();
+
+        RequireValidName(displayName);
+
+        var environment = await _environmentResolver.ResolveAsync(request.EnvironmentId, cancellationToken).ConfigureAwait(false);
         var projectDirectory = PrepareProjectDirectory(request.Project);
-        var folderName = AgentConfigLocator.WorkspaceFolderName(displayName);
+        var folderName = _workspace.ProjectFolderName(displayName);
         var workspaceRoot = PrepareWorkspaceRoot(projectDirectory, displayName, folderName);
         var workflowId = Guid.NewGuid();
 
@@ -81,6 +84,7 @@ public sealed class WorkflowCreateService
             DisplayName = stored.DisplayName,
             AgentType = stored.AgentType,
             McsWorkflowId = stored.McsWorkflowId,
+            WorkflowName = displayName,
             WorkflowFolder = _workspace.RequireSingle(workspaceRoot).FolderPath,
             WorkflowState = WorkflowStateProjection.NotDeployed,
             TenantId = stored.TenantId,
@@ -106,16 +110,19 @@ public sealed class WorkflowCreateService
             ?? throw ManagedAgentException.WorkflowSourceNotFound(workflowId.ToString(), source.EnvironmentId);
 
         var displayName = string.IsNullOrWhiteSpace(request.Name) ? remote.Name : request.Name.Trim();
+
+        RequireValidName(displayName);
+
         var projectDirectory = PrepareProjectDirectory(request.Project);
 
         WorkflowRegistrationGuard.RequireUnregistered(_agents, _locator, projectDirectory, workflowId);
 
-        var folderName = AgentConfigLocator.WorkspaceFolderName(displayName);
+        var folderName = _workspace.ProjectFolderName(displayName);
         var workspaceRoot = PrepareWorkspaceRoot(projectDirectory, displayName, folderName);
 
         var downloaded = await _workflows.DownloadAsync(source, workflowId, workspaceRoot, cancellationToken).ConfigureAwait(false);
         var stored = Register(projectDirectory, displayName, request.Description ?? remote.Description, folderName, target, workflowId, await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false));
-        var deployment = RegisterHomeDeploymentOrRollBack(projectDirectory, stored, target.EnvironmentId);
+        var deployment = _homeDeployments.Register(projectDirectory, stored, target.EnvironmentId);
 
         return new ManagedAgentCreateResult
         {
@@ -123,6 +130,7 @@ public sealed class WorkflowCreateService
             DisplayName = stored.DisplayName,
             AgentType = stored.AgentType,
             McsWorkflowId = stored.McsWorkflowId,
+            WorkflowName = downloaded.Workflow.Name,
             WorkflowFolder = downloaded.FolderPath,
             WorkflowState = WorkflowStateProjection.ToPortalLabel(downloaded.Workflow.State),
             TenantId = stored.TenantId,
@@ -134,6 +142,7 @@ public sealed class WorkflowCreateService
             DeploymentId = deployment.DeploymentId,
             DeploymentName = deployment.DeploymentName,
             DeploymentType = deployment.DeploymentType,
+            Warnings = downloaded.Warnings,
         };
     }
 
@@ -145,24 +154,34 @@ public sealed class WorkflowCreateService
         return projectDirectory;
     }
 
+    private void RequireValidName(string displayName)
+    {
+        if (_scaffold.ValidateName(displayName) is { } reason)
+        {
+            throw ManagedAgentException.WorkflowNameInvalid(reason);
+        }
+    }
+
     private string PrepareWorkspaceRoot(string projectDirectory, string displayName, string folderName)
     {
         if (_agents.List(projectDirectory).FirstOrDefault(agent => string.Equals(agent.DisplayName, displayName, StringComparison.OrdinalIgnoreCase)) is { } duplicate)
         {
-            throw new UsageException($"An agent named '{duplicate.DisplayName}' is already registered in {_locator.ConfigFilePath(projectDirectory)}.");
+            throw ManagedAgentException.AlreadyRegistered(duplicate.DisplayName, duplicate.AgentId, _locator.ConfigFilePath(projectDirectory));
         }
 
         var workspaceRoot = Path.Combine(projectDirectory, folderName);
 
         if (_workspace.FindAll(workspaceRoot).Count > 0)
         {
-            throw new UsageException($"'{workspaceRoot}' already holds a workflow. Choose a different --agent-name, or a --project directory that does not hold a folder by that name.");
+            throw ManagedAgentException.WorkspaceNotEmpty(workspaceRoot, "a workflow");
         }
 
         if (_workspace.HasAgentProject(workspaceRoot))
         {
-            throw new UsageException($"'{workspaceRoot}' already holds an agent project. Choose a different --agent-name, or a --project directory that does not hold a folder by that name.");
+            throw ManagedAgentException.WorkspaceNotEmpty(workspaceRoot, "an agent project");
         }
+
+        WorkspaceDirectoryGuard.RequireEmpty(workspaceRoot);
 
         Directory.CreateDirectory(workspaceRoot);
 
@@ -195,30 +214,4 @@ public sealed class WorkflowCreateService
             EntityTag = string.Empty,
             AgentState = EntityStates.Saved,
         });
-
-    private AgentDeploymentRecord RegisterHomeDeploymentOrRollBack(string projectDirectory, ManagedAgentRecord agent, string targetEnvironmentId)
-    {
-        try
-        {
-            return _deployments.Add(projectDirectory, new AgentDeploymentRecord
-            {
-                DeploymentId = Guid.NewGuid().ToString(),
-                AgentId = agent.AgentId,
-                AgentType = agent.AgentType,
-                DeploymentType = DeploymentStages.Dev,
-                DeploymentName = DeploymentStages.Dev,
-                TenantId = agent.TenantId,
-                HomeEnvironmentId = agent.EnvironmentId,
-                EnvironmentId = targetEnvironmentId,
-                CreatedBy = agent.CreatedBy,
-                EntityTag = string.Empty,
-            });
-        }
-        catch (Exception failure) when (failure is not OperationCanceledException)
-        {
-            _agents.RemoveWithDeployments(projectDirectory, agent.AgentId, agent.EntityTag);
-
-            throw ManagedAgentException.CloneNotRegistered(agent.DisplayName, failure);
-        }
-    }
 }

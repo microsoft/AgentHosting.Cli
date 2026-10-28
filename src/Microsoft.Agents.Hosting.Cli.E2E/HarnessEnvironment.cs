@@ -1,11 +1,13 @@
 using Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 using Microsoft.Agents.Hosting.Cli.E2E.Scenarios;
+using Microsoft.Agents.Hosting.Cli.E2E.Scenarios.StandaloneWorkflow;
 
 namespace Microsoft.Agents.Hosting.Cli.E2E;
 
 /// <summary>Assembles a run: locates the project, checks pre-flight, primes consent, and schedules scenarios.</summary>
 public sealed class HarnessEnvironment
 {
+    private const string ProjectFileName = "Microsoft.Agents.Hosting.Cli.E2E.Tests.csproj";
 
     private HarnessEnvironment(RunContext run, Scenario[] scheduled)
     {
@@ -20,7 +22,7 @@ public sealed class HarnessEnvironment
     public Scenario[] Scheduled { get; }
 
     /// <summary>The harness project directory, which holds the config and the fixtures.</summary>
-    public static string ProjectDirectory { get; } = LocateProjectDirectory();
+    public static string ProjectDirectory { get; } = FindProjectDirectory(AppContext.BaseDirectory) ?? Environment.CurrentDirectory;
 
     /// <summary>Where run folders are written.</summary>
     public static string RunsRoot { get; } = Path.Combine(ProjectDirectory, ".runs");
@@ -69,7 +71,7 @@ public sealed class HarnessEnvironment
             return null;
         }
 
-        var binary = await new MsagentCliBuilder(SourceRoot(), transcript).AcquireAsync(runDirectory, ToolDirectory(runId), options.MsagentPath, cancellationToken).ConfigureAwait(false);
+        var binary = await new MsagentCliBuilder(SourceRoot(ProjectDirectory), transcript).AcquireAsync(runDirectory, ToolDirectory(runId), options.MsagentPath, cancellationToken).ConfigureAwait(false);
         var msagent = new MsagentCli(binary.Path, transcript, CrashDumps.DirectoryFor(runDirectory));
         var azure = new AzureCli(transcript);
         var cloud = new CloudProbe(msagent, azure);
@@ -93,6 +95,15 @@ public sealed class HarnessEnvironment
             capabilities = Capabilities.Resolve(config, Path.Combine(ProjectDirectory, "fixtures"), signedIn, signedInDetail, azureCliPresent, armConsentGranted: false);
         }
 
+        var scheduled = ScenarioCatalogue.Select(options.Filters).ToArray();
+        StandaloneServices? standalone = null;
+
+        if (scheduled.Any(scenario => string.Equals(scenario.Feature, StandaloneWorkflowScenarios.Feature, StringComparison.OrdinalIgnoreCase)))
+        {
+            standalone = new StandaloneServices(config, runDirectory, transcript, Path.Combine(ProjectDirectory, "fixtures", Capabilities.StandaloneFixturesFolder));
+            capabilities = await standalone.ProbeAsync(capabilities, cancellationToken).ConfigureAwait(false);
+        }
+
         var run = new RunContext
         {
             RunId = runId,
@@ -110,9 +121,10 @@ public sealed class HarnessEnvironment
             Session = new SessionResources(),
             Transcript = transcript,
             Reporter = new Reporter(!options.NoColour),
+            Standalone = standalone,
         };
 
-        return new HarnessEnvironment(run, [.. ScenarioCatalogue.Select(options.Filters)]);
+        return new HarnessEnvironment(run, scheduled);
     }
 
     private static void AnnounceCreatedConfig()
@@ -265,30 +277,27 @@ public sealed class HarnessEnvironment
         }
     }
 
-    private static string SourceRoot()
+    /// <summary>Finds the harness project directory: the nearest directory at or above the start that holds the harness project file.</summary>
+    /// <param name="startDirectory">The directory the search starts from, usually the build output folder.</param>
+    /// <returns>The harness project directory, or null when no directory above the start holds the project file.</returns>
+    public static string? FindProjectDirectory(string startDirectory) => FindAncestorHolding(startDirectory, ProjectFileName);
+
+    /// <summary>Finds the source root: the nearest directory at or above the start that holds the CLI project folder.</summary>
+    /// <param name="startDirectory">The directory the search starts from, usually the harness project directory.</param>
+    /// <returns>The source root directory.</returns>
+    public static string SourceRoot(string startDirectory) => FindAncestorHolding(startDirectory, Path.Combine("Microsoft.Agents.Hosting.Cli", "Microsoft.Agents.Hosting.Cli.csproj")) ?? throw new E2EException("Could not locate the source root; Microsoft.Agents.Hosting.Cli.csproj was not found above the harness project.");
+
+    private static string? FindAncestorHolding(string startDirectory, string relativeFilePath)
     {
-        for (var directory = new DirectoryInfo(ProjectDirectory); directory is not null; directory = directory.Parent)
+        for (var directory = new DirectoryInfo(startDirectory); directory is not null; directory = directory.Parent)
         {
-            if (File.Exists(Path.Combine(directory.FullName, "AgentHosting.slnx")))
+            if (File.Exists(Path.Combine(directory.FullName, relativeFilePath)))
             {
                 return directory.FullName;
             }
         }
 
-        throw new E2EException("Could not locate the source root; AgentHosting.slnx was not found above the harness project.");
-    }
-
-    private static string LocateProjectDirectory()
-    {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "Microsoft.Agents.Hosting.Cli.E2E.csproj")))
-            {
-                return directory.FullName;
-            }
-        }
-
-        return Environment.CurrentDirectory;
+        return null;
     }
 
     private static string Summarize(string value) =>

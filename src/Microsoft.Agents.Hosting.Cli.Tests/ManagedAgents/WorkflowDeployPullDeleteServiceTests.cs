@@ -30,12 +30,15 @@ public sealed class WorkflowDeployServiceTests : IDisposable
         ManagedAgentFixtures.Principals(),
         new FixedClock(ManagedAgentFixtures.Now));
 
-    private Guid Register(bool activated = true)
+    private Guid Register(bool activated = true, bool withDeployment = true)
     {
         var workflowId = WorkflowFixtures.Write(_workspace.Root, "WF Hook 2", activated);
 
         _config.Add(_workspace.Root, WorkflowFixtures.Record(workflowId: workflowId.ToString()));
-        ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment());
+        if (withDeployment)
+        {
+            ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment());
+        }
 
         return workflowId;
     }
@@ -128,6 +131,50 @@ public sealed class WorkflowDeployServiceTests : IDisposable
         Assert.Equal(WorkflowStateProjection.Draft, result.WorkflowState);
         Assert.Equal(1, result.UnboundConnectionCount);
         Assert.NotEqual(0, _connections.ReadCalls);
+    }
+
+    [Fact]
+    public async Task ADraftDeployCountsAndNamesTheReferencesThePushLeftUnbound()
+    {
+        Register(activated: false);
+        _store.UnboundConnectionReferencesOnPush.AddRange(["cr_teams", "cr_outlook", "cr_sharepoint"]);
+
+        var result = await Service().DeployAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(3, result.UnboundConnectionCount);
+        Assert.Contains(result.Warnings, warning => warning.Contains("3 connection reference(s) have no connection: cr_teams, cr_outlook, cr_sharepoint.", StringComparison.Ordinal));
+        Assert.Equal(0, _connections.ReadCalls);
+    }
+
+    [Fact]
+    public async Task ADraftDeployDoesNotNameTheReferencesItDeclaredTwice()
+    {
+        Register(activated: false);
+        _store.DeclaredConnectionReferences.Add("cr_teams");
+        _store.UnboundConnectionReferencesOnPush.AddRange(["cr_teams", "cr_outlook"]);
+
+        var result = await Service().DeployAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(2, result.UnboundConnectionCount);
+        Assert.Contains(result.Warnings, warning => warning.Contains("1 connection reference(s) have no connection: cr_outlook.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ADeployCountsWhatTheActivationPassLeftUnboundRatherThanWhatThePushSaw()
+    {
+        Register();
+        _store.DraftOnPush = true;
+        _store.UnboundConnectionReferencesOnPush.AddRange(["cr_teams", "cr_outlook", "cr_sharepoint"]);
+        _connections.Views.Add(new CopilotConnectionView { LogicalName = "cr_teams", ConnectorId = "shared_teams", Candidates = [ManagedAgentFixtures.Candidate("conn-1")] });
+        _connections.Views.Add(new CopilotConnectionView { LogicalName = "cr_outlook", ConnectorId = "shared_office365", IsDeclared = true });
+        _connections.Views.Add(new CopilotConnectionView { LogicalName = "cr_sharepoint", ConnectorId = "shared_sharepointonline", IsDeclared = true });
+        _connections.Workflows.Add(new CopilotWorkflowView { WorkflowId = Guid.NewGuid().ToString(), DisplayName = "WF Hook 2", CanEnable = false, ConnectionReferences = ["cr_teams", "cr_outlook", "cr_sharepoint"] });
+
+        var result = await Service().DeployAsync(Request(), CancellationToken.None);
+
+        Assert.Equal("cr_teams", Assert.Single(_connections.Bound).LogicalName);
+        Assert.Equal(2, result.UnboundConnectionCount);
+        Assert.DoesNotContain(result.Warnings, warning => warning.Contains("have no connection", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -279,33 +326,133 @@ public sealed class WorkflowDeployServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task OverwriteIsRejected()
+    public async Task TheDeployResultNamesTheFlowSeparatelyFromTheRecord()
     {
-        Register();
+        var workflowId = WorkflowFixtures.Write(_workspace.Root, "Order intake flow");
+        _config.Add(_workspace.Root, WorkflowFixtures.Record(displayName: "intake", workflowId: workflowId.ToString()));
+        ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment());
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => Service().DeployAsync(Request(overwrite: true), CancellationToken.None));
+        var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Contains("--overwrite", failure.Message, StringComparison.Ordinal);
+        Assert.Equal("Order intake flow", result.WorkflowName);
+        Assert.Equal("intake", result.DisplayName);
+        Assert.StartsWith("Deployed workflow 'Order intake flow' (record 'intake') to devwf", result.ToTextLines()[0], StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task SchemaNameIsRejected()
+    public async Task ADevDeployChecksForUnpulledChangesBeforeItUploads()
     {
-        Register();
+        var workflowId = Register();
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => Service().DeployAsync(Request(schemaName: "con_flow"), CancellationToken.None));
+        await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Contains("--schema-name", failure.Message, StringComparison.Ordinal);
+        Assert.Equal([$"unpulled:{workflowId}", $"upsert:{workflowId}"], _store.Calls);
     }
 
     [Fact]
-    public async Task ADeploymentSelectorIsRequired()
+    public async Task ADevDeployIsRefusedBeforeAnythingChangesWhenTheEnvironmentHoldsUnpulledChanges()
+    {
+        var workflowId = Register();
+        _store.UnpulledChanges.Add(workflowId);
+        States().Write(_workspace.Root, "env-1", new Dictionary<string, int> { ["cloud-only"] = WorkflowStateCache.Activated });
+        var configuration = File.ReadAllBytes(_workspace.ConfigPath);
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service().DeployAsync(Request(publish: true), CancellationToken.None));
+
+        Assert.Equal("workflow-cloud-changes-would-be-lost", failure.ErrorKind);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal($"'{WorkflowWorkspace.FolderNameFor("WF Hook 2", workflowId)}' has conflict remote change, and a deploy would replace them.", failure.Message);
+        Assert.Equal("Run `msagent agent pull` to get them, or deploy again with --overwrite to replace them.", failure.Remediation);
+        Assert.Equal([$"unpulled:{workflowId}"], _store.Calls);
+        Assert.Equal(0, _connections.ReadCalls);
+        Assert.Equal(WorkflowStateCache.Activated, Assert.Single(States().Read(_workspace.Root, "env-1")).Value);
+        Assert.Equal(configuration, File.ReadAllBytes(_workspace.ConfigPath));
+    }
+
+    [Fact]
+    public async Task OverwriteReplacesUnpulledChangesWithoutCheckingForThem()
+    {
+        var workflowId = Register();
+
+        await Service().DeployAsync(Request(), CancellationToken.None);
+        _store.UnpulledChanges.Add(workflowId);
+        var replaced = await Service().DeployAsync(Request(overwrite: true), CancellationToken.None);
+
+        Assert.Equal("update", replaced.Action);
+        Assert.Equal([$"unpulled:{workflowId}", $"upsert:{workflowId}", $"upsert:{workflowId}"], _store.Calls);
+        Assert.Empty(replaced.Warnings);
+    }
+
+    [Theory]
+    [InlineData(DeploymentStages.Test)]
+    [InlineData(DeploymentStages.Prod)]
+    public async Task ADeployToATestOrProdSlotReplacesTheCloudCopyWithoutChecking(string deploymentType)
+    {
+        var workflowId = Register();
+        ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment(deploymentName: "testwf", deploymentId: "dep-2", environmentId: "env-2", deploymentType: deploymentType));
+        _store.UnpulledChanges.Add(workflowId);
+
+        var result = await Service().DeployAsync(Request() with { DeploymentName = "testwf" }, CancellationToken.None);
+
+        Assert.Equal("create", result.Action);
+        Assert.Equal("env-2", result.TargetEnvironmentId);
+        Assert.Equal([$"upsert:{workflowId}"], _store.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SchemaNameIsRejectedBeforeAnythingIsUploadedOrRecorded(bool overwrite)
     {
         Register();
+        var configuration = File.ReadAllBytes(_workspace.ConfigPath);
 
-        await Assert.ThrowsAsync<UsageException>(() => Service().DeployAsync(
-            new ManagedAgentDeployRequest { Project = _workspace.Root, AgentId = "wf-1" },
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Service().DeployAsync(Request(overwrite: overwrite, schemaName: "con_flow"), CancellationToken.None));
+
+        Assert.Equal("--schema-name does not apply to a workflow, which is addressed by its workflow id. Remove --schema-name.", failure.Message);
+        Assert.Empty(_store.Calls);
+        Assert.Equal(0, _connections.ReadCalls);
+        Assert.Equal(configuration, File.ReadAllBytes(_workspace.ConfigPath));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ABlankSchemaNameIsNotRejected(string schemaName)
+    {
+        var workflowId = Register();
+
+        var result = await Service().DeployAsync(Request(schemaName: schemaName), CancellationToken.None);
+
+        Assert.Single(_store.Calls, call => call == $"upsert:{workflowId}");
+        Assert.Empty(result.Warnings);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task AnUnresolvedDeploymentStopsBeforeCloudOrCacheChanges(bool hasDeployment, bool withSelector)
+    {
+        Register(withDeployment: hasDeployment);
+        States().Write(_workspace.Root, "env-1", new Dictionary<string, int> { ["cloud-only"] = WorkflowStateCache.Activated });
+        _workspace.AddFile(Path.Combine(".mcs", "botdefinition.json"), "{\"source\":\"cloud\"}");
+        var configuration = File.ReadAllBytes(_workspace.ConfigPath);
+        var cachePath = Path.Combine(_workspace.Root, ".mcs", "botdefinition.json");
+        var cache = File.ReadAllBytes(cachePath);
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service().DeployAsync(
+            new ManagedAgentDeployRequest { Project = _workspace.Root, AgentId = "wf-1", DeploymentName = withSelector ? "no-such-slot" : null },
             CancellationToken.None));
+
+        Assert.Equal(withSelector ? "deployment-not-found" : hasDeployment ? "deployment-selector-required" : "deployment-records-empty", failure.ErrorKind);
+        Assert.Contains(hasDeployment ? withSelector ? "no-such-slot" : "Available deployments: devwf" : "no deployment records", failure.Message, StringComparison.Ordinal);
+        Assert.Empty(_store.Calls);
+        Assert.Equal(0, _connections.ReadCalls);
+        Assert.Equal(WorkflowStateCache.Activated, Assert.Single(States().Read(_workspace.Root, "env-1")).Value);
+        Assert.Equal(configuration, File.ReadAllBytes(_workspace.ConfigPath));
+        Assert.Equal(cache, File.ReadAllBytes(cachePath));
     }
 
     [Fact]
@@ -438,14 +585,31 @@ public sealed class WorkflowPullServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PullReportsTheWarningsTheDownloadGave()
+    {
+        Register();
+        _store.WarningsOnDownload = ["'WF Hook 2' also has a draft in env-1 that was saved in the designer but not published, so only the published version was written. Publish the draft in the designer to get it."];
+
+        var result = await Service().PullAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(_store.WarningsOnDownload, result.Warnings);
+        Assert.Contains($"  warning    {_store.WarningsOnDownload[0]}", result.ToTextLines());
+    }
+
+    [Fact]
     public async Task PullRenamesTheFolderWhenTheCloudNameChanged()
     {
         var workflowId = Register();
+        var previousFolder = WorkflowWorkspaceFixtures.Single(_workspace.Root).FolderPath;
         _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Renamed In Portal", State = WorkflowStateProjection.Activated };
 
-        await Service().PullAsync(Request(), CancellationToken.None);
+        var result = await Service().PullAsync(Request(), CancellationToken.None);
 
         Assert.Equal($"RenamedInPortal-{workflowId}", WorkflowWorkspaceFixtures.Single(_workspace.Root).FolderName);
+        Assert.Equal("Renamed In Portal", result.WorkflowName);
+        Assert.Equal(previousFolder, result.PreviousFolder);
+        Assert.Equal(WorkflowWorkspaceFixtures.Single(_workspace.Root).FolderPath, result.WorkflowFolder);
+        Assert.Contains($"  renamed    {previousFolder} -> {result.WorkflowFolder}", result.ToTextLines());
     }
 
     [Fact]
@@ -748,6 +912,64 @@ public sealed class WorkflowDeleteServiceTests : IDisposable
 
         Assert.Equal("env-1", orphan.EnvironmentId);
         Assert.Equal("devwf", orphan.DeploymentName);
+    }
+
+    [Fact]
+    public async Task DeletingAWorkflowAnAgentUsesNamesTheAgentInTheConfirmationAndTheResult()
+    {
+        var workflowId = Register();
+        _store.AgentUseWarnings[workflowId] = WorkflowFixtures.AgentUseWarning;
+        var prompt = new ScriptedConfirmationPrompt { Answer = true };
+
+        var result = await Service(prompt).DeleteAsync(Request(), CancellationToken.None);
+
+        Assert.Contains($"  warning      {WorkflowFixtures.AgentUseWarning}", prompt.LastDetail!.Split(System.Environment.NewLine));
+        Assert.Equal([("env-1", workflowId)], _store.AgentUseReads);
+        Assert.Equal([WorkflowFixtures.AgentUseWarning], result.Warnings);
+        Assert.Contains($"  warning      {WorkflowFixtures.AgentUseWarning}", result.ToTextLines());
+        Assert.Contains($"delete:{workflowId}", _store.Calls);
+    }
+
+    [Fact]
+    public async Task DeletingAWorkflowNoAgentUsesShowsNoWarning()
+    {
+        Register();
+        var prompt = new ScriptedConfirmationPrompt { Answer = true };
+
+        var result = await Service(prompt).DeleteAsync(Request(), CancellationToken.None);
+
+        Assert.DoesNotContain("warning", prompt.LastDetail, StringComparison.Ordinal);
+        Assert.Empty(result.Warnings);
+        Assert.DoesNotContain(result.ToTextLines(), line => line.Contains("warning", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ANonInteractiveDeleteOfAWorkflowAnAgentUsesDeletesItAndReportsTheWarning()
+    {
+        var workflowId = Register();
+        _store.AgentUseWarnings[workflowId] = WorkflowFixtures.AgentUseWarning;
+        var prompt = new ScriptedConfirmationPrompt { Throws = true };
+
+        var result = await Service(prompt).DeleteAsync(Request() with { NonInteractive = true }, CancellationToken.None);
+
+        Assert.Equal(0, prompt.Calls);
+        Assert.Equal([WorkflowFixtures.AgentUseWarning], result.Warnings);
+        Assert.Contains($"delete:{workflowId}", _store.Calls);
+    }
+
+    [Fact]
+    public async Task WhenTheAgentsUsingTheWorkflowCannotBeReadNothingIsAskedOrDeleted()
+    {
+        var workflowId = Register();
+        _store.AgentUseThrows = new InvalidOperationException("the service is unavailable");
+        var prompt = new ScriptedConfirmationPrompt { Answer = true };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Service(prompt).DeleteAsync(Request(), CancellationToken.None));
+
+        Assert.Equal(0, prompt.Calls);
+        Assert.DoesNotContain($"delete:{workflowId}", _store.Calls);
+        Assert.Single(_store.Cloud);
+        Assert.Single(_config.List(_workspace.Root));
     }
 
     private void RemoveHomeDeployment()

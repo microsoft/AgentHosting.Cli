@@ -34,6 +34,7 @@ public sealed class AgentHostCli
     private readonly CommandTelemetrySessionFactory _telemetryFactory;
     private readonly CommandTelemetrySessionAccessor _telemetryAccessor;
     private readonly SystemCommandLineInputFactory _inputFactory;
+    private readonly ProgressSpinner? _progressSpinner;
 
     /// <summary>Creates the host.</summary>
     /// <param name="operations">The operations facade the commands dispatch to.</param>
@@ -59,7 +60,8 @@ public sealed class AgentHostCli
         IServiceProvider? services = null,
         IFeatureFlags? featureFlags = null,
         CommandTelemetrySessionAccessor? telemetryAccessor = null,
-        SystemCommandLineInputFactory? inputFactory = null)
+        SystemCommandLineInputFactory? inputFactory = null,
+        ProgressSpinner? progressSpinner = null)
     {
         ArgumentNullException.ThrowIfNull(operations);
 
@@ -71,6 +73,7 @@ public sealed class AgentHostCli
         _telemetryAccessor = telemetryAccessor ?? new CommandTelemetrySessionAccessor();
         _inputFactory =
             inputFactory ?? CommandTreeBuilder.CreateSystemCommandLineInput;
+        _progressSpinner = progressSpinner;
     }
 
     /// <summary>
@@ -124,7 +127,8 @@ public sealed class AgentHostCli
             debugOption,
             nonInteractiveOption,
             _telemetryAccessor,
-            _inputFactory);
+            _inputFactory,
+            _progressSpinner);
         var root = new RootCommand(
             $"{AgentHostingCliInfo.ProductName}{Environment.NewLine}" +
             $"Version: {ThisAssembly.AssemblyInformationalVersion} ({System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}){Environment.NewLine}" +

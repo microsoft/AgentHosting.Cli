@@ -1,12 +1,10 @@
-using System.Net;
 using System.Net.Http.Headers;
-using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 
 namespace Microsoft.Agents.Hosting.Cli.CopilotStudio.AskClient;
 
 internal sealed class McsResponseBridgeHandler(
     HttpMessageHandler innerHandler,
-    McsLiveTestTarget target,
+    McsLiveEndpointDiscovery discovery,
     Action<string> serviceConversationId,
     Action<Exception> responseError) : DelegatingHandler(innerHandler)
 {
@@ -14,8 +12,13 @@ internal sealed class McsResponseBridgeHandler(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
-        ValidateRequest(request, target);
-        NormalizeApiVersion(request, target);
+        var isDiscovery = request.RequestUri == discovery.DiscoveryUri;
+        if (request.RequestUri is null ||
+            !discovery.IsExpectedRequestResource(request.RequestUri.AbsoluteUri) ||
+            request.Method != (isDiscovery ? HttpMethod.Get : HttpMethod.Post))
+        {
+            throw new McsLiveTestProtocolException("The SDK generated an unapproved Copilot Studio request.");
+        }
 
         HttpResponseMessage response;
         try
@@ -36,6 +39,26 @@ internal sealed class McsResponseBridgeHandler(
             var status = response.StatusCode;
             response.Dispose();
             throw new McsLiveTestTransportException(status, "The Copilot Studio service returned an unsuccessful response.");
+        }
+
+        if (isDiscovery)
+        {
+            try
+            {
+                var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                discovery.ReadResponse(json);
+                return response;
+            }
+            catch (Exception error) when (error is IOException or HttpRequestException)
+            {
+                response.Dispose();
+                throw new McsLiveTestTransportException(null, "The Copilot Studio discovery response could not be read.");
+            }
+            catch
+            {
+                response.Dispose();
+                throw;
+            }
         }
 
         if (response.Headers.TryGetValues("x-ms-conversationid", out var values))
@@ -73,44 +96,5 @@ internal sealed class McsResponseBridgeHandler(
 
         response.Dispose();
         throw new McsLiveTestProtocolException("The Copilot Studio service returned an unsupported response format.");
-    }
-
-    private static void ValidateRequest(HttpRequestMessage request, McsLiveTestTarget target)
-    {
-        var uri = request.RequestUri;
-        var endpoint = target.Endpoint ?? McsLiveTargetValidation.GetEndpoint(target);
-        var prefix = endpoint.AbsolutePath;
-
-        if (uri is null ||
-            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.Ordinal) ||
-            !string.Equals(uri.Host, endpoint.Host, StringComparison.OrdinalIgnoreCase) ||
-            uri.Port != 443 ||
-            !string.IsNullOrEmpty(uri.UserInfo) ||
-            !string.IsNullOrEmpty(uri.Fragment) ||
-            !McsLiveTargetValidation.IsSupportedSdkQuery(uri.Query, endpoint.Query, target.AgentType) ||
-            !(uri.AbsolutePath.Equals(prefix, StringComparison.Ordinal) ||
-              (uri.AbsolutePath.StartsWith(prefix + "/", StringComparison.Ordinal) &&
-               uri.AbsolutePath[(prefix.Length + 1)..].IndexOf('/') < 0)))
-        {
-            throw new McsLiveTestProtocolException("The SDK generated an unapproved Copilot Studio request.");
-        }
-    }
-
-    private static void NormalizeApiVersion(HttpRequestMessage request, McsLiveTestTarget target)
-    {
-        var endpoint = target.Endpoint ?? McsLiveTargetValidation.GetEndpoint(target);
-        if (target.AgentType != LiveTestAgentType.GitHubCopilot ||
-            request.RequestUri is not { } uri ||
-            string.Equals(uri.Query, endpoint.Query, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        var builder = new UriBuilder(uri)
-        {
-            Query = endpoint.Query.TrimStart('?'),
-        };
-        // SDK 1.8.77 rebuilds DirectConnectUrl requests with its standard API version.
-        request.RequestUri = builder.Uri;
     }
 }

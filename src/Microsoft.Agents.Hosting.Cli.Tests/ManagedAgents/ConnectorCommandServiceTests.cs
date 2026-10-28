@@ -150,7 +150,7 @@ public sealed class ConnectorCommandServiceTests
     {
         var connectors = Catalog("shared_teams");
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => Resolver(connectors).RequireAsync(ManagedAgentFixtures.EnvironmentContext(), "shared_nothing", "list", CancellationToken.None));
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Resolver(connectors).RequireAsync(ManagedAgentFixtures.EnvironmentContext(), "shared_nothing", "list", CancellationToken.None));
 
         Assert.Contains("serves no connector 'shared_nothing'", failure.Message, StringComparison.Ordinal);
     }
@@ -236,7 +236,7 @@ public sealed class ConnectorCommandServiceTests
         var connections = new FakeConnectionPort();
         var connectors = Catalog("shared_teams");
 
-        await Assert.ThrowsAsync<UsageException>(() => ReferenceService(store, connectors, connections).CreateAsync(
+        await Assert.ThrowsAsync<ManagedAgentException>(() => ReferenceService(store, connectors, connections).CreateAsync(
             new AgentDeploymentConnectionReferenceCreateRequest { AgentId = "agent-1", DeploymentName = "dev", Connector = "shared_typo" },
             CancellationToken.None));
 
@@ -293,7 +293,7 @@ public sealed class ConnectorCommandServiceTests
         var connectors = Catalog("shared_teams");
         connectors.Connections["shared_teams"] = [ManagedAgentFixtures.Candidate("conn-a")];
 
-        await Assert.ThrowsAsync<UsageException>(() => ReferenceService(store, connectors, connections).CreateAsync(
+        await Assert.ThrowsAsync<ManagedAgentException>(() => ReferenceService(store, connectors, connections).CreateAsync(
             new AgentDeploymentConnectionReferenceCreateRequest { AgentId = "agent-1", DeploymentName = "dev", Connector = "shared_teams", ConnectionId = " conn-z " },
             CancellationToken.None));
 
@@ -578,7 +578,7 @@ public sealed class ConnectorCommandServiceTests
         using var scope = new CurrentDirectoryScope(workspace.Root);
         var consentFlow = new ScriptedConsentFlow();
 
-        await Assert.ThrowsAsync<UsageException>(() => CreateService(store, Catalog("shared_teams"), consentFlow).CreateAsync(
+        await Assert.ThrowsAsync<ManagedAgentException>(() => CreateService(store, Catalog("shared_teams"), consentFlow).CreateAsync(
             new AgentDeploymentConnectionCreateRequest { AgentId = "agent-1", DeploymentName = "dev", Connector = "shared_nothing" },
             CancellationToken.None));
 
@@ -777,7 +777,7 @@ public sealed class ConnectorCommandServiceTests
         var connectors = Catalog("shared_teams");
         connectors.Connections["shared_teams"] = [ManagedAgentFixtures.Candidate("conn-a")];
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => ReferenceService(store, connectors, connections).CreateAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => ReferenceService(store, connectors, connections).CreateAsync(
             new AgentDeploymentConnectionReferenceCreateRequest { AgentId = "agent-1", DeploymentName = "dev", Connector = "shared_teams", ConnectionId = "conn-missing" },
             CancellationToken.None));
 
@@ -958,7 +958,7 @@ public sealed class ConnectorCommandServiceTests
         using var scope = new CurrentDirectoryScope(workspace.Root);
         var connections = new FakeConnectionPort();
 
-        await Assert.ThrowsAsync<UsageException>(() => ReferenceService(store, Catalog("shared_teams"), connections).CreateAsync(
+        await Assert.ThrowsAsync<ManagedAgentException>(() => ReferenceService(store, Catalog("shared_teams"), connections).CreateAsync(
             new AgentDeploymentConnectionReferenceCreateRequest { AgentId = "agent-1", DeploymentName = "dev", Connector = "shared_nothing" },
             CancellationToken.None));
 
@@ -1106,11 +1106,11 @@ public sealed class ConnectorCommandServiceTests
         using var _ = workspace;
         using var scope = new CurrentDirectoryScope(workspace.Root);
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => ReferenceService(store, Catalog("shared_teams"), new FakeConnectionPort()).CreateAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => ReferenceService(store, Catalog("shared_teams"), new FakeConnectionPort()).CreateAsync(
             new AgentDeploymentConnectionReferenceCreateRequest { AgentId = "agent-1", DeploymentName = "dev", Connector = "zzz" },
             CancellationToken.None));
 
-        Assert.Contains("msagent deployment connection connectors --agent-id agent-1 --deployment-name dev --filter <text>", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("msagent deployment connection connectors --agent-id agent-1 --deployment-name dev --filter <text>", failure.Remediation, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1120,11 +1120,11 @@ public sealed class ConnectorCommandServiceTests
         using var _ = workspace;
         using var scope = new CurrentDirectoryScope(workspace.Root);
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => ReferenceService(store, Catalog("shared_teams"), new FakeConnectionPort()).CreateAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => ReferenceService(store, Catalog("shared_teams"), new FakeConnectionPort()).CreateAsync(
             new AgentDeploymentConnectionReferenceCreateRequest { AgentId = "agent-1", DeploymentName = "dev", SchemaName = "cr123_override", Connector = "zzz" },
             CancellationToken.None));
 
-        Assert.DoesNotContain("--schema-name", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("--schema-name", failure.Remediation, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1292,11 +1292,18 @@ public sealed class ConnectorCommandServiceTests
         connections.Views.Add(ManagedAgentFixtures.Reference("cr_one", "shared_teams"));
         var lifecycle = new FakeConnectionLifecyclePort();
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => RemoveService(store, CatalogServing("shared_teams", "conn-other"), connections, lifecycle).RemoveAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => RemoveService(store, CatalogServing("shared_teams", "conn-other"), connections, lifecycle).RemoveAsync(
             new AgentDeploymentConnectionRemoveRequest { AgentId = "agent-1", DeploymentName = "dev", ConnectionReference = "cr_one", ConnectionId = "conn-a", Connector = "shared_teams" },
             CancellationToken.None));
 
+        Assert.Equal(11051, failure.ErrorCode);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal("connection-not-served", failure.ErrorKind);
         Assert.Contains("serves no connection conn-a", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("shared_teams", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("env-1", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("msagent deployment connection list", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains("--deployment-name dev", failure.Remediation, StringComparison.Ordinal);
         Assert.Empty(connections.RemovedReferenceNames);
         Assert.Empty(lifecycle.Deleted);
     }
@@ -1396,10 +1403,11 @@ public sealed class ConnectorCommandServiceTests
 
         catalog.Connectors.Add(new CopilotConnectorInfo { InternalId = "shared_teams", DisplayName = "shared_teams" });
 
-        var failure = await Assert.ThrowsAsync<UsageException>(() => RemoveService(store, catalog, connections, lifecycle).RemoveAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => RemoveService(store, catalog, connections, lifecycle).RemoveAsync(
             new AgentDeploymentConnectionRemoveRequest { AgentId = "agent-1", DeploymentName = "dev", ConnectionReference = "cr_one", ConnectionId = "conn-a", Connector = "shared_teams" },
             CancellationToken.None));
 
+        Assert.Equal(11051, failure.ErrorCode);
         Assert.Contains("serves no connection conn-a", failure.Message, StringComparison.Ordinal);
         Assert.Empty(connections.RemovedReferenceNames);
         Assert.Empty(lifecycle.Deleted);
@@ -1414,7 +1422,7 @@ public sealed class ConnectorCommandServiceTests
         var connections = new FakeConnectionPort();
         connections.Views.Add(ManagedAgentFixtures.Reference("cr_one", "shared_teams", "conn-a"));
 
-        await Assert.ThrowsAsync<UsageException>(() => RemoveService(store, Catalog("shared_sql"), connections).RemoveAsync(
+        await Assert.ThrowsAsync<ManagedAgentException>(() => RemoveService(store, Catalog("shared_sql"), connections).RemoveAsync(
             new AgentDeploymentConnectionRemoveRequest { AgentId = "agent-1", DeploymentName = "dev", ConnectionReference = "cr_one", ConnectionId = "conn-a", Connector = "shared_teams" },
             CancellationToken.None));
 
@@ -1858,7 +1866,7 @@ public sealed class ConnectorCommandServiceTests
         using var scope = new CurrentDirectoryScope(workspace.Root);
         var lifecycle = new FakeConnectionLifecyclePort();
 
-        await Assert.ThrowsAsync<UsageException>(() => RemoveService(store, Catalog("shared_teams"), new FakeConnectionPort(), lifecycle).RemoveAsync(
+        await Assert.ThrowsAsync<ManagedAgentException>(() => RemoveService(store, Catalog("shared_teams"), new FakeConnectionPort(), lifecycle).RemoveAsync(
             new AgentDeploymentConnectionRemoveRequest { AgentId = "agent-1", DeploymentName = "dev", Connector = "shared_nothing", ConnectionId = "conn-1" },
             CancellationToken.None));
 

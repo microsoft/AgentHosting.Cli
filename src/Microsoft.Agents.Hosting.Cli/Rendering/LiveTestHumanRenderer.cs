@@ -11,7 +11,6 @@ public sealed class LiveTestHumanRenderer
 {
     private const string CompletedStatus = "SDK response completed; remote action success is not verified";
     private const string MissingFinalWarning = "No final message was supplied for a streamed response";
-    private const string FallbackWarning = "Unrecognized activity update; see JSON for full data";
 
     private readonly TextWriter _output;
     private readonly TextWriter _error;
@@ -55,13 +54,13 @@ public sealed class LiveTestHumanRenderer
 
         if (activity.ValueKind != JsonValueKind.Object)
         {
-            WriteFallback();
+            WriteActivitySummary(activity);
             return;
         }
 
         if (HasUnknownDelta(activity))
         {
-            WriteFallback();
+            WriteActivitySummary(activity);
             return;
         }
 
@@ -83,7 +82,7 @@ public sealed class LiveTestHumanRenderer
 
         if (!rendered && (HasProperty(activity, "channelData") || HasProperty(activity, "delta")))
         {
-            WriteFallback();
+            WriteActivitySummary(activity);
             return;
         }
 
@@ -91,7 +90,7 @@ public sealed class LiveTestHumanRenderer
             (!TryGetString(activity, "type", out var type) ||
              !string.Equals(type, "typing", StringComparison.OrdinalIgnoreCase)))
         {
-            WriteFallback();
+            WriteActivitySummary(activity);
         }
     }
 
@@ -121,9 +120,9 @@ public sealed class LiveTestHumanRenderer
 
     /// <summary>
     /// Finishes the human rendering path. A false value reports that the SDK stream did not complete
-    /// normally; it does not claim anything about remote work.
+    /// normally; it does not claim anything about remote work. Preflight failures omit SDK status.
     /// </summary>
-    public void Finish(bool sdkCompleted)
+    public void Finish(bool sdkCompleted, bool sdkStarted = true)
     {
         if (_finished)
         {
@@ -140,9 +139,12 @@ public sealed class LiveTestHumanRenderer
             }
         }
 
-        WriteCliLine(
-            sdkCompleted ? CompletedStatus : "SDK response did not complete",
-            _output);
+        if (sdkStarted)
+        {
+            WriteCliLine(
+                sdkCompleted ? CompletedStatus : "SDK response did not complete",
+                _output);
+        }
         _output.Flush();
         _finished = true;
     }
@@ -152,7 +154,7 @@ public sealed class LiveTestHumanRenderer
         if (string.IsNullOrWhiteSpace(info.StreamId) ||
             (info.StreamType is not "informative" and not "streaming" and not "final"))
         {
-            WriteFallback();
+            WriteActivitySummary(activity);
             return;
         }
 
@@ -185,7 +187,7 @@ public sealed class LiveTestHumanRenderer
             rendered |= RenderAttachments(activity);
             if (!rendered)
             {
-                WriteFallback();
+                WriteActivitySummary(activity);
             }
 
             state.Text = string.Empty;
@@ -468,10 +470,18 @@ public sealed class LiveTestHumanRenderer
         WriteLabelLine("Agent:", text, _output, "36");
     }
 
-    private void WriteFallback()
+    private void WriteActivitySummary(JsonElement activity)
     {
         ClearTransient();
-        WriteCliLine(FallbackWarning, _output);
+        var type = FirstString(activity, "type");
+        var name = FirstString(activity, "name");
+        var label = string.IsNullOrWhiteSpace(type) ? "unknown" : type;
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            label += $" ({name})";
+        }
+
+        WriteCliLine($"Activity received: {label}", _output);
     }
 
     private void WriteCliLine(string text, TextWriter writer)

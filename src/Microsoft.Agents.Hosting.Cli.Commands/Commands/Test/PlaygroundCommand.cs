@@ -7,14 +7,14 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Test;
 
 /// <summary>Launches the M365 Agents Playground against a selected Copilot Studio runtime.</summary>
-[Command("playground", Description = "Launch the M365 Agents Playground for a Copilot Studio agent. Live actions can have real effects. Native browser/device-code sign-in may still require user action even with --non-interactive; --json is unsupported in this MVP.", ParentGroup = typeof(TestGroup), SortPriority = 20)]
+[Command("playground", Description = "Launch the M365 Agents Playground in a new terminal window using DirectEngine or Direct Line, returning after startup. Live actions can have real effects. Direct Line requires an interactive terminal and native masked credential entry. DirectEngine browser/device-code sign-in may still require user action even with --non-interactive; --json is unsupported in this MVP.", ParentGroup = typeof(TestGroup), SortPriority = 20)]
 [RequiredFeatureFlag(FeatureName.LiveTestFeatures)]
 public sealed class PlaygroundCommand : CommandBase<PlaygroundRequest, ILiveTestStreamingResult>
 {
     /// <inheritdoc />
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
-        OptionCatalog.Value("--agent-harness", "Agent harness: standard or github-copilot.", required: true),
+        OptionCatalog.Value("--target", "Connection transport: directline or directengine (default)."),
         OptionCatalog.Value("--project", "Local project directory holding agent.config.json."),
         OptionCatalog.Value("--agent-id", "Managed-agent record id."),
         OptionCatalog.Value("--agent-name", "Managed-agent record name."),
@@ -30,7 +30,7 @@ public sealed class PlaygroundCommand : CommandBase<PlaygroundRequest, ILiveTest
     /// <inheritdoc />
     protected override PlaygroundRequest Bind(ICommandInput input) => new()
     {
-        AgentType = input.GetString("--agent-harness")!,
+        Target = input.GetString("--target") ?? "directengine",
         Project = input.GetString("--project"),
         AgentId = input.GetString("--agent-id"),
         AgentName = input.GetString("--agent-name"),

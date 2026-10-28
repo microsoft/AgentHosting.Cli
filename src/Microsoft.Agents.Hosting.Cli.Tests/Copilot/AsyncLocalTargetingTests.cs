@@ -19,6 +19,8 @@ internal sealed class AsyncLocalWorkspacePort : ICopilotWorkspacePort
 
     public bool IsWorkspace(string directory) => true;
 
+    public string ProjectFolderName(string displayName) => Microsoft.CopilotStudio.Sync.WorkspaceFolderNames.ForProject(displayName);
+
     public Task<CopilotWorkspaceInfo> ReadWorkspaceInfoAsync(string directory, CancellationToken cancellationToken) =>
         Task.FromResult(new CopilotWorkspaceInfo
         {

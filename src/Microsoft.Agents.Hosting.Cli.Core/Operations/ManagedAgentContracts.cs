@@ -84,6 +84,9 @@ public sealed record ManagedAgentCreateResult : ITextGridRenderable
     /// <summary>The Dataverse workflow the record addresses, for a standalone workflow.</summary>
     public string? McsWorkflowId { get; init; }
 
+    /// <summary>The workflow's Dataverse name, for a standalone workflow, while <see cref="DisplayName"/> stays the record's name.</summary>
+    public string? WorkflowName { get; init; }
+
     /// <summary>The absolute folder holding the workflow's files, for a standalone workflow.</summary>
     public string? WorkflowFolder { get; init; }
 
@@ -138,8 +141,8 @@ public sealed record ManagedAgentCreateResult : ITextGridRenderable
         var lines = new List<string>
         {
             CreatedFrom == "clone"
-                ? $"Cloned workflow {DisplayName} from {McsWorkflowId} in {SourceEnvironmentId}."
-                : $"Created workflow {DisplayName} in {ProjectDirectory}.",
+                ? $"Cloned workflow {TextGrid.DescribeWorkflow(WorkflowName, DisplayName)} from {McsWorkflowId} in {SourceEnvironmentId}."
+                : $"Created workflow {TextGrid.DescribeWorkflow(WorkflowName, DisplayName)} in {ProjectDirectory}.",
             $"  agent id     {AgentId}",
             $"  workflow id  {McsWorkflowId}",
             $"  folder       {WorkflowFolder}",
@@ -158,7 +161,7 @@ public sealed record ManagedAgentCreateResult : ITextGridRenderable
             lines.Add($"  deployment   {DeploymentName} ({DeploymentType})");
         }
 
-        lines.AddRange(Warnings.Select(warning => $"  warning      {warning}"));
+        lines.AddRange(Warnings.Select(warning => TextGrid.WarningLine("  ", warning)));
 
         return lines;
     }
@@ -365,6 +368,9 @@ public sealed record ManagedAgentInitResult : ITextGridRenderable
     /// <summary>The Dataverse workflow the record addresses, for a standalone workflow.</summary>
     public string? McsWorkflowId { get; init; }
 
+    /// <summary>The workflow's Dataverse name, for a standalone workflow, while <see cref="DisplayName"/> stays the record's name.</summary>
+    public string? WorkflowName { get; init; }
+
     /// <summary>The absolute folder holding the workflow's files, for a standalone workflow.</summary>
     public string? WorkflowFolder { get; init; }
 
@@ -375,7 +381,7 @@ public sealed record ManagedAgentInitResult : ITextGridRenderable
     public IReadOnlyList<string> ToTextLines() => AgentType == AgentTypes.McsWorkflow
         ?
         [
-            $"Registered workflow {DisplayName} in {ProjectDirectory}.",
+            $"Registered workflow {TextGrid.DescribeWorkflow(WorkflowName, DisplayName)} in {ProjectDirectory}.",
             $"  agent id     {AgentId}",
             $"  workflow id  {McsWorkflowId}",
             $"  folder       {WorkflowFolder}",
@@ -613,6 +619,9 @@ public sealed record ManagedAgentDeleteResult : ITextGridRenderable
     /// <summary>Cloud agents left running by this delete.</summary>
     public IReadOnlyList<ManagedAgentOrphanedTarget> OrphanedTargets { get; init; } = [];
 
+    /// <summary>Advisories about the delete, such as the Copilot Studio agents that lost the deleted workflow.</summary>
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines()
     {
@@ -639,6 +648,8 @@ public sealed record ManagedAgentDeleteResult : ITextGridRenderable
                 : $"  {cloudLabel}  deleted from {EnvironmentId}",
             $"  records      1 ManagedAgent + {RemovedAgentDeployments} AgentDeployment row(s)",
         };
+
+        lines.AddRange(Warnings.Select(warning => TextGrid.WarningLine("  ", warning)));
 
         if (OrphanedTargets.Count > 0)
         {
@@ -705,6 +716,15 @@ public sealed record ManagedAgentPullResult : ITextGridRenderable
     /// <summary>How many components a clone wrote, in clone mode only.</summary>
     public int? ComponentCount { get; init; }
 
+    /// <summary>The workflow's Dataverse name, for a standalone workflow.</summary>
+    public string? WorkflowName { get; init; }
+
+    /// <summary>The absolute folder the workflow's files are in after the pull, for a standalone workflow.</summary>
+    public string? WorkflowFolder { get; init; }
+
+    /// <summary>The absolute folder a rename moved the workflow out of, or <see langword="null"/> when its folder kept its name.</summary>
+    public string? PreviousFolder { get; init; }
+
     /// <summary>Advisories that did not stop the pull, such as files left with merge conflicts.</summary>
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
@@ -713,12 +733,19 @@ public sealed record ManagedAgentPullResult : ITextGridRenderable
     {
         var lines = new List<string>
         {
-            Status switch
+            (Status, WorkflowName) switch
             {
-                "up-to-date" => $"Already up to date with {EnvironmentId}.",
-                _ => $"Pulled {ChangeCount} change(s) from {EnvironmentId} into {ProjectDirectory}.",
+                ("up-to-date", null) => $"Already up to date with {EnvironmentId}.",
+                ("up-to-date", _) => $"Workflow '{WorkflowName}' is already up to date with {EnvironmentId}.",
+                (_, null) => $"Pulled {ChangeCount} change(s) from {EnvironmentId} into {ProjectDirectory}.",
+                _ => $"Pulled {ChangeCount} change(s) to workflow '{WorkflowName}' from {EnvironmentId} into {ProjectDirectory}.",
             },
         };
+
+        if (PreviousFolder is not null)
+        {
+            lines.Add($"  renamed    {PreviousFolder} -> {WorkflowFolder}");
+        }
 
         lines.AddRange(Warnings.Select(warning => $"  warning    {warning}"));
 
@@ -800,6 +827,9 @@ public sealed record ManagedAgentDeployResult : ITextGridRenderable
     /// <summary>The Dataverse workflow that was deployed, for a standalone workflow.</summary>
     public string? McsWorkflowId { get; init; }
 
+    /// <summary>The workflow's Dataverse name, for a standalone workflow, while <see cref="DisplayName"/> stays the record's name.</summary>
+    public string? WorkflowName { get; init; }
+
     /// <summary>Whether the workflow ended up activated or a draft, for a standalone workflow.</summary>
     public string? WorkflowState { get; init; }
 
@@ -836,7 +866,7 @@ public sealed record ManagedAgentDeployResult : ITextGridRenderable
         var lines = AgentType == AgentTypes.McsWorkflow
             ? new List<string>
             {
-                $"Deployed workflow {DisplayName} to {DeploymentName} ({DeploymentType}) in {TargetEnvironmentId}.",
+                $"Deployed workflow {TextGrid.DescribeWorkflow(WorkflowName, DisplayName)} to {DeploymentName} ({DeploymentType}) in {TargetEnvironmentId}.",
                 $"  action       {Action}{(TargetAgentCreated ? " — workflow created" : string.Empty)}",
                 $"  workflow id  {McsWorkflowId}",
                 $"  state        {WorkflowState}",

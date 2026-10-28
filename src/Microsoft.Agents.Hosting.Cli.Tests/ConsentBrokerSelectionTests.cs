@@ -282,6 +282,24 @@ public sealed class ConsentBrokerSelectionTests
         Assert.NotNull(provider.GetRequiredService<MsalLiveTestTokenProvider>());
     }
 
+    [Fact]
+    public async Task InteractiveMessagesGoToTheConfiguredWriter()
+    {
+        var output = new StringWriter();
+        var services = new ServiceCollection();
+        services.AddAgentHostAuthentication(new AgentHostAuthOptions
+        {
+            ClientId = FirstPartyClientId.ToString("D"),
+            ConfigDirectory = Path.Combine(Path.GetTempPath(), "ah-consent-" + Guid.NewGuid().ToString("N")),
+            MessageOutput = output,
+        });
+
+        using var provider = services.BuildServiceProvider();
+        await provider.GetRequiredService<IInteractiveMessagePresenter>().PresentAsync("Open https://microsoft.com/devicelogin to sign in.", CancellationToken.None);
+
+        Assert.Equal($"Open https://microsoft.com/devicelogin to sign in.{Environment.NewLine}", output.ToString());
+    }
+
     private static bool UseBroker(FakePlatformInfo platform, string? flowType)
     {
         var provider = FakeClientProviders.Create(platform);

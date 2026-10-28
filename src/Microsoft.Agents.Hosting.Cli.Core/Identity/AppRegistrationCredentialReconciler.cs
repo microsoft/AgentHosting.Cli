@@ -214,7 +214,8 @@ internal sealed class AppRegistrationFederatedCredentialException : AgentHosting
             cause.ExitCode,
             cause.ErrorKind,
             cause.Remediation,
-            cause)
+            cause,
+            cause.ErrorCode)
     {
         ManagedIdentity = managedIdentity ?? throw new ArgumentNullException(nameof(managedIdentity));
     }

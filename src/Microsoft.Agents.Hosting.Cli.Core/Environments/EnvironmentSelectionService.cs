@@ -88,8 +88,7 @@ public sealed class EnvironmentSelectionService
                 EnvironmentId = environment.EnvironmentId,
                 DisplayName = environment.DisplayName,
                 TenantId = environment.TenantId,
-                ApiEndpoint = _cloudMap
-                    .RequireTrusted(environment.ApiEndpoint, $"environment '{environment.EnvironmentId}'")
+                ApiEndpoint = ResolveEnvironmentEndpoint(environment.EnvironmentId, environment.ApiEndpoint)
                     .ToString(),
                 IsActive = active is not null &&
                     string.Equals(active.EnvironmentId, environment.EnvironmentId, StringComparison.OrdinalIgnoreCase),
@@ -117,12 +116,12 @@ public sealed class EnvironmentSelectionService
             .ListEnvironmentsAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        foreach (var environment in environments)
-        {
-            _cloudMap.RequireTrusted(environment.ApiEndpoint, $"environment '{environment.EnvironmentId}'");
-        }
-
-        return environments;
+        return environments
+            .Select(environment => environment with
+            {
+                ApiEndpoint = ResolveEnvironmentEndpoint(environment.EnvironmentId, environment.ApiEndpoint),
+            })
+            .ToList();
     }
 
     /// <summary>
@@ -213,7 +212,10 @@ public sealed class EnvironmentSelectionService
         var active = await _selectionStore.GetActiveAsync(cancellationToken).ConfigureAwait(false);
         if (active is not null)
         {
-            _cloudMap.RequireTrusted(active.ApiEndpoint, $"stored environment '{active.EnvironmentId}'");
+            return active with
+            {
+                ApiEndpoint = ResolveEnvironmentEndpoint(active.EnvironmentId, active.ApiEndpoint),
+            };
         }
 
         return active;
@@ -362,10 +364,16 @@ public sealed class EnvironmentSelectionService
 
         return match with
         {
-            ApiEndpoint = _cloudMap.RequireTrusted(
-                match.ApiEndpoint,
-                $"environment '{match.EnvironmentId}'"),
+            ApiEndpoint = ResolveEnvironmentEndpoint(match.EnvironmentId, match.ApiEndpoint),
         };
+    }
+
+    private Uri ResolveEnvironmentEndpoint(string environmentId, Uri endpoint)
+    {
+        var trusted = _cloudMap.RequireTrusted(endpoint, $"environment '{environmentId}'");
+        return trusted == _apiTarget.GlobalEndpoint
+            ? PowerPlatformApiDiscovery.GetEnvironmentEndpoint(_apiTarget, environmentId)
+            : trusted;
     }
 
     private async Task<AuthProfile> RequireSignedInAsync(CancellationToken cancellationToken)

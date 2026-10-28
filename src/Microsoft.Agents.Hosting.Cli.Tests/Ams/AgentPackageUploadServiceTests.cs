@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.Ams;
 
 public sealed class AgentPackageUploadServiceTests
 {
-    private const string DataPlaneEndpoint = "https://amsdp.example.invalid/";
+    private const string DataPlaneEndpoint = "https://env-1.api.powerplatform.com/";
     private const string Agent = "44444444-4444-4444-4444-444444444444";
     private const string Environment = "22222222-2222-2222-2222-222222222222";
     private const string Repository = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -43,6 +43,7 @@ public sealed class AgentPackageUploadServiceTests
                 .ToLowerInvariant();
             Assert.Equal(1, agents.Calls);
             Assert.Equal(1, packages.Calls);
+            Assert.Equal(DataPlaneEndpoint, agents.LastRequest!.Endpoint.AbsoluteUri);
             Assert.Equal(packagePath, Assert.IsType<FileStream>(packages.LastRequest!.PackageStream).Name);
             Assert.Equal(DataPlaneEndpoint, packages.LastRequest!.Endpoint.AbsoluteUri);
             Assert.Equal(expectedDigest, packages.SentDigest);
@@ -93,15 +94,14 @@ public sealed class AgentPackageUploadServiceTests
     }
 
     [Fact]
-    public async Task Upload_NeedsOnlyTheDataPlaneTarget_AndHasNoDeploymentDependency()
+    public async Task Upload_UsesTheSelectedEnvironment_AndHasNoDeploymentDependency()
     {
         var packagePath = await WritePackageAsync([42]);
         try
         {
             var service = Service(
                 new RecordingAgentReadTransport(BoundAgent()),
-                new RecordingAmsTransport(SucceededUpload),
-                new AgentHostingServiceTargets { DataPlaneEndpoint = DataPlaneEndpoint });
+                new RecordingAmsTransport(SucceededUpload));
 
             var result = await service.UploadAsync(Request(packagePath), default);
 
@@ -268,8 +268,7 @@ public sealed class AgentPackageUploadServiceTests
 
     private static AgentPackageUploadService Service(
         IAmsAgentReadTransport agents,
-        IAmsPackagePublicationTransport packages,
-        AgentHostingServiceTargets? targets = null)
+        IAmsPackagePublicationTransport packages)
     {
         var profiles = InMemoryAuthProfileStore.SignedIn(
             "op@contoso.com",
@@ -281,7 +280,6 @@ public sealed class AgentPackageUploadServiceTests
         environments.SelectAsync(Environment, default).GetAwaiter().GetResult();
 
         return new AgentPackageUploadService(
-            targets ?? new AgentHostingServiceTargets { DataPlaneEndpoint = DataPlaneEndpoint },
             environments,
             agents,
             packages);
@@ -296,6 +294,7 @@ public sealed class AgentPackageUploadServiceTests
 
     private sealed class RecordingAgentReadTransport(AmsAgentReadResult result) : IAmsAgentReadTransport
     {
+        public AmsAgentReadTransportRequest? LastRequest { get; private set; }
         public int Calls { get; private set; }
 
         public Task<AmsAgentReadResult> GetAsync(
@@ -303,6 +302,7 @@ public sealed class AgentPackageUploadServiceTests
             CancellationToken cancellationToken)
         {
             Calls++;
+            LastRequest = request;
             return Task.FromResult(result);
         }
     }

@@ -112,8 +112,11 @@ public static class CommandLine
 
             Options
               --packs core,azure,eval  include the Azure pack, the evaluation pack, or both
-              --feature <names>        mcs-agent, code-agent, abs, identity, mcs-eval
-              --only <patterns>        MA-18, MA-2*, AB-07, EV-01
+                                       swf adds the aggressive standalone-workflow suite, and
+                                       swf-chaos (with swf) adds its kill, concurrency and fault scenarios
+              --feature <names>        mcs-agent, mcs-workflow, mcs-standaloneworkflow, code-agent, abs,
+                                       identity, mcs-eval
+              --only <patterns>        MA-18, MA-2*, AB-07, EV-01, SW-B0*
               --smoke                  a fast subset: one deploy per fixture shape plus the checks
                                        that pin previously shipped bugs
               --msagent-path <file>    drive an existing binary instead of packing one

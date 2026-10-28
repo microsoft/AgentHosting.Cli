@@ -3,6 +3,9 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Operations;
 /// <summary>One invocation's playground selectors and launch preferences.</summary>
 public sealed record PlaygroundRequest
 {
+    /// <summary>The connection transport: directengine (default) or directline.</summary>
+    public string Target { get; init; } = "directengine";
+
     /// <summary>The local project directory holding agent.config.json.</summary>
     public string? Project { get; init; }
 
@@ -27,9 +30,6 @@ public sealed record PlaygroundRequest
     /// <summary>The destination tenant id.</summary>
     public string? Tenant { get; init; }
 
-    /// <summary>The selected agent harness.</summary>
-    public string AgentType { get; init; } = "standard";
-
     /// <summary>Whether machine-readable output was requested.</summary>
     public bool Json { get; init; }
 
@@ -53,6 +53,5 @@ public sealed record PlaygroundRequest
         DeploymentName = DeploymentName,
         EnvironmentId = EnvironmentId,
         Tenant = Tenant,
-        AgentType = AgentType,
     };
 }

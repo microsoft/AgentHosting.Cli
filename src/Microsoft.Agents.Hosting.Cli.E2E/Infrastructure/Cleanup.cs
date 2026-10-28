@@ -3,7 +3,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 
 /// <summary>Removes everything the ledger records, and only that.</summary>
-public sealed class Cleanup
+public sealed partial class Cleanup
 {
     /// <summary>How long a stopped run is given to reach a state the service will delete.</summary>
     private static readonly TimeSpan RunTerminalWait = TimeSpan.FromMinutes(3);
@@ -24,25 +24,34 @@ public sealed class Cleanup
     private readonly AzureCli _azure;
     private readonly CloudProbe _cloud;
     private readonly Transcript _transcript;
+    private readonly StandaloneServices? _standalone;
 
-    public Cleanup(MsagentCli msagent, AzureCli azure, CloudProbe cloud, Transcript transcript)
+    public Cleanup(MsagentCli msagent, AzureCli azure, CloudProbe cloud, Transcript transcript, StandaloneServices? standalone = null)
     {
         _msagent = msagent;
         _azure = azure;
         _cloud = cloud;
         _transcript = transcript;
+        _standalone = standalone;
     }
 
-    /// <summary>Walks the ledger newest-first, removing or restoring each outstanding entry.</summary>
+    /// <summary>Walks the ledger newest-first within each cleanup phase, removing or restoring each outstanding entry.</summary>
     public async Task<IReadOnlyList<LedgerEntry>> RunAsync(Ledger ledger, CancellationToken cancellationToken = default)
     {
-        foreach (var entry in ledger.Outstanding.OrderByDescending(candidate => candidate.Sequence))
+        foreach (var entry in ledger.Outstanding.OrderBy(CleanupPhase).ThenByDescending(candidate => candidate.Sequence))
         {
             await RemoveAsync(ledger, entry, cancellationToken).ConfigureAwait(false);
         }
 
         return ledger.Entries.Where(entry => entry.State == ResourceState.Orphaned).ToArray();
     }
+
+    private static int CleanupPhase(LedgerEntry entry) => entry.Kind switch
+    {
+        ResourceKind.StandaloneConnectionReference => 1,
+        ResourceKind.LocalWorkspace => 2,
+        _ => 0,
+    };
 
     private async Task RemoveAsync(Ledger ledger, LedgerEntry entry, CancellationToken cancellationToken)
     {
@@ -60,6 +69,8 @@ public sealed class Cleanup
                 ResourceKind.ConfigEdit => await RestoreConfigEditAsync(entry, cancellationToken).ConfigureAwait(false),
                 ResourceKind.EvaluationTestSet => await RemoveEvaluationTestSetAsync(entry, cancellationToken).ConfigureAwait(false),
                 ResourceKind.EvaluationRun => await RemoveEvaluationRunAsync(entry, cancellationToken).ConfigureAwait(false),
+                ResourceKind.StandaloneWorkflow => await RemoveStandaloneWorkflowAsync(entry, cancellationToken).ConfigureAwait(false),
+                ResourceKind.StandaloneConnectionReference => await RemoveStandaloneConnectionReferenceAsync(entry, cancellationToken).ConfigureAwait(false),
                 _ => $"no cleanup is defined for {entry.Kind}",
             };
 
@@ -418,7 +429,7 @@ public sealed class Cleanup
     private static string? RemoveLocalWorkspace(LedgerEntry entry, Ledger ledger)
     {
         if (ledger.Entries.Any(candidate =>
-                candidate.Kind is ResourceKind.McsAgent or ResourceKind.McsWorkflow
+                candidate.Kind is ResourceKind.McsAgent or ResourceKind.McsWorkflow or ResourceKind.StandaloneWorkflow
                 && candidate.State == ResourceState.Orphaned
                 && IsUnder(candidate.Cleanup.ProjectDirectory, entry.Id)))
         {
@@ -473,6 +484,8 @@ public sealed class Cleanup
         ResourceKind.EntraApp => $"az ad app delete --id {entry.Id}",
         ResourceKind.McsAgent => $"cd \"{entry.Cleanup.ProjectDirectory}\" && msagent deployment delete --deployment-name {entry.Cleanup.DeploymentName} --delete-deployed-mcs-agent",
         ResourceKind.McsWorkflow => $"cd \"{entry.Cleanup.ProjectDirectory}\" && msagent agent delete --agent-id {entry.Cleanup.AgentId}",
+        ResourceKind.StandaloneWorkflow => $"msagent agent create --agent-type MCSWorkflow --mcs-clone-workflow-id {entry.Cleanup.WorkflowId} --mcs-clone-environment-id {entry.Cleanup.EnvironmentId} --environment-id {entry.Cleanup.EnvironmentId} --project <empty directory>, then msagent agent delete in that directory",
+        ResourceKind.StandaloneConnectionReference => $"declare {entry.Cleanup.Correlation} ({entry.Cleanup.ConnectorId}) in a workflow workspace with a deployment targeting {entry.Cleanup.EnvironmentId}, then msagent deployment connection remove --connection-reference {entry.Cleanup.Correlation} --force",
         ResourceKind.LocalWorkspace => $"remove the directory {entry.Id}",
         ResourceKind.ConfigEdit => $"msagent env select {entry.Cleanup.PriorValue}",
         ResourceKind.EvaluationTestSet => $"msagent agent eval testset delete --testset {entry.Id} --agent-id {entry.Cleanup.McsAgentId} --environment-id {entry.Cleanup.EnvironmentId} --force",

@@ -13,6 +13,8 @@ public sealed class ManagedAgentListService
 {
     private const int DefaultLimit = 20;
 
+    private const int TenantReadConcurrency = 4;
+
     /// <summary>
     /// One row beyond the limit is requested so truncation stays detectable.
     ///
@@ -79,14 +81,14 @@ public sealed class ManagedAgentListService
         }
 
         var limit = request.Limit ?? DefaultLimit;
-        var read = ReaderFor(agentType, request, cancellationToken);
+        var read = ReaderFor(agentType, request);
         var rows = new List<ManagedAgentListItem>();
         var diagnostics = new List<ManagedAgentListDiagnostic>();
 
         if (!request.Tenant)
         {
             var environment = await _environmentResolver.ResolveAsync(request.EnvironmentId, cancellationToken).ConfigureAwait(false);
-            rows.AddRange(await read(environment, Probe(limit)).ConfigureAwait(false));
+            rows.AddRange(await read(environment, Probe(limit), cancellationToken).ConfigureAwait(false));
 
             return Project("environment", environment.EnvironmentId, agentType, limit, rows, diagnostics);
         }
@@ -99,39 +101,67 @@ public sealed class ManagedAgentListService
             Message = "The environment carries no usable Dataverse organization url.",
         }));
 
-        foreach (var environment in inventory.Reachable)
-        {
-            if (rows.Count > limit)
-            {
-                break;
-            }
-
-            try
-            {
-                rows.AddRange(await read(environment, Probe(limit) - rows.Count).ConfigureAwait(false));
-            }
-            catch (Exception failure) when (failure is not OperationCanceledException)
-            {
-                diagnostics.Add(new ManagedAgentListDiagnostic { EnvironmentId = environment.EnvironmentId, Message = failure.Message });
-            }
-        }
+        await ReadTenantAsync(inventory.Reachable, read, limit, rows, diagnostics, cancellationToken).ConfigureAwait(false);
 
         return Project("tenant", environmentId: null, agentType, limit, rows, diagnostics);
     }
 
-    /// <summary>Selects the per-environment read the requested agent type needs.</summary>
-    private Func<CopilotEnvironmentContext, int, Task<IReadOnlyList<ManagedAgentListItem>>> ReaderFor(string agentType, ManagedAgentListRequest request, CancellationToken cancellationToken)
+    private static async Task ReadTenantAsync(IReadOnlyList<CopilotEnvironmentContext> environments, Func<CopilotEnvironmentContext, int, CancellationToken, Task<IReadOnlyList<ManagedAgentListItem>>> read, int limit, List<ManagedAgentListItem> rows, List<ManagedAgentListDiagnostic> diagnostics, CancellationToken cancellationToken)
+    {
+        using var abandoned = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var pending = new Queue<(string EnvironmentId, Task<(IReadOnlyList<ManagedAgentListItem> Rows, string? Failure)> Read)>();
+        var started = 0;
+
+        try
+        {
+            while (rows.Count <= limit && (started < environments.Count || pending.Count > 0))
+            {
+                for (; pending.Count < TenantReadConcurrency && started < environments.Count; started++)
+                {
+                    pending.Enqueue((environments[started].EnvironmentId, TryReadAsync(read, environments[started], Probe(limit), abandoned.Token)));
+                }
+
+                var (environmentId, reading) = pending.Dequeue();
+                var (environmentRows, failure) = await reading.ConfigureAwait(false);
+
+                if (failure is not null)
+                {
+                    diagnostics.Add(new ManagedAgentListDiagnostic { EnvironmentId = environmentId, Message = failure });
+                }
+
+                rows.AddRange(environmentRows.Take(Probe(limit) - rows.Count));
+            }
+        }
+        finally
+        {
+            await abandoned.CancelAsync().ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<(IReadOnlyList<ManagedAgentListItem> Rows, string? Failure)> TryReadAsync(Func<CopilotEnvironmentContext, int, CancellationToken, Task<IReadOnlyList<ManagedAgentListItem>>> read, CopilotEnvironmentContext environment, int maximumCount, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await read(environment, maximumCount, cancellationToken).ConfigureAwait(false), null);
+        }
+        catch (Exception failure) when (failure is not OperationCanceledException)
+        {
+            return ([], failure.Message);
+        }
+    }
+
+    private Func<CopilotEnvironmentContext, int, CancellationToken, Task<IReadOnlyList<ManagedAgentListItem>>> ReaderFor(string agentType, ManagedAgentListRequest request)
     {
         if (agentType != AgentTypes.McsWorkflow)
         {
             var annotations = ReadAnnotations(request.Project);
 
-            return (environment, maximumCount) => ReadEnvironmentAsync(environment, annotations, maximumCount, cancellationToken);
+            return (environment, maximumCount, cancellationToken) => ReadEnvironmentAsync(environment, annotations, maximumCount, cancellationToken);
         }
 
         var workflowAnnotations = ReadWorkflowAnnotations(request.Project);
 
-        return (environment, maximumCount) => ReadWorkflowsAsync(environment, workflowAnnotations, request.Filter, maximumCount, cancellationToken);
+        return (environment, maximumCount, cancellationToken) => ReadWorkflowsAsync(environment, workflowAnnotations, request.Filter, maximumCount, cancellationToken);
     }
 
     private static ManagedAgentListResult Project(string scope, string? environmentId, string agentType, int limit, List<ManagedAgentListItem> rows, List<ManagedAgentListDiagnostic> diagnostics) => new()

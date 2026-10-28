@@ -3,6 +3,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Http;
 using System.Net.Http.Headers;
 using Microsoft.Agents.Platform.Content.Abstractions;
 using Microsoft.CopilotStudio.Sync;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.CopilotStudio;
 
@@ -58,7 +59,7 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
         var organization = DataverseOperationScope.Organization
             ?? throw new InvalidOperationException("The Dataverse organization has not been set. Call SetDataverseOrganization before creating a client.");
 
-        return new HttpClient(new BearerTokenHandler(_authProvider, organization, new ResilientRequestHandler { InnerHandler = SharedHandler() }), disposeHandler: true) { Timeout = RequestTimeout };
+        return new HttpClient(new BearerTokenHandler(_authProvider, organization, new DataverseRetryHandler { InnerHandler = SharedHandler() }), disposeHandler: true) { Timeout = RequestTimeout };
     }
 
     /// <summary>Disposes the transport shared by every client this accessor created.</summary>

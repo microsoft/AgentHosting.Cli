@@ -11,7 +11,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.Ams;
 /// <summary>Offline wire-contract and credential-safety coverage for the AMS-DP v1 package upload.</summary>
 public sealed class AmsPackagePublicationAdapterTests
 {
-    private const string Endpoint = "https://amsdp-alias.example";
+    private const string Endpoint = "https://env-1.api.powerplatform.com";
     private const string Audience = "https://api.powerplatform.com/";
     private const string Tenant = "11111111-1111-1111-1111-111111111111";
     private const string Agent = "22222222-2222-2222-2222-222222222222";
@@ -60,8 +60,7 @@ public sealed class AmsPackagePublicationAdapterTests
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal(
-            "https://amsdp-alias.example/agenthosting/tenants/11111111-1111-1111-1111-111111111111" +
-            "/environments/env%2Fblue/agents/22222222-2222-2222-2222-222222222222/packages?api-version=1",
+            "https://env-1.api.powerplatform.com/agenthosting/agents/22222222-2222-2222-2222-222222222222/packages?api-version=1",
             request.Uri.AbsoluteUri);
         Assert.Equal("application/zip", request.ContentType);
         Assert.Equal((long)PackageBytes.Length, request.ContentLength);
@@ -114,17 +113,9 @@ public sealed class AmsPackagePublicationAdapterTests
 
         Assert.Equal("redirect-rejected", exception.ErrorKind);
         var request = Assert.Single(handler.Requests);
-        Assert.Equal("amsdp-alias.example", request.Uri.Host);
+        Assert.Equal("env-1.api.powerplatform.com", request.Uri.Host);
         Assert.True(request.HasAuthorization);
         Assert.DoesNotContain("attacker.example", exception.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void RedirectRejectingHandler_DoesNotFollowRedirects()
-    {
-        using var handler = AmsPackagePublicationAdapter.CreateRedirectRejectingHandler();
-
-        Assert.False(handler.AllowAutoRedirect);
     }
 
     [Theory]

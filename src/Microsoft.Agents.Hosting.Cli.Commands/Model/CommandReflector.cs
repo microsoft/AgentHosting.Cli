@@ -52,6 +52,12 @@ public sealed class CommandMetadata
     /// <summary>Orders siblings in help when explicitly provided.</summary>
     public int? SortPriority { get; init; }
 
+    /// <summary>The progress spinner text shown while the command runs, or null for a generic one.</summary>
+    public string? ProgressLabel { get; init; }
+
+    /// <summary>Whether the progress spinner stays hidden while the command runs.</summary>
+    public bool SuppressProgress { get; init; }
+
     /// <summary>The declaring type.</summary>
     public required Type DeclaringType { get; init; }
 
@@ -146,6 +152,8 @@ public static class CommandReflector
                 Name = attribute.Name,
                 Description = attribute.Description,
                 SortPriority = ExplicitPriority(attribute.SortPriority),
+                ProgressLabel = attribute.ProgressLabel,
+                SuppressProgress = attribute.SuppressProgress,
                 DeclaringType = type,
                 RequiredFeatures = RequiredFeatures(type),
                 Implementation = Instantiate(type),
@@ -302,6 +310,8 @@ public static class CommandReflector
             Name = source.Name,
             Description = source.Description,
             SortPriority = source.SortPriority,
+            ProgressLabel = source.ProgressLabel,
+            SuppressProgress = source.SuppressProgress,
             DeclaringType = source.DeclaringType,
             RequiredFeatures = source.RequiredFeatures,
             Implementation = source.Implementation,

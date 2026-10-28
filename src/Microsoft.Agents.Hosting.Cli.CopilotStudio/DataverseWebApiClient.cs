@@ -208,16 +208,6 @@ public sealed class DataverseWebApiClient
     public static string? ReadString(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    /// <summary>Escapes a value for use inside an OData single-quoted string literal.</summary>
-    /// <param name="value">The raw value.</param>
-    /// <returns>The escaped value.</returns>
-    public static string EscapeODataLiteral(string value)
-    {
-        ArgumentNullException.ThrowIfNull(value);
-
-        return value.Replace("'", "''", StringComparison.Ordinal);
-    }
-
     /// <summary>
     /// Renders a completed OData filter as a query-string value.
     /// </summary>

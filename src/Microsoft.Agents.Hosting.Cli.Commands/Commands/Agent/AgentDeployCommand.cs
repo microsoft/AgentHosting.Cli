@@ -7,7 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent deploy</c>, routed on whether a deployment is named.</summary>
-[Command("deploy", Description = "Deploy an agent to a named deployment.", ParentGroup = typeof(AgentGroup), SortPriority = 70)]
+[Command("deploy", Description = "Deploy an agent to a named deployment.", ParentGroup = typeof(AgentGroup), SortPriority = 70, ProgressLabel = "Deploying agent")]
 public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, ManagedAgentDeployResult>
 {
     private static readonly string[] AmsOptions =
@@ -15,8 +15,6 @@ public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, 
 
     private static readonly string[] RequiredAmsOptions =
         ["--agent-id", "--package-revision", "--target-environment-id", "--deployment-name", "--deployment-type", "--entra-id", "--entra-id-type"];
-
-    private static readonly string[] McsSelectorOptions = ["--agent-id", "--agent-name", "--schema-name", "--publish", "--overwrite"];
 
     private static readonly string[] McsOnlyOptions =
         ["--project", "--agent-name", "--deployment-id", "--schema-name", "--publish", "--overwrite", "--commit-id", "--async"];
@@ -76,7 +74,6 @@ public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, 
     protected override string? Validate(ICommandInput input, IServiceProvider services)
     {
         ArgumentNullException.ThrowIfNull(input);
-        var amsEnabled = FeatureGate.IsEnabled(services, FeatureName.AmsFeatures);
 
         if (SelectsAms(input))
         {
@@ -93,23 +90,7 @@ public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, 
             return "--async is not supported: this deploy is synchronous and returns when the push completes. There is no operation to poll. Remove --async.";
         }
 
-        if (SelectsDeployment(input))
-        {
-            return null;
-        }
-
-        if (string.IsNullOrWhiteSpace(input.GetString("--project")))
-        {
-            return amsEnabled
-                ? "`msagent agent deploy` requires --deployment-id or --deployment-name for an MCS agent, or --agent, --package-revision and explicit deployment inputs for AMS. There is no active-environment fallback: deploying to an unnamed target is the mistake deployments exist to prevent."
-                : "`msagent agent deploy` requires --deployment-id or --deployment-name for an MCS agent. There is no active-environment fallback: deploying to an unnamed target is the mistake deployments exist to prevent.";
-        }
-
-        return McsSelectorOptions.FirstOrDefault(option => Supplied(input, option)) is { } conflicting
-            ? $"{conflicting} applies to MCS agents only. Add --deployment-id or --deployment-name to deploy the MCS project in that directory."
-            : amsEnabled
-                ? "CodeAgent package bytes must first be uploaded with `msagent agent package upload`, then deployed with --agent, --package-revision and explicit deployment inputs. --project alone does not deploy them."
-                : "--project must identify an MCS deployment with --deployment-id or --deployment-name.";
+        return null;
     }
 
     /// <inheritdoc />
@@ -171,8 +152,4 @@ public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, 
     private static bool SelectsAms(ICommandInput input) => AmsOptions.Any(option => Supplied(input, option));
 
     private static bool Supplied(ICommandInput input, string option) => input.WasProvided(option);
-
-    private static bool SelectsDeployment(ICommandInput input) =>
-        !string.IsNullOrWhiteSpace(input.GetString("--deployment-id"))
-        || !string.IsNullOrWhiteSpace(input.GetString("--deployment-name"));
 }

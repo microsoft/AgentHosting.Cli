@@ -9,7 +9,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent create</c>, routed on <c>--agent-type</c>.</summary>
-[Command("create", Description = "Create an agent project.", ParentGroup = typeof(AgentGroup), SortPriority = 10)]
+[Command("create", Description = "Create an agent project.", ParentGroup = typeof(AgentGroup), SortPriority = 10, ProgressLabel = "Creating agent")]
 public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, ManagedAgentCreateResult>
 {
     private static readonly string[] McsOnlyOptions =
@@ -39,6 +39,8 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
 
     private static readonly string[] CodeAgentOnlyOptions = ["--language", "--language-version", "--idempotency-key"];
 
+    private static readonly string[] McsAgentCloneOptions = ["--mcs-clone-agent-id", "--mcs-clone-agent-schemaname", "--mcs-clone-environment-id"];
+
     /// <inheritdoc />
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
@@ -57,7 +59,7 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
         OptionCatalog.Value("--mcs-clone-agent-schemaname", "Clone this schema name instead of scaffolding. MCS only."),
         OptionCatalog.Value("--mcs-clone-agent-id", "Clone this agent id instead of scaffolding. MCS only."),
         OptionCatalog.Value("--mcs-clone-workflow-id", "Clone this workflow id instead of scaffolding. MCSWorkflow only."),
-        OptionCatalog.Value("--mcs-clone-environment-id", "Clone source environment. Defaults to --environment-id, then the active one. MCS only."),
+        OptionCatalog.Value("--mcs-clone-environment-id", "Environment to clone the MCS agent or workflow from. Defaults to --environment-id, then the active one."),
     ];
 
     /// <inheritdoc />
@@ -71,7 +73,9 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
     public override IReadOnlyList<UsageRoute> UsageRoutes =>
     [
         new("--agent-type MCSAgent", "--agent-name", "--description", "--initial-prompt") { Summary = "Scaffold a new MCS agent" },
-        new("--agent-type MCSAgent", "(--mcs-clone-agent-id <id> | --mcs-clone-agent-schemaname <schema-name>)") { Summary = "Clone an existing MCS agent" },
+        new("[--agent-type MCSAgent]", "(--mcs-clone-agent-id <id> | --mcs-clone-agent-schemaname <schema-name>)") { Summary = "Clone an existing MCS agent" },
+        new("--agent-type MCSWorkflow", "--agent-name") { Summary = "Scaffold a new standalone workflow" },
+        new("--agent-type MCSWorkflow", "--mcs-clone-workflow-id <id>") { Summary = "Clone an existing standalone workflow" },
         new("--agent-type CodeAgent", "--agent-name", "--language", "--language-version")
         {
             Summary = "Create a CodeAgent",
@@ -82,7 +86,7 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
     /// <inheritdoc />
     protected override void EnsureAvailable(ICommandInput input, IServiceProvider services)
     {
-        var requestedAgentType = AgentTypes.Parse(input.GetString("--agent-type"));
+        var requestedAgentType = RequestedAgentType(input);
         if (requestedAgentType is not null && !AgentTypes.IsMcs(requestedAgentType))
         {
             FeatureGate.RequireEnabled(
@@ -98,7 +102,7 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
     {
         ArgumentNullException.ThrowIfNull(input);
 
-        if (AgentTypes.Parse(input.GetString("--agent-type")) is not { } requestedAgentType)
+        if (RequestedAgentType(input) is not { } requestedAgentType)
         {
             return $"--agent-type '{input.GetString("--agent-type")}' is not a known agent type. Use {string.Join(" or ", AgentTypes.All)}.";
         }
@@ -159,7 +163,7 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
             CloneWorkflowId = input.GetString("--mcs-clone-workflow-id"),
             CloneEnvironmentId = input.GetString("--mcs-clone-environment-id"),
             EnvironmentId = input.GetString("--environment-id"),
-            AgentType = AgentTypes.Parse(input.GetString("--agent-type")),
+            AgentType = RequestedAgentType(input),
             Project = input.GetString("--project"),
         };
     }
@@ -188,8 +192,14 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
             cancellationToken);
     }
 
-    private static bool IsMcs(ICommandInput input) =>
-        AgentTypes.Parse(input.GetString("--agent-type")) is { } agentType && AgentTypes.IsMcs(agentType);
+    private static bool IsMcs(ICommandInput input) => RequestedAgentType(input) is { } agentType && AgentTypes.IsMcs(agentType);
+
+    private static string? RequestedAgentType(ICommandInput input) =>
+        string.IsNullOrWhiteSpace(input.GetString("--agent-type"))
+        && FirstSupplied(input, CodeAgentOnlyOptions) is null
+        && FirstSupplied(input, McsAgentCloneOptions) is not null
+            ? AgentTypes.McsAgent
+            : AgentTypes.Parse(input.GetString("--agent-type"));
 
     private static string? FirstSupplied(ICommandInput input, IEnumerable<string> options) =>
         options.FirstOrDefault(option => !string.IsNullOrWhiteSpace(input.GetString(option)));

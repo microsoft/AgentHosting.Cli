@@ -185,6 +185,11 @@ public interface ICopilotWorkspacePort
     /// <returns><see langword="true"/> when a workspace was found at or above the directory.</returns>
     bool IsWorkspace(string directory);
 
+    /// <summary>The folder name a project of this display name occupies.</summary>
+    /// <param name="displayName">The project's display name.</param>
+    /// <returns>A folder name every supported file system accepts.</returns>
+    string ProjectFolderName(string displayName);
+
     /// <summary>Reads the connection details a workspace was cloned with.</summary>
     /// <param name="directory">A directory at or below the workspace root.</param>
     /// <param name="cancellationToken">Cancels the read.</param>

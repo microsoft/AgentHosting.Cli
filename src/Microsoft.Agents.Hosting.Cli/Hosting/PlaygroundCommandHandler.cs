@@ -13,31 +13,37 @@ namespace Microsoft.Agents.Hosting.Cli.Hosting;
 internal sealed class PlaygroundCommandHandler : ICommandHandler<PlaygroundRequest, ILiveTestStreamingResult>
 {
     private readonly Func<LiveTestRequest, LiveTestDestination> _resolve;
+    private readonly Func<LiveTestDestination, bool, CancellationToken, Task<LiveTestDestination>> _discover;
     private readonly IPlaygroundToolLocator _locator;
     private readonly IPlaygroundGlobalInstaller _installer;
     private readonly IPlaygroundLauncher _launcher;
     private readonly IConfirmationPrompt _confirmation;
     private readonly Func<AgentHostClientAppConfiguration> _clientConfiguration;
     private readonly Func<bool> _isInputRedirected;
+    private readonly Func<bool> _isOutputRedirected;
     private readonly Action<PlaygroundTelemetryDetails> _recordTelemetry;
 
     internal PlaygroundCommandHandler(
         Func<LiveTestRequest, LiveTestDestination> resolve,
+        Func<LiveTestDestination, bool, CancellationToken, Task<LiveTestDestination>> discover,
         IPlaygroundToolLocator locator,
         IPlaygroundGlobalInstaller installer,
         IPlaygroundLauncher launcher,
         IConfirmationPrompt confirmation,
         Func<AgentHostClientAppConfiguration> clientConfiguration,
         Func<bool> isInputRedirected,
+        Func<bool> isOutputRedirected,
         Action<PlaygroundTelemetryDetails> recordTelemetry)
     {
         _resolve = resolve ?? throw new ArgumentNullException(nameof(resolve));
+        _discover = discover ?? throw new ArgumentNullException(nameof(discover));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _installer = installer ?? throw new ArgumentNullException(nameof(installer));
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
         _confirmation = confirmation ?? throw new ArgumentNullException(nameof(confirmation));
         _clientConfiguration = clientConfiguration ?? throw new ArgumentNullException(nameof(clientConfiguration));
         _isInputRedirected = isInputRedirected ?? throw new ArgumentNullException(nameof(isInputRedirected));
+        _isOutputRedirected = isOutputRedirected ?? throw new ArgumentNullException(nameof(isOutputRedirected));
         _recordTelemetry = recordTelemetry ?? throw new ArgumentNullException(nameof(recordTelemetry));
     }
 
@@ -48,11 +54,13 @@ internal sealed class PlaygroundCommandHandler : ICommandHandler<PlaygroundReque
             new PlaygroundExecution(
                 request,
                 _resolve,
+                _discover,
                 _locator,
                 _installer,
                 _launcher,
                 _confirmation,
                 _clientConfiguration,
                 _isInputRedirected,
+                _isOutputRedirected,
                 _recordTelemetry));
 }

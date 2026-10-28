@@ -13,6 +13,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Hosting;
+using Microsoft.Agents.Hosting.Cli.Rendering;
 using Microsoft.Agents.Hosting.Cli.Telemetry;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Identity.Client;
@@ -175,6 +176,8 @@ public sealed class TelemetryFullTests
             new FixedClock(),
             typeof(AgentHostCli).Assembly,
             observer,
+            policyTimeout: TelemetryTestBudgets.Policy,
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
         var statusCalls = 0;
         var switchCalls = 0;
@@ -334,6 +337,8 @@ public sealed class TelemetryFullTests
             new FixedClock(),
             typeof(AgentHostCli).Assembly,
             observer,
+            policyTimeout: TelemetryTestBudgets.Policy,
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: outerTransport);
         var innerOperations = new FakeOperations
         {
@@ -423,7 +428,8 @@ public sealed class TelemetryFullTests
         var session = new CommandTelemetrySession(
             new FixedDestinationResolver(Destination(server.Address)),
             new FixedClock(),
-            "1.2.3-test");
+            "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush);
 
         session.ObserveAuthenticatedTenant(tenantId);
         session.ObserveAuthenticatedTenant(tenantId);
@@ -450,7 +456,8 @@ public sealed class TelemetryFullTests
         var session = new CommandTelemetrySession(
             new FixedDestinationResolver(Destination(server.Address)),
             new FixedClock(),
-            "1.2.3-test");
+            "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush);
         session.RecordAttempt(
             CommandTelemetryPath.FromMetadata(["auth", "status"]));
 
@@ -468,31 +475,43 @@ public sealed class TelemetryFullTests
     }
 
     [Theory]
-    [InlineData("usage", "usage", "usage")]
-    [InlineData("not-signed-in", "not-signed-in", "not-signed-in")]
-    [InlineData("failure", "failure", "failure")]
-    [InlineData("timeout", "timeout", "failure")]
+    [InlineData("usage", "usage", "usage", "99002")]
+    [InlineData("not-signed-in", "not-signed-in", "not-signed-in", "12002")]
+    [InlineData("failure", "failure", "failure", "99001")]
+    [InlineData("timeout", "timeout", "failure", "99004")]
+    [InlineData("connector", "usage", "usage", "11049")]
     public async Task LeafFailuresMapToBoundedOutcomeCategories(
         string failureKind,
         string expectedOutcome,
-        string expectedExitClass)
+        string expectedExitClass,
+        string expectedErrorCode)
     {
+        var observer = new CommandTelemetryTenantObserver();
         var operations = new FakeOperations
         {
-            OnStatus = () => throw failureKind switch
+            OnStatus = () =>
             {
-                "usage" => new UsageException("synthetic usage"),
-                "not-signed-in" => new NotSignedInException(
-                    "synthetic not signed in",
-                    remediation: "synthetic remediation"),
-                "timeout" => new OperationCanceledException("synthetic timeout"),
-                _ => new InvalidOperationException("synthetic failure"),
+                AuthAccountMapper.FromResult(
+                    Result(new Guid("11111111-1111-1111-1111-111111111111")),
+                    observer);
+                throw failureKind switch
+                {
+                    "usage" => new UsageException("synthetic usage"),
+                    "not-signed-in" => new NotSignedInException(
+                        "synthetic not signed in",
+                        remediation: "synthetic remediation"),
+                    "timeout" => new OperationCanceledException("synthetic timeout"),
+                    "connector" => ManagedAgentException.ConnectorNotServed(
+                        "private-connector", "private-environment", [], "private-list-command"),
+                    _ => new InvalidOperationException("synthetic failure"),
+                };
             },
         };
 
         JsonElement[] events = await InvokeAsync(
-            ["auth", "status"],
-            operations);
+            ["auth", "status", "--json"],
+            operations,
+            observer);
 
         JsonElement outcome = Assert.Single(
             events,
@@ -503,6 +522,22 @@ public sealed class TelemetryFullTests
         Assert.Equal(
             expectedExitClass,
             Dimensions(outcome).GetProperty("exitClass").GetString());
+        Assert.Equal(expectedErrorCode, Dimensions(outcome).GetProperty("errorCode").GetString());
+        Assert.False(Dimensions(events[0]).TryGetProperty("errorCode", out _));
+        Assert.DoesNotContain("synthetic", outcome.GetRawText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("private-", outcome.GetRawText(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("unknown-command")]
+    [InlineData("auth")]
+    public async Task HostUsageRecordsIncludeGenericUsageErrorCode(string command)
+    {
+        JsonElement[] events = await InvokeAsync([command], new FakeOperations());
+
+        JsonElement item = Assert.Single(events);
+        Assert.Equal("HostCase", Data(item).GetProperty("event_Name").GetString());
+        Assert.Equal("99002", Dimensions(item).GetProperty("errorCode").GetString());
     }
 
     [Fact]
@@ -541,6 +576,7 @@ public sealed class TelemetryFullTests
         JsonElement dimensions = Dimensions(outcome);
         Assert.Equal("cancellation", dimensions.GetProperty("outcomeCategory").GetString());
         Assert.False(dimensions.TryGetProperty("exitClass", out _));
+        Assert.False(dimensions.TryGetProperty("errorCode", out _));
     }
 
     [Fact]
@@ -580,7 +616,7 @@ public sealed class TelemetryFullTests
             featureFlags: new TestFeatureFlags(FeatureName.LiveTestFeatures));
 
         int exitCode = await host.InvokeAsync(
-            ["test", "ask", "--query", "hello", "--agent-harness", "standard"],
+            ["test", "ask", "--query", "hello"],
             new StringWriter(),
             new StringWriter(),
             color: false);
@@ -592,13 +628,70 @@ public sealed class TelemetryFullTests
             events.Select(item => Data(item).GetProperty("event_Name").GetString()));
         JsonElement outcome = events[1];
         Assert.Equal(expectedCategory, Dimensions(outcome).GetProperty("outcomeCategory").GetString());
+        if (streamingExitCode == 0)
+        {
+            Assert.False(Dimensions(outcome).TryGetProperty("errorCode", out _));
+        }
+        else
+        {
+            Assert.Equal("99001", Dimensions(outcome).GetProperty("errorCode").GetString());
+        }
+    }
+
+    [Theory]
+    [InlineData("connector", "11049")]
+    [InlineData("usage", "99002")]
+    [InlineData("timeout", "99004")]
+    [InlineData("unknown", "99001")]
+    public async Task LiveTestHandledFailuresPreserveCodesInOneDs(string failureKind, string expectedErrorCode)
+    {
+        await using var server = new LoopbackServer();
+        var services = new StreamingHandlerProvider(resultFactory: request => new LiveTestExecution(
+            request,
+            _ => throw failureKind switch
+            {
+                "connector" => ManagedAgentException.ConnectorNotServed(
+                    "private-connector", "private-environment", [], "private-list-command"),
+                "usage" => new LiveTestFailure("invalid-input", 2, "private-input", "private-remediation"),
+                "timeout" => new OperationCanceledException("private-timeout"),
+                _ => new InvalidOperationException("private-details"),
+            },
+            (_, _, _) => throw new InvalidOperationException("authentication must not run"),
+            (_, _, _) => throw new InvalidOperationException("session must not be created")));
+        var host = new AgentHostCli(
+            new FakeOperations(),
+            telemetryFactory: Factory(server.Address),
+            services: services,
+            featureFlags: new TestFeatureFlags(FeatureName.LiveTestFeatures));
+        var output = new StringWriter();
+
+        int exitCode = await host.InvokeAsync(
+            ["test", "ask", "--query", "hello", "--json"],
+            output, new StringWriter(), color: false);
+
+        Assert.NotEqual(0, exitCode);
+        using var result = JsonDocument.Parse(output.ToString());
+        Assert.Equal("failed", result.RootElement.GetProperty("status").GetString());
+        JsonElement[] events = Parse(await server.RequestBody);
+        Assert.Equal(2, events.Length);
+        Assert.Equal(expectedErrorCode, Dimensions(events[1]).GetProperty("errorCode").GetString());
+        Assert.DoesNotContain("private-", events[1].GetRawText(), StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task StreamingExceptionRecordsFailureOutcome()
+    public async Task LiveTestCancellationDoesNotInventFailureErrorCode()
     {
         await using var server = new LoopbackServer();
-        var services = new StreamingHandlerProvider(throwDuringRender: true);
+        using var cancellation = new CancellationTokenSource();
+        var services = new StreamingHandlerProvider(resultFactory: request => new LiveTestExecution(
+            request,
+            _ =>
+            {
+                cancellation.Cancel();
+                throw new OperationCanceledException(cancellation.Token);
+            },
+            (_, _, _) => throw new InvalidOperationException("authentication must not run"),
+            (_, _, _) => throw new InvalidOperationException("session must not be created")));
         var host = new AgentHostCli(
             new FakeOperations(),
             telemetryFactory: Factory(server.Address),
@@ -606,7 +699,35 @@ public sealed class TelemetryFullTests
             featureFlags: new TestFeatureFlags(FeatureName.LiveTestFeatures));
 
         int exitCode = await host.InvokeAsync(
-            ["test", "ask", "--query", "hello", "--agent-harness", "standard"],
+            ["test", "ask", "--query", "hello", "--json"],
+            new StringWriter(), new StringWriter(), color: false, cancellation.Token);
+
+        Assert.NotEqual(0, exitCode);
+        JsonElement[] events = Parse(await server.RequestBody);
+        Assert.Equal(2, events.Length);
+        JsonElement dimensions = Dimensions(events[1]);
+        Assert.Equal("cancellation", dimensions.GetProperty("outcomeCategory").GetString());
+        Assert.False(dimensions.TryGetProperty("errorCode", out _));
+    }
+
+    [Theory]
+    [InlineData(false, "failure", "99001")]
+    [InlineData(true, "usage", "11049")]
+    public async Task StreamingExceptionRecordsFailureOutcome(
+        bool typed, string expectedCategory, string expectedErrorCode)
+    {
+        await using var server = new LoopbackServer();
+        var services = new StreamingHandlerProvider(resultFactory: _ => new StreamingCommandResult(
+            1, true, typed ? ManagedAgentException.ConnectorNotServed(
+                "private-connector", "private-environment", [], "private-list-command") : null));
+        var host = new AgentHostCli(
+            new FakeOperations(),
+            telemetryFactory: Factory(server.Address),
+            services: services,
+            featureFlags: new TestFeatureFlags(FeatureName.LiveTestFeatures));
+
+        int exitCode = await host.InvokeAsync(
+            ["test", "ask", "--query", "hello"],
             new StringWriter(),
             new StringWriter(),
             color: false);
@@ -616,7 +737,9 @@ public sealed class TelemetryFullTests
         Assert.Equal(
             ["CommandAttempt", "CommandOutcome"],
             events.Select(item => Data(item).GetProperty("event_Name").GetString()));
-        Assert.Equal("failure", Dimensions(events[1]).GetProperty("outcomeCategory").GetString());
+        Assert.Equal(expectedCategory, Dimensions(events[1]).GetProperty("outcomeCategory").GetString());
+        Assert.Equal(expectedErrorCode, Dimensions(events[1]).GetProperty("errorCode").GetString());
+        Assert.DoesNotContain("private-", events[1].GetRawText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -708,7 +831,9 @@ public sealed class TelemetryFullTests
             new FixedDestinationResolver(
                 Destination(new Uri("http://127.0.0.1:1/OneCollector/1.0/"))),
             new FixedClock(),
-            typeof(AgentHostCli).Assembly);
+            typeof(AgentHostCli).Assembly,
+            policyTimeout: TelemetryTestBudgets.Policy,
+            flushTimeout: TelemetryTestBudgets.Flush);
 
         await using CommandTelemetrySession session =
             await factory.CreateAsync(suppressTelemetry: false, CancellationToken.None);
@@ -729,6 +854,7 @@ public sealed class TelemetryFullTests
             new ThrowingDestinationResolver(),
             new FixedClock(),
             "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
         session.RecordHost(CommandTelemetryHostCategory.Help);
 
@@ -755,6 +881,7 @@ public sealed class TelemetryFullTests
                 Destination(new Uri("http://127.0.0.1:1/OneCollector/1.0/"))),
             new FixedClock(),
             "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: transport);
         session.RecordHost(CommandTelemetryHostCategory.Help);
 
@@ -775,6 +902,7 @@ public sealed class TelemetryFullTests
                 Destination(new Uri("http://127.0.0.1:1/OneCollector/1.0/"))),
             new FixedClock(),
             "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush,
             transport: new ThrowingTransport());
         session.RecordHost(CommandTelemetryHostCategory.Help);
 
@@ -876,6 +1004,7 @@ public sealed class TelemetryFullTests
 
         Assert.Equal(
             [
+                "IsFailure",
                 "cliVersion",
                 "cloud",
                 "exitClass",
@@ -892,6 +1021,7 @@ public sealed class TelemetryFullTests
                 .Order(StringComparer.Ordinal));
         Assert.Equal(
             [
+                "IsFailure",
                 "cliVersion",
                 "cloud",
                 "isOnePlayer",
@@ -906,6 +1036,7 @@ public sealed class TelemetryFullTests
                 .Order(StringComparer.Ordinal));
         Assert.Equal(
             [
+                "IsFailure",
                 "cliVersion",
                 "cloud",
                 "exitClass",
@@ -929,12 +1060,81 @@ public sealed class TelemetryFullTests
         var session = new CommandTelemetrySession(
             new FixedDestinationResolver(Destination(server.Address)),
             new FixedClock(),
-            "1.2.3-test");
+            "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush);
         session.RecordHost(CommandTelemetryHostCategory.Help);
 
         await session.DisposeAsync();
 
         Assert.NotEmpty(await server.RequestBody);
+    }
+
+    [Theory]
+    [InlineData((int)CommandTelemetryOutcome.Success, false)]
+    [InlineData((int)CommandTelemetryOutcome.Usage, true)]
+    [InlineData((int)CommandTelemetryOutcome.NotSignedIn, true)]
+    [InlineData((int)CommandTelemetryOutcome.Failure, true)]
+    [InlineData((int)CommandTelemetryOutcome.Timeout, true)]
+    [InlineData((int)CommandTelemetryOutcome.Cancellation, false)]
+    public async Task OutcomeFailureFlagIsWrittenAsBoolean(
+        int outcome,
+        bool expectedFailure)
+    {
+        await using var server = new LoopbackServer();
+        await using CommandTelemetrySession session =
+            await Factory(server.Address).CreateAsync(suppressTelemetry: false, CancellationToken.None);
+        session.RecordAttempt(CommandTelemetryPath.FromMetadata(["auth", "status"]));
+        session.RecordOutcome((CommandTelemetryOutcome)outcome);
+
+        await session.DisposeAsync();
+
+        JsonElement[] events = Parse(await server.RequestBody);
+        Assert.Equal(2, events.Length);
+        Assert.All(events, item => Assert.False(Data(item).TryGetProperty("IsFailure", out _)));
+        Assert.False(Dimensions(events[0]).GetProperty("IsFailure").GetBoolean());
+        Assert.Equal(expectedFailure, Dimensions(events[1]).GetProperty("IsFailure").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData((int)CommandTelemetryHostCategory.Help, false)]
+    [InlineData((int)CommandTelemetryHostCategory.Version, false)]
+    [InlineData((int)CommandTelemetryHostCategory.ParserRejection, true)]
+    [InlineData((int)CommandTelemetryHostCategory.GroupUsage, true)]
+    public async Task HostFailureFlagDistinguishesErrorsFromInformationalEvents(
+        int category,
+        bool expectedFailure)
+    {
+        await using var server = new LoopbackServer();
+        var session = new CommandTelemetrySession(
+            new FixedDestinationResolver(Destination(server.Address)),
+            new FixedClock(),
+            "1.2.3-test",
+            flushTimeout: TelemetryTestBudgets.Flush);
+        session.RecordHost((CommandTelemetryHostCategory)category);
+
+        await session.DisposeAsync();
+
+        JsonElement item = Assert.Single(Parse(await server.RequestBody));
+        Assert.False(Data(item).TryGetProperty("IsFailure", out _));
+        Assert.Equal(expectedFailure, Dimensions(item).GetProperty("IsFailure").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData(-1, "-1")]
+    [InlineData(100000, "100000")]
+    public async Task OutOfRangeErrorCodesDoNotPreventTelemetryWriting(int errorCode, string expectedValue)
+    {
+        await using var server = new LoopbackServer();
+        await using CommandTelemetrySession session =
+            await Factory(server.Address).CreateAsync(suppressTelemetry: false, CancellationToken.None);
+        session.RecordAttempt(CommandTelemetryPath.FromMetadata(["auth", "status"]));
+        session.RecordOutcome(CommandTelemetryOutcome.Failure, errorCode);
+
+        await session.DisposeAsync();
+
+        JsonElement[] events = Parse(await server.RequestBody);
+        Assert.Equal(2, events.Length);
+        Assert.Equal(expectedValue, Dimensions(events[1]).GetProperty("errorCode").GetString());
     }
 
     private static async Task<JsonElement[]> InvokeAsync(
@@ -1001,27 +1201,35 @@ public sealed class TelemetryFullTests
             resolver ?? new FixedDestinationResolver(Destination(endpoint)),
             new FixedClock(),
             typeof(AgentHostCli).Assembly,
-            observer);
+            observer,
+            policyTimeout: TelemetryTestBudgets.Policy,
+            flushTimeout: TelemetryTestBudgets.Flush);
 
-    private sealed class StreamingHandlerProvider(int exitCode = 0, bool throwDuringRender = false) : IServiceProvider
+    private sealed class StreamingHandlerProvider(
+        int exitCode = 0,
+        bool throwDuringRender = false,
+        Func<LiveTestRequest, ILiveTestStreamingResult>? resultFactory = null) : IServiceProvider
     {
         public object? GetService(Type serviceType) =>
             serviceType == typeof(ICommandHandler<LiveTestRequest, ILiveTestStreamingResult>)
-                ? new StreamingCommandHandler(exitCode, throwDuringRender)
+                ? new StreamingCommandHandler(exitCode, throwDuringRender, resultFactory)
                 : null;
     }
 
-    private sealed class StreamingCommandHandler(int exitCode, bool throwDuringRender)
+    private sealed class StreamingCommandHandler(
+        int exitCode,
+        bool throwDuringRender,
+        Func<LiveTestRequest, ILiveTestStreamingResult>? resultFactory)
         : ICommandHandler<LiveTestRequest, ILiveTestStreamingResult>
     {
         public Task<ILiveTestStreamingResult> HandleAsync(
             LiveTestRequest request,
             CancellationToken cancellationToken) =>
             Task.FromResult<ILiveTestStreamingResult>(
-                new StreamingCommandResult(exitCode, throwDuringRender));
+                resultFactory?.Invoke(request) ?? new StreamingCommandResult(exitCode, throwDuringRender));
     }
 
-    private sealed class StreamingCommandResult(int exitCode, bool throwDuringRender)
+    private sealed class StreamingCommandResult(int exitCode, bool throwDuringRender, Exception? failure = null)
         : ILiveTestStreamingResult
     {
         public async Task<int> RenderAsync(
@@ -1033,7 +1241,7 @@ public sealed class TelemetryFullTests
             await stdout.WriteAsync("streamed");
             if (throwDuringRender)
             {
-                throw new InvalidOperationException("synthetic streaming failure");
+                throw failure ?? new InvalidOperationException("synthetic streaming failure");
             }
 
             return exitCode;
