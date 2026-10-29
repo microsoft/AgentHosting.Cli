@@ -75,6 +75,14 @@ does not accept `--project`, `--agent-id`, `--agent-name`,
 `--tenant`. The credential determines the agent. `--plain` suppresses only CLI
 progress; `--json` is unsupported. A missing/old playground offers a consented
 global npm install that may execute package lifecycle scripts.
+Before offering installation, the CLI checks Node.js 22.17.1 or newer and npm in
+the original terminal. Existing playground installations also get a Node.js
+runtime check before a new window opens. Missing or unsupported dependencies
+are reported there with recovery steps; install Node.js with npm from
+https://nodejs.org/en/download, open a new terminal, and retry.
+If the launched playground fails, its terminal keeps the output visible until
+you press Enter or Ctrl+C. Normal exits and cancellations do not pause, and
+redirected input or output never waits for acknowledgment.
 
 The CLI isolates playground config, uses the native default display name, binds
 the listener to `127.0.0.1`, and disables native telemetry. Regional/custom/

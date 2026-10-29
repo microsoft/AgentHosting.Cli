@@ -20,7 +20,7 @@ public sealed class PlaygroundGlobalInstallerTests
         var result = await installer.InstallAsync(CancellationToken.None);
 
         Assert.Same(installed, result);
-        Assert.Equal(["detect-npm", "locate"], locator.Calls);
+        Assert.Equal(["detect-npm", "locate", "detect-node"], locator.Calls);
         var request = Assert.Single(runner.Requests);
         Assert.Equal(npm.ExecutablePath, request.ExecutablePath);
         Assert.Equal(
@@ -36,6 +36,28 @@ public sealed class PlaygroundGlobalInstallerTests
     }
 
     [Fact]
+    public async Task InstallAsync_VerifiesTheInstalledPlaygroundsNodeRuntime()
+    {
+        var locator = new RecordingLocator
+        {
+            NodeResult = Discovery(null, new PlaygroundToolRejection("node", new PlaygroundFailure
+            {
+                Kind = PlaygroundFailureKind.NodeBelowMinimum,
+                Message = "Node.js is below the minimum.",
+                Remediation = PlaygroundToolLocator.NodeInstallRemediation,
+            })),
+        };
+        var runner = new RecordingRunner(_ => new PlaygroundProcessResult(0, string.Empty, string.Empty));
+
+        var failure = await Assert.ThrowsAsync<PlaygroundInstallException>(() =>
+            new PlaygroundGlobalInstaller(locator, runner).InstallAsync(CancellationToken.None));
+
+        Assert.Equal(PlaygroundInstallFailureKind.NodeBelowMinimum, failure.Kind);
+        Assert.Contains("22.17.1", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(["detect-npm", "locate", "detect-node"], locator.Calls);
+    }
+
+    [Fact]
     public async Task InstallAsync_RefusesMissingOrOldPrerequisite_WithoutRunningInstall()
     {
         var locator = new RecordingLocator
@@ -48,7 +70,7 @@ public sealed class PlaygroundGlobalInstallerTests
                     {
                         Kind = PlaygroundFailureKind.NodeBelowMinimum,
                         Message = "Node.js is too old.",
-                        Remediation = "Install Node.js 22 or newer.",
+                        Remediation = PlaygroundToolLocator.NodeInstallRemediation,
                     })),
         };
         var runner = new RecordingRunner(_ => throw new Xunit.Sdk.XunitException("install must not run"));
@@ -293,9 +315,22 @@ public sealed class PlaygroundGlobalInstallerTests
         public PlaygroundToolDiscoveryResult LocateResult { get; init; } =
             Discovery(Tool("0.2.29", "/usr/bin/agentsplayground"));
 
+        public PlaygroundToolDiscoveryResult NodeResult { get; init; } =
+            Discovery(Tool("22.17.1", "/usr/bin/node"));
+
         public Exception? LocateFailure { get; init; }
 
         public List<string> Calls { get; } = [];
+
+        public Task<PlaygroundToolDiscoveryResult> DetectNodeAsync(
+            PlaygroundTool? playground,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.Same(LocateResult.Tool, playground);
+            Calls.Add("detect-node");
+            return Task.FromResult(NodeResult);
+        }
 
         public Task<PlaygroundToolDiscoveryResult> LocateAsync(CancellationToken cancellationToken)
         {

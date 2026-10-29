@@ -97,7 +97,7 @@ use `--json` for full activity data. Typing-only activities remain silent.
 
 ## `msagent test playground`
 
-Launch the M365 Agents Playground in the foreground. This command rejects `--json`,
+Launch the M365 Agents Playground in a new terminal window. This command rejects `--json`,
 `--query`, and `--conversation-id`.
 
 ```text
@@ -149,8 +149,20 @@ composer in the browser rather than assuming process start means a connection is
 The CLI uses `agentsplayground` on `PATH` with version `0.2.29` or newer. If missing or too old,
 interactive use offers `npm install -g @microsoft/m365agentsplayground@latest` and requires typing
 `install`. Non-interactive or redirected-input use requires explicit `--install-playground`
-consent. The install path checks for Node.js 22+ and npm, but does not install or upgrade them.
+consent. Before offering installation, the CLI checks for Node.js 22.17.1 or newer and npm.
+An existing playground also requires a supported Node.js runtime, but does not require npm.
+These checks and any prerequisite errors appear in the original terminal before a new window
+opens. On Windows, dependency probes and npm installation do not open additional console windows.
+The CLI does not install or upgrade Node.js or npm. If they are missing or unsupported, install
+Node.js with npm from https://nodejs.org/en/download, open a new terminal so PATH is refreshed,
+and rerun `msagent test playground`.
 Use a user-owned npm prefix when the global prefix would require elevation.
+
+After process startup, the calling terminal returns and the new terminal owns the playground.
+If the session fails, the new terminal retains its output and waits for Enter before closing;
+Ctrl+C also closes it. Successful exits and intentional cancellations do not pause, and no
+acknowledgment is requested when input or output is redirected. Process startup is not proof
+that the playground is ready or authenticated; later errors remain in the playground window.
 
 Version probes have a 10-second timeout; installation has a 600-second timeout. On Ctrl+C or
 normal exit, shutdown allows up to 10 seconds for graceful exit, then kills only the owned child

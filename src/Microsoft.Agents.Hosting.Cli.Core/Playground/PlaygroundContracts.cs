@@ -374,5 +374,10 @@ public interface IPlaygroundToolLocator
 {
     Task<PlaygroundToolDiscoveryResult> LocateAsync(CancellationToken cancellationToken);
 
+    /// <summary>Checks the selected playground's Node.js runtime, or discovers a runtime for installation when playground is null.</summary>
+    Task<PlaygroundToolDiscoveryResult> DetectNodeAsync(
+        PlaygroundTool? playground,
+        CancellationToken cancellationToken);
+
     Task<PlaygroundToolDiscoveryResult> DetectNpmAsync(CancellationToken cancellationToken);
 }

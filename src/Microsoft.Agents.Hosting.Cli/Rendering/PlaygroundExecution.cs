@@ -189,6 +189,54 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
                 return ExitCodes.Failure;
             }
 
+            PlaygroundToolDiscoveryResult prerequisites;
+            try
+            {
+                prerequisites = tool is null
+                    ? await _locator.DetectNpmAsync(cancellationToken).ConfigureAwait(false)
+                    : await _locator.DetectNodeAsync(tool, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (TimeoutException)
+            {
+                errorCategory = PlaygroundErrorCategory.Timeout;
+                _semanticOutcome = PlaygroundSemanticOutcome.Timeout;
+                await WriteErrorAsync(stderr,
+                    $"The playground prerequisite check timed out. {PlaygroundToolLocator.NodeInstallRemediation}")
+                    .ConfigureAwait(false);
+                return ExitCodes.Failure;
+            }
+            catch (Exception failure)
+            {
+                _errorCode = (failure as AgentHostingException)?.ErrorCode;
+                errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                await WriteErrorAsync(stderr,
+                    $"The playground prerequisites could not be checked safely. {PlaygroundToolLocator.NodeInstallRemediation}")
+                    .ConfigureAwait(false);
+                return ExitCodes.Failure;
+            }
+
+            if (prerequisites.Tool is null)
+            {
+                var failure = prerequisites.Rejections
+                    .LastOrDefault(rejection => rejection.Failure.Kind != PlaygroundFailureKind.InvalidPathEntry)
+                    ?.Failure;
+                var timedOut = failure?.Kind is PlaygroundFailureKind.NodeProbeTimedOut or PlaygroundFailureKind.NpmProbeTimedOut;
+                errorCategory = timedOut ? PlaygroundErrorCategory.Timeout : PlaygroundErrorCategory.LaunchFailed;
+                if (timedOut)
+                {
+                    _semanticOutcome = PlaygroundSemanticOutcome.Timeout;
+                }
+
+                await WriteErrorAsync(stderr,
+                    $"{failure?.Message ?? "A supported Node.js and npm installation could not be detected."} {failure?.Remediation ?? PlaygroundToolLocator.NodeInstallRemediation}")
+                    .ConfigureAwait(false);
+                return ExitCodes.Failure;
+            }
+
             if (tool is null)
             {
                 errorCategory = DiscoveryCategory(discovery);

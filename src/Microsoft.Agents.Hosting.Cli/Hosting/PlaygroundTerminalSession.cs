@@ -91,6 +91,63 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
     internal static async Task<int> RunChildAsync(
         string pipeName,
         Func<IReadOnlyDictionary<string, string>, IPlaygroundLauncher> launcherFactory,
+        CancellationToken cancellationToken,
+        Func<CancellationToken, Task>? acknowledgeFailure = null)
+    {
+        var exitCode = await RunChildCoreAsync(pipeName, launcherFactory, cancellationToken)
+            .ConfigureAwait(false);
+        if (exitCode != 0 && exitCode != 130 && !cancellationToken.IsCancellationRequested &&
+            acknowledgeFailure is not null)
+        {
+            try
+            {
+                await acknowledgeFailure(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+        }
+
+        return exitCode;
+    }
+
+    internal static async Task AcknowledgeFailureAsync(
+        bool inputRedirected,
+        bool outputRedirected,
+        CancellationToken cancellationToken)
+    {
+        if (inputRedirected || outputRedirected || cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        await Console.Error.WriteLineAsync(
+            "Review the error above. Press Enter to close this window, or Ctrl+C to exit.")
+            .ConfigureAwait(false);
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Console.KeyAvailable && Console.ReadKey(intercept: true).Key == ConsoleKey.Enter)
+                {
+                    return;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception failure) when (failure is IOException or InvalidOperationException)
+        {
+            await Console.Error.WriteLineAsync(
+                "The terminal input is unavailable; this window cannot remain open. Rerun msagent test playground in an interactive terminal.")
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<int> RunChildCoreAsync(
+        string pipeName,
+        Func<IReadOnlyDictionary<string, string>, IPlaygroundLauncher> launcherFactory,
         CancellationToken cancellationToken)
     {
         using var pipe = new NamedPipeClientStream(
@@ -128,9 +185,15 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
 
                 acknowledged = true;
             }, cancellationToken).ConfigureAwait(false);
-            if (exitCode != 0)
+            if (exitCode == 130)
             {
-                await Console.Error.WriteLineAsync($"The playground process exited with code {exitCode}.")
+                await Console.Error.WriteLineAsync("The playground session was cancelled.")
+                    .ConfigureAwait(false);
+            }
+            else if (exitCode != 0)
+            {
+                await Console.Error.WriteLineAsync(
+                    $"The playground process exited with code {exitCode}. Review the playground output above. Verify Node.js {PlaygroundToolLocator.MinimumNodeVersion} or newer with node --version, and update the playground with npm install -g @microsoft/m365agentsplayground@latest before retrying.")
                     .ConfigureAwait(false);
             }
 

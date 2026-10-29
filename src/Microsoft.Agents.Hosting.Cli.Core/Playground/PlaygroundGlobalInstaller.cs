@@ -148,6 +148,33 @@ public sealed class PlaygroundGlobalInstaller : IPlaygroundGlobalInstaller
             throw CreatePostVerificationFailure();
         }
 
+        PlaygroundToolDiscoveryResult nodeVerification;
+        try
+        {
+            nodeVerification = await _toolLocator.DetectNodeAsync(installedTool, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TimeoutException)
+        {
+            throw CreateFailure(
+                PlaygroundInstallFailureKind.Timeout,
+                "The installed playground's Node.js runtime check timed out.",
+                PlaygroundToolLocator.NodeInstallRemediation);
+        }
+        catch (Exception)
+        {
+            throw CreatePostVerificationFailure();
+        }
+
+        if (nodeVerification.Tool is null)
+        {
+            throw CreatePrerequisiteFailure(nodeVerification);
+        }
+
         return installedTool;
     }
 
@@ -167,7 +194,7 @@ public sealed class PlaygroundGlobalInstaller : IPlaygroundGlobalInstaller
             throw CreateFailure(
                 PlaygroundInstallFailureKind.Prerequisite,
                 "A supported Node.js and npm installation could not be detected.",
-                "Install Node.js 22 or newer with npm and ensure both are available on PATH.");
+                PlaygroundToolLocator.NodeInstallRemediation);
         }
     }
 
@@ -182,18 +209,20 @@ public sealed class PlaygroundGlobalInstaller : IPlaygroundGlobalInstaller
         {
             PlaygroundFailureKind.NodeNotFound => CreateFailure(
                 PlaygroundInstallFailureKind.NodeNotFound,
-                "Node.js 22 or newer was not found on PATH.",
-                "Install Node.js 22 or newer and ensure it is available on PATH.",
+                "Node.js 22.17.1 or newer was not found on PATH.",
+                PlaygroundToolLocator.NodeInstallRemediation,
                 failure.ExitCode),
             PlaygroundFailureKind.NodeInvalidVersion => CreateFailure(
                 PlaygroundInstallFailureKind.NodeInvalidVersion,
                 "Node.js returned an invalid version.",
-                "Install Node.js 22 or newer and try again.",
+                PlaygroundToolLocator.NodeInstallRemediation,
                 failure.ExitCode),
             PlaygroundFailureKind.NodeBelowMinimum => CreateFailure(
                 PlaygroundInstallFailureKind.NodeBelowMinimum,
-                "Node.js is below the required version.",
-                "Install Node.js 22 or newer and try again.",
+                failure.ObservedVersion is { } observedVersion
+                    ? $"Node.js version {observedVersion} is below the required minimum {PlaygroundToolLocator.MinimumNodeVersion}."
+                    : $"Node.js is below the required version {PlaygroundToolLocator.MinimumNodeVersion}.",
+                PlaygroundToolLocator.NodeInstallRemediation,
                 failure.ExitCode),
             PlaygroundFailureKind.NodeProbeTimedOut => CreateFailure(
                 PlaygroundInstallFailureKind.NodeProbeTimedOut,
@@ -208,7 +237,7 @@ public sealed class PlaygroundGlobalInstaller : IPlaygroundGlobalInstaller
             PlaygroundFailureKind.NpmNotFound => CreateFailure(
                 PlaygroundInstallFailureKind.NpmNotFound,
                 "npm was not found on PATH.",
-                "Install npm with Node.js 22 or newer and ensure npm is available on PATH.",
+                PlaygroundToolLocator.NodeInstallRemediation,
                 failure.ExitCode),
             PlaygroundFailureKind.NpmInvalidVersion => CreateFailure(
                 PlaygroundInstallFailureKind.NpmInvalidVersion,
@@ -228,7 +257,7 @@ public sealed class PlaygroundGlobalInstaller : IPlaygroundGlobalInstaller
             _ => CreateFailure(
                 PlaygroundInstallFailureKind.Prerequisite,
                 "A supported Node.js and npm installation could not be detected.",
-                "Install Node.js 22 or newer with npm and ensure both are available on PATH.",
+                PlaygroundToolLocator.NodeInstallRemediation,
                 failure?.ExitCode),
         };
     }

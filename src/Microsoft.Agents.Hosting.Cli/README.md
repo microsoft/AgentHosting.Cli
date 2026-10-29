@@ -233,8 +233,13 @@ the tool is missing or too old, interactive use offers
 `npm install -g @microsoft/m365agentsplayground@latest`; accepting it runs npm
 lifecycle scripts that may execute code, so consent is required.
 `--non-interactive` refuses that offer unless `--install-playground` is also
-supplied. The install path checks for Node.js 22 or newer and npm, but never
-installs or upgrades Node.js or npm. The Windows candidate was manually checked
+supplied. Before offering installation, the CLI checks for Node.js 22.17.1 or newer
+and npm. An existing playground also gets a Node.js runtime check, without requiring npm.
+Prerequisite failures are reported in the calling terminal before opening a new window.
+On Windows, dependency probes and npm installation do not create extra console windows.
+The CLI never installs or upgrades Node.js or npm. Install them from
+https://nodejs.org/en/download, open a new terminal to refresh PATH, and retry.
+The Windows candidate was manually checked
 with Node.js 22.17.1 and npm 10.9.2. Use a user-owned npm prefix or a version
 manager when a global prefix requires elevation. The user's npm registry,
 proxy, and authentication configuration is left intact.
@@ -260,6 +265,9 @@ Version probes time out after 10 seconds and installation after 600 seconds.
 Terminal startup and the process-start handoff time out after 30 seconds.
 This is not an authentication or conversation-readiness timeout, and later
 Playground exit codes are reported only in its own terminal.
+After an unexpected session failure, that terminal retains the output and asks
+for Enter to close; Ctrl+C also exits. Successful exits and intentional cancellations
+do not pause. Redirected input or output never waits for acknowledgment.
 
 A local desktop session is required. Windows opens a separate console window.
 macOS opens Terminal and may request permission to automate it. Linux requires
