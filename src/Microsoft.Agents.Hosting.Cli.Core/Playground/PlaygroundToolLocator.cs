@@ -79,7 +79,8 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
             : EnumerateCandidates("node", rejections);
         if (playground is not null && nodeCandidates.Count > 1)
         {
-            nodeCandidates = [nodeCandidates[0]];
+            var selected = nodeCandidates.FirstOrDefault(_environment.IsExecutable) ?? nodeCandidates[0];
+            nodeCandidates = [selected];
         }
 
         var node = await FindUsableNodeAsync(nodeCandidates, rejections, cancellationToken).ConfigureAwait(false);

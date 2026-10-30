@@ -160,10 +160,7 @@ public sealed class PlaygroundGlobalInstaller : IPlaygroundGlobalInstaller
         }
         catch (TimeoutException)
         {
-            throw CreateFailure(
-                PlaygroundInstallFailureKind.Timeout,
-                "The installed playground's Node.js runtime check timed out.",
-                PlaygroundToolLocator.NodeInstallRemediation);
+            throw CreateNodeVerificationTimeout();
         }
         catch (Exception)
         {
@@ -172,7 +169,10 @@ public sealed class PlaygroundGlobalInstaller : IPlaygroundGlobalInstaller
 
         if (nodeVerification.Tool is null)
         {
-            throw CreatePrerequisiteFailure(nodeVerification);
+            throw nodeVerification.Rejections.Any(
+                    rejection => rejection.Failure.Kind == PlaygroundFailureKind.NodeProbeTimedOut)
+                ? CreateNodeVerificationTimeout()
+                : CreatePrerequisiteFailure(nodeVerification);
         }
 
         return installedTool;
@@ -197,6 +197,11 @@ public sealed class PlaygroundGlobalInstaller : IPlaygroundGlobalInstaller
                 PlaygroundToolLocator.NodeInstallRemediation);
         }
     }
+
+    private static PlaygroundInstallException CreateNodeVerificationTimeout() => CreateFailure(
+        PlaygroundInstallFailureKind.Timeout,
+        "The installed playground's Node.js runtime check timed out.",
+        PlaygroundToolLocator.NodeInstallRemediation);
 
     private static PlaygroundInstallException CreatePrerequisiteFailure(
         PlaygroundToolDiscoveryResult discovery)

@@ -271,7 +271,8 @@ public sealed class PlaygroundTerminalSessionTests
         Task<int>? childTask = null;
         var launcher = new PlaygroundTerminalSession(
             pipe => childTask = PlaygroundTerminalSession.RunChildAsync(
-                pipe, childLauncher, CancellationToken.None),
+                pipe, _ => childLauncher, CancellationToken.None,
+                _ => throw new InvalidOperationException("A cancelled handoff must not wait for acknowledgment.")),
             TimeSpan.FromSeconds(10));
         var parentTask = launcher.RunAsync(
             Tool(), new PlaygroundConnection.DirectLine(),
@@ -289,7 +290,7 @@ public sealed class PlaygroundTerminalSessionTests
             release.TrySetResult();
             if (childTask is not null)
             {
-                Assert.Equal(1, await childTask.WaitAsync(TimeSpan.FromSeconds(10)));
+                Assert.Equal(130, await childTask.WaitAsync(TimeSpan.FromSeconds(10)));
             }
         }
 

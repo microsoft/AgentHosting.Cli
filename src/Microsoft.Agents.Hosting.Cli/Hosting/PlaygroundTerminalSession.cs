@@ -9,6 +9,8 @@ namespace Microsoft.Agents.Hosting.Cli.Hosting;
 internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
 {
     internal const string ChildOption = "--internal-playground-session";
+    private const byte HandoffCancelled = 2;
+    private static readonly TimeSpan HandoffCancelSignalTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private readonly Action<string> _openTerminal;
     private readonly TimeSpan _startupTimeout;
@@ -73,12 +75,32 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            await SignalHandoffCancelledAsync(pipe).ConfigureAwait(false);
             throw;
         }
         catch (Exception failure) when (
             failure is not PlaygroundLaunchException)
         {
             throw StartFailure();
+        }
+    }
+
+    private static async Task SignalHandoffCancelledAsync(NamedPipeServerStream pipe)
+    {
+        if (!pipe.IsConnected)
+        {
+            return;
+        }
+
+        using var timeout = new CancellationTokenSource(HandoffCancelSignalTimeout);
+        try
+        {
+            await pipe.WriteAsync(new[] { HandoffCancelled }, timeout.Token).ConfigureAwait(false);
+            await pipe.FlushAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception failure) when (
+            failure is IOException or ObjectDisposedException or InvalidOperationException or OperationCanceledException)
+        {
         }
     }
 
@@ -161,8 +183,15 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
             await pipe.ConnectAsync(startup.Token).ConfigureAwait(false);
             using var reader = new StreamReader(pipe, leaveOpen: true);
             var json = await reader.ReadLineAsync(startup.Token).ConfigureAwait(false);
+            if (json?.Contains((char)HandoffCancelled) == true)
+            {
+                throw new HandoffCancelledException();
+            }
+
             var request = JsonSerializer.Deserialize<SessionRequest>(
                 json ?? throw new EndOfStreamException()) ?? throw new JsonException();
+            var response = new byte[1];
+            var handoffResponse = pipe.ReadExactlyAsync(response, startup.Token).AsTask();
             var launcher = launcherFactory(request.Environment);
             var tool = new PlaygroundTool(
                 request.ExecutablePath, request.ArgumentPrefix, request.SelectedPath,
@@ -174,10 +203,21 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
 
             var exitCode = await launcher.RunAsync(tool, connection, () =>
             {
-                pipe.WriteByte(1);
-                pipe.Flush();
-                var response = new byte[1];
-                pipe.ReadExactlyAsync(response, startup.Token).AsTask().GetAwaiter().GetResult();
+                try
+                {
+                    pipe.WriteByte(1);
+                    pipe.Flush();
+                }
+                catch (IOException)
+                {
+                }
+
+                handoffResponse.GetAwaiter().GetResult();
+                if (response[0] == HandoffCancelled)
+                {
+                    throw new HandoffCancelledException();
+                }
+
                 if (response[0] != 1)
                 {
                     throw new IOException("The launch handoff was not completed.");
@@ -201,6 +241,14 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            return 130;
+        }
+        catch (HandoffCancelledException)
+        {
+            acknowledged = true;
+            await Console.Error.WriteLineAsync(
+                "The playground startup was cancelled from the calling terminal.")
+                .ConfigureAwait(false);
             return 130;
         }
         catch (PlaygroundLaunchException failure)
@@ -367,6 +415,8 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         PlaygroundLaunchFailureKind.StartFailed,
         "The playground could not be started in a separate terminal.",
         "Use a local desktop session with a terminal application available. On Linux, install GNOME Terminal, Konsole, Xfce Terminal, or xterm; on macOS, allow Terminal automation.");
+
+    private sealed class HandoffCancelledException : Exception;
 
     internal sealed record SessionRequest(
         string ExecutablePath,

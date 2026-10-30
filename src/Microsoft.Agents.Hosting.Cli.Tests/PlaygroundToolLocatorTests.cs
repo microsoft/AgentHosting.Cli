@@ -300,6 +300,29 @@ public sealed class PlaygroundToolLocatorTests
     }
 
     [Fact]
+    public async Task DetectNode_InstalledPosixPlaygroundSkipsNonExecutableNodeOnPath()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "posix-non-executable-node");
+        var nonExecutableNode = Path.Combine(directory, "node");
+        var otherDirectory = Path.Combine(Path.GetTempPath(), "posix-executable-node");
+        var executableNode = Path.Combine(otherDirectory, "node");
+        var environment = new FakePlaygroundEnvironment(
+            isWindows: false,
+            pathValue: string.Join(Path.PathSeparator, directory, otherDirectory),
+            existingPaths: [nonExecutableNode, executableNode]);
+        environment.NonExecutablePaths.Add(environment.GetFullPath(nonExecutableNode));
+        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "v22.17.1", string.Empty));
+        var playground = new PlaygroundTool(
+            Path.Combine(otherDirectory, "agentsplayground"), [], "agentsplayground",
+            PlaygroundVersion.Parse("0.2.29"));
+
+        var result = await CreateLocator(environment, runner).DetectNodeAsync(playground, CancellationToken.None);
+
+        Assert.NotNull(result.Tool);
+        Assert.Equal(executableNode, Assert.Single(runner.Requests).ExecutablePath);
+    }
+
+    [Fact]
     public async Task DetectNode_MissingNodeProvidesDownloadAndRetryGuidance()
     {
         var environment = new FakePlaygroundEnvironment(false, string.Empty, []);
@@ -784,6 +807,11 @@ public sealed class PlaygroundToolLocatorTests
                 isWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
         public bool FileExists(string path) => ExistingPaths.Contains(GetFullPath(path));
+
+        public HashSet<string> NonExecutablePaths { get; } = [];
+
+        public bool IsExecutable(string path) =>
+            FileExists(path) && !NonExecutablePaths.Contains(GetFullPath(path));
 
         public Dictionary<string, string> Links { get; } = [];
 

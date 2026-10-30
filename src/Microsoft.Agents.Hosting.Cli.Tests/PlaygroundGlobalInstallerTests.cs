@@ -299,6 +299,33 @@ public sealed class PlaygroundGlobalInstallerTests
         Assert.DoesNotContain("secret", failure.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task InstallAsync_NormalizesInstalledNodeProbeTimeoutToTimeout()
+    {
+        var locator = new RecordingLocator
+        {
+            NpmResult = Discovery(Tool("10.9.2", "/usr/bin/npm")),
+            NodeResult = Discovery(
+                null,
+                new PlaygroundToolRejection(
+                    "/usr/bin/node",
+                    new PlaygroundFailure
+                    {
+                        Kind = PlaygroundFailureKind.NodeProbeTimedOut,
+                        Message = "Node.js did not return a version within the allowed time.",
+                        Remediation = "Check the Node.js installation and try again.",
+                    })),
+        };
+        var runner = new RecordingRunner(_ => new PlaygroundProcessResult(0, string.Empty, string.Empty));
+
+        var failure = await Assert.ThrowsAsync<PlaygroundInstallException>(() =>
+            new PlaygroundGlobalInstaller(locator, runner).InstallAsync(CancellationToken.None));
+
+        Assert.Equal(PlaygroundInstallFailureKind.Timeout, failure.Kind);
+        Assert.Contains("Node.js", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(["detect-npm", "locate", "detect-node"], locator.Calls);
+    }
+
     private static PlaygroundTool Tool(string version, string path) =>
         new(path, [], path, PlaygroundVersion.Parse(version));
 
