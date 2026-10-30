@@ -15,19 +15,26 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
     private readonly Action<string> _openTerminal;
     private readonly TimeSpan _startupTimeout;
     private readonly IReadOnlyDictionary<string, string>? _inheritedEnvironment;
+    private readonly Action? _stopTerminal;
+    private Process? _terminalProcess;
+    private bool _terminalProcessIsDrained;
 
-    public PlaygroundTerminalSession() : this(OpenTerminal, StartupTimeout)
+    public PlaygroundTerminalSession()
     {
+        _openTerminal = OpenTerminal;
+        _startupTimeout = StartupTimeout;
     }
 
     internal PlaygroundTerminalSession(
         Action<string> openTerminal,
         TimeSpan startupTimeout,
-        IReadOnlyDictionary<string, string>? inheritedEnvironment = null)
+        IReadOnlyDictionary<string, string>? inheritedEnvironment = null,
+        Action? stopTerminal = null)
     {
         _openTerminal = openTerminal;
         _startupTimeout = startupTimeout;
         _inheritedEnvironment = inheritedEnvironment;
+        _stopTerminal = stopTerminal;
     }
 
     public async Task<int> RunAsync(
@@ -76,6 +83,7 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             await SignalHandoffCancelledAsync(pipe).ConfigureAwait(false);
+            StopTerminal();
             throw;
         }
         catch (Exception failure) when (
@@ -83,6 +91,54 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         {
             throw StartFailure();
         }
+        finally
+        {
+            ReleaseTerminalProcess();
+        }
+    }
+
+    private void StopTerminal()
+    {
+        if (_stopTerminal is not null)
+        {
+            _stopTerminal();
+            return;
+        }
+
+        var process = Interlocked.Exchange(ref _terminalProcess, null);
+        if (process is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        finally
+        {
+            if (!_terminalProcessIsDrained)
+            {
+                process.Dispose();
+            }
+        }
+    }
+
+    private void ReleaseTerminalProcess()
+    {
+        var process = Interlocked.Exchange(ref _terminalProcess, null);
+        if (process is not null && !_terminalProcessIsDrained)
+        {
+            process.Dispose();
+        }
+
+        _terminalProcessIsDrained = false;
     }
 
     private static async Task SignalHandoffCancelledAsync(NamedPipeServerStream pipe)
@@ -176,6 +232,7 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
             ".", pipeName, PipeDirection.InOut,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         var acknowledged = false;
+        var requestReceived = false;
         try
         {
             using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -183,15 +240,10 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
             await pipe.ConnectAsync(startup.Token).ConfigureAwait(false);
             using var reader = new StreamReader(pipe, leaveOpen: true);
             var json = await reader.ReadLineAsync(startup.Token).ConfigureAwait(false);
-            if (json?.Contains((char)HandoffCancelled) == true)
-            {
-                throw new HandoffCancelledException();
-            }
-
             var request = JsonSerializer.Deserialize<SessionRequest>(
                 json ?? throw new EndOfStreamException()) ?? throw new JsonException();
-            var response = new byte[1];
-            var handoffResponse = pipe.ReadExactlyAsync(response, startup.Token).AsTask();
+            requestReceived = true;
+            var handoffResponse = ReadHandoffResponseAsync(reader, startup.Token);
             var launcher = launcherFactory(request.Environment);
             var tool = new PlaygroundTool(
                 request.ExecutablePath, request.ArgumentPrefix, request.SelectedPath,
@@ -212,13 +264,13 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
                 {
                 }
 
-                handoffResponse.GetAwaiter().GetResult();
-                if (response[0] == HandoffCancelled)
+                var response = handoffResponse.GetAwaiter().GetResult();
+                if (response == HandoffCancelled)
                 {
                     throw new HandoffCancelledException();
                 }
 
-                if (response[0] != 1)
+                if (response != 1)
                 {
                     throw new IOException("The launch handoff was not completed.");
                 }
@@ -249,6 +301,10 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
             await Console.Error.WriteLineAsync(
                 "The playground startup was cancelled from the calling terminal.")
                 .ConfigureAwait(false);
+            return 130;
+        }
+        catch (IOException) when (!requestReceived)
+        {
             return 130;
         }
         catch (PlaygroundLaunchException failure)
@@ -282,7 +338,21 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         }
     }
 
-    private static void OpenTerminal(string pipeName)
+    internal static async Task<char> ReadHandoffResponseAsync(
+        StreamReader reader,
+        CancellationToken cancellationToken)
+    {
+        var response = new char[1];
+        var read = await reader.ReadAsync(response.AsMemory(), cancellationToken).ConfigureAwait(false);
+        if (read != 1)
+        {
+            throw new EndOfStreamException();
+        }
+
+        return response[0];
+    }
+
+    private void OpenTerminal(string pipeName)
     {
         var executable = Environment.ProcessPath ?? throw StartFailure();
         var arguments = new List<string>();
@@ -297,10 +367,12 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
             executable, arguments,
             OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux",
             FindExecutable);
-        StartTerminalProcess(info, redirectOutput: OperatingSystem.IsLinux());
+        var redirectOutput = OperatingSystem.IsLinux();
+        _terminalProcess = StartTerminalProcess(info, redirectOutput);
+        _terminalProcessIsDrained = redirectOutput;
     }
 
-    internal static void StartTerminalProcess(ProcessStartInfo info, bool redirectOutput)
+    internal static Process StartTerminalProcess(ProcessStartInfo info, bool redirectOutput)
     {
         if (redirectOutput)
         {
@@ -313,10 +385,8 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         {
             _ = DrainTerminalOutputAsync(process);
         }
-        else
-        {
-            process.Dispose();
-        }
+
+        return process;
     }
 
     private static async Task DrainTerminalOutputAsync(Process process)

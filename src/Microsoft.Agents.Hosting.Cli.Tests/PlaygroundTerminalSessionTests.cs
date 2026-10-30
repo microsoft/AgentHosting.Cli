@@ -298,6 +298,61 @@ public sealed class PlaygroundTerminalSessionTests
     }
 
     [Fact]
+    public async Task RunAsync_CancelledBeforeChildConnectsDoesNotWaitForAcknowledgment()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var childLifetime = new CancellationTokenSource();
+        var terminalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connectChild = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acknowledgmentRequested = false;
+        Task<int>? childTask = null;
+        var launcher = new PlaygroundTerminalSession(
+            pipe =>
+            {
+                terminalStarted.SetResult();
+                childTask = Task.Run(async () =>
+                {
+                    await connectChild.Task;
+                    return await PlaygroundTerminalSession.RunChildAsync(
+                        pipe, _ => new HoldingLauncher(), childLifetime.Token,
+                        _ =>
+                        {
+                            acknowledgmentRequested = true;
+                            return Task.CompletedTask;
+                        });
+                });
+            },
+            TimeSpan.FromSeconds(10),
+            stopTerminal: childLifetime.Cancel);
+
+        var parentTask = launcher.RunAsync(
+            Tool(), new PlaygroundConnection.DirectLine(),
+            () => Assert.Fail("A cancelled handoff must not report startup."), cancellation.Token);
+
+        await terminalStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => parentTask);
+        connectChild.SetResult();
+
+        Assert.NotNull(childTask);
+        Assert.Equal(130, await childTask.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.False(acknowledgmentRequested);
+    }
+
+    [Fact]
+    public async Task ReadHandoffResponseAsync_ReadsCancellationBufferedAfterRequestLine()
+    {
+        var bytes = new byte[] { (byte)'{', (byte)'}', (byte)'\n', 2 };
+        using var stream = new MemoryStream(bytes);
+        using var reader = new StreamReader(stream, leaveOpen: true);
+
+        Assert.Equal("{}", await reader.ReadLineAsync());
+        Assert.Equal(
+            '\u0002',
+            await PlaygroundTerminalSession.ReadHandoffResponseAsync(reader, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task RunAsync_SanitizesTerminalStartExceptions()
     {
         var launcher = new PlaygroundTerminalSession(
