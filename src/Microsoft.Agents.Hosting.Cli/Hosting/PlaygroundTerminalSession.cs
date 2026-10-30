@@ -10,7 +10,9 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
 {
     internal const string ChildOption = "--internal-playground-session";
     private const byte HandoffCancelled = 2;
+    private const byte HandoffCancellationComplete = 3;
     private static readonly TimeSpan HandoffCancelSignalTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan HandoffCancellationCleanupTimeout = TimeSpan.FromSeconds(25);
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private readonly Action<string> _openTerminal;
     private readonly TimeSpan _startupTimeout;
@@ -82,8 +84,11 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            await SignalHandoffCancelledAsync(pipe).ConfigureAwait(false);
-            StopTerminal();
+            if (!await SignalHandoffCancelledAsync(pipe).ConfigureAwait(false))
+            {
+                StopTerminal();
+            }
+
             throw;
         }
         catch (Exception failure) when (
@@ -141,22 +146,47 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         _terminalProcessIsDrained = false;
     }
 
-    private static async Task SignalHandoffCancelledAsync(NamedPipeServerStream pipe)
+    private static async Task<bool> SignalHandoffCancelledAsync(NamedPipeServerStream pipe)
     {
         if (!pipe.IsConnected)
         {
-            return;
+            return false;
         }
 
-        using var timeout = new CancellationTokenSource(HandoffCancelSignalTimeout);
+        using var signalTimeout = new CancellationTokenSource(HandoffCancelSignalTimeout);
         try
         {
-            await pipe.WriteAsync(new[] { HandoffCancelled }, timeout.Token).ConfigureAwait(false);
-            await pipe.FlushAsync(timeout.Token).ConfigureAwait(false);
+            await pipe.WriteAsync(new[] { HandoffCancelled }, signalTimeout.Token).ConfigureAwait(false);
+            await pipe.FlushAsync(signalTimeout.Token).ConfigureAwait(false);
         }
         catch (Exception failure) when (
             failure is IOException or ObjectDisposedException or InvalidOperationException or OperationCanceledException)
         {
+            return false;
+        }
+
+        using var cleanupTimeout = new CancellationTokenSource(HandoffCancellationCleanupTimeout);
+        try
+        {
+            while (true)
+            {
+                var response = new byte[1];
+                await pipe.ReadExactlyAsync(response, cleanupTimeout.Token).ConfigureAwait(false);
+                if (response[0] == HandoffCancellationComplete)
+                {
+                    return true;
+                }
+
+                if (response[0] != 1)
+                {
+                    return false;
+                }
+            }
+        }
+        catch (Exception failure) when (
+            failure is IOException or ObjectDisposedException or InvalidOperationException or OperationCanceledException)
+        {
+            return false;
         }
     }
 
@@ -301,6 +331,10 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
             await Console.Error.WriteLineAsync(
                 "The playground startup was cancelled from the calling terminal.")
                 .ConfigureAwait(false);
+            await pipe.WriteAsync(
+                    new[] { HandoffCancellationComplete }, CancellationToken.None)
+                .ConfigureAwait(false);
+            await pipe.FlushAsync(CancellationToken.None).ConfigureAwait(false);
             return 130;
         }
         catch (IOException) when (!requestReceived)

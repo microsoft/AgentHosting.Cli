@@ -267,13 +267,23 @@ public sealed class PlaygroundTerminalSessionTests
         using var cancellation = new CancellationTokenSource();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var childLauncher = new HoldingLauncher { Entered = entered, BeforeStart = release.Task };
+        var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanupEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var childLauncher = new HoldingLauncher
+        {
+            Entered = entered,
+            BeforeStart = release.Task,
+            Cleanup = cleanup.Task,
+            CleanupEntered = cleanupEntered,
+        };
+        var terminalStopped = false;
         Task<int>? childTask = null;
         var launcher = new PlaygroundTerminalSession(
             pipe => childTask = PlaygroundTerminalSession.RunChildAsync(
                 pipe, _ => childLauncher, CancellationToken.None,
                 _ => throw new InvalidOperationException("A cancelled handoff must not wait for acknowledgment.")),
-            TimeSpan.FromSeconds(10));
+            TimeSpan.FromSeconds(10),
+            stopTerminal: () => terminalStopped = true);
         var parentTask = launcher.RunAsync(
             Tool(), new PlaygroundConnection.DirectLine(),
             () => Assert.Fail("A cancelled handoff must not report startup."), cancellation.Token);
@@ -282,12 +292,18 @@ public sealed class PlaygroundTerminalSessionTests
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
             cancellation.Cancel();
+            release.TrySetResult();
+            await cleanupEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(parentTask.IsCompleted);
+            Assert.False(terminalStopped);
+            cleanup.SetResult();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => parentTask);
         }
         finally
         {
             cancellation.Cancel();
             release.TrySetResult();
+            cleanup.TrySetResult();
             if (childTask is not null)
             {
                 Assert.Equal(130, await childTask.WaitAsync(TimeSpan.FromSeconds(10)));
@@ -561,6 +577,8 @@ public sealed class PlaygroundTerminalSessionTests
         public int? ExitCode { get; init; }
         public TaskCompletionSource? Entered { get; init; }
         public Task? BeforeStart { get; init; }
+        public Task? Cleanup { get; init; }
+        public TaskCompletionSource? CleanupEntered { get; init; }
         public bool Stopped { get; private set; }
 
         public async Task<int> RunAsync(
@@ -595,6 +613,12 @@ public sealed class PlaygroundTerminalSessionTests
             }
             finally
             {
+                CleanupEntered?.TrySetResult();
+                if (Cleanup is not null)
+                {
+                    await Cleanup;
+                }
+
                 Stopped = true;
             }
         }
