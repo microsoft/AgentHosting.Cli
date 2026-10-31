@@ -1119,10 +1119,6 @@ The CLI supports TLS 1.3 and TLS 1.2.
 
 ### Personal AMS DEV routing (controlled preview)
 
-For a source-build walkthrough covering internal feeds, native sign-in, downstream
-routing and first-deployment/package-update checks, see
-[DEV stamp testing with AMS-CMP and AMS-DP](../../../docs/dev-stamp-testing.md).
-
 With both endpoint overrides unset, native AMS commands retain their normal trusted Power Platform
 API front-door routes in every ring. For personal DEV validation only, the executable accepts this
 explicit pair of service origins:
