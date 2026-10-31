@@ -21,16 +21,19 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
     private readonly HttpClient _httpClient;
     private readonly ITokenProvider _tokens;
     private readonly PpapiTokenClaimsValidator _claimsValidator;
+    private readonly AmsDevEndpoints _devEndpoints;
 
     public AmsPackagePublicationAdapter(
         HttpClient httpClient,
         ITokenProvider tokens,
-        PpapiTokenClaimsValidator? claimsValidator = null)
+        PpapiTokenClaimsValidator? claimsValidator = null,
+        AmsDevEndpoints? devEndpoints = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _httpClient.Timeout = Timeout.InfiniteTimeSpan;
         _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens));
         _claimsValidator = claimsValidator ?? new PpapiTokenClaimsValidator();
+        _devEndpoints = devEndpoints ?? AmsDevEndpoints.Unconfigured;
     }
 
     public async Task<AmsPackagePublicationResult> PublishAsync(
@@ -45,9 +48,14 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
             throw new ArgumentException("A non-empty readable package stream is required.", nameof(request));
         }
 
+        var endpoint = _devEndpoints.DataPlane ?? request.Endpoint;
+        var prefix = _devEndpoints.DataPlane is null
+            ? "agenthosting/"
+            : $"agenthosting/tenants/{Uri.EscapeDataString(request.TenantId)}/" +
+              $"environments/{Uri.EscapeDataString(request.EnvironmentId)}/";
         var relativePath =
-            $"agenthosting/agents/{Uri.EscapeDataString(request.AgentId)}/packages?api-version=1";
-        var targetUri = new Uri(EnsureTrailingSlash(request.Endpoint), relativePath);
+            $"{prefix}agents/{Uri.EscapeDataString(request.AgentId)}/packages?api-version=1";
+        var targetUri = new Uri(EnsureTrailingSlash(endpoint), relativePath);
         var clientRequestId = Guid.NewGuid().ToString("D");
         var token = await _tokens
             .AcquireTokenSilentAsync(request.Audience, request.TenantId, cancellationToken)
@@ -96,7 +104,7 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
                 throw AgentDeployException.RedirectRejected(
                     "package upload",
                     (int)response.StatusCode,
-                    request.Endpoint.Host);
+                    endpoint.Host);
             }
 
             string responseBody;

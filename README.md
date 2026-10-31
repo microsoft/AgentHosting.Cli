@@ -8,6 +8,11 @@ The CLI creates a local definition of a Copilot Studio agent as a project that a
 
 ## Prerequisites
 
+**Internal personal-DEV validation on this branch:** use the
+[DEV stamp testing walkthrough](docs/dev-stamp-testing.md) instead of the public
+tool-install commands below. It builds this branch from internal feeds and routes
+native CodeAgent operations to a paired personal AMS-CMP/AMS-DP deployment.
+
 ### Permissions:
 - Permissions to install applications to your laptop (the CLI)
 - Permissions and access to Copilot Studio through a work/school account (verified through copilotstudio.microsoft.com)

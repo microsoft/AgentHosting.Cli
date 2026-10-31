@@ -5,8 +5,8 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 
 /// <summary>
 /// Resolves the endpoint and route mode used by <c>msagent agent create</c>. Normal operation uses the
-/// trusted environment API front door; an embedding or test host may explicitly supply a direct
-/// AMSDataPlane endpoint.
+/// trusted environment API front door; the native host may supply a validated personal-DEV
+/// AMSDataPlane endpoint, or an embedding host may explicitly supply its own direct endpoint.
 /// </summary>
 public sealed record AgentCreationTarget
 {

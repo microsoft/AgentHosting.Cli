@@ -154,28 +154,16 @@ internal static class Program
             powerPlatformApiTarget,
             claimsValidator: sp.GetRequiredService<PpapiTokenClaimsValidator>()));
 
-        services.AddSingleton<AgentCreationTarget>();
+        try
+        {
+            AddAmsServices(services, powerPlatformApiTarget, Environment.GetEnvironmentVariable);
+        }
+        catch (ArgumentException failure)
+        {
+            return ReportConfigurationFailure(failure.Message);
+        }
 
-        // Automatic redirect following is disabled at client construction — before any authorization
-        // header exists — so a host-changing redirect can never cause the delegated bearer token to be
-        // resent to a host that is not the configured one.
         var debugRequested = GlobalOptions.IsPresent(args, "--debug");
-        services.AddSingleton<IAmsPackagePublicationTransport>(sp => new AmsPackagePublicationAdapter(
-            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
-            sp.GetRequiredService<ITokenProvider>(),
-            sp.GetRequiredService<PpapiTokenClaimsValidator>()));
-        services.AddSingleton(sp => new AmsDeploymentAdapter(
-            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
-            sp.GetRequiredService<ITokenProvider>(),
-            sp.GetRequiredService<PpapiTokenClaimsValidator>()));
-        services.AddSingleton<IAmsAgentReadTransport>(
-            sp => sp.GetRequiredService<AmsDeploymentAdapter>());
-        services.AddSingleton<IAmsDeploymentTransport>(
-            sp => sp.GetRequiredService<AmsDeploymentAdapter>());
-        services.AddSingleton<IAmsAgentCreationTransport>(sp => new AmsAgentCreationAdapter(
-            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
-            sp.GetRequiredService<ITokenProvider>(),
-            sp.GetRequiredService<PpapiTokenClaimsValidator>()));
 
         services.AddAgentHostAuthentication(options, powerPlatformApiTarget);
         services.AddSingleton<ICommandTelemetryProfileContextSource>(
@@ -553,6 +541,46 @@ internal static class Program
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "agenthost-cli-csharp")
             : configured;
+    }
+
+    internal static void AddAmsServices(
+        IServiceCollection services,
+        PowerPlatformApiTargetConfig target,
+        Func<string, string?> readEnvironment,
+        Func<HttpClient>? createHttpClient = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(readEnvironment);
+
+        var endpoints = AmsDevEndpoints.FromConfiguration(
+            target.Ring,
+            readEnvironment("AH_CLI_AMS_ENDPOINT"),
+            readEnvironment("AH_CLI_AMSDP_ENDPOINT"));
+        services.AddSingleton(endpoints);
+        services.AddSingleton(new AgentCreationTarget { Endpoint = endpoints.DataPlane?.AbsoluteUri });
+
+        // The executable always uses native tokens and redirect-rejecting transports. The client
+        // factory lets offline composition tests capture requests without changing those defaults.
+        createHttpClient ??= () => new HttpClient(TransportDefaults.CreateRedirectRejectingHandler());
+        services.AddSingleton<IAmsPackagePublicationTransport>(sp => new AmsPackagePublicationAdapter(
+            createHttpClient(),
+            sp.GetRequiredService<ITokenProvider>(),
+            sp.GetRequiredService<PpapiTokenClaimsValidator>(),
+            endpoints));
+        services.AddSingleton(sp => new AmsDeploymentAdapter(
+            createHttpClient(),
+            sp.GetRequiredService<ITokenProvider>(),
+            sp.GetRequiredService<PpapiTokenClaimsValidator>(),
+            endpoints));
+        services.AddSingleton<IAmsAgentReadTransport>(
+            sp => sp.GetRequiredService<AmsDeploymentAdapter>());
+        services.AddSingleton<IAmsDeploymentTransport>(
+            sp => sp.GetRequiredService<AmsDeploymentAdapter>());
+        services.AddSingleton<IAmsAgentCreationTransport>(sp => new AmsAgentCreationAdapter(
+            createHttpClient(),
+            sp.GetRequiredService<ITokenProvider>(),
+            sp.GetRequiredService<PpapiTokenClaimsValidator>()));
     }
 
     private static bool ParseBoolean(string? value) =>

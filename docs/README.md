@@ -11,6 +11,7 @@ All docs live in the [AgentHosting.Cli repo](https://github.com/microsoft/AgentH
 | Source control | [Source Control with msagent cli](Source%20Control%20with%20msagent%20cli.md) |
 | Deploy | [Deploying your Agent](Deploying%20your%20Agent%20from%20your%20local%20machine.md) |
 | Test | [Testing your Agent](Testing%20your%20Agent%20from%20your%20local%20machine.md) |
+| Personal DEV CodeAgent validation (this branch) | [DEV stamp testing with AMS-CMP and AMS-DP](dev-stamp-testing.md) |
 | Coding agent rules | [Additional coding agent instructions](Additional%20coding%20agent%20instructions.md) |
 
 ## Instructions
@@ -31,5 +32,5 @@ All docs live in the [AgentHosting.Cli repo](https://github.com/microsoft/AgentH
 - Install: See the [Prerequisites](../README.md#prerequisites) section of the root README.
 - Never use `pac` during the bug bash, and never mix it with `msagent`.
 - `msagent test` is not yet implemented. Use the provided test client (a shim for how `msagent test` will behave).
-- Ignore anything CodeAgent-related (e.g. `codeagent` types) in the CLI. It is irrelevant to Copilot Studio and not supported.
+- CodeAgent paths are outside the ordinary Copilot Studio bug bash. This branch's separately gated [personal DEV walkthrough](dev-stamp-testing.md) covers native CodeAgent package/deployment validation, not general CodeAgent availability.
 - Please file issues here: https://github.com/microsoft/AgentHosting.Cli

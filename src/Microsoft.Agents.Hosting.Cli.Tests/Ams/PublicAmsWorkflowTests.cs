@@ -1,11 +1,13 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Ams;
 
@@ -26,37 +28,56 @@ public sealed class PublicAmsWorkflowTests
         PowerPlatformApiRing.Production,
         false,
         "https://api.powerplatform.com/",
-        "https://222222222222222222222222222222.22.environment.api.powerplatform.com/")]
+        "https://222222222222222222222222222222.22.environment.api.powerplatform.com/",
+        false)]
     [InlineData(
         PowerPlatformApiRing.Preprod,
         false,
         "https://api.preprod.powerplatform.com/",
-        "https://2222222222222222222222222222222.2.environment.api.preprod.powerplatform.com/")]
+        "https://2222222222222222222222222222222.2.environment.api.preprod.powerplatform.com/",
+        false)]
     [InlineData(
         PowerPlatformApiRing.Test,
         false,
         "https://api.test.powerplatform.com/",
-        "https://2222222222222222222222222222222.2.environment.api.test.powerplatform.com/")]
+        "https://2222222222222222222222222222222.2.environment.api.test.powerplatform.com/",
+        false)]
     [InlineData(
         PowerPlatformApiRing.Production,
         true,
         "https://api.powerplatform.com/",
-        "https://222222222222222222222222222222.22.environment.api.powerplatform.com/")]
+        "https://222222222222222222222222222222.22.environment.api.powerplatform.com/",
+        false)]
     [InlineData(
         PowerPlatformApiRing.Preprod,
         true,
         "https://api.preprod.powerplatform.com/",
-        "https://2222222222222222222222222222222.2.environment.api.preprod.powerplatform.com/")]
+        "https://2222222222222222222222222222222.2.environment.api.preprod.powerplatform.com/",
+        false)]
     [InlineData(
         PowerPlatformApiRing.Test,
         true,
         "https://api.test.powerplatform.com/",
-        "https://2222222222222222222222222222222.2.environment.api.test.powerplatform.com/")]
-    public async Task CreateUploadDeployUpdate_ResolvesEnvironmentHostWithoutAdvertisedEndpoints(
+        "https://2222222222222222222222222222222.2.environment.api.test.powerplatform.com/",
+        false)]
+    [InlineData(
+        PowerPlatformApiRing.Test,
+        false,
+        "https://api.test.powerplatform.com/",
+        "https://2222222222222222222222222222222.2.environment.api.test.powerplatform.com/",
+        true)]
+    [InlineData(
+        PowerPlatformApiRing.Test,
+        true,
+        "https://api.test.powerplatform.com/",
+        "https://2222222222222222222222222222222.2.environment.api.test.powerplatform.com/",
+        true)]
+    public async Task CreateUploadDeployUpdate_UsesNativeRoutingAndVerifiedEnvironmentCoordinates(
         PowerPlatformApiRing ring,
         bool useStoredGlobalEndpoint,
         string globalEndpoint,
-        string environmentEndpoint)
+        string environmentEndpoint,
+        bool usePersonalDevOverrides)
     {
         var target = PowerPlatformApiRingSelection.TargetFor(ring);
         var profiles = InMemoryAuthProfileStore.SignedOut();
@@ -176,15 +197,30 @@ public sealed class PublicAmsWorkflowTests
                 PowerPlatformApiPermissions.AppsRead,
                 PowerPlatformApiPermissions.AppsUpdate),
         };
-        var agentAdapter = new AmsAgentCreationAdapter(http, tokens);
-        var deploymentAdapter = new AmsDeploymentAdapter(http, tokens);
-        var create = new AgentCreateService(new AgentCreationTarget(), environments, agentAdapter);
-        var upload = new AgentPackageUploadService(
-            environments,
-            deploymentAdapter,
-            new AmsPackagePublicationAdapter(http, tokens));
-        var deploy = new AgentDeployService(target, environments, deploymentAdapter, deploymentAdapter);
-        var packagePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.zip");
+        var services = new ServiceCollection();
+        Program.AddAmsServices(
+            services,
+            target,
+            setting => usePersonalDevOverrides ? setting switch
+            {
+                "AH_CLI_AMS_ENDPOINT" => NativeAmsRoutingTests.ControlPlane,
+                "AH_CLI_AMSDP_ENDPOINT" => NativeAmsRoutingTests.DataPlane,
+                _ => null,
+            } : null,
+            () => http);
+        services.AddAgentHostAuthentication(new AgentHostAuthOptions
+        {
+            ConfigDirectory = AppContext.BaseDirectory,
+            Cloud = target.Cloud,
+            InteractionAllowed = false,
+        }, target);
+        services.AddSingleton<ITokenProvider>(tokens);
+        services.AddSingleton(environments);
+        using var provider = services.BuildServiceProvider();
+        var create = provider.GetRequiredService<AgentCreateService>();
+        var upload = provider.GetRequiredService<AgentPackageUploadService>();
+        var deploy = provider.GetRequiredService<AgentDeployService>();
+        var packagePath = Path.Combine(AppContext.BaseDirectory, $"ams-routing-{Guid.NewGuid():N}.zip");
         try
         {
             await File.WriteAllBytesAsync(packagePath, packageBytes);
@@ -228,17 +264,53 @@ public sealed class PublicAmsWorkflowTests
 
             var environmentOrigin = new Uri(environmentEndpoint).GetLeftPart(UriPartial.Authority);
             var globalOrigin = new Uri(globalEndpoint).GetLeftPart(UriPartial.Authority);
+            Assert.Equal(7, handler.Requests.Count);
             Assert.All(handler.Requests, request =>
             {
-                var expectedOrigin = Resource(request.Uri) is "deployments" or Deployment
-                    ? globalOrigin
-                    : environmentOrigin;
+                var isDeployment = Resource(request.Uri) is "deployments" or Deployment;
+                var expectedOrigin = (usePersonalDevOverrides, isDeployment) switch
+                {
+                    (true, true) => NativeAmsRoutingTests.ControlPlane,
+                    (true, false) => NativeAmsRoutingTests.DataPlane,
+                    (false, true) => globalOrigin,
+                    (false, false) => environmentOrigin,
+                };
+                var prefix = usePersonalDevOverrides
+                    ? $"/agenthosting/tenants/{Tenant}/environments/{Home}/"
+                    : isDeployment ? $"/agenthosting/environments/{Home}/" : "/agenthosting/";
+                var suffix = (request.Method.Method, Resource(request.Uri)) switch
+                {
+                    ("POST", "agents") => "agents",
+                    ("GET", Agent) => $"agents/{Agent}",
+                    ("POST", "packages") => $"agents/{Agent}/packages",
+                    ("POST", "deployments") => $"agents/{Agent}/deployments",
+                    ("GET", Deployment) or ("PATCH", Deployment) =>
+                        $"agents/{Agent}/deployments/{Deployment}",
+                    _ => throw new InvalidOperationException("Unexpected AMS wire operation."),
+                };
                 Assert.Equal(expectedOrigin, request.Uri.GetLeftPart(UriPartial.Authority));
+                Assert.Equal(prefix + suffix, request.Uri.AbsolutePath);
+                Assert.Equal("?api-version=1", request.Uri.Query);
                 Assert.True(request.HasAuthorization);
                 Assert.True(Guid.TryParse(request.ClientRequestId, out _));
+                if (isDeployment && request.Method == HttpMethod.Post)
+                {
+                    using var body = JsonDocument.Parse(request.Body);
+                    Assert.Equal(Target, body.RootElement.GetProperty("environmentId").GetString());
+                }
             });
             Assert.All(tokens.Resources, audience => Assert.Equal(target.Audience, audience));
             Assert.All(tokens.Tenants, tenant => Assert.Equal(Tenant, tenant));
+            Assert.All(inventoryHandler.Requests, request =>
+                Assert.Equal(globalOrigin, request.Uri.GetLeftPart(UriPartial.Authority)));
+            var selected = await selections.GetActiveAsync(default);
+            Assert.NotNull(selected);
+            Assert.Equal(Tenant, selected.TenantId);
+            Assert.Equal(Home, selected.EnvironmentId);
+            Assert.Equal(target.Audience, selected.ApiAudience);
+            Assert.Equal(
+                useStoredGlobalEndpoint ? globalOrigin : environmentOrigin,
+                selected.ApiEndpoint.GetLeftPart(UriPartial.Authority));
         }
         finally
         {

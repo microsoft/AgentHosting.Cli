@@ -1110,12 +1110,57 @@ environment itself:
 | `AH_CLI_ALLOW_UNPROTECTED_CACHE` | Allow an unprotected token cache when a protected store is unavailable. |
 | `AH_CLI_FEATURES` | Semicolon-separated, case-insensitive feature names to enable over shipped defaults. Supported: `AmsFeatures`, `AzureBotServiceFeatures`, `IdentityFeatures`. |
 | `AH_CLI_TELEMETRY_OPTOUT` | Overrides the remembered telemetry preference. `1`/`true` opts out, `0`/`false` opts in; unset defers to `msagent telemetry`. |
-| `AH_CLI_AMS_ENDPOINT` | Agent Management Service **control plane** endpoint, used by deploy. Absolute HTTPS; deployment-configured, not settable per command. |
-| `AH_CLI_AMSDP_ENDPOINT` | Agent Management Service **data plane** endpoint, used by package upload and by `agent create` as a direct Dev-island override. Absolute HTTPS. |
+| `AH_CLI_AMS_ENDPOINT` | Explicit personal-DEV Agent Management Service **control plane** origin, used by revision deployment and its dependent deployment reads/updates. Requires the paired `AH_CLI_AMSDP_ENDPOINT` and an active Test-ring profile; see below. |
+| `AH_CLI_AMSDP_ENDPOINT` | Paired personal-DEV Agent Management Service **data plane** origin, used by CodeAgent creation, agent reads and package upload. Requires `AH_CLI_AMS_ENDPOINT`; see below. |
 | `NO_COLOR` | Disable colored output (same effect as `--no-color`). |
 | `CI` | Hide the progress spinner when set to anything other than `false` or `0`, as CI systems do. |
 
 The CLI supports TLS 1.3 and TLS 1.2.
+
+### Personal AMS DEV routing (controlled preview)
+
+For a source-build walkthrough covering internal feeds, native sign-in, downstream
+routing and first-deployment/package-update checks, see
+[DEV stamp testing with AMS-CMP and AMS-DP](../../../docs/dev-stamp-testing.md).
+
+With both endpoint overrides unset, native AMS commands retain their normal trusted Power Platform
+API front-door routes in every ring. For personal DEV validation only, the executable accepts this
+explicit pair of service origins:
+
+```text
+AH_CLI_AMS_ENDPOINT=https://parp-agentmanagementservice-<alias>.<region>-cm<NNN>.gateway.test.cm.powerapps.com
+AH_CLI_AMSDP_ENDPOINT=https://parp-agentmanagementservicedataplane-<alias>.<region>-il<NNN>.gateway.test.island.powerapps.com
+```
+
+Both settings are required together, with the same non-empty personal alias and region. Aliases use
+ASCII letters/digits with optional internal hyphens and must fit the service's DNS label; regions
+use 2–12 ASCII letters and cluster numbers exactly three digits. Matching is case-insensitive.
+Only HTTPS origins (optionally ending in `/`) are accepted: credentials, explicit ports (including
+`:443`), additional paths, query strings, fragments, whitespace, shared unaliased endpoints,
+cross-plane service hosts and arbitrary external hosts are rejected.
+Invalid/partial pairs and overrides outside the active profile's Test ring fail startup before any
+authentication, discovery or service request; they are never silently ignored. Select the Test
+profile first, before setting these overrides. Unset both overrides before switching to another
+ring or repairing sign-in state.
+
+CodeAgent creation, agent reads and opaque package publication use AMS-DP paths rooted at
+`/agenthosting/tenants/{verified-tenant}/environments/{verified-home}/agents`.
+Revision deployment, its pre-update read and conditional package update use AMS control-plane paths
+rooted at the same tenant/home-qualified agent path, followed by `/deployments`.
+Both retain `api-version=1`. The target environment remains the deployment body's separately
+verified environment; it does not replace the home environment in the route.
+
+These settings do **not** retarget environment inventory or persist DEV origins in environment
+selection. Discovery must still return a trusted environment in the native selected tenant; its
+verified IDs construct the direct service paths. Authentication still uses the native public
+client, MSAL/cache, and the Test profile's Power Platform API resource/audience—not either override
+host. Token audience/client/tenant/delegated-permission validation, HTTPS transport, redirect refusal
+and absence of automatic mutation retries are unchanged. The CLI never calls AHRG directly.
+
+`AmsFeatures` still ships off and is a command-availability control, not authentication or permission
+to mutate services. Endpoint configuration neither enables that feature nor grants access. Live
+creation/upload/deployment/update requires separate approval; offline routing tests are not live
+native DEV end-to-end evidence.
 
 ## Selecting a deployment ring
 

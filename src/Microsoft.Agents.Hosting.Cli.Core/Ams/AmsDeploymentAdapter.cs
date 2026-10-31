@@ -13,7 +13,8 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 
 /// <summary>
 /// Reads the selected Agent from AMS-DP and creates one PackageRevision-selected Deployment through
-/// AMS-CMP. Each call validates delegated-token claims before attaching authorization.
+/// AMS-CMP, using front-door routes by default or explicitly configured personal-DEV routes.
+/// Each call validates delegated-token claims before attaching authorization.
 /// </summary>
 public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymentTransport
 {
@@ -23,16 +24,19 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
     private readonly HttpClient _httpClient;
     private readonly ITokenProvider _tokens;
     private readonly PpapiTokenClaimsValidator _claimsValidator;
+    private readonly AmsDevEndpoints _devEndpoints;
 
     public AmsDeploymentAdapter(
         HttpClient httpClient,
         ITokenProvider tokens,
-        PpapiTokenClaimsValidator? claimsValidator = null)
+        PpapiTokenClaimsValidator? claimsValidator = null,
+        AmsDevEndpoints? devEndpoints = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _httpClient.Timeout = Timeout.InfiniteTimeSpan;
         _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens));
         _claimsValidator = claimsValidator ?? new PpapiTokenClaimsValidator();
+        _devEndpoints = devEndpoints ?? AmsDevEndpoints.Unconfigured;
     }
 
     public async Task<AmsAgentReadResult> GetAsync(
@@ -45,7 +49,7 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
         var response = await SendAsync(
             HttpMethod.Get,
             uri,
-            request.Endpoint,
+            _devEndpoints.DataPlane ?? request.Endpoint,
             request.Audience,
             request.TenantId,
             [PowerPlatformApiPermissions.AppsRead],
@@ -103,7 +107,7 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
         var response = await SendAsync(
             HttpMethod.Get,
             BuildExistingDeploymentUri(request),
-            request.Endpoint,
+            _devEndpoints.ControlPlane ?? request.Endpoint,
             request.Audience,
             request.TenantId,
             [PowerPlatformApiPermissions.AppsUpdate, PowerPlatformApiPermissions.AppsRead],
@@ -170,7 +174,7 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
         var response = await SendAsync(
             HttpMethod.Post,
             uri,
-            request.Endpoint,
+            _devEndpoints.ControlPlane ?? request.Endpoint,
             request.Audience,
             request.TenantId,
             [PowerPlatformApiPermissions.AppsUpdate],
@@ -214,7 +218,7 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
         var response = await SendAsync(
             HttpMethod.Patch,
             BuildExistingDeploymentUri(request),
-            request.Endpoint,
+            _devEndpoints.ControlPlane ?? request.Endpoint,
             request.Audience,
             request.TenantId,
             [PowerPlatformApiPermissions.AppsUpdate],
@@ -399,28 +403,38 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
         }
     }
 
-    private static Uri BuildAgentUri(AmsAgentReadTransportRequest request)
+    private Uri BuildAgentUri(AmsAgentReadTransportRequest request)
     {
+        var prefix = _devEndpoints.DataPlane is null
+            ? "agenthosting/"
+            : $"agenthosting/tenants/{Uri.EscapeDataString(request.TenantId)}/" +
+              $"environments/{Uri.EscapeDataString(request.EnvironmentId)}/";
         var relativePath =
-            $"agenthosting/agents/{Uri.EscapeDataString(request.AgentId)}?api-version=1";
-        return new Uri(EnsureTrailingSlash(request.Endpoint), relativePath);
+            $"{prefix}agents/{Uri.EscapeDataString(request.AgentId)}?api-version=1";
+        return new Uri(EnsureTrailingSlash(_devEndpoints.DataPlane ?? request.Endpoint), relativePath);
     }
 
-    private static Uri BuildDeploymentUri(AmsDeploymentCreateTransportRequest request)
+    private Uri BuildDeploymentUri(AmsDeploymentCreateTransportRequest request)
     {
+        var prefix = _devEndpoints.ControlPlane is null
+            ? "agenthosting/"
+            : $"agenthosting/tenants/{Uri.EscapeDataString(request.TenantId)}/";
         var relativePath =
-            $"agenthosting/environments/{Uri.EscapeDataString(request.HomeEnvironmentId)}/" +
+            $"{prefix}environments/{Uri.EscapeDataString(request.HomeEnvironmentId)}/" +
             $"agents/{Uri.EscapeDataString(request.AgentId)}/deployments?api-version=1";
-        return new Uri(EnsureTrailingSlash(request.Endpoint), relativePath);
+        return new Uri(EnsureTrailingSlash(_devEndpoints.ControlPlane ?? request.Endpoint), relativePath);
     }
 
-    private static Uri BuildExistingDeploymentUri(AmsDeploymentReadTransportRequest request)
+    private Uri BuildExistingDeploymentUri(AmsDeploymentReadTransportRequest request)
     {
+        var prefix = _devEndpoints.ControlPlane is null
+            ? "agenthosting/"
+            : $"agenthosting/tenants/{Uri.EscapeDataString(request.TenantId)}/";
         var relativePath =
-            $"agenthosting/environments/{Uri.EscapeDataString(request.HomeEnvironmentId)}/" +
+            $"{prefix}environments/{Uri.EscapeDataString(request.HomeEnvironmentId)}/" +
             $"agents/{Uri.EscapeDataString(request.AgentId)}/deployments/" +
             $"{Uri.EscapeDataString(request.DeploymentId)}?api-version=1";
-        return new Uri(EnsureTrailingSlash(request.Endpoint), relativePath);
+        return new Uri(EnsureTrailingSlash(_devEndpoints.ControlPlane ?? request.Endpoint), relativePath);
     }
 
     private static AgentDeployException MapFailure(
