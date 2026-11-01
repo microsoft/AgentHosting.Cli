@@ -77,7 +77,7 @@ function commentBody(root, file, base, summary) {
     'The code is the source of truth. This diagram differs from the audited implementation.', '',
     '**What the audit found:**', '', note || '_See the proposed diff below._', '',
     '**Proposed fix** (Mermaid rendering succeeded before publication):', '',
-    `${fence}diff`, diff.trimEnd(), fence, '',
+    `${fence}diff`, diff.replace(/\n$/, ''), fence, '',
     `Apply this change only to \`${file}\`; do not modify source code. Preserve its existing encoding.`,
     'This is an automated proposal; verify it against the audited code before applying it.',
   ].join('\n');
