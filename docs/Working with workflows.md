@@ -56,24 +56,41 @@ See `Workflow definition examples - important.md` in this folder for the full
 copy-paste template and a worked example, intended specifically for GitHub Copilot
 to follow when generating these files.
 
-## Deploy order (important — avoids a real failure)
+## Connection references and deployment
 
-Confirmed by direct testing: getting this order wrong causes `msagent agent deploy`
-to fail with a Dataverse duplicate-key error (`ExportKeyInvalidCreate`).
+The workflow must name the intended connection reference in both its definition
+and metadata. A reference does **not** have to be new: an existing reference for
+the same connector can be reused in the target environment.
 
-1. Write the workflow + tool files, referencing a **new, not-yet-existing** connection
-   reference logical name.
-2. Run `msagent agent deploy` — this creates the connection reference automatically
-   and activates the workflow. If a usable connection for that connector already
-   exists in the environment, it auto-binds immediately.
-3. Only if `msagent deployment connection list --json` shows `connectionsReady: false`
-   do you run `msagent deployment connection add`/`update` — and only **after** the
-   first successful deploy, never before.
+1. Back up or commit the authored workflow and tool files before connection or
+   deployment operations.
+2. Inspect `msagent deployment connection list --project <project> --agent-id <id>
+   --deployment-name <deployment> --json`. Do not assume an available connection
+   has already been bound to every reference.
+3. If a reference needs binding, use the exact approved reference and connection:
 
-Running `deployment connection add`/`update` for a connector *before* the workflow
-referencing it has been deployed can also silently delete local `workflows/*` source
-folders that the CLI considers already cloud-synced. Keep backups of anything
-authored but not yet deployed.
+   ```text
+   msagent deployment connection update --project <project> --agent-id <id> --deployment-name <deployment> --connection-reference <logical-name> --connection-id <connection-id> --json --non-interactive
+   ```
+
+   Binding can run before the workflow's first successful deploy. If the command
+   reports saved bindings but failed workflow activation, do not treat that as a
+   ready workflow; inspect the diagnostic and retry deployment after resolving it.
+4. Run `msagent agent deploy --project <project> --agent-id <id> --deployment-name
+   <deployment>` to save the agent draft, then inspect connection and workflow
+   readiness again. Verify authored files remain present and independently read
+   back the deployed workflow.
+
+On CLI `0.2.52-beta`, a fresh reference named only in the workflow did not
+automatically become bound during the first push, even with an owned connection
+available. The push returned `deploy-incomplete` with a missing-workflow
+dependency error. Binding that exact reference and retrying the draft deploy
+succeeded. Do not treat “deploy first, bind only after success” as a universal
+requirement, or a duplicate-key error from older testing as inevitable.
+
+Only use `deployment connection add` when a new reference is actually needed.
+Stop rather than guessing between ambiguous connection candidates. These draft
+deployment checks do not authorize connector execution or agent publication.
 
 ## Standalone workflows (`--agent-type MCSWorkflow`)
 

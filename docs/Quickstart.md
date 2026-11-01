@@ -21,7 +21,7 @@ msagent env select [environmentid]
 Create an agent locally in your directory. This will build out the initial components of a copilot studio agent on your machine. Nothing is deployed to copilot studio until later with the deploy command.
 
 ```
-msagent create --agent-type MCSAgent --name "Incident Management Agent" --description "helps manage issues" --initial-prompt "Support customers with logging their initial ticket and triage" --project "project1" --json
+msagent agent create --agent-type MCSAgent --name "Incident Management Agent" --description "helps manage issues" --initial-prompt "Support customers with logging their initial ticket and triage" --project "project1" --json
 ```
 
 This command creates a new agent, creates a new 'project' called project1, and scaffolds all the required files for your agent
