@@ -29,7 +29,7 @@ The files and folders that should be committed are the agent definition itself, 
 - Topics, `capabilities/` (tools), `knowledge/` and `workflows/`, where present
 - `infrastructure/connections/*.sync.yaml` (the connection references, not the connections themselves)
 
-The ignored files can be recreated when they do not exist by running `msagent agent init`. This looks for the definition files and creates the missing project configuration files that must be available to deploy and use other commands.
+The local project registration can be recreated by running `msagent agent init` against the existing definition files. This registers a new, disconnected local record; it does not restore a connection to a previously deployed cloud agent or recreate its sync baseline. Commands that require a cloud connection, such as `agent pull`, cannot run on that disconnected record.
 
 ## Create a new repo with your copilot studio agent definition
 
@@ -45,7 +45,15 @@ The ignored files can be recreated when they do not exist by running `msagent ag
 2. Clone your repo into a new working file directory on your local machine
 3. Sign into the CLI and connect to the environment you want to establish connection with using `command: msagent env list` and `command: msagent env select <environment-id>`
 4. Run msagent agent init `command: msagent agent init -an "<agent-name>" -mas <path-to-existing-project>`
-5. Your project files should have been reestablished
+5. Your local registration has been reestablished, but it is disconnected from Copilot Studio even if this definition was deployed previously.
+
+To work with an existing cloud agent, clone it through the supported CLI operation into a new, empty project directory:
+
+```
+msagent agent create --agent-type MCSAgent --mcs-clone-agent-id "<cloud-agent-id>" --mcs-clone-environment-id "<environment-id>" --project "<new-empty-project-directory>"
+```
+
+The clone establishes cloud tracking and a sync baseline. Compare the source-controlled definition with that connected workspace and review any changes before deploying. Do not overwrite an occupied workspace or assume that a matching schema name reconnects an initialized record.
 
 ## Managing conflicts if the remote Copilot Studio Agent has changed since you last pulled the definition
 
@@ -63,8 +71,8 @@ To update local out-of-sync folders and get your local folder back in sync to wo
 2. Ensure you have got your local-out-of-sync working folder backed up with a git commit and to your remote in the scenario you ever need to roll back
 3. This path is assuming the source of truth in this scenario is on the cloud and you’re going to overwrite your local changes
 4. Ensure your authenticated with the msagent CLI and your environment is selected which has the copilot studio agent you wish to sync with
-5. If you have not got an active project with config file setup run `command: msagent agent init -an "<agent-name>" -mas <path-to-existing-project>`
-6. Run `command: msagent agent pull -an "<agent-name>" -p <project-path>` to pull down and *overwrite* your local files with the definition from the cloud
+5. Confirm that the project is connected to the intended cloud agent. If it is disconnected, use the cloud-clone procedure above; running `agent init` does not reconnect it.
+6. In the connected project, run `command: msagent agent pull -an "<agent-name>" -p <project-path>` to retrieve the cloud definition, then review any reported conflicts before continuing.
 
 Use  git diff  /  git status  to see exactly what differs between your last commit and the pulled cloud state.
 
@@ -77,5 +85,5 @@ Your organization will have it's own process for managing PRs in a repo, interac
 ### Notes
 
 - The local  agentId  in  .config/agent.config.json  is a local tracking handle — it can differ after re-init and it's fine.
-- Agent init relinks via schema name, restoring the correct  mcsAgentId  pointing at the real cloud agent — but only if the agent was deployed at least once. If it was only ever  agent created (Saved, never deployed) , init  creates a fully disconnected new agent instead. No duplicate cloud agent gets created either way.
-- Deployment records (e.g.  dev1 ) are not restored by  init  -  so you have to manually  msagent deployment create -dn dev1 -dt dev  again. Deploying after that correctly targets/updates the same cloud agent though a new deployment id is generated server-side and "Last deployed" history resets.
+- `agent init` registers a new disconnected record whether or not the definition was deployed previously. It does not restore `mcsAgentId` by schema name or create a cloud agent. A subsequent `agent pull` fails with `workspace-disconnected` until the project has a supported cloud connection.
+- Deployment records are not restored by `init`. Do not assume that creating a deployment for an initialized record will target the old cloud agent. For an existing cloud agent, use the clone-generated tracking and inspect `msagent deployment list` before selecting a deployment.
