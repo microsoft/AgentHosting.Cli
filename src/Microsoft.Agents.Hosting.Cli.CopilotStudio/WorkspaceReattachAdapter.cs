@@ -85,7 +85,8 @@ public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort
                 _synchronizer.ClearComponentSyncBaselines(workspaceFolder);
             }
 
-            var pushedConnectors = await _synchronizer.PushCustomConnectorsAsync(workspaceFolder, _dataverseClient, cancellationToken).ConfigureAwait(false);
+            var pushedConnectors = await _synchronizer.PushCustomConnectorsAsync(workspaceFolder, _dataverseClient, cancellationToken, overwriteRemoteChanges: true).ConfigureAwait(false);
+            refusals.AddRange(pushedConnectors.FailureReasons);
 
             var provisionedReferences = await DeclaredConnectionReferences.ProvisionAsync(
                 command.ProjectDirectory, _synchronizer, _dataverseClient,
@@ -94,7 +95,7 @@ public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort
             var (workflowResponses, cloudFlowMetadata) = await _synchronizer.UpsertWorkflowForAgentAsync(workspaceFolder, _dataverseClient, syncInfo.AgentId, cancellationToken, WorkflowActivationMode.DraftWhenConnectionReferencesExist).ConfigureAwait(false);
             refusals.AddRange(SyncResponseGuards.DescribeRefusedWorkflows(workflowResponses));
 
-            var (promptResponses, aiPromptMetadata) = await _synchronizer.UpsertAIPromptsForAgentAsync(workspaceFolder, _dataverseClient, syncInfo.AgentId, cancellationToken).ConfigureAwait(false);
+            var (promptResponses, aiPromptMetadata) = await _synchronizer.UpsertAIPromptsForAgentAsync(workspaceFolder, _dataverseClient, syncInfo.AgentId, cancellationToken, overwriteRemoteChanges: true).ConfigureAwait(false);
             refusals.AddRange(SyncResponseGuards.DescribeRefusedPrompts(promptResponses));
 
             var seededFlowMetadata = DeclaredConnectionReferences.WithProvisioned(cloudFlowMetadata, provisionedReferences);

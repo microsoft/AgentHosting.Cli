@@ -130,14 +130,7 @@ public sealed record CopilotPushOutcome
     /// <summary>The components that were uploaded.</summary>
     public required IReadOnlyList<CopilotChange> Changes { get; init; }
 
-    /// <summary>
-    /// How many workflows and AI prompts the service was actually asked to store.
-    ///
-    /// The component change set does not describe AI prompts, so a prompt-only edit produces no
-    /// component changes at all. Counting what the upserts sent is what keeps such an edit from being
-    /// reported as nothing to do. The library skips a prompt whose content is unchanged, so a resource
-    /// only appears here when it genuinely differed from the cloud.
-    /// </summary>
+    /// <summary>How many workflows the service was asked to store that <see cref="Changes"/> does not already report.</summary>
     public int AuxiliaryChangeCount { get; init; }
 
     /// <summary>

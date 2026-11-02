@@ -2,15 +2,16 @@ using System.Net;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
-public sealed class SyncWorkspaceAdapterVerificationTests
+public sealed class SyncWorkspaceAdapterPushOutcomeTests
 {
     private static CopilotWorkspaceInfo Workspace() => new()
     {
-        WorkspacePath = Path.Combine(Path.GetTempPath(), "ah-verify-tests"),
+        WorkspacePath = Path.Combine(Path.GetTempPath(), "ah-push-outcome-tests"),
         AgentId = "11111111-2222-3333-4444-555555555555",
         EnvironmentId = "env-1",
         DataverseOrganization = new Uri("https://contoso.crm.dynamics.com/"),
@@ -27,126 +28,19 @@ public sealed class SyncWorkspaceAdapterVerificationTests
             new CopilotChangeMapper());
 
     [Fact]
-    public async Task Push_ConfirmsWhatTheServiceStored()
+    public async Task Push_DoesNotCloneTheAgentBackAfterSendingIt()
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.VerifyPushCalls);
-    }
-
-    [Fact]
-    public async Task Push_ConfirmsAfterTheContentIsSent()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(
-            [nameof(IWorkspaceSynchronizer.PushLocalChangesAsync), nameof(IWorkspaceSynchronizer.VerifyPushAsync)],
-            synchronizer.Calls.Where(call => call is nameof(IWorkspaceSynchronizer.PushLocalChangesAsync) or nameof(IWorkspaceSynchronizer.VerifyPushAsync)));
-    }
-
-    [Fact]
-    public async Task Push_WhenEverythingWasStored_WarnsAboutNothing()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
+        synchronizer.LocalChanges.Add(new Change { Name = "Greeting", SchemaName = "cr_agent.topic.Greeting", ChangeKind = "DialogComponent", ChangeType = ChangeType.Update });
 
         var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
 
+        Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.CloneChangesAsync), synchronizer.Calls);
         Assert.Empty(outcome.Warnings);
     }
 
     [Fact]
-    public async Task Push_WhenTheServiceDidNotStoreEverything_Warns()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer
-        {
-            VerificationReturns = new PushVerificationResult
-            {
-                IsFullyAccepted = false,
-                EntityTypes = [new EntityTypeVerification { ChangeKind = "topic", PushedCount = 3, VerifiedCount = 1 }],
-            },
-        };
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Contains(outcome.Warnings, warning => warning.Contains("topic", StringComparison.Ordinal) && warning.Contains("2 of 3", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task Push_WhenTheServiceReportsAMismatchTheWorkspaceCannotSee_StillWarns()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer
-        {
-            VerificationReturns = new PushVerificationResult
-            {
-                IsFullyAccepted = false,
-                EntityTypes = [new EntityTypeVerification { ChangeKind = "BotEntity", PushedCount = 1, VerifiedCount = 0 }],
-            },
-        };
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(["The service did not report 1 of 1 pushed BotEntity change(s) as stored."], outcome.Warnings);
-    }
-
-    [Fact]
-    public async Task Push_WhenTheServiceReportsSeveralMismatches_WarnsAboutEveryKind()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer
-        {
-            VerificationReturns = new PushVerificationResult
-            {
-                IsFullyAccepted = false,
-                EntityTypes =
-                [
-                    new EntityTypeVerification { ChangeKind = "BotEntity", PushedCount = 1, VerifiedCount = 0 },
-                    new EntityTypeVerification { ChangeKind = "topic", PushedCount = 2, VerifiedCount = 0 },
-                ],
-            },
-        };
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(
-            [
-                "The service did not report 1 of 1 pushed BotEntity change(s) as stored.",
-                "The service did not report 2 of 2 pushed topic change(s) as stored.",
-            ],
-            outcome.Warnings);
-    }
-
-    [Fact]
-    public async Task Push_ConfirmsTheServiceWithoutRereadingTheWorkspace()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer
-        {
-            VerificationReturns = new PushVerificationResult
-            {
-                IsFullyAccepted = false,
-                EntityTypes = [new EntityTypeVerification { ChangeKind = "topic", PushedCount = 1, VerifiedCount = 0 }],
-            },
-        };
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.Calls.Count(call => call == nameof(IWorkspaceSynchronizer.GetLocalChangesAsync)));
-    }
-
-    [Fact]
-    public async Task Push_WhenConfirmationItselfFails_WarnsRatherThanFailing()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer { VerifyPushThrows = new InvalidOperationException("the service is unavailable") };
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Contains(outcome.Warnings, warning => warning.Contains("could not be confirmed", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task Push_ReportsTheAuxiliaryResourcesItSent()
+    public async Task Push_CountsTheWorkflowsItSentButNotThePrompts()
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
         synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Escalate" });
@@ -154,7 +48,22 @@ public sealed class SyncWorkspaceAdapterVerificationTests
 
         var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
 
-        Assert.Equal(2, outcome.AuxiliaryChangeCount);
+        Assert.Equal(1, outcome.AuxiliaryChangeCount);
+    }
+
+    [Fact]
+    public async Task Push_DoesNotCountAWorkflowTwiceWhenItIsAlsoAReportedChange()
+    {
+        var workflowId = Guid.NewGuid();
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+        synchronizer.LocalChanges.Add(new Change { Name = "Escalate", SchemaName = $"{WorkflowLayout.SchemaNamePrefix}{workflowId}", ChangeKind = "CloudFlowDefinition", ChangeType = ChangeType.Update });
+        synchronizer.LocalChanges.Add(new Change { Name = "Escalate", SchemaName = $"{WorkflowLayout.SchemaNamePrefix}{workflowId}.metadata", ChangeKind = "CloudFlowDefinition", ChangeType = ChangeType.Update });
+        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowId = workflowId, WorkflowName = "Escalate" });
+
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+
+        Assert.Equal($"{WorkflowLayout.SchemaNamePrefix}{workflowId}", Assert.Single(outcome.Changes).SchemaName);
+        Assert.Equal(0, outcome.AuxiliaryChangeCount);
     }
 
     [Fact]

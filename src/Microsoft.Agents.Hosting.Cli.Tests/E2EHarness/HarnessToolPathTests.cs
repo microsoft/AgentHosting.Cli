@@ -9,15 +9,13 @@ public sealed class HarnessToolPathTests
 
     private static readonly string DeepestNativeAsset = Path.Combine(
         ".store",
-        "Microsoft.Agents.Hosting.Cli",
-        "Microsoft.Agents.Hosting.Cli",
-        "1.0.0.0",
+        "microsoft.agents.hosting.cli",
+        "0.2.52-beta-gab25938f2f",
+        "microsoft.agents.hosting.cli.win-arm64",
+        "0.2.52-beta-gab25938f2f",
         "tools",
         "net10.0",
-        "any",
-        "runtimes",
-        "win-x64",
-        "native",
+        "win-arm64",
         "msalruntime.dll");
 
     [Fact]
@@ -75,6 +73,44 @@ public sealed class HarnessToolPathTests
         var nested = Path.Combine(root, "runtimes", "win-x64", "native");
         Directory.CreateDirectory(nested);
         File.WriteAllText(Path.Combine(nested, "msalruntime.dll"), string.Empty);
+
+        try
+        {
+            MsagentCliBuilder.VerifyNativeAssetsAreReachable(root);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AnUnreachableNativeAssetBesideTheManagedOnesIsReported()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"ahtool-{Guid.NewGuid():N}");
+        var nested = Path.Combine(root, "tools", "net10.0", "win-x64");
+        Directory.CreateDirectory(nested);
+        File.WriteAllText(Path.Combine(nested, new string('a', MsagentCliBuilder.MaximumNativeAssetPathLength - nested.Length) + ".dll"), string.Empty);
+
+        try
+        {
+            var failure = Assert.Throws<E2EException>(() => MsagentCliBuilder.VerifyNativeAssetsAreReachable(root));
+
+            Assert.Contains("Windows loader", failure.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AManagedAssemblyBeyondTheLimitIsNotANativeAsset()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"ahtool-{Guid.NewGuid():N}");
+        var nested = Path.Combine(root, "tools", "net10.0", "win-x64");
+        Directory.CreateDirectory(nested);
+        File.Copy(typeof(MsagentCliBuilder).Assembly.Location, Path.Combine(nested, new string('a', MsagentCliBuilder.MaximumNativeAssetPathLength - nested.Length) + ".dll"));
 
         try
         {

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Reflection.PortableExecutable;
+using System.Xml.Linq;
 
 namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 
@@ -23,6 +25,25 @@ public sealed class MsagentCliBuilder
     public static IReadOnlyList<string> ExecutableNames => [ExecutableName, LegacyExecutableName];
 
     private static string Executable(string commandName) => OperatingSystem.IsWindows() ? commandName + ".exe" : commandName;
+
+    /// <summary>Finds the installed executable, which a runtime-specific tool keeps in its store rather than beside its command shim, or null when there is none.</summary>
+    /// <param name="toolDirectory">The directory the tool was installed into.</param>
+    public static string? FindInstalledBinary(string toolDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolDirectory);
+
+        return ExecutableNames.Select(name => Path.Combine(toolDirectory, name)).FirstOrDefault(File.Exists) ?? FindStoredEntryPoint(Path.Combine(toolDirectory, ".store"));
+    }
+
+    private static string? FindStoredEntryPoint(string storeDirectory) => Directory.Exists(storeDirectory)
+        ? Directory.EnumerateFiles(storeDirectory, "DotnetToolSettings.xml", SearchOption.AllDirectories)
+            .SelectMany(settings => XDocument.Load(settings).Descendants("Command")
+                .Where(command => (string?)command.Attribute("Runner") == "executable")
+                .Select(command => (string?)command.Attribute("EntryPoint"))
+                .OfType<string>()
+                .Select(entryPoint => Path.Combine(Path.GetDirectoryName(settings) ?? storeDirectory, entryPoint)))
+            .FirstOrDefault(File.Exists)
+        : null;
 
     private readonly string _sourceRoot;
     private readonly Transcript _transcript;
@@ -60,11 +81,9 @@ public sealed class MsagentCliBuilder
     /// <param name="toolDirectory">The directory the tool was installed into.</param>
     public static void VerifyNativeAssetsAreReachable(string toolDirectory)
     {
-        var marker = $"{Path.DirectorySeparatorChar}native{Path.DirectorySeparatorChar}";
-
         var unreachable = Directory
             .EnumerateFiles(toolDirectory, "*", SearchOption.AllDirectories)
-            .Where(path => path.Contains(marker, StringComparison.OrdinalIgnoreCase) && path.Length > MaximumNativeAssetPathLength)
+            .Where(path => path.Length > MaximumNativeAssetPathLength && IsNativeAsset(path))
             .ToArray();
 
         if (unreachable.Length == 0)
@@ -76,6 +95,27 @@ public sealed class MsagentCliBuilder
             $"The tool installed into {toolDirectory}, where {unreachable.Length} native asset(s) exceed the "
             + $"{MaximumNativeAssetPathLength}-character limit the Windows loader applies. The loader would "
             + $"silently fall back to PATH and bind a different library. Longest: {unreachable.MaxBy(path => path.Length)}");
+    }
+
+    private static bool IsNativeAsset(string path) => path.Contains($"{Path.DirectorySeparatorChar}native{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".so" or ".dylib" => true,
+        ".dll" => !IsManagedAssembly(path),
+        _ => false,
+    };
+
+    private static bool IsManagedAssembly(string path)
+    {
+        try
+        {
+            using var reader = new PEReader(File.OpenRead(path));
+
+            return reader.HasMetadata;
+        }
+        catch (BadImageFormatException)
+        {
+            return false;
+        }
     }
 
     private async Task<MsagentBinary> PackAndInstallAsync(string runDirectory, string toolDirectory, CancellationToken cancellationToken)
@@ -142,17 +182,20 @@ public sealed class MsagentCliBuilder
     }
 
     /// <summary>
-    /// The version <c>dotnet pack</c> just produced, which the install is then pinned to.
+    /// The version of the tool package <c>dotnet pack</c> just produced, which the install is then pinned to; the runtime-specific packages packed beside it are skipped.
     /// </summary>
     /// <param name="packageDirectory">The directory the package was written to.</param>
     public static string PackedVersion(string packageDirectory)
     {
-        var packages = Directory.GetFiles(packageDirectory, $"{PackageId}.*.nupkg");
+        var versions = Directory.GetFiles(packageDirectory, $"{PackageId}.*.nupkg")
+            .Select(package => Path.GetFileNameWithoutExtension(package)[(PackageId.Length + 1)..])
+            .Where(version => char.IsAsciiDigit(version.FirstOrDefault()))
+            .ToArray();
 
-        return packages.Length == 1
-            ? Path.GetFileNameWithoutExtension(packages[0])[(PackageId.Length + 1)..]
+        return versions.Length == 1
+            ? versions[0]
             : throw new E2EException(
-                $"Expected exactly one {PackageId} package in {packageDirectory}, found {packages.Length}. "
+                $"Expected exactly one {PackageId} package in {packageDirectory}, found {versions.Length}. "
                 + "The install is pinned to the packed version, so it cannot choose between them.");
     }
 
@@ -162,8 +205,8 @@ public sealed class MsagentCliBuilder
     /// <para><c>--add-source</c> adds a feed rather than replacing the configured ones, and
     /// <c>dotnet tool install</c> then resolves the highest version across all of them. A feed
     /// publishing a newer build of this same package therefore wins, and the suite silently exercises
-    /// the published tool instead of the working tree. The package is a self-contained
-    /// <c>DotnetTool</c> with no dependencies, so clearing every other source costs nothing.</para>
+    /// the published tool instead of the working tree. The tool package and the runtime-specific
+    /// packages it installs are all packed into this directory, so clearing every other source costs nothing.</para>
     /// </summary>
     /// <param name="packageDirectory">The directory holding the packed package.</param>
     public static string WriteIsolatedFeed(string packageDirectory)
@@ -245,14 +288,7 @@ public sealed class MsagentCliBuilder
         Directory.CreateDirectory(toolDirectory);
     }
 
-    private static string LocateInstalledTool(string toolDirectory)
-    {
-        var path = Path.Combine(toolDirectory, ExecutableName);
-
-        return File.Exists(path)
-            ? path
-            : throw new E2EException($"The tool installed but {ExecutableName} is not in {toolDirectory}.");
-    }
+    private static string LocateInstalledTool(string toolDirectory) => FindInstalledBinary(toolDirectory) ?? throw new E2EException($"The tool installed but neither {ExecutableName} nor a stored entry point is in {toolDirectory}.");
 
     private async Task RunToolchainAsync(string fileName, IReadOnlyList<string> arguments, string what, CancellationToken cancellationToken)
     {

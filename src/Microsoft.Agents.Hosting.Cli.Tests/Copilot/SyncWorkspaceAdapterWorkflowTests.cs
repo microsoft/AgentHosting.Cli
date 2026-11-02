@@ -1,6 +1,8 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
@@ -76,7 +78,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     }
 
     [Fact]
-    public async Task Push_UploadsCustomConnectorsEvenWithNoComponentChange()
+    public async Task Push_RunsTheConnectorPushWithoutCountingUnchangedConnectors()
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
         synchronizer.ConnectorRowIds["cre98_weather"] = Guid.NewGuid();
@@ -84,9 +86,115 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.Contains(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
-        Assert.Equal(1, outcome.AuxiliaryChangeCount);
+        Assert.Equal(0, outcome.AuxiliaryChangeCount);
         Assert.Empty(outcome.Changes);
     }
+
+    [Fact]
+    public async Task Push_ReportsAPushedConnectorOnceAsAChange()
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+        synchronizer.LocalChanges.Add(ConnectorChange());
+        synchronizer.ConnectorRowIds["cre98_weather"] = ConnectorId;
+
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+
+        Assert.Equal(CustomConnectorLayout.ChangeKind, Assert.Single(outcome.Changes).ComponentType);
+        Assert.Equal(0, outcome.AuxiliaryChangeCount);
+    }
+
+    [Fact]
+    public async Task Push_DoesNotReportAnyFileOfAConnectorThatFailedToSave()
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+        synchronizer.LocalChanges.Add(ConnectorChange());
+        synchronizer.LocalChanges.Add(ConnectorChange() with { Uri = $"connectors/Weather_{ConnectorId}/openapidefinition.json", SchemaName = $"{CustomConnectorLayout.SchemaNamePrefix}{ConnectorId}.openapidefinition" });
+        synchronizer.LocalChanges.Add(new Change { Name = "Greeting", SchemaName = "cre98_agent.topic.Greeting", ChangeKind = "DialogComponent", ChangeType = ChangeType.Update });
+        synchronizer.FailedConnectors.Add(ConnectorChange() with { ChangeType = ChangeType.Update });
+
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+
+        Assert.Equal("cre98_agent.topic.Greeting", Assert.Single(outcome.Changes).SchemaName);
+    }
+
+    [Fact]
+    public async Task Push_ReportsANewConnectorOnceHoweverManyOfItsFilesChanged()
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+        synchronizer.LocalChanges.Add(ConnectorChange());
+        synchronizer.LocalChanges.Add(ConnectorChange() with { Uri = $"connectors/Weather_{ConnectorId}/openapidefinition.json", SchemaName = $"{CustomConnectorLayout.SchemaNamePrefix}{ConnectorId}.openapidefinition" });
+        synchronizer.LocalChanges.Add(ConnectorChange() with { Uri = $"connectors/Weather_{ConnectorId}/connectionparameters.json", SchemaName = $"{CustomConnectorLayout.SchemaNamePrefix}{ConnectorId}.connectionparameters" });
+
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+
+        var change = Assert.Single(outcome.Changes);
+        Assert.Equal(CustomConnectorLayout.SchemaNamePrefix + ConnectorId, change.SchemaName);
+        Assert.Equal(CopilotChangeKinds.Created, change.Kind);
+    }
+
+    [Fact]
+    public async Task Push_ReportsANewFileInAnExistingConnectorAsAnUpdateToTheConnector()
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+        synchronizer.LocalChanges.Add(ConnectorChange() with { Uri = $"connectors/Weather_{ConnectorId}/iconblob.png", SchemaName = $"{CustomConnectorLayout.SchemaNamePrefix}{ConnectorId}.iconblob" });
+
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+
+        var change = Assert.Single(outcome.Changes);
+        Assert.Equal(CustomConnectorLayout.SchemaNamePrefix + ConnectorId, change.SchemaName);
+        Assert.Equal(CopilotChangeKinds.Updated, change.Kind);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Push_LetsTheConnectorPushOverwriteTheCloudOnlyWhenAskedTo(bool overwrite)
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+
+        await Create(synchronizer).PushAsync(Workspace(), overwrite, CancellationToken.None);
+
+        Assert.Equal(overwrite, synchronizer.LastConnectorPushOverwroteRemoteChanges);
+    }
+
+    [Fact]
+    public async Task Push_WhenAConnectorIsNotSaved_WarnsWithTheReason()
+    {
+        const string reason = "Failed to push custom connector 'Weather': it changed in the cloud since it was last synced. Get the latest changes, or overwrite the cloud copy.";
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+        synchronizer.FailedConnectors.Add(ConnectorChange() with { ChangeType = ChangeType.Update });
+        synchronizer.ConnectorFailureReasons.Add(reason);
+
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+
+        Assert.Equal(reason, Assert.Single(outcome.Warnings));
+    }
+
+    [Fact]
+    public async Task Push_DoesNotReportAnyFileOfAWorkflowTheServiceRefused()
+    {
+        var workflowId = Guid.NewGuid();
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+        synchronizer.LocalChanges.Add(new Change { Name = "Escalate", SchemaName = $"{WorkflowLayout.SchemaNamePrefix}{workflowId}", ChangeKind = "CloudFlowDefinition", ChangeType = ChangeType.Update });
+        synchronizer.LocalChanges.Add(new Change { Name = "Escalate", SchemaName = $"{WorkflowLayout.SchemaNamePrefix}{workflowId}.metadata", ChangeKind = "CloudFlowDefinition", ChangeType = ChangeType.Update });
+        synchronizer.LocalChanges.Add(new Change { Name = "Greeting", SchemaName = "cre98_agent.topic.Greeting", ChangeKind = "DialogComponent", ChangeType = ChangeType.Update });
+        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowId = workflowId, WorkflowName = "Escalate", ErrorMessage = "the flow definition is invalid" });
+
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+
+        Assert.Equal("cre98_agent.topic.Greeting", Assert.Single(outcome.Changes).SchemaName);
+    }
+
+    private static readonly Guid ConnectorId = Guid.Parse("6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b");
+
+    private static Change ConnectorChange() => new()
+    {
+        Name = "Weather",
+        Uri = $"connectors/Weather_{ConnectorId}/metadata.yml",
+        ChangeType = ChangeType.Create,
+        ChangeKind = CustomConnectorLayout.ChangeKind,
+        SchemaName = CustomConnectorLayout.SchemaNamePrefix + ConnectorId,
+    };
 
     [Fact]
     public async Task Push_UploadsCustomConnectorsBeforeUpsertingWorkflows()

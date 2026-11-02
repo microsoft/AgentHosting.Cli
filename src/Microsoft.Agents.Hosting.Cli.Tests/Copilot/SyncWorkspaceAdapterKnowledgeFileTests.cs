@@ -276,10 +276,12 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
     public Task<(ImmutableArray<Change> Changes, ImmutableArray<Change> UnreadableChanges)> GetStandaloneWorkflowChangesForDiscardAsync(DirectoryPath workspaceFolder, CancellationToken cancellationToken) =>
         Task.FromResult((ImmutableArray<Change>.Empty, ImmutableArray<Change>.Empty));
 
+    public List<Change> LocalChanges { get; } = [];
+
     public Task<(PvaComponentChangeSet, ImmutableArray<Change>)> GetLocalChangesAsync(DirectoryPath workspaceFolder, DefinitionBase workspaceDefinition, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, CancellationToken cancellationToken)
     {
         Calls.Add(nameof(GetLocalChangesAsync));
-        return Task.FromResult((new PvaComponentChangeSet(null, null, null), ImmutableArray<Change>.Empty));
+        return Task.FromResult((new PvaComponentChangeSet(null, null, null), LocalChanges.ToImmutableArray()));
     }
 
     public DiscardResult DiscardLocalChanges(DirectoryPath workspaceFolder, IReadOnlyCollection<Change> changes) => new();
@@ -354,10 +356,13 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
 
     public Queue<Exception> PushLocalChangesFailures { get; } = new();
 
-    public Task PushLocalChangesAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, DefinitionBase workspaceDefinition, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, CloudFlowMetadata? cloudFlowMetadata, ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts, CancellationToken cancellationToken, AuthoringOperationContextBase? contentSaveContextOverride = null)
+    public bool? LastOverwriteRemoteChanges { get; private set; }
+
+    public Task PushLocalChangesAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, DefinitionBase workspaceDefinition, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, CloudFlowMetadata? cloudFlowMetadata, ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts, CancellationToken cancellationToken, AuthoringOperationContextBase? contentSaveContextOverride = null, bool overwriteRemoteChanges = false)
     {
         PushLocalChangesCalls++;
         LastPushedPrompts = aiPrompts;
+        LastOverwriteRemoteChanges = overwriteRemoteChanges;
         Calls.Add(nameof(PushLocalChangesAsync));
 
         if (PushLocalChangesFailures.Count > 0)
@@ -407,10 +412,13 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
         return Task.FromResult(FetchedPromptMetadata.ToImmutableArray());
     }
 
-    public Task<(ImmutableArray<SyncDataverseClient.AIPromptResponse>, ImmutableArray<SyncDataverseClient.AIPromptMetadata>)> UpsertAIPromptsForAgentAsync(DirectoryPath workspaceFolder, ISyncDataverseClient dataverseClient, Guid? agentId, CancellationToken cancellationToken)
+    public bool? LastPromptUpsertOverwroteRemoteChanges { get; private set; }
+
+    public Task<(ImmutableArray<SyncDataverseClient.AIPromptResponse>, ImmutableArray<SyncDataverseClient.AIPromptMetadata>)> UpsertAIPromptsForAgentAsync(DirectoryPath workspaceFolder, ISyncDataverseClient dataverseClient, Guid? agentId, CancellationToken cancellationToken, bool overwriteRemoteChanges = false)
     {
         UpsertAIPromptsCalls++;
         Calls.Add(nameof(UpsertAIPromptsForAgentAsync));
+        LastPromptUpsertOverwroteRemoteChanges = overwriteRemoteChanges;
         return Task.FromResult((PromptResponses.ToImmutableArray(), PromptMetadata.ToImmutableArray()));
     }
 
@@ -464,11 +472,18 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
 
     public Dictionary<string, Guid> ConnectorRowIds { get; } = [];
 
-    public Task<CustomConnectorPushResult> PushCustomConnectorsAsync(DirectoryPath workspaceFolder, ISyncDataverseClient dataverseClient, CancellationToken cancellationToken)
+    public List<Change> FailedConnectors { get; } = [];
+
+    public List<string> ConnectorFailureReasons { get; } = [];
+
+    public bool? LastConnectorPushOverwroteRemoteChanges { get; private set; }
+
+    public Task<CustomConnectorPushResult> PushCustomConnectorsAsync(DirectoryPath workspaceFolder, ISyncDataverseClient dataverseClient, CancellationToken cancellationToken, bool overwriteRemoteChanges = false)
     {
         Calls.Add(nameof(PushCustomConnectorsAsync));
+        LastConnectorPushOverwroteRemoteChanges = overwriteRemoteChanges;
 
-        return Task.FromResult(new CustomConnectorPushResult { PushedRowIds = ConnectorRowIds });
+        return Task.FromResult(new CustomConnectorPushResult { PushedRowIds = ConnectorRowIds, Failed = FailedConnectors, FailureReasons = ConnectorFailureReasons });
     }
 
     public Task<DefinitionBase> ReadWorkspaceDefinitionAsync(DirectoryPath workspaceFolder, CancellationToken cancellationToken, bool checkKnowledgeFiles = false)
@@ -477,22 +492,6 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
         Calls.Add(nameof(ReadWorkspaceDefinitionAsync));
 
         return ReadWorkspaceDefinitionThrows is not null ? Task.FromException<DefinitionBase>(ReadWorkspaceDefinitionThrows) : Task.FromResult(DefinitionReturns ?? new BotDefinition());
-    }
-
-    public PushVerificationResult? VerificationReturns { get; init; }
-
-    public Exception? VerifyPushThrows { get; init; }
-
-    public int VerifyPushCalls { get; private set; }
-
-    public Task<PushVerificationResult> VerifyPushAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, CancellationToken cancellationToken)
-    {
-        VerifyPushCalls++;
-        Calls.Add(nameof(VerifyPushAsync));
-
-        return VerifyPushThrows is not null
-            ? Task.FromException<PushVerificationResult>(VerifyPushThrows)
-            : Task.FromResult(VerificationReturns ?? new PushVerificationResult { IsFullyAccepted = true });
     }
 
     public Task<ImmutableArray<DirectoryPath>> CloneAllAssetsAsync(DirectoryPath rootFolder, AgentSyncInfo syncInfo, AssetsToClone assetsToClone, AgentInfo agentInfo, IOperationContextProvider operationContextProvider, ISyncDataverseClient dataverseClient, CancellationToken cancellationToken) =>
