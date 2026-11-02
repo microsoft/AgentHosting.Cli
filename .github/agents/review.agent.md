@@ -1,7 +1,6 @@
 ---
 name: review
 description: Local reviewer-vs-challenger loop that reproduces the GitHub Copilot PR review dynamic before you open the PR. Invokes reviewer-github (a different model) to emulate GitHub's findings, then disputes or resolves each one, giving a per-finding verdict — Fix / Push back / Needs judgment. Read-only.
-model: claude-opus-4.8
 tools: ['agent', 'search', 'read']
 agents: ['reviewer-github']
 user-invocable: true
