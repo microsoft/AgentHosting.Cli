@@ -2,33 +2,26 @@ using System.Xml.Linq;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
-/// <summary>Proves the CLI and runtime clusters stay separable, so each solution builds alone.</summary>
+/// <summary>Proves all source projects and their references belong to the CLI solution.</summary>
 public sealed class SolutionBoundaryTests
 {
-    private static readonly string[] RuntimeProjects =
-    [
-        "AuthSidecar",
-        "HostingGateway",
-        "MockPlex",
-        "SampleAgent",
-        "SandboxShell",
-        "Tests",
-    ];
-
-    private static bool IsCliProject(string projectName) => projectName.StartsWith("Microsoft.Agents.Hosting.Cli", StringComparison.Ordinal);
+    private const string CliSolutionFileName = "Microsoft.Agents.Hosting.Cli.slnx";
 
     [Fact]
-    public void NoProjectReferenceCrossesTheBoundary()
+    public void TheCliSourceRootIsFound()
     {
-        if (SourceRoot() is not { } sourceRoot)
-        {
-            return;
-        }
+        Assert.True(File.Exists(Path.Combine(SourceRoot(), CliSolutionFileName)));
+    }
 
+    [Fact]
+    public void NoProjectReferenceLeavesTheCliSolution()
+    {
+        var sourceRoot = SourceRoot();
+        var members = SolutionMembers(sourceRoot).ToHashSet(StringComparer.Ordinal);
         var crossings = ProjectFiles(sourceRoot)
-            .SelectMany(projectFile => ReferencedProjectNames(projectFile)
-                .Where(referenced => IsCliProject(ProjectName(projectFile)) != IsCliProject(referenced))
-                .Select(referenced => $"{ProjectName(projectFile)} -> {referenced}"))
+            .SelectMany(projectFile => ReferencedProjectPaths(projectFile)
+                .Where(referenced => !members.Contains(referenced))
+                .Select(referenced => $"{Path.GetRelativePath(sourceRoot, projectFile)} -> {referenced}"))
             .ToArray();
 
         Assert.Empty(crossings);
@@ -37,90 +30,55 @@ public sealed class SolutionBoundaryTests
     [Fact]
     public void TheCliSolutionListsOnlyCliProjects()
     {
-        if (SourceRoot() is not { } sourceRoot)
-        {
-            return;
-        }
-
-        Assert.All(SolutionMembers(sourceRoot, "Microsoft.Agents.Hosting.Cli.slnx"), member => Assert.True(IsCliProject(member), $"{member} is not a CLI project."));
+        var members = SolutionMembers(SourceRoot()).ToArray();
+        Assert.NotEmpty(members);
+        Assert.All(members, member => Assert.True(
+            Path.GetFileNameWithoutExtension(member).StartsWith("Microsoft.Agents.Hosting.Cli", StringComparison.Ordinal),
+            $"{member} is not a CLI project."));
     }
 
     [Fact]
-    public void TheRuntimeSolutionListsOnlyRuntimeProjects()
+    public void EverySourceProjectAppearsExactlyOnceInTheCliSolution()
     {
-        if (SourceRoot() is not { } sourceRoot)
-        {
-            return;
-        }
+        var sourceRoot = SourceRoot();
+        var projects = ProjectFiles(sourceRoot).Order(StringComparer.Ordinal).ToArray();
+        var members = SolutionMembers(sourceRoot).Order(StringComparer.Ordinal).ToArray();
 
-        Assert.All(SolutionMembers(sourceRoot, "AgentHosting.Runtime.slnx"), member => Assert.False(IsCliProject(member), $"{member} is not a runtime project."));
+        Assert.NotEmpty(projects);
+        Assert.Equal(projects, members);
     }
-
-    [Fact]
-    public void EveryProjectBelongsToExactlyOneSolution()
-    {
-        if (SourceRoot() is not { } sourceRoot)
-        {
-            return;
-        }
-
-        var cli = SolutionMembers(sourceRoot, "Microsoft.Agents.Hosting.Cli.slnx").ToHashSet(StringComparer.Ordinal);
-        var runtime = SolutionMembers(sourceRoot, "AgentHosting.Runtime.slnx").ToHashSet(StringComparer.Ordinal);
-
-        var misplaced = ProjectFiles(sourceRoot)
-            .Select(ProjectName)
-            .Where(name => cli.Contains(name) == runtime.Contains(name))
-            .ToArray();
-
-        Assert.Empty(misplaced);
-    }
-
-    [Fact]
-    public void TheRuntimeClusterIsTheKnownSet()
-    {
-        if (SourceRoot() is not { } sourceRoot)
-        {
-            return;
-        }
-
-        Assert.Equal(
-            RuntimeProjects.Order(StringComparer.Ordinal),
-            ProjectFiles(sourceRoot).Select(ProjectName).Where(name => !IsCliProject(name)).Order(StringComparer.Ordinal));
-    }
-
-    private static string ProjectName(string projectFilePath) => Path.GetFileNameWithoutExtension(projectFilePath);
 
     private static IEnumerable<string> ProjectFiles(string sourceRoot) => Directory
         .EnumerateFiles(sourceRoot, "*.csproj", SearchOption.AllDirectories)
         .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
             && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
 
-    private static IEnumerable<string> ReferencedProjectNames(string projectFilePath) => XDocument
+    private static IEnumerable<string> ReferencedProjectPaths(string projectFilePath) => XDocument
         .Load(projectFilePath)
         .Descendants("ProjectReference")
-        .Select(reference => reference.Attribute("Include")?.Value)
-        .Where(include => !string.IsNullOrWhiteSpace(include))
-        .Select(include => Path.GetFileNameWithoutExtension(include!.Replace('\\', Path.DirectorySeparatorChar)));
+        .Select(reference => ResolveProjectPath(Path.GetDirectoryName(projectFilePath)!, reference.Attribute("Include")!.Value));
 
-    private static IEnumerable<string> SolutionMembers(string sourceRoot, string solutionFileName) => XDocument
-        .Load(Path.Combine(sourceRoot, solutionFileName))
+    private static IEnumerable<string> SolutionMembers(string sourceRoot) => XDocument
+        .Load(Path.Combine(sourceRoot, CliSolutionFileName))
         .Descendants("Project")
-        .Select(project => project.Attribute("Path")?.Value)
-        .Where(path => !string.IsNullOrWhiteSpace(path))
-        .Select(path => Path.GetFileNameWithoutExtension(path!.Replace('\\', '/')));
+        .Select(project => ResolveProjectPath(sourceRoot, project.Attribute("Path")!.Value));
 
-    private static string? SourceRoot()
+    private static string ResolveProjectPath(string baseDirectory, string projectPath) => Path.GetFullPath(
+        projectPath.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar),
+        baseDirectory);
+
+    private static string SourceRoot()
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
         {
             var candidate = Path.Combine(directory.FullName, "src");
 
-            if (Directory.Exists(candidate) && File.Exists(Path.Combine(candidate, "AgentHosting.slnx")))
+            if (File.Exists(Path.Combine(candidate, CliSolutionFileName)))
             {
                 return candidate;
             }
         }
 
-        return null;
+        throw new DirectoryNotFoundException($"Could not find src/{CliSolutionFileName} from {AppContext.BaseDirectory}.");
     }
 }

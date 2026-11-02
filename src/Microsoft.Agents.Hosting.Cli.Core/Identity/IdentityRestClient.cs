@@ -93,7 +93,8 @@ public sealed class IdentityRestClient : IIdentityRestClient
             throw new ArgumentException("A Microsoft Graph request path is required.", nameof(path));
         }
 
-        var uri = Uri.TryCreate(path, UriKind.Absolute, out var absolute)
+        var uri = !path.StartsWith('/') &&
+            Uri.TryCreate(path, UriKind.Absolute, out var absolute)
             ? absolute
             : new Uri(GraphEndpoint, path);
         if (!string.Equals(uri.Scheme, GraphEndpoint.Scheme, StringComparison.OrdinalIgnoreCase) ||

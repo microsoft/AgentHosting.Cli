@@ -1,0 +1,163 @@
+name: Verify sequence diagrams
+
+# Audit tracked docs/*sequence-diagram.md against the CLI implementation.
+# Proposals stay local and are published as refreshable issue comments, never commits or PRs.
+# With no matching diagrams, exit before installing tools or invoking the model.
+
+on:
+  schedule:
+    # 08:00 UTC every Monday.
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: verify-sequence-diagrams
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify-diagrams:
+    name: Audit sequence diagrams
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Discover diagrams
+        id: diagrams
+        run: |
+          set -euo pipefail
+          # Keep the validator/publisher outside the checkout before the agent can edit it.
+          cp .github/scripts/sequence-diagram-audit.mjs "$RUNNER_TEMP/sequence-diagram-audit.mjs"
+          files=$(node "$RUNNER_TEMP/sequence-diagram-audit.mjs" discover "$GITHUB_SHA")
+          if [ "$files" = "[]" ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No tracked docs/*sequence-diagram.md files; nothing to audit."
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Diagrams to audit: $files"
+          fi
+
+      - name: Setup Node.js
+        if: steps.diagrams.outputs.found == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Check model authentication
+        if: steps.diagrams.outputs.found == 'true'
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_CLI_PAT }}
+        run: |
+          if [ -z "$COPILOT_GITHUB_TOKEN" ]; then
+            echo "::error::COPILOT_CLI_PAT is required when sequence diagrams exist."
+            exit 1
+          fi
+
+      - name: Test diagram audit helpers
+        if: steps.diagrams.outputs.found == 'true'
+        run: node --test .github/scripts/sequence-diagram-audit.test.mjs
+
+      - name: Install GitHub Copilot CLI
+        if: steps.diagrams.outputs.found == 'true'
+        run: npm install -g @github/copilot@1.0.98
+
+      - name: Install Mermaid CLI
+        if: steps.diagrams.outputs.found == 'true'
+        run: |
+          npm install -g @mermaid-js/mermaid-cli@12.0.0
+          printf '%s\n' '{ "args": ["--no-sandbox"] }' > "$RUNNER_TEMP/puppeteer-config.json"
+
+      - name: Audit diagrams against implementation
+        if: steps.diagrams.outputs.found == 'true'
+        env:
+          # Model auth only. Repository operations happen in the publication step.
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_CLI_PAT }}
+        run: |
+          set -euo pipefail
+          timeout --kill-after=30s 8m copilot \
+            --allow-all-tools \
+            --log-level none \
+            -p "$(cat .github/prompts/verify-sequence-diagrams.prompt.md)" \
+            2>&1 | tee "$RUNNER_TEMP/copilot-output.log"
+
+      - name: Validate edit scope, lint diagrams, and self-correct
+        id: lint
+        if: steps.diagrams.outputs.found == 'true'
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_CLI_PAT }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          max_fixups=2
+          mkdir -p "$RUNNER_TEMP/mermaid-lint"
+
+          lint_diagrams() {
+            local rc=0
+            : > "$RUNNER_TEMP/mermaid-lint-errors.log"
+            for f in docs/*sequence-diagram.md; do
+              echo "::group::Linting $f"
+              if out=$(mmdc -i "$f" -o "$RUNNER_TEMP/mermaid-lint/$(basename "$f").svg" \
+                  -p "$RUNNER_TEMP/puppeteer-config.json" 2>&1); then
+                echo "$out"
+              else
+                echo "$out"
+                echo "::warning file=$f::Mermaid rendering failed for $f"
+                { echo "## $f"; echo "$out"; echo; } >> "$RUNNER_TEMP/mermaid-lint-errors.log"
+                rc=1
+              fi
+              echo "::endgroup::"
+            done
+            return $rc
+          }
+
+          attempt=0
+          while true; do
+            node "$RUNNER_TEMP/sequence-diagram-audit.mjs" validate "$GITHUB_SHA"
+            if lint_diagrams; then
+              echo "All Mermaid diagrams are valid."
+              echo "status=success" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            if [ "$attempt" -ge "$max_fixups" ]; then
+              echo "::error::Mermaid diagrams are still invalid after $attempt self-correction attempt(s)."
+              echo "status=failed" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            attempt=$((attempt + 1))
+            echo "::warning::Invalid Mermaid detected; asking Copilot to fix it (attempt $attempt/$max_fixups)."
+            fix_prompt="$(cat .github/prompts/fix-mermaid-syntax.prompt.md)
+
+          === MERMAID LINT ERRORS ===
+          $(cat "$RUNNER_TEMP/mermaid-lint-errors.log")"
+            timeout --kill-after=30s 8m copilot \
+              --allow-all-tools \
+              --log-level none \
+              -p "$fix_prompt" \
+              2>&1 | tee -a "$RUNNER_TEMP/copilot-output.log"
+          done
+
+      - name: Publish diagram drift
+        if: steps.lint.outputs.status == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/sequence-diagram-audit.mjs" publish "$GITHUB_SHA" \
+            "$RUNNER_TEMP/copilot-output.log"
+
+      - name: Fail if diagrams invalid
+        if: steps.lint.outputs.status == 'failed'
+        run: |
+          echo "Copilot could not produce valid Mermaid after the allotted self-correction attempts." >&2
+          echo "See the 'Lint diagrams and self-correct' step logs for the parser errors." >&2
+          exit 1

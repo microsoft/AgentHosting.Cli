@@ -1,0 +1,60 @@
+"Build: Automation":
+- changed-files:
+  - any-glob-to-any-file: ['.github/**', '.azdo/**']
+
+"Build: scripts & configs":
+- changed-files:
+  - any-glob-to-any-file:
+    - '.config/**'
+    - '.gdn/**'
+    - '.gitignore'
+    - '*.proj'
+    - '*.props'
+    - '*.targets'
+    - 'global.json'
+    - 'nuget.config'
+    - 'es-metadata.yml'
+    - 'src/*.props'
+    - 'src/*.targets'
+    - 'src/*.slnx'
+    - 'src/version.json'
+
+"ML: CLI Docs":
+- changed-files:
+  - any-glob-to-any-file:
+    - '*.md'
+    - 'docs/**'
+    - 'src/**/*.md'
+
+"ML: CLI":
+- changed-files:
+  - any-glob-to-any-file: ['src/Microsoft.Agents.Hosting.Cli/**']
+
+"ML: Core":
+- changed-files:
+  - any-glob-to-any-file: ['src/Microsoft.Agents.Hosting.Cli.Core/**']
+
+"ML: Auth":
+- changed-files:
+  - any-glob-to-any-file: ['src/Microsoft.Agents.Hosting.Cli.Auth/**']
+
+"ML: Copilot Studio":
+- changed-files:
+  - any-glob-to-any-file: ['src/Microsoft.Agents.Hosting.Cli.CopilotStudio/**']
+
+"ML: Commands":
+- changed-files:
+  - any-glob-to-any-file: ['src/Microsoft.Agents.Hosting.Cli.Commands/**']
+
+"ML: Tests":
+- changed-files:
+  - any-glob-to-any-file: ['src/Microsoft.Agents.Hosting.Cli.Tests/**','src/Microsoft.Agents.Hosting.Cli.E2E/**','src/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests/**','src/AgentHostCli.Conformance/**']
+
+"ML: Packages":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/Directory.Packages.props'
+    - 'src/NugetPackage.Shared.props'
+    - 'src/version.json'
+    - 'nuget.config'
+    - '.azdo/nuget.config'
