@@ -337,6 +337,9 @@ public interface IPlaygroundToolEnvironment
 
     /// <summary>Returns the fully resolved symlink target, or the full path when it is not a link.</summary>
     string ResolveRealPath(string path) => GetFullPath(path);
+
+    /// <summary>Returns whether the file exists and, on POSIX, has an execute permission bit set.</summary>
+    bool IsExecutable(string path) => FileExists(path);
 }
 
 /// <summary>The default process environment used by playground discovery.</summary>
@@ -349,6 +352,33 @@ public sealed class SystemPlaygroundToolEnvironment : IPlaygroundToolEnvironment
     public bool FileExists(string path) => File.Exists(path);
 
     public string GetFullPath(string path) => Path.GetFullPath(path);
+
+    public bool IsExecutable(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            return true;
+        }
+
+        try
+        {
+            return (File.GetUnixFileMode(path) &
+                    (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
 
     public string ResolveRealPath(string path)
     {
@@ -373,6 +403,11 @@ public sealed class SystemPlaygroundToolEnvironment : IPlaygroundToolEnvironment
 public interface IPlaygroundToolLocator
 {
     Task<PlaygroundToolDiscoveryResult> LocateAsync(CancellationToken cancellationToken);
+
+    /// <summary>Checks the selected playground's Node.js runtime, or discovers a runtime for installation when playground is null.</summary>
+    Task<PlaygroundToolDiscoveryResult> DetectNodeAsync(
+        PlaygroundTool? playground,
+        CancellationToken cancellationToken);
 
     Task<PlaygroundToolDiscoveryResult> DetectNpmAsync(CancellationToken cancellationToken);
 }

@@ -125,7 +125,7 @@ public sealed class PlaygroundProcessRunner : IPlaygroundProcessRunner
         throw primaryFailure ?? new InvalidOperationException("The process did not complete safely.");
     }
 
-    private static ProcessStartInfo CreateStartInfo(PlaygroundProcessRequest request)
+    internal static ProcessStartInfo CreateStartInfo(PlaygroundProcessRequest request)
     {
         try
         {
@@ -136,6 +136,7 @@ public sealed class PlaygroundProcessRunner : IPlaygroundProcessRunner
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 RedirectStandardInput = false,
+                CreateNoWindow = true,
             };
 
             if (request.WorkingDirectory is not null)

@@ -9,23 +9,34 @@ namespace Microsoft.Agents.Hosting.Cli.Hosting;
 internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
 {
     internal const string ChildOption = "--internal-playground-session";
+    private const byte HandoffCancelled = 2;
+    private const byte HandoffCancellationComplete = 3;
+    private static readonly TimeSpan HandoffCancelSignalTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan HandoffCancellationCleanupTimeout = TimeSpan.FromSeconds(25);
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private readonly Action<string> _openTerminal;
     private readonly TimeSpan _startupTimeout;
     private readonly IReadOnlyDictionary<string, string>? _inheritedEnvironment;
+    private readonly Action? _stopTerminal;
+    private Process? _terminalProcess;
+    private bool _terminalProcessIsDrained;
 
-    public PlaygroundTerminalSession() : this(OpenTerminal, StartupTimeout)
+    public PlaygroundTerminalSession()
     {
+        _openTerminal = OpenTerminal;
+        _startupTimeout = StartupTimeout;
     }
 
     internal PlaygroundTerminalSession(
         Action<string> openTerminal,
         TimeSpan startupTimeout,
-        IReadOnlyDictionary<string, string>? inheritedEnvironment = null)
+        IReadOnlyDictionary<string, string>? inheritedEnvironment = null,
+        Action? stopTerminal = null)
     {
         _openTerminal = openTerminal;
         _startupTimeout = startupTimeout;
         _inheritedEnvironment = inheritedEnvironment;
+        _stopTerminal = stopTerminal;
     }
 
     public async Task<int> RunAsync(
@@ -73,12 +84,109 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            if (!await SignalHandoffCancelledAsync(pipe).ConfigureAwait(false))
+            {
+                StopTerminal();
+            }
+
             throw;
         }
         catch (Exception failure) when (
             failure is not PlaygroundLaunchException)
         {
             throw StartFailure();
+        }
+        finally
+        {
+            ReleaseTerminalProcess();
+        }
+    }
+
+    private void StopTerminal()
+    {
+        if (_stopTerminal is not null)
+        {
+            _stopTerminal();
+            return;
+        }
+
+        var process = Interlocked.Exchange(ref _terminalProcess, null);
+        if (process is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        finally
+        {
+            if (!_terminalProcessIsDrained)
+            {
+                process.Dispose();
+            }
+        }
+    }
+
+    private void ReleaseTerminalProcess()
+    {
+        var process = Interlocked.Exchange(ref _terminalProcess, null);
+        if (process is not null && !_terminalProcessIsDrained)
+        {
+            process.Dispose();
+        }
+
+        _terminalProcessIsDrained = false;
+    }
+
+    private static async Task<bool> SignalHandoffCancelledAsync(NamedPipeServerStream pipe)
+    {
+        if (!pipe.IsConnected)
+        {
+            return false;
+        }
+
+        using var signalTimeout = new CancellationTokenSource(HandoffCancelSignalTimeout);
+        try
+        {
+            await pipe.WriteAsync(new[] { HandoffCancelled }, signalTimeout.Token).ConfigureAwait(false);
+            await pipe.FlushAsync(signalTimeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception failure) when (
+            failure is IOException or ObjectDisposedException or InvalidOperationException or OperationCanceledException)
+        {
+            return false;
+        }
+
+        using var cleanupTimeout = new CancellationTokenSource(HandoffCancellationCleanupTimeout);
+        try
+        {
+            while (true)
+            {
+                var response = new byte[1];
+                await pipe.ReadExactlyAsync(response, cleanupTimeout.Token).ConfigureAwait(false);
+                if (response[0] == HandoffCancellationComplete)
+                {
+                    return true;
+                }
+
+                if (response[0] != 1)
+                {
+                    return false;
+                }
+            }
+        }
+        catch (Exception failure) when (
+            failure is IOException or ObjectDisposedException or InvalidOperationException or OperationCanceledException)
+        {
+            return false;
         }
     }
 
@@ -91,12 +199,70 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
     internal static async Task<int> RunChildAsync(
         string pipeName,
         Func<IReadOnlyDictionary<string, string>, IPlaygroundLauncher> launcherFactory,
+        CancellationToken cancellationToken,
+        Func<CancellationToken, Task>? acknowledgeFailure = null)
+    {
+        var exitCode = await RunChildCoreAsync(pipeName, launcherFactory, cancellationToken)
+            .ConfigureAwait(false);
+        if (exitCode != 0 && exitCode != 130 && !cancellationToken.IsCancellationRequested &&
+            acknowledgeFailure is not null)
+        {
+            try
+            {
+                await acknowledgeFailure(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+        }
+
+        return exitCode;
+    }
+
+    internal static async Task AcknowledgeFailureAsync(
+        bool inputRedirected,
+        bool outputRedirected,
+        CancellationToken cancellationToken)
+    {
+        if (inputRedirected || outputRedirected || cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        await Console.Error.WriteLineAsync(
+            "Review the error above. Press Enter to close this window, or Ctrl+C to exit.")
+            .ConfigureAwait(false);
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Console.KeyAvailable && Console.ReadKey(intercept: true).Key == ConsoleKey.Enter)
+                {
+                    return;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception failure) when (failure is IOException or InvalidOperationException)
+        {
+            await Console.Error.WriteLineAsync(
+                "The terminal input is unavailable; this window cannot remain open. Rerun msagent test playground in an interactive terminal.")
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<int> RunChildCoreAsync(
+        string pipeName,
+        Func<IReadOnlyDictionary<string, string>, IPlaygroundLauncher> launcherFactory,
         CancellationToken cancellationToken)
     {
         using var pipe = new NamedPipeClientStream(
             ".", pipeName, PipeDirection.InOut,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         var acknowledged = false;
+        var requestReceived = false;
         try
         {
             using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -106,6 +272,8 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
             var json = await reader.ReadLineAsync(startup.Token).ConfigureAwait(false);
             var request = JsonSerializer.Deserialize<SessionRequest>(
                 json ?? throw new EndOfStreamException()) ?? throw new JsonException();
+            requestReceived = true;
+            var handoffResponse = ReadHandoffResponseAsync(reader, startup.Token);
             var launcher = launcherFactory(request.Environment);
             var tool = new PlaygroundTool(
                 request.ExecutablePath, request.ArgumentPrefix, request.SelectedPath,
@@ -117,26 +285,59 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
 
             var exitCode = await launcher.RunAsync(tool, connection, () =>
             {
-                pipe.WriteByte(1);
-                pipe.Flush();
-                var response = new byte[1];
-                pipe.ReadExactlyAsync(response, startup.Token).AsTask().GetAwaiter().GetResult();
-                if (response[0] != 1)
+                try
+                {
+                    pipe.WriteByte(1);
+                    pipe.Flush();
+                }
+                catch (IOException)
+                {
+                }
+
+                var response = handoffResponse.GetAwaiter().GetResult();
+                if (response == HandoffCancelled)
+                {
+                    throw new HandoffCancelledException();
+                }
+
+                if (response != 1)
                 {
                     throw new IOException("The launch handoff was not completed.");
                 }
 
                 acknowledged = true;
             }, cancellationToken).ConfigureAwait(false);
-            if (exitCode != 0)
+            if (exitCode == 130)
             {
-                await Console.Error.WriteLineAsync($"The playground process exited with code {exitCode}.")
+                await Console.Error.WriteLineAsync("The playground session was cancelled.")
+                    .ConfigureAwait(false);
+            }
+            else if (exitCode != 0)
+            {
+                await Console.Error.WriteLineAsync(
+                    $"The playground process exited with code {exitCode}. Review the playground output above. Verify Node.js {PlaygroundToolLocator.MinimumNodeVersion} or newer with node --version, and update the playground with npm install -g @microsoft/m365agentsplayground@latest before retrying.")
                     .ConfigureAwait(false);
             }
 
             return exitCode;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return 130;
+        }
+        catch (HandoffCancelledException)
+        {
+            acknowledged = true;
+            await Console.Error.WriteLineAsync(
+                "The playground startup was cancelled from the calling terminal.")
+                .ConfigureAwait(false);
+            await pipe.WriteAsync(
+                    new[] { HandoffCancellationComplete }, CancellationToken.None)
+                .ConfigureAwait(false);
+            await pipe.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+            return 130;
+        }
+        catch (IOException) when (!requestReceived)
         {
             return 130;
         }
@@ -171,7 +372,21 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         }
     }
 
-    private static void OpenTerminal(string pipeName)
+    internal static async Task<char> ReadHandoffResponseAsync(
+        StreamReader reader,
+        CancellationToken cancellationToken)
+    {
+        var response = new char[1];
+        var read = await reader.ReadAsync(response.AsMemory(), cancellationToken).ConfigureAwait(false);
+        if (read != 1)
+        {
+            throw new EndOfStreamException();
+        }
+
+        return response[0];
+    }
+
+    private void OpenTerminal(string pipeName)
     {
         var executable = Environment.ProcessPath ?? throw StartFailure();
         var arguments = new List<string>();
@@ -186,10 +401,12 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
             executable, arguments,
             OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux",
             FindExecutable);
-        StartTerminalProcess(info, redirectOutput: OperatingSystem.IsLinux());
+        var redirectOutput = OperatingSystem.IsLinux();
+        _terminalProcess = StartTerminalProcess(info, redirectOutput);
+        _terminalProcessIsDrained = redirectOutput;
     }
 
-    internal static void StartTerminalProcess(ProcessStartInfo info, bool redirectOutput)
+    internal static Process StartTerminalProcess(ProcessStartInfo info, bool redirectOutput)
     {
         if (redirectOutput)
         {
@@ -202,10 +419,8 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         {
             _ = DrainTerminalOutputAsync(process);
         }
-        else
-        {
-            process.Dispose();
-        }
+
+        return process;
     }
 
     private static async Task DrainTerminalOutputAsync(Process process)
@@ -304,6 +519,8 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         PlaygroundLaunchFailureKind.StartFailed,
         "The playground could not be started in a separate terminal.",
         "Use a local desktop session with a terminal application available. On Linux, install GNOME Terminal, Konsole, Xfce Terminal, or xterm; on macOS, allow Terminal automation.");
+
+    private sealed class HandoffCancelledException : Exception;
 
     internal sealed record SessionRequest(
         string ExecutablePath,

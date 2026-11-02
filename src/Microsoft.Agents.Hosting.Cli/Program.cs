@@ -63,7 +63,11 @@ internal static class Program
                 return await PlaygroundTerminalSession.RunChildAsync(
                     args[1],
                     environment => new PlaygroundLauncher(inheritedEnvironment: environment),
-                    cancellation.Token);
+                    cancellation.Token,
+                    token => PlaygroundTerminalSession.AcknowledgeFailureAsync(
+                        Console.IsInputRedirected,
+                        Console.IsOutputRedirected || Console.IsErrorRedirected,
+                        token));
             }
             finally
             {
