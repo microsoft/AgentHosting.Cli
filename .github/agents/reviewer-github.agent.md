@@ -1,7 +1,6 @@
 ---
 name: reviewer-github
 description: Emulates GitHub Copilot code review locally. Runs on a different model from the challenger to reproduce the genuine divergence you get from GitHub's own reviewer. Loads the SAME instruction files GitHub reads and produces PR-style findings. Read-only. Invoked by the `review` agent.
-model: gpt-5.5
 tools: ['search', 'read']
 user-invocable: false
 ---
