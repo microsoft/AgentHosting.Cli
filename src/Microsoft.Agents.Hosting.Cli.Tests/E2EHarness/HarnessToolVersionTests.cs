@@ -38,6 +38,25 @@ public sealed class HarnessToolVersionTests : IDisposable
     }
 
     [Fact]
+    public void TheToolPackageIsReadPastTheRuntimeSpecificPackagesPackedBesideIt()
+    {
+        Package("0.2.47-beta-gece7dce1e1");
+        Package("win-x64.0.2.47-beta-gece7dce1e1");
+        Package("linux-arm64.0.2.47-beta-gece7dce1e1");
+        Package("osx-x64.0.2.47-beta-gece7dce1e1");
+
+        Assert.Equal("0.2.47-beta-gece7dce1e1", MsagentCliBuilder.PackedVersion(_directory));
+    }
+
+    [Fact]
+    public void RuntimeSpecificPackagesWithoutTheToolPackageAreRefused()
+    {
+        Package("win-x64.0.2.47-beta-gece7dce1e1");
+
+        Assert.Throws<E2EException>(() => MsagentCliBuilder.PackedVersion(_directory));
+    }
+
+    [Fact]
     public void TwoPackagesAreRefusedRatherThanGuessedBetween()
     {
         Package("0.1.57-beta-g25087c755d");

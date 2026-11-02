@@ -845,7 +845,7 @@ public sealed record ManagedAgentDeployResult : ITextGridRenderable
     /// <summary>How many knowledge and attachment files the push sent.</summary>
     public int UploadedFileCount { get; init; }
 
-    /// <summary>Connectors, workflows and prompts sent alongside the authored components.</summary>
+    /// <summary>Workflows sent alongside the authored components.</summary>
     public int AuxiliaryChangeCount { get; init; }
 
     /// <summary>When the deploy completed.</summary>

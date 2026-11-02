@@ -144,7 +144,7 @@ public sealed record CopilotPushResult
     /// </summary>
     public int UploadedFileCount { get; init; }
 
-    /// <summary>Connectors, workflows and prompts sent alongside the authored components.</summary>
+    /// <summary>Workflows sent alongside the authored components.</summary>
     public int AuxiliaryChangeCount { get; init; }
 
     /// <summary>Resources the service declined without failing the push.</summary>

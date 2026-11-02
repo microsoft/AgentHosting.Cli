@@ -42,16 +42,7 @@ public sealed class HarnessEnvironment
 
     /// <summary>Finds the tool a previous run installed, so cleanup can reuse it.</summary>
     /// <param name="runId">The run that installed the tool.</param>
-    public static string? InstalledBinary(string runId) => FindInstalledBinary(ToolDirectory(runId));
-
-    public static string? FindInstalledBinary(string toolDirectory)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(toolDirectory);
-
-        return MsagentCliBuilder.ExecutableNames
-            .Select(name => Path.Combine(toolDirectory, name))
-            .FirstOrDefault(File.Exists);
-    }
+    public static string? InstalledBinary(string runId) => MsagentCliBuilder.FindInstalledBinary(ToolDirectory(runId));
 
     /// <summary>Prepares a run, returning null when a pre-flight check fails.</summary>
     public static async Task<HarnessEnvironment?> PrepareAsync(CommandOptions options, bool plan, CancellationToken cancellationToken)

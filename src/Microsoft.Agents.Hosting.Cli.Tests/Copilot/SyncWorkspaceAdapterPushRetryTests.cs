@@ -40,53 +40,32 @@ public sealed class SyncWorkspaceAdapterPushRetryTests
 
     private static RecordingWorkspaceSynchronizer RefusingOnce() => CopilotTestFixtures.FailingOnce(new InvalidOperationException(RemoteChangedMessage));
 
-    [Fact]
-    public async Task Push_WithOverwrite_RefreshesTheBaselineAndSendsAgain()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Push_PassesTheOverwriteDecisionToTheLibrary(bool overwrite)
     {
-        var synchronizer = RefusingOnce();
-        var retarget = new RecordingRetargetService();
+        var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer, retarget).PushAsync(Workspace(), overwrite: true, CancellationToken.None);
+        await Create(synchronizer, new RecordingRetargetService()).PushAsync(Workspace(), overwrite, CancellationToken.None);
 
-        Assert.Equal(2, synchronizer.PushLocalChangesCalls);
-        Assert.Contains(nameof(RecordingRetargetService.SyncWorkspaceAsync), retarget.Calls);
+        Assert.Equal(overwrite, synchronizer.LastOverwriteRemoteChanges);
     }
 
-    [Fact]
-    public async Task Push_WithOverwrite_DoesNotUpsertWorkflowsOrPromptsASecondTime()
-    {
-        var synchronizer = RefusingOnce();
-
-        await Create(synchronizer, new RecordingRetargetService()).PushAsync(Workspace(), overwrite: true, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.UpsertWorkflowCalls);
-        Assert.Equal(1, synchronizer.UpsertAIPromptsCalls);
-    }
-
-    [Fact]
-    public async Task Push_WithoutOverwrite_ReportsTheRemoteChangeAndNeverRefreshes()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Push_WhenTheLibraryReportsARemoteChange_FailsWithoutRefreshingOrResending(bool overwrite)
     {
         var synchronizer = RefusingOnce();
         var retarget = new RecordingRetargetService();
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer, retarget).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+            () => Create(synchronizer, retarget).PushAsync(Workspace(), overwrite, CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.RemoteChangedDuringPush, failure.ErrorKind);
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
         Assert.DoesNotContain(nameof(RecordingRetargetService.SyncWorkspaceAsync), retarget.Calls);
-    }
-
-    [Fact]
-    public async Task Push_WithOverwrite_GivesUpAfterOneRetry()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer { PushLocalChangesThrows = new InvalidOperationException(RemoteChangedMessage) };
-
-        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer, new RecordingRetargetService()).PushAsync(Workspace(), overwrite: true, CancellationToken.None));
-
-        Assert.Equal(CopilotErrorKinds.RemoteChangedDuringPush, failure.ErrorKind);
-        Assert.Equal(2, synchronizer.PushLocalChangesCalls);
     }
 
     [Fact]
@@ -109,17 +88,6 @@ public sealed class SyncWorkspaceAdapterPushRetryTests
         await Create(new RecordingWorkspaceSynchronizer(), retarget).PushAsync(Workspace(), overwrite: true, CancellationToken.None);
 
         Assert.Empty(retarget.Calls);
-    }
-
-    [Fact]
-    public async Task RefreshingTheBaseline_ReadsTheCloudAndLeavesLocalContentAlone()
-    {
-        var retarget = new RecordingRetargetService();
-
-        await Create(RefusingOnce(), retarget).PushAsync(Workspace(), overwrite: true, CancellationToken.None);
-
-        Assert.False(retarget.LastUpdateWorkspaceDirectory);
-        Assert.Null(retarget.LastChangeToken);
     }
 
     private static RecordingWorkspaceSynchronizer UnreadableReply(bool onlyOnce) => new()

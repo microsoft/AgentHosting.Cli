@@ -155,6 +155,19 @@ connectionReferences:
     }
 
     [Fact]
+    public async Task Attach_UploadsTheLocalConnectorsAndWarnsAboutAnyNotSaved()
+    {
+        const string reason = "Failed to push custom connector 'Weather': denied";
+        var synchronizer = Unconnected();
+        synchronizer.ConnectorFailureReasons.Add(reason);
+
+        var outcome = await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
+
+        Assert.True(synchronizer.LastConnectorPushOverwroteRemoteChanges);
+        Assert.Contains(reason, outcome.Warnings);
+    }
+
+    [Fact]
     public async Task Attach_ProvisionsConnectionReferencesBeforeUpsertingTheWorkflowsThatNeedThem()
     {
         DeclareClassic();
@@ -464,6 +477,7 @@ connectionReferences:
 
         var outcome = await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
 
+        Assert.True(synchronizer.LastPromptUpsertOverwroteRemoteChanges);
         Assert.Contains(outcome.Warnings, warning => warning.Contains("Summarize", StringComparison.Ordinal));
     }
 
@@ -686,7 +700,8 @@ internal sealed class RecordingRetargetService : IWorkspaceRetargetService
         CancellationToken cancellationToken,
         ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPromptMetadata,
         bool syncCustomConnectors = true,
-        bool syncWorkflowsAndPrompts = true)
+        bool syncWorkflowsAndPrompts = true,
+        bool preserveLocalConnectorAndPromptChanges = false)
     {
         Calls.Add(nameof(SyncWorkspaceAsync));
         LastUpdateWorkspaceDirectory = updateWorkspaceDirectory;

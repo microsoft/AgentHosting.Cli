@@ -1,14 +1,11 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
-using Microsoft.CopilotStudio.Sync;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
 public sealed class PushCloudCacheTests
 {
-    private const string RemoteChangedMessage = "The agent was changed in the cloud while you were editing it. Get the latest changes before pushing again.";
-
     private static CopilotWorkspaceInfo Workspace() => new()
     {
         WorkspacePath = Path.Combine(Path.GetTempPath(), "ah-push-cache-tests"),
@@ -27,84 +24,15 @@ public sealed class PushCloudCacheTests
             new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()),
             new CopilotChangeMapper());
 
-    private static RecordingWorkspaceSynchronizer RefusingOnce() => CopilotTestFixtures.FailingOnce(new InvalidOperationException(RemoteChangedMessage));
-
-    private static async Task<RecordingRetargetService> RefreshedBaselineAsync()
-    {
-        using var workspace = new ClassicWorkspace();
-        var retarget = new RecordingRetargetService();
-
-        await Create(RefusingOnce(), retarget).PushAsync(workspace.Info, overwrite: true, CancellationToken.None);
-
-        return retarget;
-    }
-
-    [Fact]
-    public async Task Push_RefreshesTheBaselineFromTheServiceRatherThanAnIncrementalToken()
-    {
-        Assert.Null((await RefreshedBaselineAsync()).LastChangeToken);
-    }
-
-    [Fact]
-    public async Task Push_DoesNotSeedTheBaselineWithLocallyPushedConnectors()
-    {
-        Assert.False((await RefreshedBaselineAsync()).LastSyncCustomConnectors);
-    }
-
-    [Fact]
-    public async Task Push_DoesNotReReadWorkflowsAndPromptsWhenRefreshingTheBaseline()
-    {
-        Assert.False((await RefreshedBaselineAsync()).LastSyncWorkflowsAndPrompts);
-    }
-
-    [Fact]
-    public async Task Push_RefreshesTheBaselineWithTheReferencesTheRunConfirmed()
-    {
-        var metadata = (await RefreshedBaselineAsync()).LastCloudFlowMetadata;
-
-        Assert.NotNull(metadata);
-        Assert.Equal(
-            ["crf9a_Classic.shared_teams.0add1954"],
-            metadata.ConnectionReferences.Select(reference => reference.ConnectionReferenceLogicalName.Value));
-    }
-
     [Fact]
     public async Task Push_WithNothingDeclared_StillRefreshesWithoutReReadingWorkflowsAndPrompts()
     {
         var retarget = new RecordingRetargetService();
 
-        await Create(RefusingOnce(), retarget).PushAsync(Workspace(), overwrite: true, CancellationToken.None);
+        await Create(CopilotTestFixtures.FailingOnce(CopilotTestFixtures.MissingEntity()), retarget).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.False(retarget.LastSyncWorkflowsAndPrompts);
         Assert.NotNull(retarget.LastCloudFlowMetadata);
-    }
-
-    [Fact]
-    public async Task Push_LeavesTheWorkspaceDirectoryAloneWhenRefreshingTheBaseline()
-    {
-        Assert.False((await RefreshedBaselineAsync()).LastUpdateWorkspaceDirectory);
-    }
-
-    [Fact]
-    public async Task Push_PushesCustomConnectorsOnceEvenWhenTheBaselineIsRefreshed()
-    {
-        var synchronizer = RefusingOnce();
-
-        await Create(synchronizer, new RecordingRetargetService()).PushAsync(Workspace(), overwrite: true, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.Calls.Count(call => call == nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync)));
-    }
-
-    [Fact]
-    public async Task Push_ProvisionsConnectionsOnceEvenWhenTheBaselineIsRefreshed()
-    {
-        using var workspace = new ClassicWorkspace();
-        var synchronizer = RefusingOnce();
-
-        await Create(synchronizer, new RecordingRetargetService()).PushAsync(workspace.Info, overwrite: true, CancellationToken.None);
-
-        Assert.Equal(0, synchronizer.FolderAwareProvisionCount);
-        Assert.Equal(1, synchronizer.DefinitionOnlyProvisionCount);
     }
 
     private static async Task<RecordingRetargetService> HealedBaselineAsync()

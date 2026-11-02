@@ -121,7 +121,7 @@ public sealed class CopilotWorkspaceServiceTests
     }
 
     [Fact]
-    public async Task Push_WithAPromptOnlyChange_IsNotReportedAsNothingToDo()
+    public async Task Push_WithOnlyAuxiliaryChanges_IsNotReportedAsNothingToDo()
     {
         var workspaces = new FakeCopilotWorkspacePort { AuxiliaryChangeCountReturns = 1 };
 

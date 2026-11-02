@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 using Microsoft.CopilotStudio.Sync.Dataverse;
 
@@ -48,6 +49,18 @@ public sealed class SyncWorkspaceAdapterPromptTests
         await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.UpsertAIPromptsCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Push_LetsThePromptUpsertOverwriteTheCloudOnlyWhenAskedTo(bool overwrite)
+    {
+        var synchronizer = SynchronizerWithPrompt();
+
+        await Create(synchronizer).PushAsync(Workspace(), overwrite, CancellationToken.None);
+
+        Assert.Equal(overwrite, synchronizer.LastPromptUpsertOverwroteRemoteChanges);
     }
 
     [Fact]
@@ -138,5 +151,20 @@ public sealed class SyncWorkspaceAdapterPromptTests
         await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.Empty(synchronizer.LastPushedPrompts);
+    }
+
+    [Fact]
+    public async Task Push_DoesNotReportAnyFileOfAPromptTheServiceRefused()
+    {
+        var promptId = Guid.NewGuid();
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+        synchronizer.LocalChanges.Add(new Change { Name = "Summarize", SchemaName = $"{AiPromptLayout.SchemaNamePrefix}{promptId}", ChangeKind = AiPromptLayout.ChangeKind, ChangeType = ChangeType.Update });
+        synchronizer.LocalChanges.Add(new Change { Name = "Summarize", SchemaName = $"{AiPromptLayout.SchemaNamePrefix}{promptId}.metadata", ChangeKind = AiPromptLayout.ChangeKind, ChangeType = ChangeType.Update });
+        synchronizer.LocalChanges.Add(new Change { Name = "Greeting", SchemaName = "cre98_agent.topic.Greeting", ChangeKind = "DialogComponent", ChangeType = ChangeType.Update });
+        synchronizer.PromptResponses.Add(new SyncDataverseClient.AIPromptResponse { AIModelId = promptId, PromptName = "Summarize", ErrorMessage = "invalid model" });
+
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+
+        Assert.Equal("cre98_agent.topic.Greeting", Assert.Single(outcome.Changes).SchemaName);
     }
 }

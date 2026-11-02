@@ -33,7 +33,7 @@ public sealed partial class HarnessToolNameTests
         using var directory = new TemporaryDirectory();
         var expected = directory.Place(MsagentCliBuilder.ExecutableName);
 
-        Assert.Equal(expected, HarnessEnvironment.FindInstalledBinary(directory.Path));
+        Assert.Equal(expected, MsagentCliBuilder.FindInstalledBinary(directory.Path));
     }
 
     [Fact]
@@ -42,7 +42,7 @@ public sealed partial class HarnessToolNameTests
         using var directory = new TemporaryDirectory();
         var expected = directory.Place(MsagentCliBuilder.LegacyExecutableName);
 
-        Assert.Equal(expected, HarnessEnvironment.FindInstalledBinary(directory.Path));
+        Assert.Equal(expected, MsagentCliBuilder.FindInstalledBinary(directory.Path));
     }
 
     [Fact]
@@ -52,7 +52,7 @@ public sealed partial class HarnessToolNameTests
         var expected = directory.Place(MsagentCliBuilder.ExecutableName);
         directory.Place(MsagentCliBuilder.LegacyExecutableName);
 
-        Assert.Equal(expected, HarnessEnvironment.FindInstalledBinary(directory.Path));
+        Assert.Equal(expected, MsagentCliBuilder.FindInstalledBinary(directory.Path));
     }
 
     [Fact]
@@ -60,7 +60,30 @@ public sealed partial class HarnessToolNameTests
     {
         using var directory = new TemporaryDirectory();
 
-        Assert.Null(HarnessEnvironment.FindInstalledBinary(directory.Path));
+        Assert.Null(MsagentCliBuilder.FindInstalledBinary(directory.Path));
+    }
+
+    [Fact]
+    public void ARuntimeSpecificInstallIsFoundAtTheEntryPointItsToolSettingsName()
+    {
+        using var directory = new TemporaryDirectory();
+        var tools = Path.Combine(".store", "microsoft.agents.hosting.cli", "1.0.0", "microsoft.agents.hosting.cli.win-x64", "1.0.0", "tools", "net10.0", "win-x64");
+        directory.Place("msagent.cmd");
+        directory.Place(Path.Combine(tools, "DotnetToolSettings.xml"), ToolSettings("Microsoft.Agents.Hosting.Cli.exe", "executable"));
+        var expected = directory.Place(Path.Combine(tools, "Microsoft.Agents.Hosting.Cli.exe"));
+
+        Assert.Equal(expected, MsagentCliBuilder.FindInstalledBinary(directory.Path));
+    }
+
+    [Fact]
+    public void AnEntryPointRunThroughDotnetIsNotTakenForTheExecutable()
+    {
+        using var directory = new TemporaryDirectory();
+        var tools = Path.Combine(".store", "microsoft.agents.hosting.cli", "1.0.0", "microsoft.agents.hosting.cli", "1.0.0", "tools", "net10.0", "any");
+        directory.Place(Path.Combine(tools, "DotnetToolSettings.xml"), ToolSettings("Microsoft.Agents.Hosting.Cli.dll", "dotnet"));
+        directory.Place(Path.Combine(tools, "Microsoft.Agents.Hosting.Cli.dll"));
+
+        Assert.Null(MsagentCliBuilder.FindInstalledBinary(directory.Path));
     }
 
     [Fact]
@@ -68,7 +91,7 @@ public sealed partial class HarnessToolNameTests
     {
         using var directory = new TemporaryDirectory();
 
-        HarnessEnvironment.FindInstalledBinary(directory.Path);
+        MsagentCliBuilder.FindInstalledBinary(directory.Path);
 
         Assert.True(Directory.Exists(directory.Path));
         Assert.Empty(Directory.GetFileSystemEntries(directory.Path));
@@ -190,6 +213,14 @@ public sealed partial class HarnessToolNameTests
         return E2EConfig.Load(directory.Path);
     }
 
+    private static string ToolSettings(string entryPoint, string runner) => $"""
+        <DotNetCliTool Version="2">
+          <Commands>
+            <Command Name="msagent" EntryPoint="{entryPoint}" Runner="{runner}" />
+          </Commands>
+        </DotNetCliTool>
+        """;
+
     private static string? ToolCommandName()
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
@@ -224,11 +255,11 @@ public sealed partial class HarnessToolNameTests
 
         public string Path { get; }
 
-        public string Place(string fileName)
+        public string Place(string fileName, string content = "")
         {
             var file = System.IO.Path.Combine(Path, fileName);
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(file)!);
-            File.WriteAllText(file, string.Empty);
+            File.WriteAllText(file, content);
 
             return file;
         }
