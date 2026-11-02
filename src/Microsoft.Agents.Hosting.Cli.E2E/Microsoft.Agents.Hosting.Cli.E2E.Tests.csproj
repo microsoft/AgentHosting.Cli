@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.CopilotStudio.Sync" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
   </ItemGroup>
 
   <ItemGroup>
