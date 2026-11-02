@@ -246,6 +246,99 @@ public sealed class PlaygroundToolLocatorTests
     }
 
     [Fact]
+    public async Task DetectNode_ValidatesSelectedWindowsRuntimeRatherThanAnotherNodeOnPath()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "selected-playground-node");
+        var node = Path.Combine(directory, "node.exe");
+        var otherDirectory = Path.Combine(Path.GetTempPath(), "newer-node");
+        var otherNode = Path.Combine(otherDirectory, "node.exe");
+        var environment = new FakePlaygroundEnvironment(
+            isWindows: true,
+            pathValue: otherDirectory,
+            existingPaths: [node, otherNode]);
+        var runner = new RecordingProcessRunner(request => new PlaygroundProcessResult(
+            0, request.ExecutablePath == node ? "v20.0.0" : "v24.0.0", string.Empty));
+        var playground = new PlaygroundTool(
+            node, ["playground-cli.js"], Path.Combine(directory, "agentsplayground.cmd"),
+            PlaygroundVersion.Parse("0.2.29"));
+
+        var result = await CreateLocator(environment, runner).DetectNodeAsync(playground, CancellationToken.None);
+
+        Assert.Null(result.Tool);
+        var failure = Assert.Single(result.Rejections).Failure;
+        Assert.Equal(PlaygroundFailureKind.NodeBelowMinimum, failure.Kind);
+        Assert.Contains("20.0.0", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("22.17.1", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(PlaygroundToolLocator.NodeInstallRemediation, failure.Remediation);
+        Assert.Equal(node, Assert.Single(runner.Requests).ExecutablePath);
+    }
+
+    [Theory]
+    [InlineData("v22.17.0", false)]
+    [InlineData("v22.17.1", true)]
+    [InlineData("v24.0.0", true)]
+    public async Task DetectNode_InstalledPosixPlaygroundChecksFirstNodeOnPathWithoutNpm(
+        string version,
+        bool usable)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "posix-playground-node");
+        var node = Path.Combine(directory, "node");
+        var otherDirectory = Path.Combine(Path.GetTempPath(), "other-posix-node");
+        var environment = new FakePlaygroundEnvironment(
+            isWindows: false,
+            pathValue: string.Join(Path.PathSeparator, directory, otherDirectory),
+            existingPaths: [node, Path.Combine(otherDirectory, "node")]);
+        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, version, string.Empty));
+        var playground = new PlaygroundTool(
+            Path.Combine(directory, "agentsplayground"), [], "agentsplayground",
+            PlaygroundVersion.Parse("0.2.29"));
+
+        var result = await CreateLocator(environment, runner).DetectNodeAsync(playground, CancellationToken.None);
+
+        Assert.Equal(usable, result.Tool is not null);
+        Assert.Equal(node, Assert.Single(runner.Requests).ExecutablePath);
+    }
+
+    [Fact]
+    public async Task DetectNode_InstalledPosixPlaygroundSkipsNonExecutableNodeOnPath()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "posix-non-executable-node");
+        var nonExecutableNode = Path.Combine(directory, "node");
+        var otherDirectory = Path.Combine(Path.GetTempPath(), "posix-executable-node");
+        var executableNode = Path.Combine(otherDirectory, "node");
+        var environment = new FakePlaygroundEnvironment(
+            isWindows: false,
+            pathValue: string.Join(Path.PathSeparator, directory, otherDirectory),
+            existingPaths: [nonExecutableNode, executableNode]);
+        environment.NonExecutablePaths.Add(environment.GetFullPath(nonExecutableNode));
+        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "v22.17.1", string.Empty));
+        var playground = new PlaygroundTool(
+            Path.Combine(otherDirectory, "agentsplayground"), [], "agentsplayground",
+            PlaygroundVersion.Parse("0.2.29"));
+
+        var result = await CreateLocator(environment, runner).DetectNodeAsync(playground, CancellationToken.None);
+
+        Assert.NotNull(result.Tool);
+        Assert.Equal(executableNode, Assert.Single(runner.Requests).ExecutablePath);
+    }
+
+    [Fact]
+    public async Task DetectNode_MissingNodeProvidesDownloadAndRetryGuidance()
+    {
+        var environment = new FakePlaygroundEnvironment(false, string.Empty, []);
+        var runner = new RecordingProcessRunner(_ => throw new InvalidOperationException());
+
+        var result = await CreateLocator(environment, runner).DetectNodeAsync(null, CancellationToken.None);
+
+        Assert.Null(result.Tool);
+        var failure = Assert.Single(result.Rejections).Failure;
+        Assert.Equal(PlaygroundFailureKind.NodeNotFound, failure.Kind);
+        Assert.Contains("https://nodejs.org/en/download", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains("new terminal", failure.Remediation, StringComparison.Ordinal);
+        Assert.Empty(runner.Requests);
+    }
+
+    [Fact]
     public async Task DetectNpm_ProbesNodeFirstAndReturnsRecognizedWindowsNpmShim()
     {
         var npmDirectory = Path.Combine(Path.GetTempPath(), "npm-shim");
@@ -259,7 +352,7 @@ public sealed class PlaygroundToolLocatorTests
             existingPaths: [npmShim, nodePath, npmEntryPoint]);
         var runner = new RecordingProcessRunner(request =>
             request.ExecutablePath == nodePath && request.Arguments.SequenceEqual(["--version"])
-                ? new PlaygroundProcessResult(0, "22.0.0", string.Empty)
+                ? new PlaygroundProcessResult(0, "22.17.1", string.Empty)
                 : new PlaygroundProcessResult(0, "0.1.0", string.Empty));
 
         var result = await CreateLocator(environment, runner).DetectNpmAsync(CancellationToken.None);
@@ -278,7 +371,9 @@ public sealed class PlaygroundToolLocatorTests
 
     [Theory]
     [InlineData("v21.9.0", false, PlaygroundFailureKind.NodeBelowMinimum)]
-    [InlineData("v22.0.0", true, PlaygroundFailureKind.None)]
+    [InlineData("v22.0.0", false, PlaygroundFailureKind.NodeBelowMinimum)]
+    [InlineData("v22.17.0", false, PlaygroundFailureKind.NodeBelowMinimum)]
+    [InlineData("v22.17.1-rc.1", false, PlaygroundFailureKind.NodeBelowMinimum)]
     [InlineData("v22.17.1", true, PlaygroundFailureKind.None)]
     [InlineData("V22.17.1", false, PlaygroundFailureKind.NodeInvalidVersion)]
     public async Task DetectNpm_NormalizesOnlyLowercaseVOnNodeVersionOutput(
@@ -342,7 +437,7 @@ public sealed class PlaygroundToolLocatorTests
             new RecordingProcessRunner(request =>
                 request.ExecutablePath == nodePath &&
                 request.Arguments.SequenceEqual(["--version"])
-                    ? new PlaygroundProcessResult(0, "22.0.0", string.Empty)
+                    ? new PlaygroundProcessResult(0, "22.17.1", string.Empty)
                     : new PlaygroundProcessResult(0, "v10.9.2", string.Empty)))
             .DetectNpmAsync(CancellationToken.None);
 
@@ -712,6 +807,11 @@ public sealed class PlaygroundToolLocatorTests
                 isWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
         public bool FileExists(string path) => ExistingPaths.Contains(GetFullPath(path));
+
+        public HashSet<string> NonExecutablePaths { get; } = [];
+
+        public bool IsExecutable(string path) =>
+            FileExists(path) && !NonExecutablePaths.Contains(GetFullPath(path));
 
         public Dictionary<string, string> Links { get; } = [];
 

@@ -9,6 +9,22 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 public sealed class PlaygroundProcessRunnerTests
 {
     [Fact]
+    public void CreateStartInfo_KeepsDependencyProbesAndInstallationsInCallingTerminal()
+    {
+        var startInfo = PlaygroundProcessRunner.CreateStartInfo(new PlaygroundProcessRequest
+        {
+            ExecutablePath = Path.Combine(Path.GetTempPath(), "node.exe"),
+            Arguments = ["--version"],
+            Timeout = TimeSpan.FromSeconds(10),
+        });
+
+        Assert.True(startInfo.CreateNoWindow);
+        Assert.False(startInfo.UseShellExecute);
+        Assert.True(startInfo.RedirectStandardOutput);
+        Assert.True(startInfo.RedirectStandardError);
+    }
+
+    [Fact]
     public async Task RunAsync_CapturesBothStreamsAndReturnsNonZeroExitCode()
     {
         var node = RequireNode();

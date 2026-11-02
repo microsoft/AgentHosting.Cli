@@ -112,7 +112,7 @@ public sealed class PlaygroundExecutionTests
     }
 
     [Fact]
-    public async Task WorkingToolLaunchesWithoutInstallerOrPrerequisiteProbe()
+    public async Task WorkingToolChecksNodeWithoutRequiringNpmOrInstallation()
     {
         var doubles = new Doubles { Tool = Tool("0.2.30") };
 
@@ -121,10 +121,134 @@ public sealed class PlaygroundExecutionTests
         Assert.Equal(0, exitCode);
         Assert.Equal(1, doubles.LocateCalls);
         Assert.Equal(0, doubles.DetectNpmCalls);
+        Assert.Equal(1, doubles.DetectNodeCalls);
         Assert.Equal(0, doubles.InstallCalls);
         Assert.Equal(1, doubles.LaunchCalls);
         Assert.Equal(ClientId, doubles.LaunchedClientId);
         Assert.Equal(1, doubles.DiscoverCalls);
+    }
+
+    [Theory]
+    [InlineData(PlaygroundFailureKind.NodeNotFound)]
+    [InlineData(PlaygroundFailureKind.NodeBelowMinimum)]
+    [InlineData(PlaygroundFailureKind.NodeInvalidVersion)]
+    [InlineData(PlaygroundFailureKind.NpmNotFound)]
+    public async Task MissingToolChecksPrerequisitesBeforeConsentOrInstallation(PlaygroundFailureKind kind)
+    {
+        var doubles = new Doubles { Tool = null };
+        doubles.DetectNpm = _ => Task.FromResult(new PlaygroundToolDiscoveryResult(null,
+        [
+            new PlaygroundToolRejection("node", new PlaygroundFailure
+            {
+                Kind = kind,
+                Message = "The prerequisite is unavailable.",
+                Remediation = PlaygroundToolLocator.NodeInstallRemediation,
+            }),
+        ]));
+
+        var exitCode = await RenderAsync(CreateExecution(Request(), doubles));
+
+        Assert.Equal(ExitCodes.Failure, exitCode);
+        Assert.Equal(0, doubles.PromptCalls);
+        Assert.Equal(0, doubles.InstallCalls);
+        Assert.Equal(0, doubles.DiscoverCalls);
+        Assert.Equal(0, doubles.LaunchCalls);
+        Assert.Contains("The prerequisite is unavailable.", doubles.Error.ToString(), StringComparison.Ordinal);
+        Assert.Contains("22.17.1", doubles.Error.ToString(), StringComparison.Ordinal);
+        Assert.Contains("https://nodejs.org/en/download", doubles.Error.ToString(), StringComparison.Ordinal);
+        Assert.Contains("new terminal", doubles.Error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PrerequisiteTimeoutStopsBeforeConsentDiscoveryOrLaunch(bool installed)
+    {
+        var doubles = new Doubles { Tool = installed ? Tool("0.2.30") : null };
+        var result = new PlaygroundToolDiscoveryResult(null,
+        [
+            new PlaygroundToolRejection("node", new PlaygroundFailure
+            {
+                Kind = PlaygroundFailureKind.NodeProbeTimedOut,
+                Message = "Node.js did not return a version.",
+            }),
+        ]);
+        doubles.DetectNpm = _ => Task.FromResult(result);
+        doubles.DetectNode = (_, _) => Task.FromResult(result);
+        var execution = CreateExecution(Request(), doubles);
+
+        Assert.Equal(ExitCodes.Failure, await RenderAsync(execution));
+        Assert.Equal(PlaygroundSemanticOutcome.Timeout, execution.SemanticOutcome);
+        Assert.Equal(PlaygroundErrorCategory.Timeout,
+            Assert.IsType<PlaygroundTelemetryDetails>(Assert.Single(doubles.Telemetry)).ErrorCategory);
+        Assert.Equal(0, doubles.PromptCalls);
+        Assert.Equal(0, doubles.DiscoverCalls);
+        Assert.Equal(0, doubles.LaunchCalls);
+    }
+
+    [Fact]
+    public async Task InstalledToolWithUnsupportedNodeDoesNotOpenTerminal()
+    {
+        var doubles = new Doubles();
+        doubles.DetectNode = (_, _) => Task.FromResult(new PlaygroundToolDiscoveryResult(null,
+        [
+            new PlaygroundToolRejection("node", new PlaygroundFailure
+            {
+                Kind = PlaygroundFailureKind.NodeBelowMinimum,
+                Message = "Node.js version 20.0.0 is below the required minimum 22.17.1.",
+                Remediation = PlaygroundToolLocator.NodeInstallRemediation,
+            }),
+        ]));
+
+        Assert.Equal(ExitCodes.Failure, await RenderAsync(CreateExecution(Request(), doubles)));
+        Assert.Equal(0, doubles.PromptCalls);
+        Assert.Equal(0, doubles.InstallCalls);
+        Assert.Equal(0, doubles.DiscoverCalls);
+        Assert.Equal(0, doubles.LaunchCalls);
+        Assert.Contains("20.0.0", doubles.Error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PrerequisiteProbeExceptionIsSanitized(bool timeout)
+    {
+        var doubles = new Doubles();
+        doubles.DetectNode = (_, _) =>
+        {
+            if (timeout)
+            {
+                throw new TimeoutException("CANARY-private-probe-output");
+            }
+
+            throw new InvalidOperationException("CANARY-private-probe-output");
+        };
+        var execution = CreateExecution(Request(), doubles);
+
+        Assert.Equal(ExitCodes.Failure, await RenderAsync(execution));
+        Assert.Equal(timeout ? PlaygroundSemanticOutcome.Timeout : PlaygroundSemanticOutcome.None,
+            execution.SemanticOutcome);
+        Assert.DoesNotContain("CANARY", doubles.Error.ToString(), StringComparison.Ordinal);
+        Assert.Contains("https://nodejs.org/en/download", doubles.Error.ToString(), StringComparison.Ordinal);
+        Assert.Equal(0, doubles.LaunchCalls);
+    }
+
+    [Fact]
+    public async Task PrerequisiteCancellationStopsBeforeConsentOrLaunch()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var doubles = new Doubles { Tool = null };
+        doubles.DetectNpm = _ =>
+        {
+            cancellation.Cancel();
+            return Task.FromCanceled<PlaygroundToolDiscoveryResult>(cancellation.Token);
+        };
+        var execution = CreateExecution(Request(), doubles);
+
+        Assert.Equal(130, await RenderAsync(execution, cancellation.Token));
+        Assert.Equal(PlaygroundSemanticOutcome.Cancellation, execution.SemanticOutcome);
+        Assert.Equal(0, doubles.PromptCalls);
+        Assert.Equal(0, doubles.LaunchCalls);
     }
 
     [Fact]
@@ -679,6 +803,12 @@ public sealed class PlaygroundExecutionTests
             DetectNpm = _ =>
             {
                 DetectNpmCalls++;
+                return Task.FromResult(Discovery(InstallTool));
+            };
+            DetectNode = (tool, _) =>
+            {
+                DetectNodeCalls++;
+                Assert.Same(Tool, tool);
                 return Task.FromResult(Discovery(Tool));
             };
             Install = _ =>
@@ -717,10 +847,11 @@ public sealed class PlaygroundExecutionTests
         public Func<AgentHostClientAppConfiguration> ClientConfiguration { get; set; }
         public Func<CancellationToken, Task<PlaygroundToolDiscoveryResult>> Locate { get; set; }
         public Func<CancellationToken, Task<PlaygroundToolDiscoveryResult>> DetectNpm { get; set; }
+        public Func<PlaygroundTool?, CancellationToken, Task<PlaygroundToolDiscoveryResult>> DetectNode { get; set; }
         public Func<CancellationToken, Task<PlaygroundTool>> Install { get; set; }
         public Func<PlaygroundTool, PlaygroundConnection, Action, CancellationToken, Task<int>> Launch { get; set; }
         public Func<string, string, CancellationToken, Task<ConfirmationOutcome>> Confirm { get; set; }
-        public IPlaygroundToolLocator Locator => new DelegateLocator(Locate, DetectNpm);
+        public IPlaygroundToolLocator Locator => new DelegateLocator(Locate, DetectNpm, DetectNode);
         public IPlaygroundGlobalInstaller Installer => new DelegateInstaller(Install);
         public IPlaygroundLauncher Launcher => new DelegateLauncher(Launch, this);
         public IConfirmationPrompt Confirmation => new DelegateConfirmation(Confirm);
@@ -738,6 +869,7 @@ public sealed class PlaygroundExecutionTests
         public int ClientConfigurationCalls { get; set; }
         public int LocateCalls { get; set; }
         public int DetectNpmCalls { get; set; }
+        public int DetectNodeCalls { get; set; }
         public int InstallCalls { get; set; }
         public int PromptCalls { get; set; }
         public int LaunchCalls { get; set; }
@@ -788,12 +920,18 @@ public sealed class PlaygroundExecutionTests
 
     private sealed class DelegateLocator(
         Func<CancellationToken, Task<PlaygroundToolDiscoveryResult>> locate,
-        Func<CancellationToken, Task<PlaygroundToolDiscoveryResult>> detectNpm) : IPlaygroundToolLocator
+        Func<CancellationToken, Task<PlaygroundToolDiscoveryResult>> detectNpm,
+        Func<PlaygroundTool?, CancellationToken, Task<PlaygroundToolDiscoveryResult>> detectNode) : IPlaygroundToolLocator
     {
         public Task<PlaygroundToolDiscoveryResult> LocateAsync(CancellationToken cancellationToken) =>
             locate(cancellationToken);
 
         public Task<PlaygroundToolDiscoveryResult> DetectNpmAsync(CancellationToken cancellationToken) =>
             detectNpm(cancellationToken);
+
+        public Task<PlaygroundToolDiscoveryResult> DetectNodeAsync(
+            PlaygroundTool? playground,
+            CancellationToken cancellationToken) =>
+            detectNode(playground, cancellationToken);
     }
 }

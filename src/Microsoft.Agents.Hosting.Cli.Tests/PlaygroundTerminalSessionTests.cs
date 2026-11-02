@@ -11,6 +11,108 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 public sealed class PlaygroundTerminalSessionTests
 {
+    [Theory]
+    [InlineData(false, 0, false)]
+    [InlineData(false, 1, true)]
+    [InlineData(false, 130, false)]
+    [InlineData(true, 1, true)]
+    public async Task RunChildAsync_AcknowledgesOnlyUnexpectedFailures(
+        bool failBeforeStart,
+        int exitCode,
+        bool shouldAcknowledge)
+    {
+        var acknowledge = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<int>? childTask = null;
+        var launcher = new PlaygroundTerminalSession(
+            pipe => childTask = PlaygroundTerminalSession.RunChildAsync(
+                pipe,
+                _ => new HoldingLauncher { Fail = failBeforeStart, ExitCode = exitCode },
+                CancellationToken.None,
+                async token =>
+                {
+                    acknowledge.SetResult();
+                    await release.Task.WaitAsync(token);
+                }),
+            TimeSpan.FromSeconds(10));
+
+        try
+        {
+            if (failBeforeStart)
+            {
+                await Assert.ThrowsAsync<PlaygroundLaunchException>(() => launcher.RunAsync(
+                    Tool(), new PlaygroundConnection.DirectLine(), () => { }, CancellationToken.None));
+            }
+            else
+            {
+                Assert.Equal(0, await launcher.RunAsync(
+                    Tool(), new PlaygroundConnection.DirectLine(), () => { }, CancellationToken.None));
+            }
+
+            Assert.NotNull(childTask);
+            if (shouldAcknowledge)
+            {
+                await acknowledge.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.False(childTask.IsCompleted);
+            }
+            else
+            {
+                Assert.Equal(exitCode, await childTask.WaitAsync(TimeSpan.FromSeconds(10)));
+                Assert.False(acknowledge.Task.IsCompleted);
+            }
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (childTask is not null)
+            {
+                Assert.Equal(exitCode, await childTask.WaitAsync(TimeSpan.FromSeconds(10)));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RunChildAsync_CtrlCWhileAcknowledgingPreservesFailureAndExits()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var acknowledge = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<int>? childTask = null;
+        var launcher = new PlaygroundTerminalSession(
+            pipe => childTask = PlaygroundTerminalSession.RunChildAsync(
+                pipe, _ => new HoldingLauncher { ExitCode = 1 }, cancellation.Token,
+                async token =>
+                {
+                    acknowledge.SetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                }),
+            TimeSpan.FromSeconds(10));
+
+        try
+        {
+            Assert.Equal(0, await launcher.RunAsync(
+                Tool(), new PlaygroundConnection.DirectLine(), () => { }, CancellationToken.None));
+            await acknowledge.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            cancellation.Cancel();
+            Assert.NotNull(childTask);
+            Assert.Equal(1, await childTask.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task AcknowledgeFailureAsync_DoesNotWaitWithRedirectedInputOrOutput(
+        bool inputRedirected,
+        bool outputRedirected)
+    {
+        await PlaygroundTerminalSession.AcknowledgeFailureAsync(
+            inputRedirected, outputRedirected, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(1));
+    }
+
     [Fact]
     public async Task RunAsync_PreservesCallersScrubbedEnvironmentForNativeProcess()
     {
@@ -165,12 +267,23 @@ public sealed class PlaygroundTerminalSessionTests
         using var cancellation = new CancellationTokenSource();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var childLauncher = new HoldingLauncher { Entered = entered, BeforeStart = release.Task };
+        var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanupEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var childLauncher = new HoldingLauncher
+        {
+            Entered = entered,
+            BeforeStart = release.Task,
+            Cleanup = cleanup.Task,
+            CleanupEntered = cleanupEntered,
+        };
+        var terminalStopped = false;
         Task<int>? childTask = null;
         var launcher = new PlaygroundTerminalSession(
             pipe => childTask = PlaygroundTerminalSession.RunChildAsync(
-                pipe, childLauncher, CancellationToken.None),
-            TimeSpan.FromSeconds(10));
+                pipe, _ => childLauncher, CancellationToken.None,
+                _ => throw new InvalidOperationException("A cancelled handoff must not wait for acknowledgment.")),
+            TimeSpan.FromSeconds(10),
+            stopTerminal: () => terminalStopped = true);
         var parentTask = launcher.RunAsync(
             Tool(), new PlaygroundConnection.DirectLine(),
             () => Assert.Fail("A cancelled handoff must not report startup."), cancellation.Token);
@@ -179,19 +292,80 @@ public sealed class PlaygroundTerminalSessionTests
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
             cancellation.Cancel();
+            release.TrySetResult();
+            await cleanupEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(parentTask.IsCompleted);
+            Assert.False(terminalStopped);
+            cleanup.SetResult();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => parentTask);
         }
         finally
         {
             cancellation.Cancel();
             release.TrySetResult();
+            cleanup.TrySetResult();
             if (childTask is not null)
             {
-                Assert.Equal(1, await childTask.WaitAsync(TimeSpan.FromSeconds(10)));
+                Assert.Equal(130, await childTask.WaitAsync(TimeSpan.FromSeconds(10)));
             }
         }
 
         Assert.True(childLauncher.Stopped);
+    }
+
+    [Fact]
+    public async Task RunAsync_CancelledBeforeChildConnectsDoesNotWaitForAcknowledgment()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var childLifetime = new CancellationTokenSource();
+        var terminalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connectChild = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acknowledgmentRequested = false;
+        Task<int>? childTask = null;
+        var launcher = new PlaygroundTerminalSession(
+            pipe =>
+            {
+                terminalStarted.SetResult();
+                childTask = Task.Run(async () =>
+                {
+                    await connectChild.Task;
+                    return await PlaygroundTerminalSession.RunChildAsync(
+                        pipe, _ => new HoldingLauncher(), childLifetime.Token,
+                        _ =>
+                        {
+                            acknowledgmentRequested = true;
+                            return Task.CompletedTask;
+                        });
+                });
+            },
+            TimeSpan.FromSeconds(10),
+            stopTerminal: childLifetime.Cancel);
+
+        var parentTask = launcher.RunAsync(
+            Tool(), new PlaygroundConnection.DirectLine(),
+            () => Assert.Fail("A cancelled handoff must not report startup."), cancellation.Token);
+
+        await terminalStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => parentTask);
+        connectChild.SetResult();
+
+        Assert.NotNull(childTask);
+        Assert.Equal(130, await childTask.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.False(acknowledgmentRequested);
+    }
+
+    [Fact]
+    public async Task ReadHandoffResponseAsync_ReadsCancellationBufferedAfterRequestLine()
+    {
+        var bytes = new byte[] { (byte)'{', (byte)'}', (byte)'\n', 2 };
+        using var stream = new MemoryStream(bytes);
+        using var reader = new StreamReader(stream, leaveOpen: true);
+
+        Assert.Equal("{}", await reader.ReadLineAsync());
+        Assert.Equal(
+            '\u0002',
+            await PlaygroundTerminalSession.ReadHandoffResponseAsync(reader, CancellationToken.None));
     }
 
     [Fact]
@@ -400,8 +574,11 @@ public sealed class PlaygroundTerminalSessionTests
         public PlaygroundTool? Tool { get; private set; }
         public PlaygroundConnection? Connection { get; private set; }
         public bool Fail { get; init; }
+        public int? ExitCode { get; init; }
         public TaskCompletionSource? Entered { get; init; }
         public Task? BeforeStart { get; init; }
+        public Task? Cleanup { get; init; }
+        public TaskCompletionSource? CleanupEntered { get; init; }
         public bool Stopped { get; private set; }
 
         public async Task<int> RunAsync(
@@ -426,11 +603,22 @@ public sealed class PlaygroundTerminalSessionTests
                 }
 
                 started();
+                if (ExitCode is { } exitCode)
+                {
+                    return exitCode;
+                }
+
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
                 return 0;
             }
             finally
             {
+                CleanupEntered?.TrySetResult();
+                if (Cleanup is not null)
+                {
+                    await Cleanup;
+                }
+
                 Stopped = true;
             }
         }

@@ -3,9 +3,11 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Playground;
 /// <summary>Discovers global playground and npm commands without invoking a shell.</summary>
 public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
 {
-    public static readonly PlaygroundVersion MinimumNodeVersion = PlaygroundVersion.Parse("22.0.0");
+    public static readonly PlaygroundVersion MinimumNodeVersion = PlaygroundVersion.Parse("22.17.1");
     public static readonly PlaygroundVersion MinimumPlaygroundVersion = PlaygroundVersion.Parse("0.2.29");
     public static readonly TimeSpan VersionProbeTimeout = TimeSpan.FromSeconds(10);
+    public const string NodeInstallRemediation =
+        "Install Node.js 22.17.1 or newer with npm from https://nodejs.org/en/download, then open a new terminal and rerun msagent test playground. Ensure node and npm are available on PATH.";
 
     private const string PlaygroundPackageEntryPoint =
         "node_modules\\@microsoft\\m365agentsplayground\\cli.js";
@@ -66,27 +68,44 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
         return new PlaygroundToolDiscoveryResult(null, rejections);
     }
 
-    public async Task<PlaygroundToolDiscoveryResult> DetectNpmAsync(CancellationToken cancellationToken)
+    public async Task<PlaygroundToolDiscoveryResult> DetectNodeAsync(
+        PlaygroundTool? playground,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var rejections = new List<PlaygroundToolRejection>();
-        var nodeCandidates = EnumerateCandidates("node", rejections);
-        var node = await FindUsableNodeAsync(nodeCandidates, rejections, cancellationToken).ConfigureAwait(false);
-        if (node is null)
+        var nodeCandidates = playground is { ArgumentPrefix.Count: > 0 } && _environment.IsWindows
+            ? new List<string> { playground.ExecutablePath }
+            : EnumerateCandidates("node", rejections);
+        if (playground is not null && nodeCandidates.Count > 1)
         {
-            if (nodeCandidates.Count == 0)
-            {
-                rejections.Add(new PlaygroundToolRejection(
-                    "node",
-                    Failure(
-                        PlaygroundFailureKind.NodeNotFound,
-                        "Node.js 22 or newer was not found on PATH.",
-                        "Install Node.js 22 or newer and ensure it is available on PATH.")));
-            }
-
-            return new PlaygroundToolDiscoveryResult(null, rejections);
+            var selected = nodeCandidates.FirstOrDefault(_environment.IsExecutable) ?? nodeCandidates[0];
+            nodeCandidates = [selected];
         }
 
+        var node = await FindUsableNodeAsync(nodeCandidates, rejections, cancellationToken).ConfigureAwait(false);
+        if (node is null && nodeCandidates.Count == 0)
+        {
+            rejections.Add(new PlaygroundToolRejection(
+                "node",
+                Failure(
+                    PlaygroundFailureKind.NodeNotFound,
+                    "Node.js 22.17.1 or newer was not found on PATH.",
+                    NodeInstallRemediation)));
+        }
+
+        return new PlaygroundToolDiscoveryResult(node, rejections);
+    }
+
+    public async Task<PlaygroundToolDiscoveryResult> DetectNpmAsync(CancellationToken cancellationToken)
+    {
+        var nodeDiscovery = await DetectNodeAsync(null, cancellationToken).ConfigureAwait(false);
+        if (nodeDiscovery.Tool is not { } node)
+        {
+            return nodeDiscovery;
+        }
+
+        var rejections = nodeDiscovery.Rejections.ToList();
         var npmCandidates = EnumerateCandidates("npm", rejections);
         foreach (var selectedPath in npmCandidates)
         {
@@ -130,7 +149,7 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
                 Failure(
                     PlaygroundFailureKind.NpmNotFound,
                     "npm was not found on PATH.",
-                    "Install npm with Node.js 22 or newer and ensure it is available on PATH.")));
+                    NodeInstallRemediation)));
         }
 
         return new PlaygroundToolDiscoveryResult(null, rejections);
@@ -195,7 +214,9 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
             return new ProbeResult(null, Failure(
                 TimeoutKind(kind),
                 $"{DisplayName(kind)} did not return a version within {VersionProbeTimeout.TotalSeconds:0} seconds.",
-                "Check the installation and try the command again."));
+                kind == PlaygroundProbeKind.Node
+                    ? NodeInstallRemediation
+                    : "Check the installation and try the command again."));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -213,7 +234,9 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
             return new ProbeResult(null, Failure(
                 ProbeFailureKind(kind),
                 $"{DisplayName(kind)} could not be started for a version probe.",
-                "Check that the executable is available and runnable."));
+                kind == PlaygroundProbeKind.Node
+                    ? NodeInstallRemediation
+                    : "Check that the executable is available and runnable."));
         }
 
         if (processResult.ExitCode != 0)
@@ -221,7 +244,9 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
             return new ProbeResult(null, Failure(
                 ProbeFailureKind(kind),
                 $"{DisplayName(kind)} version probing exited with code {processResult.ExitCode}.",
-                "Check that the executable is available and runnable.",
+                kind == PlaygroundProbeKind.Node
+                    ? NodeInstallRemediation
+                    : "Check that the executable is available and runnable.",
                 processResult.ExitCode));
         }
 
@@ -237,7 +262,9 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
             return new ProbeResult(null, Failure(
                 InvalidVersionKind(kind),
                 $"{DisplayName(kind)} returned an invalid semantic version.",
-                "Install a supported version and try the command again."));
+                kind == PlaygroundProbeKind.Node
+                    ? NodeInstallRemediation
+                    : "Install a supported version and try the command again."));
         }
 
         if (minimum is not null && version < minimum.Value)
@@ -247,7 +274,7 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
                 $"{DisplayName(kind)} version {version} is below the required minimum {minimum.Value}.",
                 kind == PlaygroundProbeKind.Playground
                     ? MinimumPlaygroundInstallRemediation
-                    : "Install Node.js 22 or newer and ensure it is available on PATH.",
+                    : NodeInstallRemediation,
                 observedVersion: version));
         }
 
@@ -267,7 +294,7 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
             failure = Failure(
                 PlaygroundFailureKind.EntryPointNotFound,
                 "The npm script has no usable directory.",
-                "Reinstall npm with Node.js 22 or newer and try the command again.");
+                NodeInstallRemediation);
             return false;
         }
 
@@ -292,7 +319,7 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
             failure = Failure(
                 PlaygroundFailureKind.EntryPointNotFound,
                 "The npm script has no resolvable npm CLI entry point.",
-                "Reinstall npm with Node.js 22 or newer and try the command again.");
+                NodeInstallRemediation);
             return false;
         }
 
@@ -380,7 +407,7 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
             failure = Failure(
                 PlaygroundFailureKind.NodeNotFound,
                 "Node.js was not found for the recognized npm shim.",
-                "Install Node.js 22 or newer and ensure it is available on PATH.");
+                NodeInstallRemediation);
             return false;
         }
 
