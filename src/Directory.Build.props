@@ -2,7 +2,8 @@
 
 	<PropertyGroup>
 		<!-- 
-    Create a coarse level define to identity .net framework vs .net core 
+    Create a coarse level define to identity .net framework vs .net core 
+
     This is to align with https://github.com/dotnet/designs/blob/main/accepted/2020/or-greater-defines/or-greater-defines.md 
     which pre-defines some preprocessor symbols for source files. 
 
