@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/microsoft/msagent-plugin",
+  "commit": "d8be3f3004768a67e5b57154510c000286954681",
+  "canonicalRepository": "https://github.com/microsoft/AgentHosting.Cli",
+  "canonicalPath": ".github/plugins/mcs-assistant",
+  "agencyPluginId": "f71dfb3c-3b50-4b47-8909-c72a047d3210"
+}

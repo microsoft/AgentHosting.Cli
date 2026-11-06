@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "triggers": [
+    { "id": "create-new", "split": "train", "prompt": "Build a new Copilot Studio agent for travel support in a new local MSAGENT project.", "expected": "create-agent" },
+    { "id": "create-draft", "split": "validation", "prompt": "Scaffold a Copilot Studio agent from these instructions and deploy its draft, without publishing.", "expected": "create-agent" },
+    { "id": "clone-existing", "split": "train", "prompt": "Clone my existing Copilot Studio agent into a new local folder.", "expected": "clone-agent" },
+    { "id": "clone-url", "split": "validation", "prompt": "Bring this existing Copilot Studio agent URL into a new MSAGENT project on my machine.", "expected": "clone-agent" },
+    { "id": "push-draft", "split": "train", "prompt": "Push my local agent edits to Copilot Studio, but do not make them live.", "expected": "push-agent" },
+    { "id": "push-not-publish", "split": "validation", "smoke": true, "prompt": "Upload the changes from this registered MSAGENT project to the existing agent's draft. This is not permission to publish.", "expected": "push-agent" },
+    { "id": "pull-existing", "split": "train", "prompt": "Pull the remote agent changes into my existing registered MSAGENT project.", "expected": "pull-agent" },
+    { "id": "pull-not-clone", "split": "validation", "prompt": "Refresh the agent project already checked out here with the latest changes from Copilot Studio; do not create another project.", "expected": "pull-agent" },
+    { "id": "publish-live", "split": "train", "prompt": "Publish my registered Copilot Studio agent so the local changes become live.", "expected": "publish-agent" },
+    { "id": "publish-not-push", "split": "validation", "smoke": true, "prompt": "Make the agent in this local MSAGENT project live, rather than only uploading a draft.", "expected": "publish-agent" },
+    { "id": "delete-cloud", "split": "train", "prompt": "Delete the Copilot Studio agent's cloud resources while preserving its local files.", "expected": "delete-agent" },
+    { "id": "delete-registered", "split": "validation", "prompt": "Remove this registered MSAGENT project's Copilot Studio agent from the cloud.", "expected": "delete-agent" },
+    { "id": "knowledge-web", "split": "train", "prompt": "Ground my locally cloned Copilot Studio agent on this public website.", "expected": "add-knowledge" },
+    { "id": "knowledge-file", "split": "validation", "prompt": "Attach this local policy PDF as knowledge to my cloned Copilot Studio agent.", "expected": "add-knowledge" },
+    { "id": "skill-author", "split": "train", "prompt": "Write an Agent Skill for my Copilot Studio agent that creates a verified weekly incident report.", "expected": "add-skill" },
+    { "id": "skill-import", "split": "validation", "prompt": "Import this SKILL.md bundle into my Copilot Studio agent's behaviors folder.", "expected": "add-skill" },
+    { "id": "channel-teams", "split": "train", "prompt": "Enable the Teams channel on my CLI-authored Copilot Studio agent using the GitHub Copilot harness.", "expected": "add-channel" },
+    { "id": "channel-copilot", "split": "validation", "prompt": "Add the Microsoft 365 Copilot channel in this local MCS agent's settings; it uses the GitHub harness.", "expected": "add-channel" },
+    { "id": "git-push", "split": "train", "prompt": "Push this Git branch to origin. Do not deploy the Copilot Studio agent.", "expected": "none" },
+    { "id": "local-folder-delete", "split": "validation", "smoke": true, "prompt": "Delete only the temporary local folder named agent-demo; do not remove any cloud resources.", "expected": "none" },
+    { "id": "git-clone", "split": "train", "prompt": "Clone the public Git repository containing an agent sample. Do not clone a Copilot Studio agent.", "expected": "none" },
+    { "id": "teams-message", "split": "validation", "smoke": true, "prompt": "Send a message to the existing Teams channel. Do not configure an agent channel.", "expected": "none" }
+  ],
+  "outcomes": [
+    {
+      "id": "knowledge-unsupported",
+      "split": "validation",
+      "smoke": true,
+      "skill": "add-knowledge",
+      "references": ["knowledge-schema.md", "website.md"],
+      "prompt": "Add https://example.com/policies as local website knowledge. The selected settings.mcs.yml contains schemaName: cr_policy, template: default-2.1.0, configuration.authoringModel: Classic. Decide whether this workspace is supported before proposing any files.",
+      "assertions": [
+        { "path": "decision", "equals": "stop" },
+        { "path": "files", "equals": [] },
+        { "path": "notes", "matches": "unsupported|non-CLI|not.*CLI|harness|template" }
+      ]
+    },
+    {
+      "id": "knowledge-website",
+      "split": "validation",
+      "smoke": true,
+      "skill": "add-knowledge",
+      "references": ["knowledge-schema.md", "website.md"],
+      "prompt": "Propose adding https://example.com/policies as website knowledge in a cloned local agent. Settings: schemaName: cr_policy; template: cliagent-1.0.0; configuration.authoringModel: CliCopilot. Exactly one workspace, no collisions, public indexed website confirmed, no access check requested. Include the candidate knowledge YAML and the checks required before reporting success. This is a proposal, not an actual write.",
+      "assertions": [
+        { "path": "decision", "equals": "plan" },
+        { "path": "files.length", "equals": 1 },
+        { "path": "checks", "matches": "YAML|pars" },
+        { "path": "checks", "matches": "diff|before.after|inventory" },
+        { "path": "notes", "matches": "local|not.*deploy|not.*publish" }
+      ],
+      "yamlArtifact": { "kind": "KnowledgeSourceConfiguration", "source": { "kind": "WebsiteKnowledgeSource", "siteUrl": "https://example.com/policies" } }
+    },
+    {
+      "id": "creation-publication",
+      "split": "validation",
+      "smoke": true,
+      "skill": "create-agent",
+      "references": ["publish-handoff.md"],
+      "prompt": "Creation, validation, draft deployment and final pull are all verified successful. The user explicitly requested publication. Exact verified target: projectRoot C:\\fixtures\\project, local agentId 33333333-3333-3333-3333-333333333333, deploymentId 44444444-4444-4444-4444-444444444444, environmentId 11111111-1111-1111-1111-111111111111, cloud mcsAgentId 22222222-2222-2222-2222-222222222222, schemaName cr_support. The publish skill is available. Return the next handoff and checks, not a deployment command.",
+      "assertions": [
+        { "path": "decision", "equals": "handoff" },
+        { "path": "handoff.skill", "matches": "(^|:)publish-agent$" },
+        { "path": "handoff.projectRoot", "equals": "C:\\fixtures\\project" },
+        { "path": "handoff.agentId", "equals": "33333333-3333-3333-3333-333333333333" },
+        { "path": "handoff.deploymentId", "equals": "44444444-4444-4444-4444-444444444444" },
+        { "path": "handoff.schemaName", "equals": "cr_support" },
+        { "path": "handoff.environmentId", "equals": "11111111-1111-1111-1111-111111111111" },
+        { "path": "handoff.mcsAgentId", "equals": "22222222-2222-2222-2222-222222222222" },
+        { "path": "checks", "matches": "final.*confirm|confirm.*publish|confirm.*live" },
+        { "path": "commands", "equals": [] }
+      ]
+    }
+  ]
+}
