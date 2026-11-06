@@ -111,6 +111,8 @@ extends:
             env:
               ob_restore_phase: true # # Steps decorated with this env variable will be run with network. All these steps are hoisted to the beginning of the build
 
+          - template: templates/plugin-checks.yml
+
           - checkout: tools
             path: s/tools
 

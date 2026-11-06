@@ -19,6 +19,9 @@ pr:
   paths:
     include:
       - src/**
+      - .github/plugins/**
+      - .claude-plugin/**
+      - .azdo/**
 
 parameters: # parameters are shown up in ADO UI in a build queue time
 - name: 'debug'
@@ -89,6 +92,8 @@ extends:
             path: s
             env:
               ob_restore_phase: true
+
+          - template: templates/plugin-checks.yml
 
           - checkout: tools
             path: s/tools

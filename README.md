@@ -55,6 +55,10 @@ msagent agent create -n "My Agent" -d "Description" -ip "Initial prompt/instruct
 
 ## What to do next
 
+- [Copilot Studio authoring plugin](.github/plugins/mcs-assistant/README.md):
+  shared Claude/Copilot workflows and generated host distributions, maintained
+  separately from the CLI's NuGet contents.
+
 - Follow the [quickstart](docs/Quickstart.md) guide to go through the full end-to-end lifecycle of a Copilot Studio agent.
 - [New Agents](docs/New%20Agents.md): Create, Clone or Initialize
 - [Editing Agents](docs/Editing%20Agents.md)

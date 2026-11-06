@@ -23,6 +23,23 @@ jobs:
       shell: pwsh
       run: ./.github/scripts/verify-no-local-agent-artifacts.ps1
 
+    - name: Setup plugin Node.js
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version: 22
+
+    - name: Restore plugin tooling
+      run: npm --prefix .github/plugins/mcs-assistant/scripts ci --no-audit --no-fund
+
+    - name: Build and test plugin
+      shell: pwsh
+      run: |
+        npm --prefix .github/plugins/mcs-assistant/scripts run build
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        npm --prefix .github/plugins/mcs-assistant/scripts test
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        git diff --exit-code -- .github/plugins/mcs-assistant
+
     - name: Setup .NET
       uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
       with:

@@ -1,0 +1,25 @@
+steps:
+- task: NodeTool@0
+  displayName: Install plugin Node.js
+  inputs:
+    versionSpec: 22.x
+  env:
+    ob_restore_phase: true
+
+- script: npm ci --no-audit --no-fund
+  displayName: Restore plugin tooling
+  workingDirectory: '$(Build.SourcesDirectory)/.github/plugins/mcs-assistant/scripts'
+  env:
+    ob_restore_phase: true
+
+- task: PowerShell@2
+  displayName: Build and test authoring plugin
+  inputs:
+    targetType: inline
+    workingDirectory: '$(Build.SourcesDirectory)/.github/plugins/mcs-assistant/scripts'
+    script: |
+      npm run build
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      npm test
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      git diff --exit-code -- "$(Build.SourcesDirectory)/.github/plugins/mcs-assistant"

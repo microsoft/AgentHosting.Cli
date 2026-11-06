@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"var p=require('path'),fs=require('fs'),rs=[process.env.COPILOT_PLUGIN_ROOT,process.env.CLAUDE_PLUGIN_ROOT].filter(Boolean).map(r=>fs.realpathSync(r));if(!rs.length||new Set(rs).size!==1)throw Error('Missing or ambiguous host plugin root');require(p.join(rs[0],'hooks','set-env-vars.bundle.js'))\"",
+            "bash": "node -e \"var p=require('path'),fs=require('fs'),rs=[process.env.COPILOT_PLUGIN_ROOT,process.env.CLAUDE_PLUGIN_ROOT].filter(Boolean).map(r=>fs.realpathSync(r));if(!rs.length||new Set(rs).size!==1)throw Error('Missing or ambiguous host plugin root');require(p.join(rs[0],'hooks','set-env-vars.bundle.js'))\"",
+            "powershell": "node -e \"var p=require('path'),fs=require('fs'),rs=[process.env.COPILOT_PLUGIN_ROOT,process.env.CLAUDE_PLUGIN_ROOT].filter(Boolean).map(r=>fs.realpathSync(r));if(!rs.length||new Set(rs).size!==1)throw Error('Missing or ambiguous host plugin root');require(p.join(rs[0],'hooks','set-env-vars.bundle.js'))\""
+          }
+        ]
+      }
+    ]
+  }
+}
