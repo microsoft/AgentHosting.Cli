@@ -5,9 +5,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node -e \"var p=require('path'),fs=require('fs'),rs=[process.env.COPILOT_PLUGIN_ROOT,process.env.CLAUDE_PLUGIN_ROOT].filter(Boolean).map(r=>fs.realpathSync(r));if(!rs.length||new Set(rs).size!==1)throw Error('Missing or ambiguous host plugin root');require(p.join(rs[0],'hooks','set-env-vars.bundle.js'))\"",
-            "bash": "node -e \"var p=require('path'),fs=require('fs'),rs=[process.env.COPILOT_PLUGIN_ROOT,process.env.CLAUDE_PLUGIN_ROOT].filter(Boolean).map(r=>fs.realpathSync(r));if(!rs.length||new Set(rs).size!==1)throw Error('Missing or ambiguous host plugin root');require(p.join(rs[0],'hooks','set-env-vars.bundle.js'))\"",
-            "powershell": "node -e \"var p=require('path'),fs=require('fs'),rs=[process.env.COPILOT_PLUGIN_ROOT,process.env.CLAUDE_PLUGIN_ROOT].filter(Boolean).map(r=>fs.realpathSync(r));if(!rs.length||new Set(rs).size!==1)throw Error('Missing or ambiguous host plugin root');require(p.join(rs[0],'hooks','set-env-vars.bundle.js'))\""
+            "command": "node -e \"var p=require('path'),r=process.env.CLAUDE_PLUGIN_ROOT;if(!r)throw Error('Missing Claude plugin root');require(p.join(require('fs').realpathSync(r),'hooks','set-env-vars.bundle.js'))\"",
+            "bash": "node -e \"var p=require('path'),r=process.env.COPILOT_PLUGIN_ROOT;if(!r)throw Error('Missing Copilot plugin root');delete process.env.CLAUDE_ENV_FILE;require(p.join(require('fs').realpathSync(r),'hooks','set-env-vars.bundle.js'))\"",
+            "powershell": "node -e \"var p=require('path'),r=process.env.COPILOT_PLUGIN_ROOT;if(!r)throw Error('Missing Copilot plugin root');delete process.env.CLAUDE_ENV_FILE;require(p.join(require('fs').realpathSync(r),'hooks','set-env-vars.bundle.js'))\""
           }
         ]
       }

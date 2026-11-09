@@ -49,6 +49,9 @@ test("deletion requires typed confirmation and exact target selection", () => {
   assert.match(skill, /not exactly `displayName`[\s\S]*nothing was deleted[\s\S]*stop/);
   assert.match(skill, /An empty answer is a decline; stop/);
   assert.match(skill, /Never substitute an agent the user did not name/);
+  assert.match(skill, /`agentLocation`[\s\S]*canonical filesystem path[\s\S]*retained workspace constraint/);
+  assert.match(skill, /missing or ambiguous match, stop before init or delete/);
+  assert.match(skill, /No agent named and no workspace supplied/);
   assert.match(skill, /only the deployments whose `agentId` equals the chosen agent's/);
   assert.match(skill, /Require the user to explicitly acknowledge this[\s\S]*nothing\s+is deleted/);
   assert.match(

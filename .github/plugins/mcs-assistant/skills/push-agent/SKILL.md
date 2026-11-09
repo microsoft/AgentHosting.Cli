@@ -54,6 +54,9 @@ Pull help must include `--project` and `--agent-id`. Deploy help must include `-
 options are unavailable, tell the user that a current Microsoft Agent Hosting CLI is required and
 stop.
 
+When a cloud `mcsAgentId` is supplied, also verify `msagent agent list --help` supports
+`--environment-id`, `--limit`, and `--json`. Stop if this cloud-target lookup is unavailable.
+
 ### 2. Resolve the project root
 
 If the user provides a directory containing `.config/agent.config.json`, use it.
@@ -74,6 +77,14 @@ From `agents[]` and `deployments[]`:
 
 1. Resolve exactly one MCS agent. Match a supplied local `agentId` or `displayName`; a supplied cloud
    `mcsAgentId` must first be mapped to its local record.
+   Normalize a supplied `.mcs/conn.json` path to its authored workspace without reading it.
+   If an agent workspace was supplied, resolve every MCS record's `agentLocation` relative to the
+   project root and require exactly one canonical path match. Treat all supplied agent selectors
+   as cumulative constraints. On a missing or ambiguous match, stop and report the mismatch;
+   never substitute the project's sole agent or select a workspace different from the supplied one.
+   A supplied cloud `mcsAgentId` is also an explicit deployment constraint: require its
+   `environmentId` and `schemaName`; stop and ask for either missing value rather than guessing.
+   Keep this expected cloud identity unchanged throughout the workflow.
 2. For each deployment owned by that agent, treat `deploymentType` as its stage. Its effective
    target environment is the deployment's `environmentId` when present; otherwise use the owning
    agent's `environmentId`.
@@ -84,9 +95,10 @@ From `agents[]` and `deployments[]`:
    the matching deployment name, ID, stage, and effective target environment where available and
    ask the user to correct or complete the selection. Never replace an explicit selector with a
    default.
-5. Only when no deployment selector was supplied, use the deployment automatically if exactly one
-   dev deployment has `deploymentType: "dev"`. Otherwise present each deployment's name, ID, stage,
-   and effective target environment and ask the user to choose.
+5. Only when no deployment selector was supplied and no cloud `mcsAgentId` was supplied, use the
+   deployment automatically if exactly one dev deployment has `deploymentType: "dev"`. Never use
+   the dev default for a supplied cloud target. Otherwise present each deployment's name, ID, stage,
+   and effective target environment and ask the user to choose within the supplied constraints.
 
 Confirm that the agent workspace exists and contains `settings.mcs.yml` or `agent.mcs.yml`. A
 connected agent also has `.mcs/conn.json`; a never-connected agent (no `mcsAgentId`) has not yet
@@ -102,6 +114,22 @@ msagent auth status --json
 If no active account is signed in, tell the user that push requires authentication and ask before
 running `msagent auth login`. Wait for sign-in to finish.
 
+#### Verify a supplied cloud target before synchronization
+
+When a cloud `mcsAgentId` was supplied, run:
+
+```bash
+msagent agent list --environment-id '<expected-environment-id>' --limit 1000 --json --non-interactive
+```
+
+Require `success: true` and exactly one row in `agents[]` matching the expected `mcsAgentId`,
+`schemaName`, and `environmentId`. Also require the selected deployment's effective environment
+to equal that expected environment. Stop before pull or deploy if the target is missing,
+different, ambiguous, or the lookup fails. A missing row with `truncated: true` is inconclusive,
+not proof of absence; stop rather than selecting another target. Do not create, adopt, or retarget
+to a different cloud agent to satisfy a supplied cloud ID. Generic push confirmation does not
+authorize replacing these target constraints.
+
 ### 5. State the effects
 
 Before execution, state:
@@ -115,8 +143,10 @@ Before execution, state:
 - that the agent will not be published.
 
 For a test or prod deployment, explicitly warn that MSAGENT overwrites target drift by design and
-require confirmation before proceeding. For dev, the user's explicit push request is consent for
-the pull and draft upload. Ask again if target resolution changed the requested target.
+require explicit confirmation before deployment, even when the agent has never been connected.
+For every connected agent, explain the local-overwrite risk and preservation plan below and
+require explicit confirmation for the prerequisite pull as well as the draft upload. A push
+request alone is not consent for that pull. Ask again if the resolved target changes.
 
 ### 6. Pull before deploying
 
@@ -127,16 +157,40 @@ never-deployed agent, and `msagent agent pull` fails with `errorKind: "workspace
 that case. When the agent has never been connected, skip the pull and go straight to step 7, whose
 deploy creates and connects the cloud agent.
 
-Otherwise, pull before deploying:
+Otherwise, before every pull, warn that knowledge-file downloads can replace local bytes without
+a merge conflict, including when JSON says `up-to-date`. Never infer safety from a clean Git
+status or from the user not mentioning local edits.
+
+Using host file tools or an approved local backup command, capture a byte-for-byte snapshot
+outside the project in private user-owned storage. Include all authored project files, hidden
+and untracked files, binary knowledge payloads, and linked component-collection workspaces.
+Exclude VCS internals and CLI-managed `.config/`, `.mcs/`, and `agent.sync.yaml`; never read or
+edit those as part of preservation. Record relative paths and content hashes and verify every
+copied file against its source before pulling. Do not follow links outside the project or omit
+unreadable files silently: if complete preservation cannot be verified, stop before pull.
+Keep the snapshot until the user decides its retention; never stash, reset, or auto-restore.
+
+After the user confirms this preservation plan and the pull, run:
 
 ```bash
 msagent agent pull --project '<project-root>' --agent-id '<local-agent-id>' --json --non-interactive
 ```
 
-Wait for success. If pull reports a merge conflict or another failure, stop. Do not deploy local
-content whose pull did not succeed.
+Wait for success. If pull reports a merge conflict or another failure, stop and retain the
+snapshot; do not deploy or automatically roll back partially applied changes.
+Compare the complete post-pull authored file inventory and hashes against the snapshot, including
+missing and overwritten knowledge payloads. Review differences with the user and reconcile local,
+remote, or merged content only with their explicit choice; do not blindly restore the snapshot.
+Verify that every intended pre-pull edit survived or was explicitly discarded by the user.
+Only after reconciliation, parse changed YAML, verify payload bytes, and review the final diff
+may deployment proceed. If comparison or reconciliation cannot complete, stop before deploy.
 
 ### 7. Run the push-equivalent deploy
+
+For a supplied cloud target, revalidate the selected local deployment through `agent show` and
+repeat the cloud-target lookup above after reconciliation, immediately before deploy. Require the
+same local agent, workspace, deployment, effective environment, cloud ID, and schema; stop if any
+identity changed. Parse authored settings and require the schema to equal the expected `schemaName`.
 
 ```bash
 msagent agent deploy --project '<project-root>' --agent-id '<local-agent-id>' --deployment-id '<deployment-id>' --json --non-interactive
@@ -158,6 +212,11 @@ Require JSON output with `success: true` and:
 Report any warnings without turning them into success. State whether the action pushed, reattached,
 or retargeted the workspace and whether a target agent was created. Confirm that the cloud content
 remains a draft.
+
+For a supplied cloud target, also require `targetMcsAgentId` to equal the expected `mcsAgentId`
+and `targetEnvironmentId` to equal the expected `environmentId`. A mismatch is a verification
+failure: report any completed side effects, but do not claim the requested cloud agent was updated
+or retry against another deployment.
 
 ## Error handling
 

@@ -4,10 +4,16 @@ Read only after selecting the Power CAT Cat Agent Skills gallery
 (`https://microsoft.github.io/cat-agent-skills/`, source `github.com/microsoft/cat-agent-skills`).
 Resolve `<scriptPath>` as the skill-local `scripts/add-skill.bundle.js`.
 
+Apply the entrypoint's shell-argument rules to every value, including installed helper paths,
+returned slugs, destinations, and output paths. Use shell-specific single-quoted literals:
+Bash escapes `'` as `'\''`; PowerShell doubles single-quote delimiters, including U+2018,
+U+2019, U+201A, and U+201B. Reject control characters. Never substitute values into double quotes
+or command substitutions, including during help or dry-run.
+
 1. List the available skills as a **table**:
 
    ```bash
-   node "<scriptPath>" list --pretty
+   node '<scriptPath>' list --pretty
    ```
 
    Columns are `#`, `◆` (bundle marker), `Name`, `Description`, and `Slug`, sorted by display name
@@ -17,7 +23,7 @@ Resolve `<scriptPath>` as the skill-local `scripts/add-skill.bundle.js`.
    Plain `list` returns JSON `{ ok, count, skills: [{ slug, name, description, platforms, tags, hasBundle }] }`.
    Stdout is paged (20 entries by default). Read stderr totals for `--pretty`; use `--offset`
    and `--limit` to browse further pages before claiming the table is complete.
-   JSON mode also accepts `--output "<new-file.json>"` for complete results; it cannot be
+   JSON mode also accepts `--output '<new-file.json>'` for complete results; it cannot be
    combined with `--pretty`. `--help` describes all options.
 2. Present the table without flattening it into a list. Ask for a number or name, then map that
    choice to the exact `slug`. If the request already named a skill, resolve and confirm the match.
@@ -25,7 +31,7 @@ Resolve `<scriptPath>` as the skill-local `scripts/add-skill.bundle.js`.
    uses `<os-tmp>/mcs-add-skill/<slug>`:
 
    ```bash
-   node "<scriptPath>" download --slug "<slug>"
+   node '<scriptPath>' download --slug '<slug>'
    ```
 
    Result JSON is `{ ok, slug, name, hasBundle, dir, zip, files }`. Use the returned `dir` as `--src`

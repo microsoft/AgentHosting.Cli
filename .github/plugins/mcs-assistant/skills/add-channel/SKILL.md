@@ -3,7 +3,7 @@ name: add-channel
 description: Use when a user asks to add, enable, or configure the Microsoft Teams or Microsoft 365 Copilot channel on a CLI-authored Copilot Studio MCS agent using the GitHub Copilot harness.
 metadata:
   argument-hint: Teams, Copilot, or both, plus an optional agent workspace path
-allowed-tools: Read Write Edit Glob Grep Bash(node *)
+allowed-tools: Read Write Edit Glob Grep
 ---
 
 # Add an MCS Agent Channel

@@ -45,6 +45,10 @@ installed root and use matching host data directories, or an installation-scoped
 directory under `~/.copilot-studio-cli/mcs-assistant/instances/`. Conflicting
 matching data directories are an error, not permission to choose arbitrarily.
 Standalone copied skill directories remain supported.
+The canonical hook's `command` launcher uses Claude's root; Copilot uses the
+platform-specific `bash`/`powershell` launcher and its own root. Neither launcher
+uses an inherited root from another host. Copilot also ignores inherited
+`CLAUDE_ENV_FILE` so it cannot append exports to another host's environment file.
 
 ## Execution and prerequisites
 
@@ -58,6 +62,9 @@ upgrade it, enable feature flags, sign in, switch accounts, deploy or publish
 implicitly. Report missing capabilities and stop the affected workflow.
 The local optional Graph verifier has its own app registration and encrypted
 cache; it does not use MSAGENT's authentication.
+Optional encrypted-cache provisioning has a 15-second npm deadline, with registry
+retries disabled. Timeout terminates the installation process tree; Windows cleanup
+has a separate five-second bound. Failure is reported and leaves tokens in memory.
 
 If a host leaves `$ARGUMENTS` unexpanded in a skill, use the user's original
 request from the conversation. Never execute a literal placeholder or infer

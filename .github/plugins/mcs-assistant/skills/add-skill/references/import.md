@@ -35,8 +35,14 @@ the 100-character schema-name limit is an error before writes: suggest a shorter
 
 ## Import command
 
+Apply the entrypoint's shell-argument rules to every value, including helper/source/workspace
+paths, names, and output paths, even for help and dry-run. Use shell-specific single-quoted
+literals: Bash escapes `'` as `'\''`; PowerShell doubles single-quote delimiters, including
+U+2018, U+2019, U+201A, and U+201B. Reject control characters. Never substitute values into
+double quotes or command substitutions; validation inside the helper happens too late.
+
 ```bash
-node "<scriptPath>" import --src "<skill-folder>" --workspace "<agent-workspace>" [--name "<folder>"] [--force] [--no-sidecars]
+node '<scriptPath>' import --src '<skill-folder>' --workspace '<agent-workspace>' [--name '<folder>'] [--force] [--no-sidecars]
 ```
 
 - `--src` is the authored or acquired unpacked folder with a top-level `SKILL.md` (case-insensitive on input,
@@ -57,7 +63,7 @@ node "<scriptPath>" import --src "<skill-folder>" --workspace "<agent-workspace>
   the extension's bundle archive; relay its warning.
 
 Use `--help` for the complete CLI contract. `--limit` (default 20, maximum 100) and `--offset`
-page each stdout array. `--output "<new-file.json>"` saves complete JSON without overwriting;
+page each stdout array. `--output '<new-file.json>'` saves complete JSON without overwriting;
 it cannot be combined with `--dry-run`. Use a private session artifact path for full results.
 JSON stdout also has a 12 KB budget: `truncatedForSize` means fewer than the requested entries
 fit, and `summaryOmitted` means scalar metadata itself exceeded that budget. Read the full output

@@ -4,15 +4,21 @@ Read only after the user picks **My WorkIQ skills**. The WorkIQ AI Catalog lists
 signed-in Microsoft 365 user is authorized to use. Resolve `<workiqPath>` as the skill-local
 `scripts/workiq-catalog.bundle.js`; execute it without reading its source.
 
+Apply the entrypoint's shell-argument rules to every value, including helper paths, query text,
+destinations, tenant/client IDs, and output paths. Use shell-specific single-quoted literals:
+Bash escapes `'` as `'\''`; PowerShell doubles single-quote delimiters, including U+2018,
+U+2019, U+201A, and U+201B. Reject control characters. Never substitute values into double quotes
+or command substitutions, including during help or dry-run.
+
 1. Tell the user a browser window will open for Microsoft sign-in with their work account, then list
    their skills:
 
    ```bash
-   node "<workiqPath>" list
+   node '<workiqPath>' list
    ```
 
    Allow the command at least 4 minutes; it waits up to 180 seconds for the browser sign-in. Add
-   `--query "<text>"` when the request already names a skill or topic. The sign-in URL is printed to
+   `--query '<text>'` when the request already names a skill or topic. The sign-in URL is printed to
    stderr; if no browser opens, give the user that URL. The token is kept in memory for this run
    only; it is never cached or printed.
 
@@ -20,7 +26,7 @@ signed-in Microsoft 365 user is authorized to use. Resolve `<workiqPath>` as the
    identifier, dir, fileCount }], failed: [{ identifier, plugin, errorKind, error, requestId }] }`.
    Every listed skill is already downloaded and unpacked into its `dir`, with `SKILL.md` on top.
    Stdout arrays are paged (default 20); read `pages` totals before claiming a complete listing
-   or complete failure report. Prefer `--output "<new-file.json>"` in private session storage
+   or complete failure report. Prefer `--output '<new-file.json>'` in private session storage
    to capture all results in this single authenticated run, then read that file in bounded ranges.
    `--limit`/`--offset` bound stdout, not catalog acquisition; rerunning for another page would
    authenticate and download again. `--help` lists all supported options.

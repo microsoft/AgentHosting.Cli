@@ -3,7 +3,7 @@ name: add-skill
 description: Create, write, or format a new Copilot Studio Agent Skill from requirements, or add, import, upload, or install an existing skill from a local SKILL.md/.zip, the Power CAT gallery, or the WorkIQ AI Catalog. Use for requests to create skills, add reporting or formatting procedures to an agent, or import existing skills into a CLI-agent workspace, including an MSAGENT-authored workspace.
 metadata:
   argument-hint: Skill requirements, an existing skill name/slug, or a local path to a SKILL.md / .zip; optional target agent workspace
-allowed-tools: Bash(node *add-skill.bundle.js*) Bash(node *workiq-catalog.bundle.js*) Read Write Glob Grep
+allowed-tools: Read Write Glob Grep
 ---
 
 # Add a Copilot Studio Agent Skill
@@ -24,6 +24,17 @@ Resolve all references and required helpers from this skill's own directory, not
 sibling skill. If a required reference or helper cannot be read, stop and report its path.
 Use `scripts/add-skill.bundle.js` as `<scriptPath>` for import or gallery acquisition; execute it
 without reading its source. Resolve the WorkIQ helper only for selected WorkIQ acquisition.
+
+## Shell arguments
+
+Treat every substituted argument as untrusted, including installed helper paths, source and
+workspace paths, names, catalog text, slugs, and output paths. The double-quoted examples in
+older instructions are not literal-safe. For every helper invocation, including help and dry-run,
+use one single-quoted literal per value: Bash replaces each `'` with `'\''`; PowerShell doubles
+each single-quote delimiter, including U+2018, U+2019, U+201A, and U+201B smart quotes.
+Reject NUL, line breaks, and other control characters. Never use double quotes or command
+substitution for external values. Keep helper execution subject to host approval; a wildcard
+containing a bundle filename does not constrain Node to executing that file.
 
 ## 1. Choose authoring or acquisition
 

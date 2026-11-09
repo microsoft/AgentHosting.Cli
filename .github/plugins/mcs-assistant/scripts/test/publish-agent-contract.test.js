@@ -51,6 +51,8 @@ test("a cloud publication target constrains the deployment instead of falling ba
   const skill = read("skills/publish-agent/SKILL.md").replace(/\s+/g, " ");
   const selection = skill.slice(skill.indexOf("### 3."), skill.indexOf("### 4."));
 
+  assert.doesNotMatch(skill, /Exact cloud-ID requests \(blocking\)|cloud-ID requests remain blocked/);
+  assert.match(selection, /cloud `mcsAgentId` to its local record/);
   assert.match(selection, /cloud `mcsAgentId` is also an explicit deployment constraint/);
   assert.match(selection, /require its `environmentId` and `schemaName`; stop and ask/);
   assert.match(selection, /deployment's `environmentId` when present; otherwise use the owning agent's `environmentId`/);
@@ -59,22 +61,26 @@ test("a cloud publication target constrains the deployment instead of falling ba
   assert.match(selection, /If an authored workspace was supplied, require it to match the selected agent's workspace/);
 });
 
-test("cloud publication verifies identity before pull and deploy and checks the published result", () => {
+test("publication revalidates the reconciled workspace and target before deploying", () => {
   const skill = read("skills/publish-agent/SKILL.md").replace(/\s+/g, " ");
   const preflight = skill.indexOf("#### Verify a supplied cloud target");
   const pull = skill.indexOf("msagent agent pull --project");
-  const revalidation = skill.indexOf("repeat the cloud-target lookup above after pull");
+  const revalidation = skill.indexOf("Revalidate the selected local agent");
   const deploy = skill.indexOf("msagent agent deploy --project");
   const verification = skill.slice(skill.indexOf("### 8."));
 
-  assert.ok(preflight >= 0 && preflight < pull);
-  assert.ok(revalidation > pull && revalidation < deploy);
+  assert.ok(preflight >= 0 && preflight < pull && revalidation > pull && revalidation < deploy);
   assert.match(skill, /msagent agent list --environment-id '<expected-environment-id>' --limit 1000 --json --non-interactive/);
   assert.match(skill, /exactly one row in `agents\[\]` matching the expected `mcsAgentId`, `schemaName`, and `environmentId`/);
   assert.match(skill, /Stop before pull or deploy if the target is missing, different, ambiguous, or the lookup fails/);
   assert.match(skill, /`truncated: true` is inconclusive[\s\S]*stop rather than selecting another target/);
-  assert.match(skill, /Do not create, adopt, or retarget to a different cloud agent/);
+  assert.match(skill, /repeat the cloud-target lookup above after pull, immediately before deploy/);
+  assert.match(skill, /workspace schema to equal the expected `schemaName`/);
   assert.match(skill, /Require the same local agent, deployment, effective environment, cloud ID, and schema; stop if any identity changed/);
+  assert.match(skill, /Parse authored settings and compare the schema with the reconciled content/);
+  assert.match(skill, /Stop if any target or schema changed/);
+  assert.match(skill, /obtain renewed publication confirmation for that final content/);
+  assert.match(verification, /`targetEnvironmentId` to equal the selected effective environment/);
   assert.match(verification, /`targetMcsAgentId` to equal the expected `mcsAgentId` and `targetEnvironmentId` to equal the expected `environmentId`/);
   assert.match(verification, /mismatch is a verification failure[\s\S]*do not claim the requested agent was published, retry chat, or retry publication/);
 });
