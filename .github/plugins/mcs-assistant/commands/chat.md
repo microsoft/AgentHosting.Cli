@@ -1,7 +1,7 @@
 ---
 description: Chat with an explicitly selected Copilot Studio agent using MSAGENT test ask.
 argument-hint: Registered project or explicit agent target, and the message to send
-allowed-tools: Bash(msagent *), Read, Glob, Grep, Skill
+allowed-tools: Bash(msagent test ask *), Bash(msagent agent show *), Bash(msagent agent list *), Bash(msagent deployment list *), Bash(msagent auth status *), Read, Glob, Grep, Skill
 ---
 
 # Chat with a Copilot Studio agent
@@ -26,6 +26,9 @@ Older approved builds may require `--agent-harness`. Only if that option appears
 in help, obtain the intended harness from the user and pass the advertised value.
 Do not pass that option to current builds that no longer expose it.
 
+When a cloud MCS ID is supplied, also require `msagent agent list --help` to
+advertise `--environment-id`, `--limit`, and `--json`. Stop if this lookup is unavailable.
+
 ## 2. Resolve and confirm one exact target
 
 Prefer a registered MSAGENT project. Use `msagent agent show --project '<root>'
@@ -39,6 +42,12 @@ Retain the selected project root, local agent ID, deployment ID, environment
 and tenant when supplied by the projections. Pass the selected deployment
 explicitly; never silently use the development/default deployment.
 
+Retain any supplied cloud `mcsAgentId` separately from the local agent ID.
+Matching the record's `mcsAgentId` does not verify its association with the
+selected deployment: that record can refer to an agent in another environment.
+Treat supplied cloud ID, schema, environment, tenant, and deployment selectors
+as cumulative constraints; never replace one with a value from another target.
+
 For a workspace without registration, offer the explicit target route only:
 require the exact schema name, environment ID, tenant ID and a user-selected
 deployment label. Workspace `settings.mcs.yml` and `.mcs/conn.json` may supply
@@ -49,6 +58,27 @@ anything implicitly; stop if the target cannot be established.
 Run `msagent auth status --json` before a new conversation. If sign-in or a
 different account is needed, ask the user before the separate `auth login` or
 account-switch operation. Do not assume that `--json` disables interaction.
+
+### Verify a supplied cloud ID before every turn
+
+For either route, resolve the selected target's schema and environment. For a
+registered target, use the selected deployment's `environmentId` and the owning
+record's `mcsSchemaName`; ask for any missing schema rather than guessing.
+Require any user-supplied schema or environment to agree with those values.
+When a cloud `mcsAgentId` was supplied, run:
+
+```text
+msagent agent list --environment-id '<selected-environment-id>' --limit 1000 --json --non-interactive
+```
+
+Require `success: true` and exactly one row in `agents[]` whose `mcsAgentId`
+equals the supplied cloud ID, `schemaName` equals the selected schema, and
+`environmentId` equals the selected environment. Stop before `test ask` if
+the association is missing, different, ambiguous, or the lookup fails.
+A missing row with `truncated: true` is inconclusive, not proof of absence.
+Never substitute another deployment or cloud ID. Repeat this lookup before
+every turn, including continuations, without replacing the originally supplied
+identity. A changed target requires fresh selection and approval, not a replay.
 
 Show the selected target and first query. Explain that this is a live agent:
 actions can have real effects, consume credits and are not rolled back; queries
@@ -66,7 +96,7 @@ Registered target template:
 msagent test ask --project '<root>' --agent-id '<local-agent-id>' --deployment-id '<deployment-id>' --query '<literal-message>' --json --non-interactive
 ```
 
-Add `--environment-id` and `--tenant` assertions when those identities are known.
+Add `--schema-name`, `--environment-id`, and `--tenant` assertions when those identities are known.
 For an explicitly confirmed unregistered target:
 
 ```text

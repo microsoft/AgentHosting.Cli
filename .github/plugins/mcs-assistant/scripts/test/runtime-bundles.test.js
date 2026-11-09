@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { isBuiltin } = require("node:module");
 const { spawnSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
 const test = require("node:test");
 const { buildSync } = require("esbuild");
 const yaml = require("js-yaml");
@@ -162,12 +163,14 @@ test("the bundled session hook scopes data and safely quotes exported paths", ()
       fs.mkdirSync(directory, { recursive: true });
       fs.writeFileSync(path.join(directory, "package.json"), "{}");
     }
-    for (const destination of [
-      path.join(plugin, "scripts", "native-deps.json"),
-      path.join(data, "native-deps.installed.json"),
-    ]) {
-      fs.copyFileSync(path.join(scripts, "native-deps.json"), destination);
+    for (const name of ["native-deps.json", "native-deps-lock.json"]) {
+      fs.copyFileSync(path.join(scripts, name), path.join(plugin, "scripts", name));
     }
+    const installation = JSON.stringify({
+      sha256: createHash("sha256").update(fs.readFileSync(path.join(scripts, "native-deps.json")))
+        .update("\0").update(fs.readFileSync(path.join(scripts, "native-deps-lock.json"))).digest("hex"),
+    });
+    fs.writeFileSync(path.join(data, "native-deps.installed.json"), installation);
     const result = spawnSync(process.execPath, [
       path.join(plugin, "hooks", "set-env-vars.bundle.js"),
     ], {

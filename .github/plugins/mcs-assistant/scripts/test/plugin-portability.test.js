@@ -30,8 +30,9 @@ function fixture(directory, name) {
 }
 
 function runHook({ platform = process.platform, childProcess, schedule, cancel = () => {},
-  kill = (pid, signal) => process.kill(pid, signal), stderr = () => {} }) {
-  const writes = new Map();
+  kill = (pid, signal) => process.kill(pid, signal), stderr = () => {},
+  files = new Map(), nativeLock = '{"lockfileVersion":3}' }) {
+  const writes = files;
   const errors = [];
   const source = fs.readFileSync(path.join(root, "scripts", "src", "set-env-vars.js"), "utf8");
   const context = {
@@ -47,7 +48,8 @@ function runHook({ platform = process.platform, childProcess, schedule, cancel =
       if (name === "./plugin-paths") return { resolvePluginPaths: () => ({ pluginRoot: root, pluginData: root }) };
       if (name === "node:child_process") return childProcess;
       if (name === "node:fs") return {
-        readFileSync: (file) => writes.get(file) || '{"dependencies":{"fixture":"1"}}',
+        readFileSync: (file) => file === path.join(root, "scripts", "native-deps-lock.json")
+          ? nativeLock : writes.get(file) || '{"dependencies":{"fixture":"1"}}',
         existsSync: (file) => writes.has(file),
         mkdirSync() {},
         writeFileSync: (file, content) => writes.set(file, content),
@@ -108,6 +110,8 @@ test("native dependency installation failures do not mark setup as completed", (
       path.join(plugin, "hooks", "set-env-vars.bundle.js"));
     fs.copyFileSync(path.join(root, "scripts", "native-deps.json"),
       path.join(plugin, "scripts", "native-deps.json"));
+    fs.copyFileSync(path.join(root, "scripts", "native-deps-lock.json"),
+      path.join(plugin, "scripts", "native-deps-lock.json"));
     const result = spawnSync(process.execPath, [path.join(plugin, "hooks", "set-env-vars.bundle.js")], {
       encoding: "utf8", timeout: 30000,
       env: {
@@ -118,7 +122,7 @@ test("native dependency installation failures do not mark setup as completed", (
       },
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stderr, /in-memory tokens/);
+    assert.match(result.stderr, /in-memory tokens: npm ci exited/);
     assert.ok(!fs.existsSync(path.join(data, "native-deps.installed.json")));
   });
 });
@@ -176,8 +180,52 @@ test("optional native install records success only after a successful exit", asy
     await result.completion;
     assert.equal(result.writes.has(marker), code === 0);
     assert.equal(result.errors.length, code === 0 ? 0 : 1);
-    if (code !== 0) assert.match(result.errors[0], /in-memory tokens: npm install exited with code 1/);
+    if (code !== 0) assert.match(result.errors[0], /in-memory tokens: npm ci exited with code 1/);
     assert.ok(cancelled);
+  }
+});
+
+test("native provisioning uses the locked tree and reinstalls after lock-only changes", async () => {
+  const files = new Map();
+  let attempts = 0;
+  const marker = path.join(root, "native-deps.installed.json");
+  for (const [lock, reinstall] of [
+    ['{"lockfileVersion":3,"packages":{"node_modules/transitive":{"version":"1.0.0"}}}', true],
+    ['{"lockfileVersion":3,"packages":{"node_modules/transitive":{"version":"1.0.0"}}}', false],
+    ['{"lockfileVersion":3,"packages":{"node_modules/transitive":{"version":"1.0.1"}}}', true],
+  ]) {
+    const child = new EventEmitter();
+    child.stderr = new PassThrough();
+    const previous = attempts;
+    const result = runHook({
+      files, nativeLock: lock,
+      childProcess: { spawn(command) {
+        assert.match(command, /^npm ci /);
+        assert.equal(files.get(path.join(root, "package-lock.json")), lock);
+        attempts++;
+        return child;
+      } },
+      schedule: () => 1,
+    });
+    child.emit("close", 0, null);
+    await result.completion;
+    assert.equal(attempts - previous, reinstall ? 1 : 0);
+    assert.deepEqual(result.errors, []);
+    assert.match(JSON.parse(files.get(marker)).sha256, /^[a-f0-9]{64}$/);
+    files.set(path.join(root, "node_modules", "fixture", "package.json"), "{}");
+  }
+});
+
+test("native lock pins the complete runtime tree without a private registry dependency", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "scripts", "native-deps.json"), "utf8"));
+  const lock = JSON.parse(fs.readFileSync(path.join(root, "scripts", "native-deps-lock.json"), "utf8"));
+  assert.deepEqual(lock.packages[""].dependencies, manifest.dependencies);
+  for (const version of Object.values(manifest.dependencies)) assert.match(version, /^\d+\.\d+\.\d+$/);
+  for (const [name, dependency] of Object.entries(lock.packages)) {
+    if (!name) continue;
+    assert.match(dependency.version, /^\d+\.\d+\.\d+$/, name);
+    assert.match(dependency.integrity, /^sha(?:1|256|384|512)-[A-Za-z0-9+/]+=*$/, name);
+    assert.equal(dependency.resolved, undefined, name);
   }
 });
 
@@ -219,7 +267,7 @@ test("optional native install times out the Windows tree or POSIX process group 
     child.emit("close", 0, null);
     await result.completion;
     assert.deepEqual(terminations, [platform === "win32" ? "tree" : "group"]);
-    assert.match(result.errors[0], /in-memory tokens: npm install timed out after 15000 ms/);
+    assert.match(result.errors[0], /in-memory tokens: npm ci timed out after 15000 ms/);
     assert.ok(child.stderr.destroyed);
     assert.ok(!result.writes.has(path.join(root, "native-deps.installed.json")));
   }
@@ -254,7 +302,7 @@ test("native install timeout stops a real descendant holding the stderr pipe ope
   const result = runHook({
     childProcess: {
       spawn(command, options) {
-        assert.match(command, /^npm install /);
+        assert.match(command, /^npm ci /);
         installer = spawn(process.execPath, ["-e", installerCode], { ...options, shell: false });
         installer.once("error", ready.reject);
         return installer;
@@ -278,7 +326,7 @@ test("native install timeout stops a real descendant holding the stderr pipe ope
   const socket = net.connect(descendant.port, "127.0.0.1");
   t.after(() => socket.destroy());
   await assert.rejects(once(socket, "connect"), /ECONNREFUSED/);
-  assert.match(result.errors[0], /in-memory tokens: npm install timed out/);
+  assert.match(result.errors[0], /in-memory tokens: npm ci timed out/);
   assert.ok(!result.writes.has(path.join(root, "native-deps.installed.json")));
   terminated = true;
 });
@@ -317,7 +365,9 @@ for (const target of ["gemini", "agency"]) {
         assert.equal(frontmatter.kind, "local");
         assert.match(agent, /Do not modify the source agent/);
         const hook = JSON.parse(fs.readFileSync(path.join(output, "hooks", "hooks.json")));
-        assert.match(hook.hooks.SessionStart[0].hooks[0].command, /\$\{extensionPath\}/);
+        const startup = hook.hooks.SessionStart[0].hooks[0];
+        assert.doesNotMatch(startup.command, /\$\{extensionPath\}/);
+        assert.equal(startup.env.MCS_ASSISTANT_GEMINI_ROOT, "${extensionPath}");
       }
       const skill = path.join(output, "skills", "add-skill");
       const standalone = path.join(directory, "standalone");
@@ -326,6 +376,52 @@ for (const target of ["gemini", "agency"]) {
         path.join(standalone, "scripts", "add-skill.bundle.js"), "--help",
       ], { cwd: directory, encoding: "utf8", timeout: 30000 });
       assert.equal(result.status, 0, result.stderr || result.stdout);
+    });
+  });
+}
+
+const geminiShells = process.platform === "win32"
+  ? [[path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    ["-NoProfile", "-NonInteractive", "-Command"]]]
+  : [["/bin/sh", ["-c"]]];
+if (process.platform === "win32") {
+  const git = spawnSync("git", ["--exec-path"], { encoding: "utf8", timeout: 5000 });
+  const bash = git.status === 0
+    ? path.resolve(git.stdout.trim(), "..", "..", "..", "bin", "bash.exe") : undefined;
+  if (bash && fs.existsSync(bash)) geminiShells.push([bash, ["--noprofile", "--norc", "-c"]]);
+  else test("Gemini POSIX-shell path regression", { skip: "Git Bash is unavailable on Windows" }, () => {});
+}
+
+for (const [shell, prefix] of geminiShells) {
+  test(`Gemini hook treats metacharacter paths as data through ${path.basename(shell)}`, () => {
+    temporary((directory) => {
+      const output = path.join(directory, "literal $CANARY $(echo EXPANDED) 'quoted' `tick`", "mcs-assistant");
+      packageHost({ target: "gemini", output });
+      fs.writeFileSync(path.join(output, "hooks", "set-env-vars.bundle.js"),
+        "const paths=require('../scripts/src/plugin-paths').resolvePluginPaths({start:__dirname});" +
+        "console.log(JSON.stringify({directory:__dirname,paths,environmentFile:process.env.CLAUDE_ENV_FILE}));");
+      const hook = JSON.parse(fs.readFileSync(path.join(output, "hooks", "hooks.json"), "utf8"))
+        .hooks.SessionStart[0].hooks[0];
+      const hydrate = (text) => text.replaceAll("${extensionPath}", output).replaceAll("${/}", path.sep);
+      const inherited = fixture(directory, "inherited");
+      const foreignData = path.join(directory, "foreign-data");
+      const result = spawnSync(shell, [...prefix, hydrate(hook.command)], {
+        cwd: directory, encoding: "utf8", timeout: 10000,
+        env: {
+          ...process.env,
+          MCS_ASSISTANT_PLUGIN_ROOT: inherited,
+          MCS_ASSISTANT_PLUGIN_DATA: foreignData,
+          CLAUDE_ENV_FILE: path.join(directory, "inherited-environment"),
+          ...Object.fromEntries(Object.entries(hook.env || {}).map(([name, value]) => [name, hydrate(value)])),
+        },
+      });
+      assert.equal(result.status, 0, result.stderr || result.error?.message);
+      const actual = JSON.parse(result.stdout);
+      assert.equal(actual.directory, path.join(output, "hooks"));
+      assert.equal(actual.paths.pluginRoot, output);
+      assert.notEqual(actual.paths.pluginData, foreignData);
+      assert.equal(actual.environmentFile, undefined);
+      assert.ok(!fs.existsSync(path.join(directory, "inherited-environment")));
     });
   });
 }

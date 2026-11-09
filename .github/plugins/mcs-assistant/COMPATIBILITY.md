@@ -57,7 +57,8 @@ records the canonical content hash and explicitly marks runtime verification fal
 Regenerate from canonical source rather than editing a generated package.
 
 Gemini receives `gemini-extension.json`, `GEMINI.md`, native TOML commands with
-`{{args}}`, slug-named agents and extension-relative hooks. Model selection is
+`{{args}}`, slug-named agents and extension-relative hooks. The hook receives its
+extension root through `env`, never by inserting the path into shell source. Model selection is
 inherited. The optional `MCS_KNOWLEDGE_CLIENT_ID` setting is declared because
 Gemini sanitizes extension environments; `--client-id` also works. Do not assume
 other shell environment variables reach the extension.
