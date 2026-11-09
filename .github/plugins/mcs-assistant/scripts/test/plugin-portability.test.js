@@ -31,29 +31,70 @@ function fixture(directory, name) {
 
 function runHook({ platform = process.platform, childProcess, schedule, cancel = () => {},
   kill = (pid, signal) => process.kill(pid, signal), stderr = () => {},
-  files = new Map(), nativeLock = '{"lockfileVersion":3}' }) {
+  files = new Map(), nativeLock = '{"lockfileVersion":3}', pluginData = root,
+  fileSystem = (value) => value }) {
   const writes = files;
   const errors = [];
+  const missing = (file) => Object.assign(new Error(`ENOENT: ${file}`), { code: "ENOENT" });
+  const contents = (directory) => [...writes.keys()]
+    .filter((file) => path.dirname(file) === directory).map((file) => path.basename(file));
   const source = fs.readFileSync(path.join(root, "scripts", "src", "set-env-vars.js"), "utf8");
   const context = {
     __dirname: path.join(root, "scripts", "src"),
     process: {
-      platform, kill, stderr: { write: stderr },
+      platform, kill, pid: process.pid, stderr: { write: stderr },
       env: { ...process.env, CLAUDE_ENV_FILE: "", SystemRoot: process.env.SystemRoot || root },
     },
     console: { error: (message) => errors.push(String(message)) },
     setTimeout: schedule,
     clearTimeout: cancel,
     require(name) {
-      if (name === "./plugin-paths") return { resolvePluginPaths: () => ({ pluginRoot: root, pluginData: root }) };
+      if (name === "./plugin-paths") return { resolvePluginPaths: () => ({ pluginRoot: root, pluginData }) };
       if (name === "node:child_process") return childProcess;
-      if (name === "node:fs") return {
-        readFileSync: (file) => file === path.join(root, "scripts", "native-deps-lock.json")
-          ? nativeLock : writes.get(file) || '{"dependencies":{"fixture":"1"}}',
+      if (name === "node:fs") return fileSystem({
+        readFileSync(file) {
+          if (file === path.join(root, "scripts", "native-deps.json")) return '{"dependencies":{"fixture":"1"}}';
+          if (file === path.join(root, "scripts", "native-deps-lock.json")) return nativeLock;
+          if (!writes.has(file)) throw missing(file);
+          return writes.get(file);
+        },
         existsSync: (file) => writes.has(file),
-        mkdirSync() {},
+        mkdirSync(directory, options) {
+          if (writes.has(directory) && !options?.recursive) {
+            throw Object.assign(new Error("Directory exists"), { code: "EEXIST" });
+          }
+          writes.set(directory, null);
+        },
         writeFileSync: (file, content) => writes.set(file, content),
-      };
+        renameSync(from, to) {
+          if (!writes.has(from)) throw missing(from);
+          if (writes.has(to)) throw Object.assign(new Error("Directory exists"), { code: "EEXIST" });
+          for (const [file, value] of [...writes]) {
+            if (file === from || file.startsWith(from + path.sep)) {
+              writes.delete(file);
+              writes.set(to + file.slice(from.length), value);
+            }
+          }
+        },
+        readdirSync(directory) {
+          if (!writes.has(directory)) throw missing(directory);
+          return contents(directory);
+        },
+        unlinkSync(file) {
+          if (!writes.delete(file)) throw missing(file);
+        },
+        rmdirSync(directory) {
+          if (!writes.has(directory)) throw missing(directory);
+          if (contents(directory).length) throw Object.assign(new Error("Directory is not empty"), { code: "ENOTEMPTY" });
+          writes.delete(directory);
+        },
+        rmSync(file, options) {
+          if (!writes.has(file) && !options?.force) throw missing(file);
+          for (const entry of writes.keys()) {
+            if (entry === file || (options?.recursive && entry.startsWith(file + path.sep))) writes.delete(entry);
+          }
+        },
+      });
       return require(name);
     },
   };
@@ -176,9 +217,11 @@ test("optional native install records success only after a successful exit", asy
     });
     const marker = path.join(root, "native-deps.installed.json");
     assert.ok(!result.writes.has(marker));
+    assert.ok(result.writes.has(path.join(root, "native-deps.install.lock")));
     child.emit("close", code, null);
     await result.completion;
     assert.equal(result.writes.has(marker), code === 0);
+    assert.ok(!result.writes.has(path.join(root, "native-deps.install.lock")));
     assert.equal(result.errors.length, code === 0 ? 0 : 1);
     if (code !== 0) assert.match(result.errors[0], /in-memory tokens: npm ci exited with code 1/);
     assert.ok(cancelled);
@@ -216,6 +259,197 @@ test("native provisioning uses the locked tree and reinstalls after lock-only ch
   }
 });
 
+test("concurrent native provisioning holds a real exclusive lock and rechecks readiness under it", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "native-provisioning-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const lock = path.join(directory, "native-deps.install.lock");
+  const marker = path.join(directory, "native-deps.installed.json");
+  const child = new EventEmitter();
+  child.stderr = new PassThrough();
+  let attempts = 0;
+  const options = {
+    pluginData: directory,
+    fileSystem: () => ({
+      ...fs,
+      existsSync(file) {
+        assert.ok(fs.existsSync(lock));
+        return fs.existsSync(file);
+      },
+    }),
+    childProcess: { spawn() {
+      attempts++;
+      assert.ok(fs.existsSync(lock));
+      assert.ok(!fs.existsSync(marker));
+      return child;
+    } },
+    schedule: () => 1,
+  };
+  const first = runHook(options);
+  const second = runHook(options);
+  await second.completion;
+  assert.equal(attempts, 1);
+  assert.match(second.errors[0], /already in progress in another session/);
+  assert.ok(fs.existsSync(lock));
+  assert.ok(!fs.existsSync(marker));
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "scripts", "native-deps.json"), "utf8"));
+  for (const name of Object.keys(manifest.dependencies)) {
+    const dependency = path.join(directory, "node_modules", name);
+    fs.mkdirSync(dependency, { recursive: true });
+    fs.writeFileSync(path.join(dependency, "package.json"), "{}");
+  }
+  child.emit("close", 0, null);
+  await first.completion;
+  assert.deepEqual(first.errors, []);
+  assert.ok(!fs.existsSync(lock));
+  assert.ok(fs.existsSync(marker));
+  const next = runHook(options);
+  await next.completion;
+  assert.deepEqual(next.errors, []);
+  assert.equal(attempts, 1);
+  assert.ok(!fs.readdirSync(directory).some((name) => name.startsWith("native-deps.install.lock")));
+});
+
+test("native provisioning recovers abandoned locks but preserves live hooks and orphaned installers", async () => {
+  const lock = path.join(root, "native-deps.install.lock");
+  for (const state of ["dead", "empty", "permission-denied", "orphan-win32", "orphan-linux", "finished-installer"]) {
+    const hasInstaller = state.startsWith("orphan-") || state === "finished-installer";
+    const owner = `12345${hasInstaller ? ".23456" : ""}-00000000-0000-4000-8000-000000000001`;
+    const busy = state === "permission-denied" || state.startsWith("orphan-");
+    const files = new Map([[lock, null]]);
+    if (state !== "empty") files.set(path.join(lock, owner), "");
+    const child = new EventEmitter();
+    child.stderr = new PassThrough();
+    let attempts = 0;
+    const result = runHook({
+      files,
+      platform: state === "orphan-win32" ? "win32" : "linux",
+      childProcess: { spawn() { attempts++; return child; } },
+      schedule: () => 1,
+      kill(pid, signal) {
+        assert.equal(signal, 0);
+        if (pid !== 12345) {
+          assert.equal(pid, state === "orphan-win32" ? 23456 : -23456);
+          if (state.startsWith("orphan-")) return;
+          assert.equal(state, "finished-installer");
+        }
+        throw Object.assign(new Error(state), { code: state === "permission-denied" ? "EPERM" : "ESRCH" });
+      },
+    });
+    child.emit("close", 0, null);
+    await result.completion;
+    if (busy) {
+      assert.equal(attempts, 0);
+      assert.match(result.errors[0], /already in progress/);
+      assert.ok(files.has(path.join(lock, owner)));
+    } else {
+      assert.equal(attempts, 1);
+      assert.deepEqual(result.errors, []);
+      assert.ok(!files.has(lock));
+    }
+    assert.ok(![...files.keys()].some((file) => file.startsWith(lock + "-")));
+  }
+});
+
+test("failure to record installer ownership terminates its group before releasing the lock", async () => {
+  const lock = path.join(root, "native-deps.install.lock");
+  const files = new Map();
+  const child = new EventEmitter();
+  child.pid = 23456;
+  child.stderr = new PassThrough();
+  let terminated = false;
+  const result = runHook({
+    files,
+    platform: "linux",
+    childProcess: { spawn: () => child },
+    schedule: () => 1,
+    fileSystem: (base) => ({
+      ...base,
+      renameSync(from, to) {
+        if (path.dirname(from) === lock) {
+          throw Object.assign(new Error("Failed to record installer ownership"), { code: "EIO" });
+        }
+        base.renameSync(from, to);
+      },
+    }),
+    kill(pid, signal) {
+      assert.equal(pid, -child.pid);
+      assert.equal(signal, "SIGKILL");
+      assert.ok(files.has(lock));
+      terminated = true;
+    },
+  });
+  await result.completion;
+  assert.ok(terminated);
+  assert.match(result.errors[0], /Failed to record installer ownership/);
+  assert.ok(!files.has(lock));
+  assert.ok(!files.has(path.join(root, "native-deps.installed.json")));
+});
+
+test("stale lock cleanup cannot remove a newer owner's lock", async () => {
+  const lock = path.join(root, "native-deps.install.lock");
+  const oldOwner = path.join(lock, "12345-00000000-0000-4000-8000-000000000001");
+  const newOwner = path.join(lock, `${process.pid}-00000000-0000-4000-8000-000000000002`);
+  const files = new Map([[lock, null], [oldOwner, ""]]);
+  let attempts = 0;
+  const result = runHook({
+    files,
+    childProcess: { spawn() { attempts++; } },
+    fileSystem: (base) => ({
+      ...base,
+      unlinkSync(file) {
+        base.unlinkSync(file);
+        if (file === oldOwner) files.set(newOwner, "");
+      },
+    }),
+    kill(pid, signal) {
+      assert.equal(signal, 0);
+      if (pid === process.pid) return;
+      assert.equal(pid, 12345);
+      throw Object.assign(new Error("Process exited"), { code: "ESRCH" });
+    },
+  });
+  await result.completion;
+  assert.equal(attempts, 0);
+  assert.match(result.errors[0], /already in progress/);
+  assert.ok(files.has(newOwner));
+  assert.ok(!files.has(oldOwner));
+});
+
+test("native provisioning repairs legacy markers and clears success before a failed reinstall", async () => {
+  const marker = path.join(root, "native-deps.installed.json");
+  const dependency = path.join(root, "node_modules", "fixture", "package.json");
+  const files = new Map();
+  let attempts = 0;
+  for (const code of [0, 0, 1, 0]) {
+    if (attempts === 1) {
+      files.set(dependency, "{}");
+      const { sha256 } = JSON.parse(files.get(marker));
+      files.set(marker, JSON.stringify({ sha256 }));
+    } else if (attempts === 2) {
+      files.delete(dependency);
+    }
+    const child = new EventEmitter();
+    child.stderr = new PassThrough();
+    const result = runHook({
+      files,
+      childProcess: { spawn() {
+        attempts++;
+        assert.ok(!files.has(marker));
+        files.set(dependency, "{}");
+        return child;
+      } },
+      schedule: () => 1,
+    });
+    child.emit("close", code, null);
+    await result.completion;
+    assert.equal(files.has(marker), code === 0);
+    if (code === 0) assert.deepEqual(result.errors, []);
+    else assert.match(result.errors[0], /npm ci exited with code 1/);
+    assert.ok(!files.has(path.join(root, "native-deps.install.lock")));
+  }
+  assert.equal(attempts, 4);
+});
+
 test("native lock pins the complete runtime tree without a private registry dependency", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "scripts", "native-deps.json"), "utf8"));
   const lock = JSON.parse(fs.readFileSync(path.join(root, "scripts", "native-deps-lock.json"), "utf8"));
@@ -249,6 +483,7 @@ test("optional native install times out the Windows tree or POSIX process group 
           assert.equal(executable, path.join(process.env.SystemRoot || root, "System32", "taskkill.exe"));
           assert.deepEqual(Array.from(args), ["/PID", String(child.pid), "/T", "/F"]);
           assert.equal(options.timeout, 5000);
+          assert.ok(result.writes.has(path.join(root, "native-deps.install.lock")));
           terminations.push("tree");
         },
       },
@@ -260,6 +495,7 @@ test("optional native install times out the Windows tree or POSIX process group 
       kill(pid, signal) {
         assert.equal(pid, -child.pid);
         assert.equal(signal, "SIGKILL");
+        assert.ok(result.writes.has(path.join(root, "native-deps.install.lock")));
         terminations.push("group");
       },
     });
@@ -270,6 +506,7 @@ test("optional native install times out the Windows tree or POSIX process group 
     assert.match(result.errors[0], /in-memory tokens: npm ci timed out after 15000 ms/);
     assert.ok(child.stderr.destroyed);
     assert.ok(!result.writes.has(path.join(root, "native-deps.installed.json")));
+    assert.ok(!result.writes.has(path.join(root, "native-deps.install.lock")));
   }
 });
 

@@ -67,11 +67,92 @@ var require_plugin_paths = __commonJS({
 var fs = require("node:fs");
 var cp = require("node:child_process");
 var path = require("node:path");
-var { createHash } = require("node:crypto");
+var { createHash, randomUUID } = require("node:crypto");
 var { resolvePluginPaths } = require_plugin_paths();
 var { pluginRoot, pluginData } = resolvePluginPaths({ start: path.resolve(__dirname, "..") });
 var environmentFile = process.env.CLAUDE_ENV_FILE;
-function installNativeDependencies(directory) {
+function releaseProvisioningLock(directory, owner) {
+  if (owner) {
+    try {
+      fs.unlinkSync(path.join(directory, owner));
+    } catch (error) {
+      if (error.code === "ENOENT") return;
+      throw error;
+    }
+  }
+  try {
+    fs.rmdirSync(directory);
+  } catch (error) {
+    if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code)) throw error;
+  }
+}
+function isProcessRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    if (error.code === "EPERM") return true;
+    throw error;
+  }
+}
+function acquireProvisioningLock() {
+  const directory = path.join(pluginData, "native-deps.install.lock");
+  const token = randomUUID();
+  let owner = `${process.pid}-${token}`;
+  const contender = `${directory}-${owner}`;
+  fs.mkdirSync(contender);
+  let acquired = false;
+  let collision;
+  try {
+    fs.writeFileSync(path.join(contender, owner), "");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        fs.renameSync(contender, directory);
+        acquired = true;
+        return {
+          release: () => releaseProvisioningLock(directory, owner),
+          trackInstaller(pid) {
+            if (pid === void 0) return;
+            if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid native dependency installer PID.");
+            const next = `${process.pid}.${pid}-${token}`;
+            fs.renameSync(path.join(directory, owner), path.join(directory, next));
+            owner = next;
+          }
+        };
+      } catch (error) {
+        if (!["EEXIST", "ENOTEMPTY", "EPERM"].includes(error.code)) throw error;
+        collision = error;
+      }
+      let owners;
+      try {
+        owners = fs.readdirSync(directory);
+      } catch (error) {
+        if (error.code === "ENOENT") continue;
+        throw error;
+      }
+      if (owners.length > 1) throw new Error("Unrecognized native dependency provisioning lock.");
+      if (owners.length === 1) {
+        const match = owners[0].match(/^([1-9]\d*)(?:\.([1-9]\d*))?-[\da-f-]{36}$/);
+        const pid = Number(match?.[1]);
+        const installerPid = match?.[2] === void 0 ? null : Number(match[2]);
+        if (!Number.isSafeInteger(pid) || pid <= 0 || installerPid !== null && (!Number.isSafeInteger(installerPid) || installerPid <= 0)) {
+          throw new Error("Unrecognized native dependency provisioning lock owner.");
+        }
+        if (isProcessRunning(pid) || installerPid !== null && isProcessRunning(process.platform === "win32" ? installerPid : -installerPid)) {
+          throw new Error("Native dependency provisioning is already in progress in another session.");
+        }
+        releaseProvisioningLock(directory, owners[0]);
+        continue;
+      }
+      releaseProvisioningLock(directory);
+    }
+    throw collision;
+  } finally {
+    if (!acquired) fs.rmSync(contender, { recursive: true, force: true });
+  }
+}
+function installNativeDependencies(directory, trackInstaller) {
   return new Promise((resolve, reject) => {
     const windows = process.platform === "win32";
     const taskkill = windows ? path.join(process.env.SystemRoot, "System32", "taskkill.exe") : null;
@@ -96,8 +177,8 @@ function installNativeDependencies(directory) {
     child.stderr.on("data", (chunk) => process.stderr.write(chunk));
     child.once("error", finish);
     child.once("close", (code, signal) => finish(code === 0 ? null : new Error(`npm ci exited with ${signal ? `signal ${signal}` : `code ${code}`}`)));
-    timer = setTimeout(() => {
-      let error = new Error(`npm ci timed out after ${timeoutMs} ms`);
+    const terminate = (failure) => {
+      let error = failure;
       try {
         if (windows) {
           cp.execFileSync(taskkill, ["/PID", String(child.pid), "/T", "/F"], {
@@ -108,9 +189,9 @@ function installNativeDependencies(directory) {
         } else {
           process.kill(-child.pid, "SIGKILL");
         }
-      } catch (failure) {
-        if (failure.code !== "ESRCH") {
-          error = new Error(`${error.message}; process-tree cleanup failed: ${failure.message}`);
+      } catch (failure2) {
+        if (failure2.code !== "ESRCH") {
+          error = new Error(`${error.message}; process-tree cleanup failed: ${failure2.message}`);
           try {
             child.kill("SIGKILL");
           } catch (rootFailure) {
@@ -120,7 +201,13 @@ function installNativeDependencies(directory) {
         }
       }
       finish(error);
-    }, timeoutMs);
+    };
+    timer = setTimeout(() => terminate(new Error(`npm ci timed out after ${timeoutMs} ms`)), timeoutMs);
+    try {
+      trackInstaller(child.pid);
+    } catch (error) {
+      terminate(error);
+    }
   });
 }
 async function setup() {
@@ -128,17 +215,24 @@ async function setup() {
     const manifest = fs.readFileSync(path.join(pluginRoot, "scripts", "native-deps.json"), "utf8");
     const lockfile = fs.readFileSync(path.join(pluginRoot, "scripts", "native-deps-lock.json"), "utf8");
     const installation = JSON.stringify({
+      schemaVersion: 1,
       sha256: createHash("sha256").update(manifest).update("\0").update(lockfile).digest("hex")
     });
     const marker = path.join(pluginData, "native-deps.installed.json");
     const dependencies = Object.keys(JSON.parse(manifest).dependencies);
-    const installed = dependencies.every((name) => fs.existsSync(path.join(pluginData, "node_modules", name, "package.json")));
-    if (!installed || !fs.existsSync(marker) || fs.readFileSync(marker, "utf8") !== installation) {
-      fs.mkdirSync(pluginData, { recursive: true });
-      fs.writeFileSync(path.join(pluginData, "package.json"), manifest);
-      fs.writeFileSync(path.join(pluginData, "package-lock.json"), lockfile);
-      await installNativeDependencies(pluginData);
-      fs.writeFileSync(marker, installation);
+    fs.mkdirSync(pluginData, { recursive: true });
+    const lock = acquireProvisioningLock();
+    try {
+      const installed = dependencies.every((name) => fs.existsSync(path.join(pluginData, "node_modules", name, "package.json")));
+      if (!installed || !fs.existsSync(marker) || fs.readFileSync(marker, "utf8") !== installation) {
+        fs.rmSync(marker, { force: true });
+        fs.writeFileSync(path.join(pluginData, "package.json"), manifest);
+        fs.writeFileSync(path.join(pluginData, "package-lock.json"), lockfile);
+        await installNativeDependencies(pluginData, lock.trackInstaller);
+        fs.writeFileSync(marker, installation);
+      }
+    } finally {
+      lock.release();
     }
   } catch (error) {
     console.error("[copilot-studio] optional encrypted Graph cache unavailable; using in-memory tokens: " + error.message);

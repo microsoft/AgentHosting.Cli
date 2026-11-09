@@ -67,6 +67,13 @@ Its exact native dependency versions and transitive tree are pinned by
 `npm ci`; changing either file invalidates the installation's success marker.
 The lock omits registry-specific tarball URLs, retaining exact versions and integrity checks
 while allowing installation through the user's configured npm registry.
+An exclusive per-installation `native-deps.install.lock` directory protects provisioning
+and the success marker. Ownership is published by atomically renaming a prepared directory;
+cleanup removes only the recorded owner's entry so it cannot delete a newer owner's lock.
+Concurrent startups report that provisioning is busy and use in-memory tokens instead of
+starting another installer. Abandoned locks are recovered after their recorded hook and
+installer processes exit; on POSIX, the installer process group must also have exited.
+Markers from the older, unlocked installer are invalidated once so incomplete trees are repaired.
 Optional encrypted-cache provisioning has a 15-second npm deadline, with registry
 retries disabled. Timeout terminates the installation process tree; Windows cleanup
 has a separate five-second bound. Failure is reported and leaves tokens in memory.

@@ -167,6 +167,7 @@ test("the bundled session hook scopes data and safely quotes exported paths", ()
       fs.copyFileSync(path.join(scripts, name), path.join(plugin, "scripts", name));
     }
     const installation = JSON.stringify({
+      schemaVersion: 1,
       sha256: createHash("sha256").update(fs.readFileSync(path.join(scripts, "native-deps.json")))
         .update("\0").update(fs.readFileSync(path.join(scripts, "native-deps-lock.json"))).digest("hex"),
     });
