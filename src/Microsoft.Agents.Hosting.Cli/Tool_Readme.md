@@ -52,6 +52,19 @@ To update to the latest version:
 dotnet tool update --global Microsoft.Agents.Hosting.Cli
 ```
 
+For preview releases, add `--prerelease`. For a local tool, omit `--global` and update
+from its manifest directory; for a custom installation, use `--tool-path <directory>` instead.
+
+In a terminal, msagent checks listed versions on nuget.org and shows an update notice on stderr
+before command output or prompts. Newer prereleases are labeled `(prerelease)` and include the
+preview update command. It never installs an update automatically.
+
+Successful checks are cached for 24 hours. Feed requests share a three-second deadline; failures
+are silent and retried no sooner than one hour later when the cache is writable. Checks are skipped
+for help, version, invalid/navigation-only commands, `--json`, CI, or redirected stdout/stderr.
+Set `AH_CLI_SKIP_UPDATE_CHECK=true` (case-insensitive) or `1` to disable checks and notices.
+`--non-interactive` alone does not disable the check.
+
 ## Command overview
 
 ```bash

@@ -31,6 +31,7 @@
     <PackageReference Include="Microsoft.Agents.Core" />
     <PackageReference Include="System.CommandLine" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="NuGet.Versioning" />
     <PackageReference Include="Microsoft.PowerApps.AppInsights.BatchedTelemetry" ExcludeAssets="contentFiles" />
   </ItemGroup>
 

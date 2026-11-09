@@ -1115,15 +1115,43 @@ environment itself:
 | `AH_CLI_ARM_CLIENT_ID` | ARM counterpart of `AH_CLI_GRAPH_CLIENT_ID`, used for managed-identity provisioning. Defaults to the well-known Azure CLI public client. |
 | `AH_CLI_ARM_REDIRECT_URI` | Redirect URI for the ARM consent client. |
 | `AH_CLI_CONFIG_DIR` | Override the profile/config directory (defaults under `LocalApplicationData`). Shared by every ring; only the ring-bound files inside it are suffixed. |
+| `AH_CLI_SKIP_UPDATE_CHECK` | `true` (case-insensitive) or `1` disables automatic version checks and notices. |
 | `AH_CLI_ALLOW_UNPROTECTED_CACHE` | Allow an unprotected token cache when a protected store is unavailable. |
 | `AH_CLI_FEATURES` | Semicolon-separated, case-insensitive feature names to enable over shipped defaults. Supported: `AmsFeatures`, `AzureBotServiceFeatures`, `IdentityFeatures`. |
 | `AH_CLI_TELEMETRY_OPTOUT` | Overrides the remembered telemetry preference. `1`/`true` opts out, `0`/`false` opts in; unset defers to `msagent telemetry`. |
 | `AH_CLI_AMS_ENDPOINT` | Agent Management Service **control plane** endpoint, used by deploy. Absolute HTTPS; deployment-configured, not settable per command. |
 | `AH_CLI_AMSDP_ENDPOINT` | Agent Management Service **data plane** endpoint, used by package upload and by `agent create` as a direct Dev-island override. Absolute HTTPS. |
 | `NO_COLOR` | Disable colored output (same effect as `--no-color`). |
-| `CI` | Hide the progress spinner when set to anything other than `false` or `0`, as CI systems do. |
+| `CI` | Hide the progress spinner and skip update checks when nonempty and set to anything other than `false` or `0`, as CI systems do. |
 
 The CLI supports TLS 1.3 and TLS 1.2.
+
+### Automatic version notices
+
+The executable checks listed `Microsoft.Agents.Hosting.Cli` versions on nuget.org before a valid
+leaf command's first output or prompt, writing notices through spinner-aware stderr. It compares
+NuGet versions with `ThisAssembly.AssemblyInformationalVersion` after removing `+` metadata.
+The highest newer stable version is shown, plus the highest newer prerelease only when it also
+exceeds the highest stable version. Suggested commands use `--global`, with `--prerelease` for a
+preview; local/tool-path installations must use their own scope. No update is executed.
+
+`Hosting/NuGetUpdateClient.cs` discovers an approved public search endpoint from the service index
+and requests prereleases and SemVer 2 versions anonymously. Discovery and response-body reads
+share a three-second deadline. There are no retries, redirects, credential providers, custom
+publisher feeds, or identity calls. Expected failures remain silent even under `--debug`;
+caller cancellation still propagates.
+
+`Hosting/UpdateCheckService.cs` caches metadata at `<config directory>/updates/version-check.json`
+for 24 hours and backs failed checks off for one hour. The cache is independent of the installed
+version and contains only schema/source/package, check time, and version maxima. Invalid, future,
+oversized, or expired data is refreshed rather than used to emit stale notices. Cache I/O is
+best-effort; writers use unique temporary files and atomic replacement without a process lock.
+
+Program resolves CI, redirection, and opt-out policy; the parsed command host additionally skips
+help/version, JSON, parser failures, and navigation groups. Playground child processes return
+before composition. `--non-interactive` alone remains eligible. Public/direct command-host
+construction stays offline unless the internal update-check seam is explicitly supplied.
+Offline tests inject HTTP handlers, temporary directories, and a manual clock.
 
 ## Selecting a deployment ring
 
