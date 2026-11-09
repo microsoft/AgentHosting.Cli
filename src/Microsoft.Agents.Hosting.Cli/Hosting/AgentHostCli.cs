@@ -35,6 +35,7 @@ public sealed class AgentHostCli
     private readonly CommandTelemetrySessionAccessor _telemetryAccessor;
     private readonly SystemCommandLineInputFactory _inputFactory;
     private readonly ProgressSpinner? _progressSpinner;
+    private readonly UpdateCheckService? _updateCheck;
 
     /// <summary>Creates the host.</summary>
     /// <param name="operations">The operations facade the commands dispatch to.</param>
@@ -61,7 +62,8 @@ public sealed class AgentHostCli
         IFeatureFlags? featureFlags = null,
         CommandTelemetrySessionAccessor? telemetryAccessor = null,
         SystemCommandLineInputFactory? inputFactory = null,
-        ProgressSpinner? progressSpinner = null)
+        ProgressSpinner? progressSpinner = null,
+        UpdateCheckService? updateCheck = null)
     {
         ArgumentNullException.ThrowIfNull(operations);
 
@@ -74,6 +76,7 @@ public sealed class AgentHostCli
         _inputFactory =
             inputFactory ?? CommandTreeBuilder.CreateSystemCommandLineInput;
         _progressSpinner = progressSpinner;
+        _updateCheck = updateCheck;
     }
 
     /// <summary>
@@ -221,6 +224,13 @@ public sealed class AgentHostCli
             int exitCode = renderer.RenderUsageError(message, json);
             telemetry.RecordHost(CommandTelemetryHostCategory.ParserRejection);
             return exitCode;
+        }
+
+        if (_updateCheck is not null && !json && !invokesHelp && !invokesVersion
+            && !ReferenceEquals(parseResult.CommandResult.Command, root)
+            && !isSubgroup.Contains(parseResult.CommandResult.Command))
+        {
+            await _updateCheck.NotifyAsync(_progressSpinner?.Error ?? stderr, cancellationToken);
         }
 
         int result = await parseResult.InvokeAsync(invocationConfiguration, cancellationToken);

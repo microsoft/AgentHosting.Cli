@@ -387,13 +387,27 @@ internal static class Program
         await using var provider = services.BuildServiceProvider();
         var operations = provider.GetRequiredService<IAgentHostingOperations>();
 
+        using var updateHttp = UpdateCheckService.ShouldCheck(
+            Console.IsOutputRedirected,
+            Console.IsErrorRedirected,
+            Environment.GetEnvironmentVariable("CI"),
+            Environment.GetEnvironmentVariable("AH_CLI_SKIP_UPDATE_CHECK"))
+            ? CreateUpdateHttpClient()
+            : null;
+        var updateCheck = updateHttp is null ? null : new UpdateCheckService(
+            new NuGetUpdateClient(updateHttp, TimeProvider.System),
+            configDirectory,
+            ThisAssembly.AssemblyInformationalVersion,
+            TimeProvider.System);
+
         var cli = new AgentHostCli(
             operations,
             provider.GetRequiredService<CommandTelemetrySessionFactory>(),
             new CompositeHandlerProvider(new FacadeHandlerProvider(operations), provider),
             featureFlags,
             provider.GetRequiredService<CommandTelemetrySessionAccessor>(),
-            progressSpinner: progressSpinner);
+            progressSpinner: progressSpinner,
+            updateCheck: updateCheck);
 
         using var lifetime = new CancellationTokenSource();
 
@@ -426,6 +440,14 @@ internal static class Program
         {
             Console.CancelKeyPress -= OnCancelKeyPress;
         }
+    }
+
+    private static HttpClient CreateUpdateHttpClient()
+    {
+        var handler = TransportDefaults.CreateRedirectRejectingHandler();
+        handler.UseCookies = false;
+        handler.AutomaticDecompression = System.Net.DecompressionMethods.All;
+        return new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
     }
 
     /// <summary>

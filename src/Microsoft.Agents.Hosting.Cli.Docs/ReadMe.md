@@ -46,6 +46,13 @@ help.
 
 ## Output and exit codes
 
+In a terminal, eligible commands can first show a newer-version notice on stderr, including
+labeled prereleases and a manual update command. Notices are suppressed for `--json`, help/version,
+invalid/navigation-only commands, CI, or redirected stdout/stderr. No command-specific options
+are added; `--non-interactive` alone does not suppress notices. See the
+[update-check configuration](../Microsoft.Agents.Hosting.Cli/README.md#automatic-version-notices)
+for opt-out, cache, and deadline behavior.
+
 Most commands write human-readable results to stdout and failures with recovery guidance to
 stderr. With `--json`, ordinary command results use a JSON envelope on stdout: successful
 results contain `success: true`, while failures contain `success: false`, `exitCode`,

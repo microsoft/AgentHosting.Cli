@@ -27,7 +27,7 @@ Apply update (use this to pick up the current version after you have installed i
 dotnet tool update microsoft.agents.hosting.cli --prerelease -g
 ```
 ### Note:
-- CLI updates happen frequently and are posted nightly when changes are pushed to the public feed. During the bug bash and private preview, it is useful to run the `dotnet tool update` command about every 24 hours before using the CLI.
+- In a terminal, msagent checks listed versions on nuget.org and shows newer stable/prerelease versions on stderr before command output or prompts. Results are cached for 24 hours; feed checks allow three seconds and fail silently. Checks are skipped for help/version/usage, `--json`, CI, or redirected stdout/stderr. Set `AH_CLI_SKIP_UPDATE_CHECK=true` (or `1`) to opt out. Suggested commands target global installations; use your installation's scope for local or `--tool-path` tools.
 - If you're using AI, it is recommended that you download the skills and `agent.md` file to assist your agent in working with the CLI.  
 
 # Getting Started - Your first Copilot Studio Agent built with code: Hello World
