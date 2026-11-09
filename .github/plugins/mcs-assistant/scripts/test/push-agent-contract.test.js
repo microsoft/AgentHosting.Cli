@@ -210,6 +210,31 @@ test("thin chat preserves exact targeting and never automatically publishes or r
   assert.doesNotMatch(chat, /node .+chat-with-agent|--set-client-id|--direct-connect-url/);
 });
 
+test("chat verifies supplied cloud IDs against the selected deployment before every turn", () => {
+  const chat = read("commands/chat.md").replace(/\s+/g, " ");
+  const lookup = chat.indexOf("msagent agent list --environment-id");
+  assert.ok(lookup >= 0 && lookup < chat.indexOf("## 3. Send a turn"));
+  assert.match(chat, /Matching the record's `mcsAgentId` does not verify its association with the selected deployment/);
+  assert.match(chat, /selected deployment's `environmentId` and the owning record's `mcsSchemaName`/);
+  assert.match(chat, /exactly one row in `agents\[\]` whose `mcsAgentId` equals the supplied cloud ID/);
+  assert.match(chat, /`schemaName` equals the selected schema[\s\S]*`environmentId` equals the selected environment/);
+  assert.match(chat, /Stop before `test ask` if the association is missing, different, ambiguous, or the lookup fails/);
+  assert.match(chat, /`truncated: true` is inconclusive/);
+  assert.match(chat, /Repeat this lookup before every turn, including continuations/);
+  assert.match(chat, /Add `--schema-name`, `--environment-id`, and `--tenant` assertions/);
+});
+
+test("describer accepts settings-only workspaces without duplicating legacy marker matches", () => {
+  const text = read("agents/copilot-studio-describer.md").replace(/\s+/g, " ");
+  const discovery = text.slice(text.indexOf("## Agent discovery"), text.indexOf("## What to read"));
+  assert.match(discovery, /Glob: \*\*\/settings\.mcs\.yml/);
+  assert.match(discovery, /Glob: \*\*\/agent\.mcs\.yml/);
+  assert.match(discovery, /Group matches by workspace directory[\s\S]*both files is one candidate/);
+  assert.match(discovery, /If neither marker is found, stop/);
+  assert.match(discovery, /settings-only workspace is valid; do not require or generate a legacy/);
+  assert.doesNotMatch(discovery, /If no `agent\.mcs\.yml` file is found, stop/);
+});
+
 test("deployment stage and effective environment use the MSAGENT projection fields", () => {
   const skill = read("skills/push-agent/SKILL.md");
 

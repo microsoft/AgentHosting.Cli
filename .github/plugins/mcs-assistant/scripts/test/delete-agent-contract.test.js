@@ -82,6 +82,41 @@ test("command inputs retain GUID validation and Bash and PowerShell escaping", (
   assert.match(skill, /single-quoted literal/);
 });
 
+test("registered deletion confirms the actual binding rather than the home environment", () => {
+  const text = readRegisteredFlow().replace(/\s+/g, " ");
+  const binding = text.indexOf("If `.mcs/conn.json` exists, read it");
+  const confirmation = text.indexOf("### 5. Confirm");
+  const revalidation = text.indexOf("Immediately before deletion, re-run step 3");
+  const deletion = text.indexOf("```bash msagent agent delete", revalidation);
+  assert.ok(binding >= 0 && binding < confirmation);
+  assert.ok(revalidation > confirmation && deletion > revalidation);
+  assert.match(text, /show that bound cloud ID and environment, never the record's home environment/);
+  assert.match(text, /unreadable or incomplete binding is an error, not permission to fall back/);
+  assert.match(text, /Only when the workspace exists and has no binding/);
+  assert.match(text, /workspace is absent, show a records-only deletion with no cloud target/);
+  assert.match(text, /If the schema or target environment cannot be established, stop before confirmation/);
+  assert.match(text, /binding appearing, disappearing, or changing cloud ID or environment is a target change/);
+  assert.match(text, /Stop and repeat steps 4-5 with fresh typed confirmation/);
+  assert.doesNotMatch(text, /home environment and its default deletion target/);
+});
+
+test("unregistered deletion compares the approved identity before init and after registration", () => {
+  const text = readWorkspaceReference().replace(/\s+/g, " ");
+  const beforeInit = text.indexOf("Immediately before initialization");
+  const init = text.indexOf("msagent agent init --agent-name");
+  const show = text.indexOf("msagent agent show --project", init);
+  assert.ok(beforeInit >= 0 && init > beforeInit && show > init && show < text.indexOf("### U4."));
+  assert.match(text, /re-read both identity files using U1's parsing rules and compare them with those approved values/);
+  assert.match(text, /changed or cannot be read, stop before init or delete/);
+  assert.match(text, /Require no deployments owned by that record/);
+  assert.match(text, /`mcsAgentId` must equal the approved cloud `AgentId`/);
+  assert.match(text, /`mcsSchemaName` must equal the approved `schemaName`/);
+  assert.match(text, /`environmentId` must equal the approved `EnvironmentId`/);
+  assert.match(text, /require the approved canonical workspace path/);
+  assert.match(text, /Re-read the current connection and settings with U1's rules/);
+  assert.match(text, /Never use the cloud `AgentId` as the local `--agent-id`/);
+});
+
 test("project discovery retains lookup precedence and explicit folder selection", () => {
   const skill = readRegisteredFlow();
   const discovery = skill.slice(skill.indexOf("### 2."), skill.indexOf("### 3."));

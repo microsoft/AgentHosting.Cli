@@ -159,6 +159,22 @@ test("authoring helpers and deletion retain independent shell approval gates", (
   assert.match(read("delete-agent"), /retain the host's command-approval gate/);
 });
 
+test("chat and pull preapprovals cannot grant unrelated destructive commands", () => {
+  for (const [file, permitted] of [
+    ["commands/chat.md", /^msagent (?:test ask|agent (?:show|list)|deployment list|auth status) \*$/],
+    ["skills/pull-agent/SKILL.md", /^msagent (?:agent (?:pull|show)|auth status) \*$/],
+  ]) {
+    const text = fs.readFileSync(path.join(root, file), "utf8");
+    const metadata = yaml.load(text.match(/^---\r?\n([\s\S]*?)\r?\n---/)[1]);
+    const patterns = [...metadata["allowed-tools"].matchAll(/Bash\(([^)]+)\)/g)]
+      .map((match) => match[1]);
+    assert.ok(patterns.length > 0);
+    for (const pattern of patterns) assert.match(pattern, permitted, file);
+    assert.doesNotMatch(metadata["allowed-tools"], /Bash\(msagent \*\)/);
+    assert.doesNotMatch(metadata["allowed-tools"], /\bmsagent agent (?:delete|init|deploy)\b|\bmsagent auth login\b/);
+  }
+});
+
 test("knowledge honors a supplied workspace before fallback discovery", () => {
   const text = read("add-knowledge").replace(/\s+/g, " ");
   const explicit = text.indexOf("If an agent workspace was supplied");

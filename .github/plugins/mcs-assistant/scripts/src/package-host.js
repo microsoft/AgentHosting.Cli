@@ -128,7 +128,8 @@ function packageHost({ target, output, root = ROOT }) {
             hooks: [{
               name: "mcs-assistant-encrypted-cache",
               type: "command",
-              command: 'node "${extensionPath}${/}hooks${/}set-env-vars.bundle.js"',
+              command: "node -e \"const root=process.env.MCS_ASSISTANT_GEMINI_ROOT; if(!root) throw new Error('Missing Gemini extension root'); delete process.env.CLAUDE_ENV_FILE; require(require('node:path').join(root, 'hooks', 'set-env-vars.bundle.js'))\"",
+              env: { MCS_ASSISTANT_GEMINI_ROOT: "${extensionPath}" },
             }],
           }],
         },

@@ -14,7 +14,7 @@ This reads the local configuration only and contacts nothing. The JSON envelope 
 `{ success, schemaVersion, projectDirectory, configPath, agents, deployments }`:
 
 - `agents[]` - each has `agentId`, `displayName`, `agentType`, `agentLocation`, `tenantId`,
-  `environmentId` (the agent's home environment and its default deletion target), and, when known,
+  `environmentId` (the agent's home environment, not necessarily its deletion target), and, when known,
   `mcsAgentId` and `mcsSchemaName`.
 - `deployments[]` - each has `deploymentId`, `agentId` (its owning agent), `deploymentName`,
   `deploymentType` (the stage), and optionally `environmentId`. A deployment without
@@ -47,7 +47,16 @@ registered in `configPath` and return to entrypoint step 2.
 2. **Cloud target.** Consider only the deployments whose `agentId` equals the chosen agent's.
    - **No deployments** - pass no deployment selector. The CLI deletes the cloud agent the
      workspace's `.mcs` binding names or, when the workspace has none, the agent that has the
-     agent's schema name in its home environment.
+     agent's schema name in its home environment. Resolve the actual target before confirmation:
+     - Resolve `agentLocation` relative to `projectDir` and retain the canonical workspace path.
+     - If the workspace is absent, show a records-only deletion with no cloud target.
+     - If `.mcs/conn.json` exists, read it without modifying it. Require nonempty `AgentId` and
+       `EnvironmentId`; show that bound cloud ID and environment, never the record's home
+       environment alongside a bound cloud ID. An unreadable or incomplete binding is an error,
+       not permission to fall back to the home environment.
+     - Only when the workspace exists and has no binding, use its known `mcsSchemaName` and the
+       record's home `environmentId`. Show this schema-based home-environment target explicitly.
+       If the schema or target environment cannot be established, stop before confirmation.
    - **One deployment** - confirm it with the user and pass its `--deployment-id`, so that the target
      is exact.
    - **Several deployments** - present a numbered pick-list (`deploymentName`, `deploymentType`,
@@ -64,14 +73,13 @@ registered in `configPath` and return to entrypoint step 2.
 
 ### 5. Confirm with the typed agent name (blocking)
 
-Show a summary like this:
+Show a summary like this, substituting the actual target resolved in step 4:
 
 ```text
 About to delete:
   agent         <displayName> (<agentId>)
   project       <projectDir>
-  cloud target  deployment "<deploymentName>" in <environmentId>
-                (or, with no deployment: the workspace-bound agent / home environment <environmentId>)
+  cloud target  <resolved cloud agent ID or schema> in <resolved environmentId>
   records       1 ManagedAgent + <N> AgentDeployment row(s)
   orphaned      <deploymentName in environmentId, ...> | none
 
@@ -79,11 +87,24 @@ This deletes remote resources and cannot be undone. Local files are not deleted;
 removes this agent's records from <configPath>.
 ```
 
+For a selected deployment, show its name and effective environment. With no deployment, show the
+bound cloud ID and bound environment, the unbound schema-based home target, or `none (records
+only)` for an absent workspace. Do not print unresolved alternatives or label a bound target with
+the home environment.
+
 Ask the user to **type the agent's display name exactly** to confirm. If what they type (ignoring
 surrounding whitespace) is not exactly `displayName`, reply "That does not match the agent name, so
 nothing was deleted." and stop. An empty answer is a decline; stop.
 
 ### 6. Run the delete
+
+Immediately before deletion, re-run step 3's local projection and resolve step 4's cloud target
+again, including whether the workspace and binding now exist. Re-read any present binding without
+modifying it. Require the selected record, canonical workspace, schema, deployment selection, and actual
+cloud target to match the confirmed values. A binding appearing, disappearing, or changing cloud
+ID or environment is a target change. Stop and repeat steps 4-5 with fresh typed confirmation
+before deleting if any identity or the orphan list changed; never replace the approved target
+with newly discovered values.
 
 Run exactly one of these once, and wait for it to complete:
 

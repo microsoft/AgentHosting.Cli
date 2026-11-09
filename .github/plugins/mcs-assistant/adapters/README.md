@@ -47,7 +47,7 @@ matching data directories are an error, not permission to choose arbitrarily.
 Standalone copied skill directories remain supported.
 The canonical hook's `command` launcher uses Claude's root; Copilot uses the
 platform-specific `bash`/`powershell` launcher and its own root. Neither launcher
-uses an inherited root from another host. Copilot also ignores inherited
+uses an inherited root from another host. Copilot and the generated Gemini hook ignore inherited
 `CLAUDE_ENV_FILE` so it cannot append exports to another host's environment file.
 
 ## Execution and prerequisites
@@ -62,6 +62,11 @@ upgrade it, enable feature flags, sign in, switch accounts, deploy or publish
 implicitly. Report missing capabilities and stop the affected workflow.
 The local optional Graph verifier has its own app registration and encrypted
 cache; it does not use MSAGENT's authentication.
+Its exact native dependency versions and transitive tree are pinned by
+`scripts/native-deps.json` and `scripts/native-deps-lock.json`. Provisioning uses
+`npm ci`; changing either file invalidates the installation's success marker.
+The lock omits registry-specific tarball URLs, retaining exact versions and integrity checks
+while allowing installation through the user's configured npm registry.
 Optional encrypted-cache provisioning has a 15-second npm deadline, with registry
 retries disabled. Timeout terminates the installation process tree; Windows cleanup
 has a separate five-second bound. Failure is reported and leaves tokens in memory.

@@ -13,7 +13,7 @@ var require_plugin_paths = __commonJS({
     var fs2 = require("node:fs");
     var os = require("node:os");
     var path2 = require("node:path");
-    var { createHash } = require("node:crypto");
+    var { createHash: createHash2 } = require("node:crypto");
     function canonical(file) {
       let resolved = path2.resolve(file);
       try {
@@ -55,7 +55,7 @@ var require_plugin_paths = __commonJS({
       if (directories.length > 1) {
         throw new Error("Conflicting plugin data directories; set only the current installation's root/data pair.");
       }
-      const identity = createHash("sha256").update(canonical(pluginRoot2)).digest("hex").slice(0, 20);
+      const identity = createHash2("sha256").update(canonical(pluginRoot2)).digest("hex").slice(0, 20);
       const pluginData2 = candidates.length ? path2.resolve(env[candidates[0][1]]) : path2.join(home, ".copilot-studio-cli", "mcs-assistant", "instances", identity);
       return { pluginRoot: pluginRoot2, pluginData: pluginData2 };
     }
@@ -67,6 +67,7 @@ var require_plugin_paths = __commonJS({
 var fs = require("node:fs");
 var cp = require("node:child_process");
 var path = require("node:path");
+var { createHash } = require("node:crypto");
 var { resolvePluginPaths } = require_plugin_paths();
 var { pluginRoot, pluginData } = resolvePluginPaths({ start: path.resolve(__dirname, "..") });
 var environmentFile = process.env.CLAUDE_ENV_FILE;
@@ -75,7 +76,7 @@ function installNativeDependencies(directory) {
     const windows = process.platform === "win32";
     const taskkill = windows ? path.join(process.env.SystemRoot, "System32", "taskkill.exe") : null;
     const timeoutMs = 15e3;
-    const child = cp.spawn("npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000", {
+    const child = cp.spawn("npm ci --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000", {
       cwd: directory,
       shell: true,
       detached: !windows,
@@ -94,9 +95,9 @@ function installNativeDependencies(directory) {
     };
     child.stderr.on("data", (chunk) => process.stderr.write(chunk));
     child.once("error", finish);
-    child.once("close", (code, signal) => finish(code === 0 ? null : new Error(`npm install exited with ${signal ? `signal ${signal}` : `code ${code}`}`)));
+    child.once("close", (code, signal) => finish(code === 0 ? null : new Error(`npm ci exited with ${signal ? `signal ${signal}` : `code ${code}`}`)));
     timer = setTimeout(() => {
-      let error = new Error(`npm install timed out after ${timeoutMs} ms`);
+      let error = new Error(`npm ci timed out after ${timeoutMs} ms`);
       try {
         if (windows) {
           cp.execFileSync(taskkill, ["/PID", String(child.pid), "/T", "/F"], {
@@ -125,14 +126,19 @@ function installNativeDependencies(directory) {
 async function setup() {
   try {
     const manifest = fs.readFileSync(path.join(pluginRoot, "scripts", "native-deps.json"), "utf8");
+    const lockfile = fs.readFileSync(path.join(pluginRoot, "scripts", "native-deps-lock.json"), "utf8");
+    const installation = JSON.stringify({
+      sha256: createHash("sha256").update(manifest).update("\0").update(lockfile).digest("hex")
+    });
     const marker = path.join(pluginData, "native-deps.installed.json");
     const dependencies = Object.keys(JSON.parse(manifest).dependencies);
     const installed = dependencies.every((name) => fs.existsSync(path.join(pluginData, "node_modules", name, "package.json")));
-    if (!installed || !fs.existsSync(marker) || fs.readFileSync(marker, "utf8") !== manifest) {
+    if (!installed || !fs.existsSync(marker) || fs.readFileSync(marker, "utf8") !== installation) {
       fs.mkdirSync(pluginData, { recursive: true });
       fs.writeFileSync(path.join(pluginData, "package.json"), manifest);
+      fs.writeFileSync(path.join(pluginData, "package-lock.json"), lockfile);
       await installNativeDependencies(pluginData);
-      fs.writeFileSync(marker, manifest);
+      fs.writeFileSync(marker, installation);
     }
   } catch (error) {
     console.error("[copilot-studio] optional encrypted Graph cache unavailable; using in-memory tokens: " + error.message);

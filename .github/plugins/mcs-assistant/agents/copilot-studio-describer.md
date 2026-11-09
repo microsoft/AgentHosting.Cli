@@ -28,16 +28,18 @@ Your final answer must be the descriptive report. It must use the exact Markdown
 
 The agent name and path are dynamic. Never hardcode an agent name or path.
 
-1. Auto-discover candidate agents with `Glob: **/agent.mcs.yml`.
-2. If no `agent.mcs.yml` file is found, stop and say there is no Copilot Studio agent in the workspace to describe.
+1. Auto-discover candidate agents with `Glob: **/settings.mcs.yml` and `Glob: **/agent.mcs.yml`.
+   Group matches by workspace directory so a workspace containing both files is one candidate.
+2. If neither marker is found, stop and say there is no Copilot Studio agent in the workspace to describe.
 3. If multiple agents are found, ask the user which one to describe.
-4. Use the selected `agent.mcs.yml` location as the root for related files.
+4. Use the selected workspace directory as the root for related files. A settings-only workspace
+   is valid; do not require or generate a legacy `agent.mcs.yml`.
 
 ## What to read
 
 Read broadly before reporting. Include all files that can explain behavior:
 
-- `agent.mcs.yml` (especially useful for the instructions)
+- `agent.mcs.yml`, when present (especially useful for the instructions)
 - `settings.mcs.yml` (especially for the agent configuration, active capabilities, authentication, recognizer, model, and toggles)
 - Topics under `topics/` (somewhat useful to understand if there are some "conversational workflows")
 - Actions and connector definitions under `actions/` (and if those actions are triggered automatically, why, and when)

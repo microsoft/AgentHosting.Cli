@@ -3,7 +3,7 @@ name: pull-agent
 description: Pull remote Copilot Studio agent changes into an existing registered MSAGENT project with `msagent agent pull`. Use when the user asks to pull, sync down, refresh, or download remote changes into a local agent project.
 metadata:
   argument-hint: Local MSAGENT project root, agent workspace, or local agent name
-allowed-tools: Bash(msagent *) Read Glob Grep
+allowed-tools: Bash(msagent agent pull *) Bash(msagent agent show *) Bash(msagent auth status *) Read Glob Grep
 ---
 
 # Pull a Copilot Studio Agent with MSAGENT CLI

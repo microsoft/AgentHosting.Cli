@@ -62,6 +62,12 @@ Ask the user to **type the agent's display name exactly** to confirm:
 compare the trimmed answer with `displayName` exactly, reply "That does not match the agent name, so
 nothing was deleted." on a mismatch and stop, and treat an empty answer as a decline.
 
+Retain the approved workspace path, cloud `AgentId`, `schemaName`, `EnvironmentId`, display name,
+and tenant when present. Immediately before initialization, re-read both identity files using U1's
+parsing rules and compare them with those approved values. If either identity changed or cannot
+be read, stop before init or delete; show the change and require fresh U2 confirmation before
+continuing. Do not replace the approved identity with the latest files silently.
+
 ### U3. Register the workspace
 
 ```bash
@@ -76,6 +82,23 @@ Before deleting, verify all of these:
 - `agentType` is `MCSAgent`, because this skill deletes only MCS agents;
 - `connected` is `true`, which means msagent read the workspace's `.mcs` binding; and
 - `environmentId` equals `EnvironmentId` from `.mcs\conn.json` (case-insensitive).
+
+Then, immediately before U4, run:
+
+```bash
+msagent agent show --project '<projectDirectory>' --json --non-interactive
+```
+
+Require `success: true` and exactly one record in `agents[]` matching the local `agentId` from U3.
+Require no deployments owned by that record; an intervening deployment requires the registered
+workflow and renewed typed confirmation, not implicit default-deployment selection.
+Resolve its `agentLocation` relative to `projectDirectory` and require the approved canonical
+workspace path. Its `mcsAgentId` must equal the approved cloud `AgentId`, `mcsSchemaName` must equal
+the approved `schemaName`, and `environmentId` must equal the approved `EnvironmentId`
+(case-insensitive). Require the approved tenant too when known. Re-read the current connection
+and settings with U1's rules and require the same approved cloud ID, schema, environment, display
+name, and tenant when known. The init result alone does not prove that the originally approved cloud agent was
+registered.
 
 If any check fails, **do not delete**. Tell the user which check failed and that msagent did not
 register the workspace as the MCS agent that `.mcs\conn.json` names, so a delete could target a
@@ -94,7 +117,8 @@ A newly registered workspace has no deployments, so pass no deployment selector:
 msagent agent delete --project '<projectDirectory>' --agent-id '<agentId>' --json --non-interactive
 ```
 
-Use `projectDirectory` and `agentId` from the U3 result. The CLI deletes the cloud agent that
+Use `projectDirectory` and `agentId` from the U3 result only after the post-registration identity
+checks pass. Never use the cloud `AgentId` as the local `--agent-id`. The CLI deletes the cloud agent that
 `.mcs\conn.json` names, after verifying that the workspace's Dataverse organization matches the
 environment and that the cloud agent's schema name matches `schemaName` in `settings.mcs.yml`. Then
 report the result as in step 7.

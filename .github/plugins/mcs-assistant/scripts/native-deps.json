@@ -3,7 +3,7 @@
   "private": true,
   "description": "Optional OS-native encrypted token storage for the Graph knowledge verifier. Installed into the current plugin installation's data directory, independently of MSAGENT authentication.",
   "dependencies": {
-    "@azure/msal-node-extensions": "^1.5.32",
+    "@azure/msal-node-extensions": "1.5.32",
     "keytar": "7.9.0"
   }
 }

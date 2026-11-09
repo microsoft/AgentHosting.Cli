@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const cp = require("node:child_process");
 const path = require("node:path");
+const { createHash } = require("node:crypto");
 const { resolvePluginPaths } = require("./plugin-paths");
 
 const { pluginRoot, pluginData } = resolvePluginPaths({ start: path.resolve(__dirname, "..") });
@@ -11,7 +12,7 @@ function installNativeDependencies(directory) {
     const windows = process.platform === "win32";
     const taskkill = windows ? path.join(process.env.SystemRoot, "System32", "taskkill.exe") : null;
     const timeoutMs = 15000;
-    const child = cp.spawn("npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000", {
+    const child = cp.spawn("npm ci --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000", {
       cwd: directory, shell: true, detached: !windows, windowsHide: true,
       stdio: ["ignore", "ignore", "pipe"],
     });
@@ -28,9 +29,9 @@ function installNativeDependencies(directory) {
     child.stderr.on("data", (chunk) => process.stderr.write(chunk));
     child.once("error", finish);
     child.once("close", (code, signal) => finish(code === 0
-      ? null : new Error(`npm install exited with ${signal ? `signal ${signal}` : `code ${code}`}`)));
+      ? null : new Error(`npm ci exited with ${signal ? `signal ${signal}` : `code ${code}`}`)));
     timer = setTimeout(() => {
-      let error = new Error(`npm install timed out after ${timeoutMs} ms`);
+      let error = new Error(`npm ci timed out after ${timeoutMs} ms`);
       try {
         if (windows) {
           cp.execFileSync(taskkill, ["/PID", String(child.pid), "/T", "/F"], {
@@ -55,15 +56,20 @@ function installNativeDependencies(directory) {
 async function setup() {
   try {
     const manifest = fs.readFileSync(path.join(pluginRoot, "scripts", "native-deps.json"), "utf8");
+    const lockfile = fs.readFileSync(path.join(pluginRoot, "scripts", "native-deps-lock.json"), "utf8");
+    const installation = JSON.stringify({
+      sha256: createHash("sha256").update(manifest).update("\0").update(lockfile).digest("hex"),
+    });
     const marker = path.join(pluginData, "native-deps.installed.json");
     const dependencies = Object.keys(JSON.parse(manifest).dependencies);
     const installed = dependencies.every((name) =>
       fs.existsSync(path.join(pluginData, "node_modules", name, "package.json")));
-    if (!installed || !fs.existsSync(marker) || fs.readFileSync(marker, "utf8") !== manifest) {
+    if (!installed || !fs.existsSync(marker) || fs.readFileSync(marker, "utf8") !== installation) {
       fs.mkdirSync(pluginData, { recursive: true });
       fs.writeFileSync(path.join(pluginData, "package.json"), manifest);
+      fs.writeFileSync(path.join(pluginData, "package-lock.json"), lockfile);
       await installNativeDependencies(pluginData);
-      fs.writeFileSync(marker, manifest);
+      fs.writeFileSync(marker, installation);
     }
   } catch (error) {
     console.error("[copilot-studio] optional encrypted Graph cache unavailable; using in-memory tokens: " + error.message);

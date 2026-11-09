@@ -102,6 +102,10 @@ for (const skill of ["push-agent", "pull-agent", "publish-agent"]) {
     assert.notEqual(descendants, -1);
     assert.ok(upward < descendants);
     assert.match(discovery, /walk only its parent directories[\s\S]*nearest/);
+    assert.match(discovery, /If none is found, stop[\s\S]*do not search the current working tree instead/);
+    assert.match(discovery, /explicit project directory is not a registered root, stop/);
+    assert.match(discovery, /Never substitute a different project for an unresolved explicit path/);
+    assert.match(discovery, /Only for a pathless request[\s\S]*search descendants/);
     assert.match(discovery, /several descendant project roots match[\s\S]*ask the user to choose/);
     assert.match(discovery, /If no project root is found, stop/);
   });
