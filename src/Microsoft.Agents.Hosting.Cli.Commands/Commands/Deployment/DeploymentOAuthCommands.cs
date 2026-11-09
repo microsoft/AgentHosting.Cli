@@ -218,7 +218,7 @@ public abstract class DeploymentOAuthCommand<TRequest, TResponse> : CodeAgentDep
     private static CommandOption ConnectionName =>
         OptionCatalog.Value(
             "--connection",
-            "OAuth connection name, unique within the bot. 2-64 characters, starting with a letter or digit, from whitespace, letters, digits, '.', '_' and '-'.",
+            "OAuth connection name, unique within the bot. 2-64 characters and start with a letter or digit. Remaining characters may be letters, digits, whitespace, '.', '_' or '-'.",
             required: true);
 
     private static CommandOption ProviderName =>

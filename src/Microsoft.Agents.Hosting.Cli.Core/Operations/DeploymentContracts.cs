@@ -12,6 +12,7 @@ public enum DeploymentOperationStatus
     Updated,
     Listed,
     Deleted,
+    WriteAccepted,
 }
 
 /// <summary>Shared deployment addressing and Azure target options.</summary>
@@ -128,31 +129,41 @@ public interface IDeploymentResult
 
     string TargetName { get; }
     string? TargetInstanceName { get; }
+    IReadOnlyList<string> Warnings { get; }
+    Uri? AuthorizationUrl { get; }
 }
 
 /// <summary>Result shared by deployment CRUD and deployment sub-resources such as OAuth connections and channels.</summary>
 public sealed record DeploymentResult<TPayload> : IDeploymentResult
 {
+    private readonly JsonElement? _armResponse;
+
     public required DeploymentOperationStatus Status { get; init; }
     public TPayload? Payload { get; init; }
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+    public Uri? AuthorizationUrl { get; init; }
     object? IDeploymentResult.Payload => Payload;
-    public JsonElement? ArmResponse => Payload switch
+    public JsonElement? ArmResponse
     {
-        CodeAgentDeployment deployment => deployment.Bot.RawArmResponse,
-        DeploymentOAuthConnection connection => connection.RawArmResponse,
-        DeploymentOAuthConnection[] connections => JsonSerializer.SerializeToElement(
-            connections
-                .Where(connection => connection.RawArmResponse is not null)
-                .Select(connection => connection.RawArmResponse!.Value)
-                .ToArray()),
-        DeploymentChannelRecord channel => channel.RawArmResponse,
-        DeploymentChannelRecord[] channels => JsonSerializer.SerializeToElement(
-            channels
-                .Where(channel => channel.RawArmResponse is not null)
-                .Select(channel => channel.RawArmResponse!.Value)
-                .ToArray()),
-        _ => null,
-    };
+        get => _armResponse ?? (Payload switch
+        {
+            CodeAgentDeployment deployment => deployment.Bot.RawArmResponse,
+            DeploymentOAuthConnection connection => connection.RawArmResponse,
+            DeploymentOAuthConnection[] connections => JsonSerializer.SerializeToElement(
+                connections
+                    .Where(connection => connection.RawArmResponse is not null)
+                    .Select(connection => connection.RawArmResponse!.Value)
+                    .ToArray()),
+            DeploymentChannelRecord channel => channel.RawArmResponse,
+            DeploymentChannelRecord[] channels => JsonSerializer.SerializeToElement(
+                channels
+                    .Where(channel => channel.RawArmResponse is not null)
+                    .Select(channel => channel.RawArmResponse!.Value)
+                    .ToArray()),
+            _ => null,
+        });
+        init => _armResponse = value;
+    }
 
     [JsonIgnore]
     public string TargetName { get; init; } = string.Empty;
@@ -235,12 +246,25 @@ public sealed record DeploymentChannelShowRequest : DeploymentChannelRequest;
 /// <summary>Raw CLI request for <c>msagent deployment channel create</c>.</summary>
 public record DeploymentChannelCreateRequest : DeploymentChannelRequest
 {
-    /// <summary>Channel-specific <c>Key=Value</c> assignments from <c>--parameters</c>.</summary>
+    public bool NonInteractive { get; init; }
+
+    /// <summary>Channel-level <c>Key=Value</c> assignments from <c>--parameters</c>.</summary>
     public IReadOnlyList<string> Parameters { get; init; } = [];
 }
 
 /// <summary>Raw CLI request for <c>msagent deployment channel update</c>.</summary>
-public sealed record DeploymentChannelUpdateRequest : DeploymentChannelCreateRequest;
+public sealed record DeploymentChannelUpdateRequest : DeploymentChannelCreateRequest
+{
+    public IReadOnlyList<string> AddSite { get; init; } = [];
+    public IReadOnlyList<string> SetSite { get; init; } = [];
+    public IReadOnlyList<string> RemoveSite { get; init; } = [];
+    public IReadOnlyList<string> AddPage { get; init; } = [];
+    public IReadOnlyList<string> SetPage { get; init; } = [];
+    public IReadOnlyList<string> RemovePage { get; init; } = [];
+    public IReadOnlyList<string> AddRegistration { get; init; } = [];
+    public IReadOnlyList<string> SetRegistration { get; init; } = [];
+    public IReadOnlyList<string> RemoveRegistration { get; init; } = [];
+}
 
 /// <summary>Raw CLI request for <c>msagent deployment channel delete</c>.</summary>
 public sealed record DeploymentChannelDeleteRequest : DeploymentChannelRequest;

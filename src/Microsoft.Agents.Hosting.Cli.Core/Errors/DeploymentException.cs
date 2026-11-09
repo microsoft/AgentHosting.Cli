@@ -58,7 +58,7 @@ public sealed class DeploymentException : AgentHostingException
     public static DeploymentException ChannelNotFound(string deploymentId, string channelName) =>
         new(
             ErrorCodes.Deployment.DeploymentChannelNotFound,
-            $"The {channelName} channel is not configured on deployment '{deploymentId}'.",
+            $"The '{channelName}' channel is not configured on deployment '{deploymentId}'.",
             ExitCodes.Usage,
             "channel-not-found",
             "Run `msagent deployment channel list` to see configured channels, or configure it with `msagent deployment channel create`.");
@@ -74,9 +74,38 @@ public sealed class DeploymentException : AgentHostingException
     public static DeploymentException ChannelOperationNotSupported(string channelName, string operation) =>
         new(
             ErrorCodes.Deployment.DeploymentChannelOperationNotSupported,
-            $"{channelName} does not support {operation}.",
+            $"The '{channelName}' channel does not support '{operation}' operation.",
             ExitCodes.Usage,
             "channel-operation-not-supported");
+
+    public static DeploymentException ChannelConfigurationUnavailable() =>
+        new(ErrorCodes.Deployment.DeploymentChannelConfigurationUnavailable,
+            "The channel response does not contain a usable configuration.",
+            ExitCodes.Failure, "channel-configuration-unavailable");
+
+    public static UsageException InvalidChannelParameter(
+        string parameterName,
+        string channelName,
+        string operation) =>
+        new($"Parameter '{parameterName}' is misspelled or not valid for '{channelName}' channel {operation}.");
+
+    public static UsageException InvalidChannelOption(string optionName, string channelName, string operation) =>
+        new($"Option '{optionName}' is not valid for '{channelName}' channel {operation}.");
+
+    public static UsageException InvalidChannelParameterValue(string parameterName, string channelName, string requirement) =>
+        new($"Parameter '{parameterName}' for '{channelName}' {requirement}.");
+
+    public static UsageException CannotClearChannelParameter(string parameterName, string channelName) =>
+        new($"Parameter '{parameterName}' for '{channelName}' cannot be cleared.");
+
+    public static UsageException DuplicateChannelParameter(string parameterName) =>
+        new($"Parameter '{parameterName}' was specified more than once.");
+
+    public static UsageException ChannelItemNotFound(string channelName, string selectorName) =>
+        new($"No item in '{channelName}' matches the '{selectorName}' selector.");
+
+    public static UsageException ChannelItemAlreadyExists(string channelName, string selectorName) =>
+        new($"An item with the same '{selectorName}' already exists in '{channelName}'.");
 
     public static UsageException ParameterNotDeclared(
         string parameterName,
@@ -95,11 +124,6 @@ public sealed class DeploymentException : AgentHostingException
         new(WithGuidance(
             $"{OptionFor(parameterName, useOAuthOption)} is required for '{definitionName}'.",
             guidance), ErrorCodes.Deployment.DeploymentRequiredParameter);
-
-    public static UsageException ReadOnlyParameter(
-        string parameterName,
-        string definitionName) =>
-        new($"{OptionFor(parameterName, useOAuthOption: false)} is read-only for '{definitionName}' and cannot be created or updated.", ErrorCodes.Deployment.DeploymentReadOnlyParameter);
 
     public static UsageException CannotClearRequiredParameter(
         string parameterName,

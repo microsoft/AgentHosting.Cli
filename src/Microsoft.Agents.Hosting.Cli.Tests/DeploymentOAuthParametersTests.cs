@@ -72,8 +72,10 @@ public sealed class DeploymentOAuthParametersTests
         Assert.Null(result.RawArmResponse);
     }
 
-    [Fact]
-    public void SanitizeConnection_WithProviderMasksDeclaredSecretsAndRemovesUnknownParameters()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SanitizeConnection_WithProviderMasksOrOmitsDeclaredSecretsAndRemovesUnknownParameters(bool omitSecrets)
     {
         using var document = JsonDocument.Parse("""{"secret":"value"}""");
         var connection = new DeploymentOAuthConnection
@@ -136,11 +138,19 @@ public sealed class DeploymentOAuthParametersTests
         var result = DeploymentOAuthParameters.Sanitize(
             connection,
             provider,
-            includeArmResponse: false);
+            includeArmResponse: false,
+            omitSecrets: omitSecrets);
 
         Assert.Equal("client-id", result.ClientId);
         Assert.Equal(["scope-a", "scope-b"], result.Scopes);
-        Assert.Equal(BotServiceResponseRedactor.Mask, result.Parameters["ProviderPrivateValue"]);
+        if (omitSecrets)
+        {
+            Assert.DoesNotContain("ProviderPrivateValue", result.Parameters.Keys);
+        }
+        else
+        {
+            Assert.Equal(BotServiceResponseRedactor.Mask, result.Parameters["ProviderPrivateValue"]);
+        }
         Assert.Equal("provider-declared-non-secret", result.Parameters["ApiKey"]);
         Assert.Equal("tenant-id", result.Parameters["TenantId"]);
         Assert.DoesNotContain("ClientId", result.Parameters.Keys);
@@ -150,7 +160,7 @@ public sealed class DeploymentOAuthParametersTests
     }
 
     [Fact]
-    public void SanitizeConnection_PreservesExplicitNullSecrets()
+    public void SanitizeConnection_MasksKnownNullSecretsAndPreservesUnknownNulls()
     {
         var connection = new DeploymentOAuthConnection
         {
@@ -195,9 +205,9 @@ public sealed class DeploymentOAuthParametersTests
             provider: null,
             includeArmResponse: false);
 
-        Assert.Null(withProvider.Parameters["ClientSecret"]);
-        Assert.Null(withProvider.Parameters["ProviderPrivateValue"]);
-        Assert.Null(withoutProvider.Parameters["ClientSecret"]);
+        Assert.Equal("***", withProvider.Parameters["ClientSecret"]);
+        Assert.Equal("***", withProvider.Parameters["ProviderPrivateValue"]);
+        Assert.Equal("***", withoutProvider.Parameters["ClientSecret"]);
         Assert.Null(withoutProvider.Parameters["ProviderPrivateValue"]);
     }
 }

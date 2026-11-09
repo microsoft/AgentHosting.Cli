@@ -67,6 +67,10 @@ public sealed record DeploymentChannelRecord
     /// </summary>
     [JsonIgnore]
     public JsonElement? RawArmResponse { get; init; }
+
+    /// <summary>The Azure-returned authorization link, retained only for the current write result.</summary>
+    [JsonIgnore]
+    public Uri? AuthorizationUrl { get; init; }
 }
 
 /// <summary>
