@@ -3,7 +3,7 @@ name: delete-agent
 description: Delete a Copilot Studio agent's cloud resources and its msagent project records with `msagent agent delete`, after an explicit typed-name confirmation. Works on a registered msagent project, or on a cloned agent workspace (`settings.mcs.yml` + `.mcs/conn.json`) that it first registers with `msagent agent init`. Local files are never deleted. Use when the user asks to delete, remove, or destroy a Copilot Studio agent in the cloud.
 metadata:
   argument-hint: Optional project or agent workspace folder path and/or agent name
-allowed-tools: Bash(msagent *) Read Glob Grep
+allowed-tools: Read Glob Grep
 ---
 
 # Delete a Copilot Studio Agent
@@ -33,7 +33,8 @@ The connection supplies cloud `AgentId` and `EnvironmentId`; settings supply
 
 - Before **either** `msagent agent init` or `msagent agent delete`, require the exact
   typed display name (step 5 or U2). `--non-interactive` bypasses the CLI confirmation;
-  this skill's confirmation is the only safeguard.
+  this skill's typed-name confirmation is mandatory. Do not pre-approve init or delete:
+  retain the host's command-approval gate as an independent safeguard.
 - Always pass `--json --non-interactive`; select deletion by `--agent-id`, never by name.
 - Never hand-edit `.config\` or `.mcs\`, delete local files, or bypass the documented MSAGENT deletion flow.
   Only CLI init/delete may create or rewrite the config; leave it in place.
@@ -81,7 +82,10 @@ be at the project root or in a direct child.
 If a folder was supplied, check in order:
 
 1. Registered config in that folder or its parent: use the directory containing
-   `.config` and continue to step 3.
+   `.config` and continue to step 3. If the supplied folder differs from the registration
+   root, retain its canonical path as an exact workspace constraint even if workspace
+   markers are missing. Also retain it when an authored workspace is at the project root.
+   Discovering a parent project does not authorize another agent.
 2. Both workspace markers: use [Unregistered agent workspace](#unregistered-agent-workspace).
 3. Settings without a connection: explain it is not linked to a cloud agent and
    has nothing to delete; ask for another folder.

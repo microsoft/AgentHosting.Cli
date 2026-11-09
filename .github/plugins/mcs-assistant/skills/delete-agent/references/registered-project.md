@@ -28,6 +28,11 @@ registered in `configPath` and return to entrypoint step 2.
 ### 4. Choose the agent and the cloud target (blocking)
 
 1. **Agent.**
+   - **A workspace was supplied.** Resolve every MCS record's `agentLocation` relative to
+     `projectDir`, normalize to its canonical filesystem path, and require exactly one match
+     to the retained workspace constraint. Apply any supplied name or ID cumulatively.
+     On a missing or ambiguous match, stop before init or delete and report the mismatch.
+     Never substitute the project's sole agent or register the workspace implicitly.
    - **The initial request named an agent.** Match the name case-insensitively against each agent's
      `displayName` and `agentId`. Never substitute an agent the user did not name.
      - **One match** - use it, and confirm the match with the user.
@@ -36,7 +41,7 @@ registered in `configPath` and return to entrypoint step 2.
        otherwise stop.
      - **No match** - tell the user that no agent named "<name>" is registered in `configPath`, list
        the registered agents (`displayName`, `agentId`), and stop. Nothing is deleted.
-   - **No agent named.** If there is one agent, use it. If there are several, present a numbered
+   - **No agent named and no workspace supplied.** If there is one agent, use it. If there are several, present a numbered
      pick-list (`displayName`, `agentId`, `agentType`).
    - If the chosen agent's `agentType` is not `MCSAgent`, stop: this skill deletes only MCS agents.
 2. **Cloud target.** Consider only the deployments whose `agentId` equals the chosen agent's.

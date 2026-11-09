@@ -99,14 +99,25 @@ running `msagent auth login`. Wait for sign-in to finish before continuing.
 ### 5. Protect local work
 
 Before execution, state the selected project and agent workspace and that pull can modify and merge
-the agent plus its connected linked component collections. If the user reports uncommitted or
-otherwise unsaved work, warn them to preserve it first. Never reset, stash, delete, or overwrite
-local work on the user's behalf.
+the agent plus its connected linked component collections. Before every pull, warn that
+knowledge-file downloads can replace local bytes without a merge conflict, even when JSON says
+`up-to-date`. Never infer safety from a clean Git status or silence about edits.
 
-The user's explicit request to pull is consent for these local writes. If this skill is invoked as
-a prerequisite for push or publish and the caller has not supplied the user's confirmation for the
-pull, stop and tell the caller to obtain that confirmation before invoking the skill again. Ask
-again only if resolving the project or agent changed the confirmed target.
+Using host file tools or an approved local backup command, capture a byte-for-byte snapshot
+outside the project in private user-owned storage. Include all authored project files, hidden
+and untracked files, binary knowledge payloads, and linked component-collection workspaces.
+Exclude VCS internals and CLI-managed `.config/`, `.mcs/`, and `agent.sync.yaml`; never read or
+edit those as part of preservation. Record relative paths and content hashes and verify every
+copied file against its source. Do not follow links outside the project or omit unreadable files
+silently: if complete preservation cannot be verified, stop before pull.
+Keep the snapshot until the user decides its retention; never reset, stash, delete, or
+automatically restore local files on the user's behalf.
+
+Require explicit confirmation after disclosing the overwrite risk and preservation plan; a
+generic pull request is not evidence that local files are safe. If this skill is invoked as
+a prerequisite for push or publish, accept the caller's confirmation only if it covers this
+exact target, risk, and preservation plan. Otherwise stop and tell the caller to obtain that
+confirmation. Ask again if resolving the project or agent changed the confirmed target.
 
 ### 6. Run the pull
 
@@ -115,6 +126,13 @@ msagent agent pull --project '<project-root>' --agent-id '<local-agent-id>' --js
 ```
 
 Wait for completion. Do not retry except under the error rules below.
+On failure, retain the snapshot and report possible partial writes; do not automatically roll back.
+On success, compare the complete post-pull authored file inventory and hashes against the snapshot,
+including missing and overwritten knowledge payloads. Review differences with the user and reconcile
+local, remote, or merged content only with their explicit choice; do not blindly restore the snapshot.
+Verify that every intended pre-pull edit survived or was explicitly discarded by the user.
+If comparison or reconciliation cannot complete, report the unresolved local-work risk and do not
+claim that local edits were preserved or hand off to push/publish.
 
 ### 7. Verify and report
 

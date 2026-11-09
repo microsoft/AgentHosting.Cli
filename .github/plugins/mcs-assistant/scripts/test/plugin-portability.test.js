@@ -3,7 +3,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync, execFileSync } = require("node:child_process");
+const { EventEmitter, once } = require("node:events");
+const { PassThrough } = require("node:stream");
+const net = require("node:net");
+const vm = require("node:vm");
 const yaml = require("js-yaml");
 const { resolvePluginPaths } = require("../src/plugin-paths");
 const { packageHost } = require("../src/package-host");
@@ -23,6 +27,35 @@ function fixture(directory, name) {
   fs.writeFileSync(path.join(plugin, ".claude-plugin", "plugin.json"),
     JSON.stringify({ name: "mcs-assistant" }));
   return plugin;
+}
+
+function runHook({ platform = process.platform, childProcess, schedule, cancel = () => {},
+  kill = (pid, signal) => process.kill(pid, signal), stderr = () => {} }) {
+  const writes = new Map();
+  const errors = [];
+  const source = fs.readFileSync(path.join(root, "scripts", "src", "set-env-vars.js"), "utf8");
+  const context = {
+    __dirname: path.join(root, "scripts", "src"),
+    process: {
+      platform, kill, stderr: { write: stderr },
+      env: { ...process.env, CLAUDE_ENV_FILE: "", SystemRoot: process.env.SystemRoot || root },
+    },
+    console: { error: (message) => errors.push(String(message)) },
+    setTimeout: schedule,
+    clearTimeout: cancel,
+    require(name) {
+      if (name === "./plugin-paths") return { resolvePluginPaths: () => ({ pluginRoot: root, pluginData: root }) };
+      if (name === "node:child_process") return childProcess;
+      if (name === "node:fs") return {
+        readFileSync: (file) => writes.get(file) || '{"dependencies":{"fixture":"1"}}',
+        existsSync: (file) => writes.has(file),
+        mkdirSync() {},
+        writeFileSync: (file, content) => writes.set(file, content),
+      };
+      return require(name);
+    },
+  };
+  return { completion: vm.runInNewContext(source, context), writes, errors };
 }
 
 test("different cached installations ignore the old singleton and receive different data roots", () => {
@@ -88,6 +121,166 @@ test("native dependency installation failures do not mark setup as completed", (
     assert.match(result.stderr, /in-memory tokens/);
     assert.ok(!fs.existsSync(path.join(data, "native-deps.installed.json")));
   });
+});
+
+test("host launchers ignore inherited roots and Copilot does not write an inherited Claude environment file", () => {
+  temporary((directory) => {
+    const current = fixture(directory, "current $name's plugin");
+    const inherited = fixture(directory, "other");
+    for (const plugin of [current, inherited]) {
+      fs.mkdirSync(path.join(plugin, "hooks"));
+      fs.writeFileSync(path.join(plugin, "hooks", "set-env-vars.bundle.js"),
+        "console.log(JSON.stringify({directory:__dirname,environmentFile:process.env.CLAUDE_ENV_FILE}))");
+    }
+    const hook = JSON.parse(fs.readFileSync(path.join(root, "hooks", "hooks.json"), "utf8"))
+      .hooks.SessionStart[0].hooks[0];
+    for (const name of ["command", "bash", "powershell"]) {
+      const code = hook[name].match(/^node -e "(.*)"$/)[1];
+      const claude = name === "command";
+      const result = spawnSync(process.execPath, ["-e", code], {
+        encoding: "utf8", timeout: 5000,
+        env: {
+          ...process.env,
+          CLAUDE_PLUGIN_ROOT: claude ? current : inherited,
+          COPILOT_PLUGIN_ROOT: claude ? inherited : current,
+          CLAUDE_ENV_FILE: "inherited-environment",
+        },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const output = JSON.parse(result.stdout);
+      assert.equal(output.directory, path.join(current, "hooks"));
+      assert.equal(output.environmentFile, claude ? "inherited-environment" : undefined);
+      const missing = spawnSync(process.execPath, ["-e", code], {
+        encoding: "utf8", timeout: 5000,
+        env: { ...process.env, CLAUDE_PLUGIN_ROOT: "", COPILOT_PLUGIN_ROOT: "" },
+      });
+      assert.notEqual(missing.status, 0);
+      assert.match(missing.stderr, /Missing (?:Claude|Copilot) plugin root/);
+    }
+  });
+});
+
+test("optional native install records success only after a successful exit", async () => {
+  for (const code of [0, 1]) {
+    const child = new EventEmitter();
+    child.stderr = new PassThrough();
+    let cancelled = false;
+    const result = runHook({
+      childProcess: { spawn: () => child },
+      schedule: () => 1,
+      cancel: () => { cancelled = true; },
+    });
+    const marker = path.join(root, "native-deps.installed.json");
+    assert.ok(!result.writes.has(marker));
+    child.emit("close", code, null);
+    await result.completion;
+    assert.equal(result.writes.has(marker), code === 0);
+    assert.equal(result.errors.length, code === 0 ? 0 : 1);
+    if (code !== 0) assert.match(result.errors[0], /in-memory tokens: npm install exited with code 1/);
+    assert.ok(cancelled);
+  }
+});
+
+test("optional native install times out the Windows tree or POSIX process group without a success marker", async () => {
+  for (const platform of ["win32", "linux"]) {
+    const child = new EventEmitter();
+    child.pid = 12345;
+    child.stderr = new PassThrough();
+    let deadline;
+    const terminations = [];
+    const result = runHook({
+      platform,
+      childProcess: {
+        spawn(command, options) {
+          assert.match(command, /--fetch-retries=0/);
+          assert.equal(options.detached, platform !== "win32");
+          assert.equal(options.stdio[2], "pipe");
+          return child;
+        },
+        execFileSync(executable, args, options) {
+          assert.equal(executable, path.join(process.env.SystemRoot || root, "System32", "taskkill.exe"));
+          assert.deepEqual(Array.from(args), ["/PID", String(child.pid), "/T", "/F"]);
+          assert.equal(options.timeout, 5000);
+          terminations.push("tree");
+        },
+      },
+      schedule(callback, delay) {
+        assert.equal(delay, 15000);
+        deadline = callback;
+        return 1;
+      },
+      kill(pid, signal) {
+        assert.equal(pid, -child.pid);
+        assert.equal(signal, "SIGKILL");
+        terminations.push("group");
+      },
+    });
+    deadline();
+    child.emit("close", 0, null);
+    await result.completion;
+    assert.deepEqual(terminations, [platform === "win32" ? "tree" : "group"]);
+    assert.match(result.errors[0], /in-memory tokens: npm install timed out after 15000 ms/);
+    assert.ok(child.stderr.destroyed);
+    assert.ok(!result.writes.has(path.join(root, "native-deps.installed.json")));
+  }
+});
+
+test("native install timeout stops a real descendant holding the stderr pipe open", { timeout: 10000 }, async (t) => {
+  const ready = Promise.withResolvers();
+  let installer;
+  let descendant;
+  let deadline;
+  let terminated = false;
+  t.after(() => {
+    if (terminated) return;
+    if (installer?.exitCode === null && installer.signalCode === null) {
+      if (process.platform === "win32") {
+        execFileSync(path.join(process.env.SystemRoot, "System32", "taskkill.exe"),
+          ["/PID", String(installer.pid), "/T", "/F"], { stdio: "ignore", timeout: 5000 });
+      } else {
+        process.kill(-installer.pid, "SIGKILL");
+      }
+    }
+    if (descendant) {
+      try { process.kill(descendant.pid, "SIGKILL"); }
+      catch (error) { if (error.code !== "ESRCH") throw error; }
+    }
+  });
+  const descendantCode = 'const server=require("node:net").createServer(socket=>socket.end());' +
+    'server.listen(0,"127.0.0.1",()=>console.error(JSON.stringify({pid:process.pid,port:server.address().port})));';
+  const installerCode = 'require("node:child_process").spawn(process.execPath,["-e",' +
+    JSON.stringify(descendantCode) + '],{stdio:["ignore","ignore","inherit"]});';
+  let output = "";
+  const result = runHook({
+    childProcess: {
+      spawn(command, options) {
+        assert.match(command, /^npm install /);
+        installer = spawn(process.execPath, ["-e", installerCode], { ...options, shell: false });
+        installer.once("error", ready.reject);
+        return installer;
+      },
+      execFileSync,
+    },
+    schedule(callback) { deadline = callback; return 1; },
+    stderr(chunk) {
+      output += chunk;
+      if (output.includes("\n")) {
+        try { ready.resolve(JSON.parse(output.trim())); }
+        catch (error) { ready.reject(error); }
+      }
+    },
+  });
+  descendant = await ready.promise;
+  const closed = once(installer, "close");
+  deadline();
+  await result.completion;
+  await closed;
+  const socket = net.connect(descendant.port, "127.0.0.1");
+  t.after(() => socket.destroy());
+  await assert.rejects(once(socket, "connect"), /ECONNREFUSED/);
+  assert.match(result.errors[0], /in-memory tokens: npm install timed out/);
+  assert.ok(!result.writes.has(path.join(root, "native-deps.installed.json")));
+  terminated = true;
 });
 
 for (const target of ["gemini", "agency"]) {

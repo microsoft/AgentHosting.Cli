@@ -58,6 +58,38 @@ test("artifact grading validates YAML semantically without depending on key orde
   assert.equal(grade(item, "outcome", response).passed, false);
 });
 
+test("literal-import grading rejects expanding paths and missing dry-run", () => {
+  const item = corpus.outcomes.find((item) => item.id === "skill-import-literal");
+  const command = "node 'C:\\plugins\\$cache\\add-skill.bundle.js' import " +
+    "--src 'C:\\fixtures\\O''Brien\\$target\\demo' --workspace 'C:\\fixtures\\agent' --dry-run";
+  assert.equal(grade(item, "outcome", { decision: "plan", commands: [command] }).passed, true);
+  for (const invalid of [
+    command.replace("'C:\\plugins\\$cache\\add-skill.bundle.js'", '"C:\\plugins\\$cache\\add-skill.bundle.js"'),
+    command.replace("O''Brien", "O'Brien"),
+    command.replace(" --dry-run", ""),
+  ]) {
+    assert.equal(grade(item, "outcome", { decision: "plan", commands: [invalid] }).passed, false);
+  }
+});
+
+test("cloud-target grading accepts deployment plans and rejects refusal or cloud IDs used as local IDs", () => {
+  for (const skill of ["push", "publish"]) {
+    const item = corpus.outcomes.find((item) => item.id === `${skill}-cloud-target-supported`);
+    const command = "msagent agent deploy --project 'C:\\fixtures\\project' " +
+      "--agent-id '33333333-3333-3333-3333-333333333333' " +
+      "--deployment-id '44444444-4444-4444-4444-444444444444' " +
+      (skill === "publish" ? "--publish " : "") + "--json --non-interactive";
+    assert.equal(grade(item, "outcome", { decision: "plan", commands: [command] }).passed, true);
+    assert.equal(grade(item, "outcome", { decision: "stop", commands: [] }).passed, false);
+    assert.equal(grade(item, "outcome", {
+      decision: "plan",
+      commands: [command.replace("33333333-3333-3333-3333-333333333333", "22222222-2222-2222-2222-222222222222")],
+    }).passed, false);
+    const wrongMode = skill === "publish" ? command.replace("--publish ", "") : command + " --publish";
+    assert.equal(grade(item, "outcome", { decision: "plan", commands: [wrongMode] }).passed, false);
+  }
+});
+
 test("handoff grading accepts nested arguments but rejects omitted or conflicting target identities", () => {
   const item = corpus.outcomes.find((item) => item.id === "creation-publication");
   const targets = {

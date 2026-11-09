@@ -243,6 +243,37 @@ test("deployment selection combines every supplied selector before using the dev
   assert.match(skill, /Never replace an explicit selector with a\s+default/i);
 });
 
+test("push retains exact workspace selection and resolves supplied cloud IDs", () => {
+  const skill = read("skills/push-agent/SKILL.md").replace(/\s+/g, " ");
+  assert.match(skill, /`agentLocation` relative to the project root[\s\S]*exactly one canonical path match/);
+  assert.match(skill, /all supplied agent selectors as cumulative constraints/);
+  assert.match(skill, /missing or ambiguous match, stop[\s\S]*never substitute the project's sole agent/);
+  assert.doesNotMatch(skill, /Exact cloud-ID requests \(blocking\)/);
+  assert.match(skill, /`mcsAgentId` must first be mapped to its local record/);
+  assert.match(skill, /cloud `mcsAgentId` is also an explicit deployment constraint/);
+  assert.match(skill, /require its `environmentId` and `schemaName`; stop and ask/);
+  assert.match(skill, /Never use the dev default for a supplied cloud target/);
+});
+
+test("push verifies supplied cloud targets before pulling and deploying and checks the result", () => {
+  const skill = read("skills/push-agent/SKILL.md").replace(/\s+/g, " ");
+  const preflight = skill.indexOf("#### Verify a supplied cloud target");
+  const pull = skill.indexOf("msagent agent pull --project");
+  const revalidation = skill.indexOf("repeat the cloud-target lookup above after reconciliation");
+  const deploy = skill.indexOf("msagent agent deploy --project");
+  const verification = skill.slice(skill.indexOf("### 8."));
+
+  assert.ok(preflight >= 0 && preflight < pull && revalidation > pull && revalidation < deploy);
+  assert.match(skill, /msagent agent list --environment-id '<expected-environment-id>' --limit 1000 --json --non-interactive/);
+  assert.match(skill, /exactly one row in `agents\[\]` matching the expected `mcsAgentId`, `schemaName`, and `environmentId`/);
+  assert.match(skill, /Stop before pull or deploy if the target is missing, different, ambiguous, or the lookup fails/);
+  assert.match(skill, /`truncated: true` is inconclusive[\s\S]*stop rather than selecting another target/);
+  assert.match(skill, /same local agent, workspace, deployment, effective environment, cloud ID, and schema; stop if any identity changed/);
+  assert.match(skill, /require the schema to equal the expected `schemaName`/);
+  assert.match(verification, /`targetMcsAgentId` to equal the expected `mcsAgentId` and `targetEnvironmentId` to equal the expected `environmentId`/);
+  assert.match(verification, /mismatch is a verification failure[\s\S]*do not claim the requested cloud agent was updated or retry against another deployment/);
+});
+
 test("the pre-push pull is skipped and unblocked end-to-end for a never-connected agent", () => {
   const skill = read("skills/push-agent/SKILL.md") + "\n" +
     read("skills/push-agent/references/error-recovery.md");

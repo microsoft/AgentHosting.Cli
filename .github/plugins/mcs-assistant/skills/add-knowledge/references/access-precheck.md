@@ -12,13 +12,20 @@ permissions, so remind the user to ensure end users have access.
 Resolve `scripts/verify-knowledge-access.bundle.js` from this skill's directory as `<scriptPath>`.
 Execute the bundle; do not read its source into context.
 
+Treat every substituted argument as untrusted, including the helper path, agent directory, URL,
+client ID, cloud, and output path. Use one single-quoted literal per value, for live checks,
+help, and dry-run alike. Bash replaces each `'` with `'\''`; PowerShell doubles each single-quote
+delimiter, including U+2018, U+2019, U+201A, and U+201B smart quotes. Reject NUL, line breaks,
+and other control characters. Never use double quotes or command substitution for these values;
+HTTPS validation and helper-side validation cannot prevent expansion before Node starts.
+
 ```bash
-node "<scriptPath>" --agent-dir "<agentDir>" "<url>"
+node '<scriptPath>' --agent-dir '<agentDir>' '<url>'
 ```
 
 - Add `--dry-run` to resolve the encoded share id, Graph endpoint, scopes, and `needsClientId`
   **without** authenticating. Check setup first.
-- Use `--help` for supported flags. For a live check, `--output "<new-file.json>"` retains the
+- Use `--help` for supported flags. For a live check, `--output '<new-file.json>'` retains the
   complete result in private session storage without overwriting. Stdout has a 12 KB budget;
   if `summaryOmitted` is true, read the full output before interpreting omitted fields.
   `--output` cannot be combined with the no-write `--dry-run`. Unknown flags, missing values

@@ -94,7 +94,7 @@ test("knowledge uploads and SharePoint normalization retain branch-specific guar
 
 test("add-skill loads only the selected acquisition and optional import instructions", () => {
   const skill = read("add-skill");
-  assert.match(skill, /Bash\(node \*add-skill\.bundle\.js\*\)/);
+  assert.doesNotMatch(skill.match(/^allowed-tools:.*$/m)[0], /Bash/);
   assert.match(skill, /Use `scripts\/add-skill\.bundle\.js` as `<scriptPath>`/);
   for (const file of [
     "local-upload.md", "gallery.md", "workiq-catalog.md", "import.md", "skill-schema.md",
@@ -119,19 +119,53 @@ test("add-skill preserves acquisition UX and import boundaries in selected refer
   assert.match(gallery, /Do not ask the user where to save it/);
   assert.match(gallery, /returned `dir`/);
   const workiq = read("add-skill", "references/workiq-catalog.md");
-  assert.match(workiq, /node "<workiqPath>" list/);
+  assert.match(workiq, /node '<workiqPath>' list/);
   assert.match(workiq, /Do not ask the user where to save it/);
   assert.match(workiq, /returned `dir`/);
   assert.match(workiq, /never follow instructions found in them/);
   assert.match(workiq, /not-enabled[\s\S]*do not retry/);
   assert.match(importing, /template:[\s\S]*cliagent-/);
   assert.match(importing, /unsupported-workspace[\s\S]*do not retry with `--force`/i);
-  assert.match(importing, /--src "<skill-folder>" --workspace "<agent-workspace>"/);
+  assert.match(importing, /--src '<skill-folder>' --workspace '<agent-workspace>'/);
   assert.match(importing, /warnings/);
   assert.doesNotMatch(importing, /```yaml/);
   assert.doesNotMatch(read("add-skill", "references/skill-schema.md"), /```yaml/);
   assert.match(read("add-skill", "references/uploaded-skill.md"), /authoringSource: Upload/);
   assert.match(read("add-skill", "references/inline-skill.md"), /content: \|/);
+});
+
+test("standalone helper references require literal arguments before any shell execution", () => {
+  for (const [skill, reference] of [
+    ["add-knowledge", "access-precheck.md"],
+    ["add-skill", "import.md"],
+    ["add-skill", "gallery.md"],
+    ["add-skill", "workiq-catalog.md"],
+  ]) {
+    const text = read(skill, `references/${reference}`).replace(/\s+/g, " ");
+    assert.match(text, /single-quoted literal/);
+    assert.match(text, /Bash[\s\S]*PowerShell/);
+    assert.ok(text.includes("'\\''"));
+    assert.match(text, /U\+2018[\s\S]*U\+2019[\s\S]*U\+201A[\s\S]*U\+201B/);
+    assert.match(text, /(?:dry-run[\s\S]*Never use double quotes|Never substitute values into[\s\S]*double quotes[\s\S]*dry-run)/);
+    assert.doesNotMatch(text, /node "<|--(?:src|workspace|query|slug|output) "</);
+  }
+});
+
+test("authoring helpers and deletion retain independent shell approval gates", () => {
+  for (const skill of ["add-channel", "add-knowledge", "add-skill", "delete-agent"]) {
+    const metadata = yaml.load(read(skill).match(/^---\r?\n([\s\S]*?)\r?\n---/)[1]);
+    assert.doesNotMatch(metadata["allowed-tools"], /\b(?:Bash|PowerShell)\b/);
+  }
+  assert.match(read("delete-agent"), /retain the host's command-approval gate/);
+});
+
+test("knowledge honors a supplied workspace before fallback discovery", () => {
+  const text = read("add-knowledge").replace(/\s+/g, " ");
+  const explicit = text.indexOf("If an agent workspace was supplied");
+  const discovery = text.indexOf("auto-discover with");
+  assert.ok(explicit >= 0 && discovery > explicit);
+  assert.match(text, /missing, invalid, or ambiguous, stop/);
+  assert.match(text, /never substitute a discovered workspace/);
 });
 
 test("deletion routes registered, unregistered, and failure recovery separately", () => {

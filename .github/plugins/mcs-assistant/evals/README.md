@@ -15,8 +15,8 @@ npm --prefix scripts run eval:skills -- --output "C:\temp\skill-eval-run"
 
 The default smoke suite makes **30 fresh model calls**: four trigger cases, plus
 three outcome cases both with and without the selected skill body, repeated three
-times. `--suite all` covers all 22 trigger prompts plus the three outcomes
-(84 calls at three repeats). `--split train` or `--split validation` selects a
+times. `--suite all` covers all 22 trigger prompts plus thirteen outcomes
+(144 calls at three repeats). `--split train` or `--split validation` selects a
 corpus split. `--case id,id` narrows selection; `--repeats 1` is useful for a
 single-run diagnostic, not a stability measurement. Use `--suite all --case ...`
 to select a non-smoke case. Runs are sequential and stop on operational failure.
@@ -41,7 +41,9 @@ outcomes when behavior changes, rather than weakening a failing assertion.
   `none`. Positive prompts cover every skill; negatives include Git operations,
   local deletion and posting to Teams rather than configuring a channel.
 - **Outcome probes:** unsupported-workspace refusal, candidate website YAML plus
-  post-write verification, and exact creation-to-publication identity handoff.
+  post-write verification, exact creation-to-publication identity handoff, explicit
+  workspace mismatch refusal, cloud-target deployment selection, incomplete pre-pull
+  preservation, and literal PowerShell import arguments.
   Assertions check structured decisions, concrete identifiers and parsed YAML,
   not a second model's opinion.
   Handoff arguments may be flat or nested under `arguments`; conflicting explicit

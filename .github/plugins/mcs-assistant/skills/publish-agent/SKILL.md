@@ -80,7 +80,10 @@ msagent agent show --project '<project-root>' --json --non-interactive
 From `agents[]` and `deployments[]`:
 
 1. Resolve exactly one MCS agent. Match a supplied local `agentId` or `displayName`; map a supplied
-   cloud `mcsAgentId` to its local record. Treat all supplied agent selectors as cumulative.
+   cloud `mcsAgentId` to its local record and a supplied workspace to the record's canonical
+   `agentLocation` relative to the project root.
+   Treat all supplied agent selectors as cumulative. On a missing or ambiguous match, stop;
+   never substitute the project's sole agent.
    A supplied cloud `mcsAgentId` is also an explicit deployment constraint: require its
    `environmentId` and `schemaName`; stop and ask for either missing value rather than guessing.
    Keep this expected cloud identity unchanged throughout the workflow.
@@ -130,7 +133,8 @@ not authorize replacing these target constraints.
 Before execution, state:
 
 - the project, local agent, deployment, stage, and target environment;
-- that pull can merge cloud changes into the local agent and component collections;
+- that pull can overwrite local knowledge files without a merge conflict, and that the verified
+  snapshot and reconciliation below are required before uploading any resulting content;
 - that deploy then uploads local content and may create, adopt, reconnect, or retarget the cloud
   agent;
 - that eligible workflows and local deployment records can be updated;
@@ -146,20 +150,42 @@ the word "publish".
 
 ### 6. Pull before deploying
 
-After confirmation:
+Before every pull, warn that knowledge-file downloads can replace local bytes without a merge
+conflict, even when JSON says `up-to-date`. Do not infer safety from Git status or silence about edits.
+Using host file tools or an approved local backup command, capture a byte-for-byte snapshot
+outside the project in private user-owned storage. Include all authored project files, hidden
+and untracked files, binary knowledge payloads, and linked component-collection workspaces.
+Exclude VCS internals and CLI-managed `.config/`, `.mcs/`, and `agent.sync.yaml`; never read or
+edit those as part of preservation. Record relative paths and content hashes and verify every
+copied file against its source. Do not follow links outside the project or omit unreadable files
+silently: if complete preservation cannot be verified, stop before pull.
+Keep the snapshot until the user decides its retention; never stash, reset, or auto-restore.
+
+After the user confirms the preservation plan and prerequisite pull as part of step 5's consent:
 
 ```bash
 msagent agent pull --project '<project-root>' --agent-id '<local-agent-id>' --json --non-interactive
 ```
 
-Wait for success. If pull reports a merge conflict or another failure, stop before any deploy or
-publish.
+Wait for success. On a merge conflict or another failure, stop and retain the snapshot; do not
+deploy, publish, or automatically roll back partially applied changes.
+Compare the complete post-pull authored file inventory and hashes against the snapshot, including
+missing and overwritten knowledge payloads. Review differences with the user and reconcile local,
+remote, or merged content only with their explicit choice; do not blindly restore the snapshot.
+Verify that every intended pre-pull edit survived or was explicitly discarded by the user.
+Parse changed YAML, verify payload bytes, and review the final diff. If comparison or
+reconciliation cannot complete, stop before deploy or publish. If reconciliation changes the
+content covered by step 5's approval, obtain renewed publication confirmation for that final content.
 
 ### 7. Deploy and publish
 
-For a supplied cloud target, revalidate the selected local deployment through `agent show` and
-repeat the cloud-target lookup above after pull, immediately before deploy. Require the same local
-agent, deployment, effective environment, cloud ID, and schema; stop if any identity changed.
+Revalidate the selected local agent, workspace, deployment, and effective environment through
+`agent show` immediately before deploy. Parse authored settings and compare the schema with
+the reconciled content approved above. Stop if any target or schema changed; do not silently
+create a new target under the previous confirmation. For a supplied cloud target, also require
+the workspace schema to equal the expected `schemaName` and repeat the cloud-target lookup above
+after pull, immediately before deploy. Require the same local agent, deployment, effective
+environment, cloud ID, and schema; stop if any identity changed.
 
 ```bash
 msagent agent deploy --project '<project-root>' --agent-id '<local-agent-id>' --deployment-id '<deployment-id>' --publish --json --non-interactive
@@ -181,10 +207,11 @@ Require JSON output with `success: true` and:
 Report warnings, the push action, whether a target agent was created, and the published timestamp.
 Claim the agent is live only when `published` is true.
 
-For a supplied cloud target, also require `targetMcsAgentId` to equal the expected `mcsAgentId`
-and `targetEnvironmentId` to equal the expected `environmentId`. A mismatch is a verification
-failure: report any completed side effects, but do not claim the requested agent was published,
-retry chat, or retry publication against another deployment.
+Require `targetEnvironmentId` to equal the selected effective environment. For a supplied cloud
+target, also require `targetMcsAgentId` to equal the expected `mcsAgentId` and `targetEnvironmentId`
+to equal the expected `environmentId`. Any target mismatch is a verification failure: report
+completed side effects, but do not claim the requested agent was published, retry chat, or retry
+publication against another deployment.
 
 ## Error handling
 

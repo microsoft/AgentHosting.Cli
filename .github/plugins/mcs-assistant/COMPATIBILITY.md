@@ -21,6 +21,9 @@ the declared helper prerequisite. MSAGENT is acquired separately through the
 publisher-approved route. Missing CLI capabilities stop the affected workflow;
 the plugin never installs MSAGENT or enables feature flags.
 
+Connected pull/push/publish workflows require verified preservation and reconciliation
+of authored files, including binary knowledge payloads, before any subsequent upload.
+
 Source access, catalog access, local execution, service/Hub execution and release
 approval are independent. Agency's local executable/artifact support does not
 establish that remote jobs can run MSAGENT. No remote backend is introduced.

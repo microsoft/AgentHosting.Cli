@@ -103,6 +103,9 @@ space-separated. Local tests validate all shipped manifests.
 Opt-in [live skill evaluations](evals/README.md) add repeated trigger/decision/artifact probes,
 baseline comparisons, traces and reported usage; they consume model credits and are not cloud tests.
 
+Before a connected pull, lifecycle skills require a verified private snapshot of authored
+files and reconciliation afterward; knowledge payloads can be overwritten without a merge conflict.
+
 ### Creating and importing Agent Skills
 
 Requests to create skills from requirements, including reporting and formatting procedures, use

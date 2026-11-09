@@ -53,6 +53,7 @@ test("create loads publication handoff only for explicit intent after complete s
   assert.match(skill, /If the reference cannot be read, stop and report it/);
   assert.doesNotMatch(skill, /invoke `mcs-assistant:publish-agent`/);
   assert.match(handoff, /invoke `mcs-assistant:publish-agent`/);
+  assert.doesNotMatch(handoff, /handoff as blocked|cannot pin deploy/);
   assert.match(handoff, /initial create-and-publish wording is intent, not that final confirmation/i);
   assert.match(handoff, /pull before deploying/);
   assert.match(handoff, /publish skill is unavailable[\s\S]*publication was not performed, then stop/);
@@ -119,20 +120,28 @@ test("push keeps the first-push predicate and connected synchronization mandator
   assert.match(skill, /Skip this pull when the selected agent has never been deployed or connected/);
   assert.match(skill, /Never\s+silently choose the first agent or deployment/);
   assert.match(skill, /a never-connected agent \(no `mcsAgentId`\) has not yet created `\.mcs\/conn\.json`/);
-  assert.match(skill, /For a test or prod deployment[\s\S]*require confirmation before proceeding/);
-  assert.match(skill, /Do not deploy local content whose pull did not succeed/);
+  assert.match(skill, /For a test or prod deployment[\s\S]*require explicit confirmation for the prerequisite pull/);
+  assert.match(skill, /pull request alone|push request alone is not consent/i);
+  assert.match(skill, /merge conflict or another failure, stop[\s\S]*do not deploy/i);
   assert.match(skill, /`published: false`/);
   const commands = [...skill.matchAll(/```bash (msagent agent deploy --project [^`]+)```/g)];
   assert.equal(commands.length, 1);
   assert.doesNotMatch(commands[0][1], /--publish|--overwrite|--schema-name/);
 });
 
+test("test and prod require confirmation even when a first push skips the pull", () => {
+  const effects = section(read("push-agent"), "### 5.", "### 6.");
+  const stageConsent = effects.slice(effects.indexOf("For a test or prod deployment"),
+    effects.indexOf("For every connected agent"));
+  assert.match(stageConsent, /require explicit confirmation before deployment, even when the agent has never been connected/);
+});
+
 test("pull preserves explicit selection, connected-workspace checks and local-write consent", () => {
   const skill = read("pull-agent");
   assert.match(skill, /Never replace an explicit selector mismatch/);
   assert.match(skill, /plus `\.mcs\/conn\.json`/);
-  assert.match(skill, /Never reset, stash, delete, or overwrite\s+local work/);
-  assert.match(skill, /caller has not supplied the user's confirmation[\s\S]*stop/);
+  assert.match(skill, /never reset, stash, delete, or automatically restore local files/i);
+  assert.match(skill, /accept the caller's confirmation only if it covers this exact target, risk, and preservation plan/);
   assert.match(skill, /status` equal to `agent-pulled` or `up-to-date`/);
   assert.match(skill, /`mode: "pull"`/);
   const recovery = read("pull-agent", "references/error-recovery.md");
@@ -149,7 +158,7 @@ test("publish retains live-change confirmation, synchronization and partial-side
   assert.ok(pull > confirmation);
   assert.ok(deploy > pull);
   assert.match(skill, /For test or prod, explicitly warn that target drift is overwritten/);
-  assert.match(skill, /another failure, stop before any deploy or\s+publish/);
+  assert.match(skill, /another failure, stop[\s\S]*do not deploy, publish/i);
   assert.match(skill, /`published: true` and a nonempty `publishedOn`/);
   assert.match(skill, /--deployment-id '<deployment-id>' --publish --json --non-interactive/);
   assert.match(skill, /Treat `partialResult` as authoritative for completed side effects/);
@@ -159,6 +168,27 @@ test("publish retains live-change confirmation, synchronization and partial-side
   assert.match(recovery, /then reconfirm publish/);
   assert.match(recovery, /Never bypass the documented MSAGENT publish workflow/);
 });
+
+for (const name of ["pull-agent", "push-agent", "publish-agent"]) {
+  test(`${name} preserves authored bytes before pull and reconciles before reporting or uploading`, () => {
+    const skill = read(name);
+    const snapshot = skill.indexOf("capture a byte-for-byte snapshot");
+    const pull = skill.indexOf("msagent agent pull --project");
+    const compare = skill.toLowerCase().indexOf("compare the complete post-pull", pull);
+    assert.ok(snapshot >= 0 && pull > snapshot && compare > pull);
+    assert.match(skill, /before every pull, warn that knowledge-file downloads can replace local bytes/i);
+    assert.match(skill, /hidden and untracked files, binary knowledge payloads, and linked component-collection/);
+    assert.match(skill, /verify every copied file against its source/);
+    assert.match(skill, /if complete preservation cannot be verified, stop before pull/);
+    assert.match(skill, /missing and overwritten knowledge payloads/);
+    assert.match(skill, /only with their explicit choice; do not blindly restore the snapshot/);
+    assert.match(skill, /every intended pre-pull edit survived or was explicitly discarded by the user/);
+    if (name !== "pull-agent") {
+      assert.ok(skill.indexOf("msagent agent deploy --project", compare) > compare);
+      assert.match(skill, /reconciliation cannot complete, stop before deploy/);
+    }
+  });
+}
 
 for (const skill of ["create-agent", "clone-agent", "push-agent", "pull-agent", "publish-agent"]) {
   test(`${skill} reads recovery only after failure and stops if it is unavailable`, () => {
