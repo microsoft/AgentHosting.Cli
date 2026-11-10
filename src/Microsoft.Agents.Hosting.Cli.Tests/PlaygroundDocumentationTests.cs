@@ -3,7 +3,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 public sealed class PlaygroundDocumentationTests
 {
     [Fact]
-    public void ReadmeDocumentsThePlaygroundMvpContract()
+    public void ManualTestingGuideDocumentsThePlaygroundMvpContract()
     {
         var readme = File.ReadAllText(ReadmePath());
         var section = Section(readme, "### M365 Agents Playground test (MVP)");
@@ -23,7 +23,7 @@ public sealed class PlaygroundDocumentationTests
         Assert.Contains("It rejects `--non-interactive`", section, StringComparison.Ordinal);
         Assert.Contains("no authentication", section, StringComparison.Ordinal);
         Assert.Contains("22.17.1+ LTS", section, StringComparison.Ordinal);
-        Assert.Contains("The user manually validated that the Direct Line connection works.", section, StringComparison.Ordinal);
+        Assert.Contains("Live runs require explicit approval", readme, StringComparison.Ordinal);
         Assert.Contains("`LiveTestFeatures`", section, StringComparison.Ordinal);
         Assert.Contains("`@microsoft/m365agentsplayground`", section, StringComparison.Ordinal);
         Assert.Contains("0.2.29", section, StringComparison.Ordinal);
@@ -55,7 +55,7 @@ public sealed class PlaygroundDocumentationTests
     private static string Section(string readme, string heading)
     {
         var start = readme.IndexOf(heading, StringComparison.Ordinal);
-        Assert.True(start >= 0, $"README is missing the '{heading}' section.");
+        Assert.True(start >= 0, $"Manual testing guide is missing the '{heading}' section.");
 
         var nextHeading = readme.IndexOf("\n### ", start + heading.Length, StringComparison.Ordinal);
         return nextHeading < 0
@@ -67,7 +67,7 @@ public sealed class PlaygroundDocumentationTests
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
         {
-            var candidate = Path.Combine(directory.FullName, "src", "Microsoft.Agents.Hosting.Cli", "README.md");
+            var candidate = Path.Combine(directory.FullName, "docs", "developer", "ManualTesting.md");
 
             if (File.Exists(candidate))
             {
@@ -75,6 +75,6 @@ public sealed class PlaygroundDocumentationTests
             }
         }
 
-        throw new FileNotFoundException("Could not locate the CLI README.");
+        throw new FileNotFoundException("Could not locate the manual testing guide.");
     }
 }

@@ -6,13 +6,13 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 /// <summary>Proves the packaged README only names options the parser actually accepts.</summary>
 public sealed partial class ReadmeOptionTests
 {
-    [Fact]
-    public void EveryOptionTheReadmeNamesExists()
+    [Theory]
+    [InlineData("src", "Microsoft.Agents.Hosting.Cli", "Readme.md")]
+    [InlineData("src", "Microsoft.Agents.Hosting.Cli", "agent.md")]
+    [InlineData("docs", "developer", "ManualTesting.md")]
+    public void EveryOptionTheReadmeNamesExists(string folder, string subfolder, string fileName)
     {
-        if (ReadmePath() is not { } path)
-        {
-            return;
-        }
+        var path = ReadmePath(folder, subfolder, fileName);
 
         var unknown = File.ReadAllLines(path)
             .Where(line => line.Contains("msagent ", StringComparison.Ordinal))
@@ -28,11 +28,11 @@ public sealed partial class ReadmeOptionTests
     [GeneratedRegex(@"--[a-z][a-z0-9-]*")]
     private static partial Regex OptionToken();
 
-    private static string? ReadmePath()
+    private static string ReadmePath(string folder, string subfolder, string fileName)
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
         {
-            var candidate = Path.Combine(directory.FullName, "src", "Microsoft.Agents.Hosting.Cli", "README.md");
+            var candidate = Path.Combine(directory.FullName, folder, subfolder, fileName);
 
             if (File.Exists(candidate))
             {
@@ -40,6 +40,6 @@ public sealed partial class ReadmeOptionTests
             }
         }
 
-        return null;
+        throw new FileNotFoundException($"Could not locate {fileName}.");
     }
 }
