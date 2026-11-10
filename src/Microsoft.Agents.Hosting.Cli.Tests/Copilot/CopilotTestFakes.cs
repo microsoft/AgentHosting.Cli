@@ -1,14 +1,18 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Copilot;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
-using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Yaml;
 using Microsoft.Agents.Platform.Content.Exceptions;
 using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 using Microsoft.CopilotStudio.Sync.Dataverse;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
@@ -25,10 +29,6 @@ internal sealed class FakeCopilotCatalogPort : ICopilotCatalogPort
     public int DeleteCalls { get; private set; }
 
     public int CreateCalls { get; private set; }
-
-    public int PublishCalls { get; private set; }
-
-    public Queue<DateTimeOffset?> PublishedOnSequence { get; } = new();
 
     public DateTimeOffset? PublishedOn { get; set; }
 
@@ -113,21 +113,33 @@ internal sealed class FakeCopilotCatalogPort : ICopilotCatalogPort
     public Exception? DeleteThrows { get; set; }
 
     public Task<DateTimeOffset?> GetPublishedOnAsync(CopilotEnvironmentContext environment, string agentId, CancellationToken cancellationToken) =>
-        Task.FromResult(PublishedOnSequence.Count > 0 ? PublishedOnSequence.Dequeue() : PublishedOn);
+        Task.FromResult(PublishedOn);
+}
 
-    public Queue<Exception> PublishThrowsSequence { get; } = new();
+internal sealed class FakeCopilotPublishPort : ICopilotPublishPort
+{
+    public List<(CopilotEnvironmentContext Environment, string AgentId, TimeSpan MaximumWait)> Requests { get; } = [];
 
-    public Task PublishAgentAsync(CopilotEnvironmentContext environment, string agentId, CancellationToken cancellationToken)
+    public Queue<Exception> ThrowsSequence { get; } = new();
+
+    public Action? OnPublish { get; init; }
+
+    public DateTimeOffset? FinishedOn { get; init; }
+
+    public Task<DateTimeOffset?> PublishAsync(CopilotEnvironmentContext environment, string agentId, TimeSpan maximumWait, CancellationToken cancellationToken)
     {
-        PublishCalls++;
+        Requests.Add((environment, agentId, maximumWait));
+        OnPublish?.Invoke();
 
-        return PublishThrowsSequence.Count > 0 ? Task.FromException(PublishThrowsSequence.Dequeue()) : Task.CompletedTask;
+        return ThrowsSequence.Count > 0 ? Task.FromException<DateTimeOffset?>(ThrowsSequence.Dequeue()) : Task.FromResult(FinishedOn);
     }
 }
 
 internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
 {
     public bool WorkspaceExists { get; set; } = true;
+
+    public Func<string, bool>? WorkspaceExistsIn { get; init; }
 
     public string ProjectFolderName(string displayName) => WorkspaceFolderNames.ForProject(displayName);
 
@@ -162,7 +174,7 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
 
     public List<string> PulledDirectories { get; } = [];
 
-    public bool IsWorkspace(string directory) => WorkspaceExists;
+    public bool IsWorkspace(string directory) => WorkspaceExistsIn?.Invoke(directory) ?? WorkspaceExists;
 
     public Task<CopilotWorkspaceInfo> ReadWorkspaceInfoAsync(string directory, CancellationToken cancellationToken) =>
         Task.FromResult(new CopilotWorkspaceInfo
@@ -185,7 +197,7 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
 
         var agentWorkspacePath = Path.Combine(command.WorkspacePath, command.AgentFolderName ?? "Contoso Agent");
         Directory.CreateDirectory(agentWorkspacePath);
-        File.WriteAllText(Path.Combine(agentWorkspacePath, AgentConfigLocator.ProjectSettingsFileName), "displayName: \"Contoso Agent\"\nschemaName: \"con_agent\"\n");
+        File.WriteAllText(Path.Combine(agentWorkspacePath, WorkspaceFileNames.Settings), "displayName: \"Contoso Agent\"\nschemaName: \"con_agent\"\n");
 
         OnClone?.Invoke();
 
@@ -239,6 +251,8 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
 
     public IReadOnlyList<string> UploadedFileNamesReturns { get; init; } = [];
 
+    public DateTimeOffset? PublishedOnReturns { get; set; }
+
     public Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
     {
         PushCalls++;
@@ -255,7 +269,7 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
             throw PushThrowsSequence.Dequeue();
         }
 
-        return Task.FromResult(new CopilotPushOutcome { Changes = LocalChanges, AuxiliaryChangeCount = AuxiliaryChangeCountReturns, UploadedFileNames = UploadedFileNamesReturns, Warnings = PushWarnings });
+        return Task.FromResult(new CopilotPushOutcome { Changes = LocalChanges, AuxiliaryChangeCount = AuxiliaryChangeCountReturns, UploadedFileNames = UploadedFileNamesReturns, Warnings = PushWarnings, PublishedOn = PublishedOnReturns });
     }
 }
 
@@ -263,15 +277,11 @@ internal sealed class FakeCopilotFileSystem : ICopilotFileSystem
 {
     public string CurrentDirectory { get; set; } = "/work";
 
-    public bool EmptyDirectory { get; set; } = true;
-
     public Dictionary<string, string> Files { get; } = [];
 
     public List<string> Written { get; } = [];
 
     public string ResolveFullPath(string path) => path.StartsWith('/') ? path : $"{CurrentDirectory}/{path}";
-
-    public bool IsEmptyDirectory(string path) => EmptyDirectory;
 
     public bool FileExists(string path) => Files.ContainsKey(path);
 
@@ -294,7 +304,11 @@ internal sealed class FakeCopilotFileSystem : ICopilotFileSystem
 
 internal sealed class RecordingScaffoldPort : ICopilotScaffoldPort
 {
+    private readonly SyncScaffoldAdapter _library = new();
+
     public CopilotScaffoldCommand? LastCommand { get; private set; }
+
+    public string ValidateDisplayName(string displayName) => _library.ValidateDisplayName(displayName);
 
     public IReadOnlyList<string> Scaffold(CopilotScaffoldCommand command)
     {
@@ -362,6 +376,12 @@ internal static class CopilotTestFixtures
 {
     public const string DataverseOrganization = "https://contoso.crm.dynamics.com/";
 
+    public const string NameOfOneHundredAndOneCharacters = "Expense approvals for every regional finance team, each cost centre, and the quarterly budget reviews";
+
+    public const string NameOfFortyThreeCharacters = "Contoso helpdesk for regional finance teams";
+
+    public const string AgentNameTooLongReason = "An agent display name can hold at most 42 characters, and this one holds 43.";
+
     public static CopilotEnvironmentResolver Resolver(string? instanceUrl = DataverseOrganization)
     {
         var client = new FakeEnvironmentClient(EnvironmentFixtures.Environment("env-1", instanceUrl: instanceUrl));
@@ -385,6 +405,44 @@ internal static class CopilotTestFixtures
     public static RecordingWorkspaceSynchronizer FailingOnce(Exception failure) =>
         new() { PushLocalChangesThrows = failure, PushLocalChangesThrowsOnlyOnce = true };
 
+    public static WorkspacePushException RemoteChanged() => new(WorkspacePushErrorCodes.RemoteChanged, "The agent was changed in the cloud while you were editing it. Get the latest changes before pushing again.", null);
+
+    public static WorkspacePushException ConnectedAgentMissing() => new(WorkspacePushErrorCodes.ConnectedAgentMissing, "Unsupported sync operation. A component references a parent agent that could not be created on the cloud.", null);
+
+    public static async Task<DefinitionBase> ReadWorkspaceDefinitionAsync(string workspacePath)
+    {
+        await using var provider = CopilotStudioServices();
+
+        return await provider.GetRequiredService<IWorkspaceSynchronizer>().ReadWorkspaceDefinitionAsync(new DirectoryPath(workspacePath.Replace('\\', '/')), CancellationToken.None);
+    }
+
+    public static void DeclareDisplayName(string workspacePath, string displayName)
+    {
+        var settings = Path.Combine(workspacePath, WorkspaceFileNames.Settings);
+        File.WriteAllText(settings, Regex.Replace(File.ReadAllText(settings), "^displayName: [^\r\n]*", $"displayName: \"{displayName}\"", RegexOptions.Multiline));
+    }
+
+    public static ServiceProvider CopilotStudioServices() => new ServiceCollection().AddSingleton<ITokenProvider>(new RecordingTokenProvider()).AddAgentHostCopilotStudio(TextWriter.Null, PowerPlatformApiRingSelection.Default).BuildServiceProvider();
+
+    public static string CloudCacheJson(DefinitionBase definition) => ElementJson(definition);
+
+    public static string ElementJson<TElement>(TElement element)
+    {
+        using var context = YamlSerializationContext.UseYamlPassThroughSerializationContext();
+
+        return JsonSerializer.Serialize(element, ElementSerializer.CreateOptions());
+    }
+
+    public static SyncWorkspaceAdapter WorkspaceAdapter(RecordingWorkspaceSynchronizer synchronizer, IWorkspaceRetargetService? retarget = null, ISyncDataverseClient? dataverseClient = null, ISyncComponentCollectionDataverseClient? componentCollections = null) =>
+        new(
+            synchronizer,
+            new WorkspacePushService(synchronizer, retarget ?? new RecordingRetargetService(), new StubOperationContextProvider(), new WorkspaceFileAccessorFactory(), new ImmediateTimeProvider()),
+            dataverseClient ?? new StubSolutionVersionsClient(),
+            componentCollections ?? new StubComponentCollectionClient(),
+            new StubOperationContextProvider(),
+            new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()),
+            new CopilotChangeMapper());
+
     public static SyncConnectionAdapter ConnectionAdapter(
         IConnectionManagementService? connections = null,
         IWorkflowActivationService? workflows = null,
@@ -394,24 +452,28 @@ internal static class CopilotTestFixtures
         ITokenProvider? tokenProvider = null,
         IFileAccessorFactory? fileAccessors = null,
         Func<HttpMessageHandler>? handlerFactory = null,
-        Core.Environments.CoreServicesClusterCategory cluster = Core.Environments.CoreServicesClusterCategory.Prod)
+        PowerPlatformApiTargetConfig? apiTarget = null)
     {
         var dataverse = dataverseClient ?? new RecordingConnectionReferenceClient();
+        var connectionManagement = connections ?? new RecordingConnectionManagementService();
+        var workflowActivation = workflows ?? new RecordingWorkflowActivationService();
+        var fileAccessorFactory = fileAccessors ?? new WorkspaceFileAccessorFactory();
         var httpClientAccessor = handlerFactory is null
             ? new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider())
             : new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider(), handlerFactory);
 
         return new SyncConnectionAdapter(
-            connections ?? new RecordingConnectionManagementService(),
-            workflows ?? new RecordingWorkflowActivationService(),
+            connectionManagement,
+            workflowActivation,
+            new WorkflowActivationPass(connectionManagement, workflowActivation, fileAccessorFactory),
             synchronizer ?? new RecordingWorkspaceSynchronizer(),
             dataverse,
             catalogClient ?? new StubConnectionCatalogClient(),
             tokenProvider ?? new StubTokenProvider(),
             httpClientAccessor,
-            fileAccessors ?? new WorkspaceFileAccessorFactory(),
+            fileAccessorFactory,
             new DataverseWebApiClient(dataverse, httpClientAccessor),
-            cluster);
+            apiTarget ?? PowerPlatformApiTargetConfig.Public);
     }
 
     public static CopilotWorkspaceLocator Locator(ICopilotWorkspacePort workspaces, ICopilotFileSystem fileSystem) =>

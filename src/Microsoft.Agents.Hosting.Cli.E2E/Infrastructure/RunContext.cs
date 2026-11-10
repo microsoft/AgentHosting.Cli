@@ -36,6 +36,8 @@ public sealed class RunContext
 
     public StandaloneServices? Standalone { get; init; }
 
+    public AmsMcsServices? AmsMcs { get; init; }
+
     /// <summary>Builds the context one scenario sees.</summary>
     public ScenarioContext ContextFor(Scenario scenario, Assertions assertions, CancellationToken cancellationToken) => new()
     {
@@ -51,5 +53,6 @@ public sealed class RunContext
         RunSuffix = RunSuffix,
         CancellationToken = cancellationToken,
         Standalone = Standalone,
+        AmsMcs = AmsMcs,
     };
 }

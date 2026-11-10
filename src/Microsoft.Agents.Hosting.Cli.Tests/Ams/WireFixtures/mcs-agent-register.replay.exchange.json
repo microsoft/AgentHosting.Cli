@@ -1,0 +1,18 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "agents/mcs",
+    "query": {},
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "bodyFixture": "mcs-agent-register.request.json"
+  },
+  "response": {
+    "status": 200,
+    "headers": {},
+    "bodyFixture": "mcs-agent-register.response.json"
+  },
+  "startsOperation": false,
+  "errors": []
+}

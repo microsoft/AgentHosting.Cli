@@ -17,6 +17,7 @@ public sealed class AgentDeploymentCreateService
     private readonly CopilotEnvironmentResolver _environmentResolver;
     private readonly CopilotProjectIdentityReader _projectIdentities;
     private readonly ManagedAgentPrincipalResolver _principals;
+    private readonly IAgentRecordMirror _mirror;
 
     /// <summary>Creates the service.</summary>
     /// <param name="resolver">Resolves records from selectors.</param>
@@ -24,13 +25,15 @@ public sealed class AgentDeploymentCreateService
     /// <param name="environmentResolver">Resolves the target and source environments.</param>
     /// <param name="projectIdentities">Reads the project's declared schema name.</param>
     /// <param name="principals">Resolves the signed-in operator recorded as the creator.</param>
-    public AgentDeploymentCreateService(ManagedAgentResolver resolver, IAgentDeploymentRegistry deployments, CopilotEnvironmentResolver environmentResolver, CopilotProjectIdentityReader projectIdentities, ManagedAgentPrincipalResolver principals)
+    /// <param name="mirror">Applies the new deployment to AMS's copy of the records first, in AMS mode.</param>
+    public AgentDeploymentCreateService(ManagedAgentResolver resolver, IAgentDeploymentRegistry deployments, CopilotEnvironmentResolver environmentResolver, CopilotProjectIdentityReader projectIdentities, ManagedAgentPrincipalResolver principals, IAgentRecordMirror? mirror = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
         _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
+        _mirror = mirror ?? NoAgentRecordMirror.Instance;
     }
 
     /// <summary>Creates a deployment slot.</summary>
@@ -64,7 +67,7 @@ public sealed class AgentDeploymentCreateService
         var target = await _environmentResolver.ResolveAsync(targetEnvironmentId, cancellationToken).ConfigureAwait(false);
         var schemaName = ResolveSchemaName(projectDirectory, agent);
 
-        var stored = _deployments.Add(projectDirectory, new AgentDeploymentRecord
+        var record = new AgentDeploymentRecord
         {
             DeploymentId = Guid.NewGuid().ToString(),
             AgentId = agent.AgentId,
@@ -78,7 +81,8 @@ public sealed class AgentDeploymentCreateService
             IsQuarantined = false,
             IsEnabled = true,
             EntityTag = string.Empty,
-        });
+        };
+        var (stored, warning, _) = await _mirror.ApplyAsync(projectDirectory, new DeploymentCreated(agent, record), () => _deployments.Add(projectDirectory, record), cancellationToken).ConfigureAwait(false);
 
         return new AgentDeploymentCreateResult
         {
@@ -89,6 +93,7 @@ public sealed class AgentDeploymentCreateService
             EnvironmentId = stored.EnvironmentId,
             TargetEnvironmentId = target.EnvironmentId,
             SchemaName = schemaName,
+            Warnings = warning is null ? null : [warning],
         };
     }
 

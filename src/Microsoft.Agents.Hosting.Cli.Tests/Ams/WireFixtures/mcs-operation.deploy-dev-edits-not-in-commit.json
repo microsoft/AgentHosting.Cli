@@ -1,0 +1,20 @@
+{
+  "id": "12345678-7777-4777-8777-000000000007",
+  "kind": "Deploy",
+  "status": "Failed",
+  "agentId": "aaaaaaaa-1111-4111-8111-000000000001",
+  "deploymentId": "eeeeeeee-5555-4555-8555-000000000005",
+  "sourceCommitSha": "9fceb02d0ae598e95dc970b74767f19372d61af8",
+  "resultCommitSha": "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+  "capturedCommitSha": "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+  "startedBy": "99999999-0000-4000-8000-000000000099",
+  "startedTime": "2026-08-02T09:00:00Z",
+  "lastHeartbeatTime": "2026-08-02T09:01:20Z",
+  "completedTime": "2026-08-02T09:01:21Z",
+  "error": {
+    "code": "McsDevEditsNotInCommit",
+    "message": "Nothing was deployed: Dev had edits that commit '9fceb02d0ae598e95dc970b74767f19372d61af8' doesn't hold. They were captured as commit '1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c'."
+  },
+  "notices": [],
+  "publish": false
+}

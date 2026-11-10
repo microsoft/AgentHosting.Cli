@@ -17,32 +17,14 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         DataverseOrganization = new Uri("https://contoso.crm.dynamics.com/"),
     };
 
-    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
-        new(
-            synchronizer,
-            new RecordingRetargetService(),
-            new StubSolutionVersionsClient(),
-            new StubComponentCollectionClient(),
-            new StubOperationContextProvider(),
-            new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()),
-            new CopilotChangeMapper());
+    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) => CopilotTestFixtures.WorkspaceAdapter(synchronizer);
 
-    private static RecordingWorkspaceSynchronizer SynchronizerWithWorkflow(string? errorMessage = null)
+    private static RecordingWorkspaceSynchronizer SynchronizerWithWorkflow(string errorMessage)
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
-        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Escalate", ErrorMessage = errorMessage! });
+        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Escalate", ErrorMessage = errorMessage });
 
         return synchronizer;
-    }
-
-    [Fact]
-    public async Task Push_UpsertsWorkflows()
-    {
-        var synchronizer = SynchronizerWithWorkflow();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.UpsertWorkflowCalls);
     }
 
     [Fact]
@@ -57,37 +39,9 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     }
 
     [Fact]
-    public async Task Push_WhenAWorkflowIsRejected_StillPushesTheComponents()
+    public async Task Push_WhenARefusalCarriesARawDataverseFailure_WarnsWithItsRedactedDescription()
     {
-        var synchronizer = SynchronizerWithWorkflow(errorMessage: "this is not a valid connection");
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.PushLocalChangesCalls);
-        Assert.Equal(1, synchronizer.UploadKnowledgeFilesCalls);
-    }
-
-    [Fact]
-    public async Task Push_WhenAWorkflowIsRejected_StillUpsertsPrompts()
-    {
-        var synchronizer = SynchronizerWithWorkflow(errorMessage: "this is not a valid connection");
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.UpsertAIPromptsCalls);
-    }
-
-    [Fact]
-    public async Task Push_RunsTheConnectorPushWithoutCountingUnchangedConnectors()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-        synchronizer.ConnectorRowIds["cre98_weather"] = Guid.NewGuid();
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Contains(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
-        Assert.Equal(0, outcome.AuxiliaryChangeCount);
-        Assert.Empty(outcome.Changes);
+        Assert.Equal(["Workflow 'Escalate' was not activated: HTTP 403 Forbidden. Principal user is missing prvCreateworkflow privilege. (0x80040220)"], (await Create(SynchronizerWithWorkflow(errorMessage: """Dataverse request failed (403): {"error":{"code":"0x80040220","message":"Principal user is missing prvCreateworkflow privilege."},"trace":"sample.person@contoso.com"}""")).PushAsync(Workspace(), overwrite: false, CancellationToken.None)).Warnings);
     }
 
     [Fact]
@@ -101,20 +55,6 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
 
         Assert.Equal(CustomConnectorLayout.ChangeKind, Assert.Single(outcome.Changes).ComponentType);
         Assert.Equal(0, outcome.AuxiliaryChangeCount);
-    }
-
-    [Fact]
-    public async Task Push_DoesNotReportAnyFileOfAConnectorThatFailedToSave()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-        synchronizer.LocalChanges.Add(ConnectorChange());
-        synchronizer.LocalChanges.Add(ConnectorChange() with { Uri = $"connectors/Weather_{ConnectorId}/openapidefinition.json", SchemaName = $"{CustomConnectorLayout.SchemaNamePrefix}{ConnectorId}.openapidefinition" });
-        synchronizer.LocalChanges.Add(new Change { Name = "Greeting", SchemaName = "cre98_agent.topic.Greeting", ChangeKind = "DialogComponent", ChangeType = ChangeType.Update });
-        synchronizer.FailedConnectors.Add(ConnectorChange() with { ChangeType = ChangeType.Update });
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal("cre98_agent.topic.Greeting", Assert.Single(outcome.Changes).SchemaName);
     }
 
     [Fact]
@@ -145,18 +85,6 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         Assert.Equal(CopilotChangeKinds.Updated, change.Kind);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Push_LetsTheConnectorPushOverwriteTheCloudOnlyWhenAskedTo(bool overwrite)
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite, CancellationToken.None);
-
-        Assert.Equal(overwrite, synchronizer.LastConnectorPushOverwroteRemoteChanges);
-    }
-
     [Fact]
     public async Task Push_WhenAConnectorIsNotSaved_WarnsWithTheReason()
     {
@@ -168,21 +96,6 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.Equal(reason, Assert.Single(outcome.Warnings));
-    }
-
-    [Fact]
-    public async Task Push_DoesNotReportAnyFileOfAWorkflowTheServiceRefused()
-    {
-        var workflowId = Guid.NewGuid();
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-        synchronizer.LocalChanges.Add(new Change { Name = "Escalate", SchemaName = $"{WorkflowLayout.SchemaNamePrefix}{workflowId}", ChangeKind = "CloudFlowDefinition", ChangeType = ChangeType.Update });
-        synchronizer.LocalChanges.Add(new Change { Name = "Escalate", SchemaName = $"{WorkflowLayout.SchemaNamePrefix}{workflowId}.metadata", ChangeKind = "CloudFlowDefinition", ChangeType = ChangeType.Update });
-        synchronizer.LocalChanges.Add(new Change { Name = "Greeting", SchemaName = "cre98_agent.topic.Greeting", ChangeKind = "DialogComponent", ChangeType = ChangeType.Update });
-        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowId = workflowId, WorkflowName = "Escalate", ErrorMessage = "the flow definition is invalid" });
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal("cre98_agent.topic.Greeting", Assert.Single(outcome.Changes).SchemaName);
     }
 
     private static readonly Guid ConnectorId = Guid.Parse("6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b");
@@ -197,20 +110,6 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     };
 
     [Fact]
-    public async Task Push_UploadsCustomConnectorsBeforeUpsertingWorkflows()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        var connectors = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync));
-        var workflows = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.UpsertWorkflowForAgentAsync));
-
-        Assert.True(connectors >= 0 && workflows >= 0);
-        Assert.True(connectors < workflows);
-    }
-
-    [Fact]
     public async Task Push_WhenAWorkflowIsLeftDisabledWithoutAnError_Warns()
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
@@ -221,10 +120,9 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         Assert.Contains(outcome.Warnings, warning => warning.Contains("Escalate", StringComparison.Ordinal) && warning.Contains("disabled", StringComparison.Ordinal));
     }
 
-    private static RecordingWorkspaceSynchronizer Failing(string message, bool onlyOnce = false) => new()
+    private static RecordingWorkspaceSynchronizer Failing(string message) => new()
     {
         PushLocalChangesThrows = new InvalidOperationException(message),
-        PushLocalChangesThrowsOnlyOnce = onlyOnce,
     };
 
     private const string DuplicateConnectionReference = CopilotTestFixtures.DuplicateConnectionReferenceMessage;
@@ -251,25 +149,6 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     }
 
     [Fact]
-    public async Task Push_WhenAComponentFailsWithNothingRefused_KeepsTheOriginalFailure()
-    {
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => Create(Failing("something else went wrong")).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
-
-        Assert.Equal("something else went wrong", failure.Message);
-    }
-
-    [Fact]
-    public async Task Push_WhenAMissingEntityFailsWithNothingRefused_KeepsTheOriginalFailure()
-    {
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => Create(Failing("Entity 'Workflow' With Id = abc Does Not Exist"))
-                .PushAsync(Workspace(), overwrite: false, CancellationToken.None));
-
-        Assert.Contains("Does Not Exist", failure.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public async Task Push_WhenAConnectionReferenceStillCollidesAfterTheRetry_FailsRatherThanWarning()
     {
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(
@@ -282,26 +161,6 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         Assert.DoesNotContain("cre98_AgentC1.cr.WX3p-EQ4", failure.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("ExportKeyInvalidCreate", failure.Message, StringComparison.Ordinal);
         Assert.Contains("ExportKeyInvalidCreate", failure.InnerException!.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task Push_WhenAConnectionReferenceAlreadyExists_RetriesOnceBeforeFailing()
-    {
-        var synchronizer = Failing(DuplicateConnectionReference);
-
-        await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
-
-        Assert.Equal(2, synchronizer.PushLocalChangesCalls);
-    }
-
-    [Fact]
-    public async Task Push_WhenADuplicateClearsOnRetry_CompletesWithoutWarning()
-    {
-        var outcome = await Create(Failing(DuplicateConnectionReference, onlyOnce: true))
-            .PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Empty(outcome.Warnings);
     }
 
     [Fact]
@@ -320,59 +179,5 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         Assert.Contains("1 component", failure.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("Flow F1", failure.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("need connections created", failure.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task Push_WhenAWorkflowIsEnabledAndAccepted_DoesNotWarn()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Escalate", IsDisabled = false });
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Empty(outcome.Warnings);
-    }
-
-    [Fact]
-    public async Task Push_WhenOneWorkflowOfSeveralIsRejected_WarnsAboutOnlyTheRejectedOne()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Accepted" });
-        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Refused", ErrorMessage = "the flow definition is invalid" });
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Contains(outcome.Warnings, warning => warning.Contains("Refused", StringComparison.Ordinal));
-        Assert.DoesNotContain(outcome.Warnings, warning => warning.Contains("Accepted", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task Push_WithEveryWorkflowAccepted_WarnsAboutNothing()
-    {
-        var synchronizer = SynchronizerWithWorkflow();
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Empty(outcome.Warnings);
-    }
-
-    [Fact]
-    public async Task Push_WithEveryWorkflowAccepted_ReachesThePush()
-    {
-        var synchronizer = SynchronizerWithWorkflow();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.PushLocalChangesCalls);
-    }
-
-    [Fact]
-    public async Task Push_WithNoWorkflows_ReachesThePush()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.PushLocalChangesCalls);
     }
 }

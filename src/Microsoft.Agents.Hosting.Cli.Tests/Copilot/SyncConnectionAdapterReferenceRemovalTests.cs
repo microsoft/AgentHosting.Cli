@@ -63,7 +63,7 @@ public sealed class SyncConnectionAdapterReferenceRemovalTests : IDisposable
             .WithConnectionReferences([.. logicalNames.Select(Reference)]);
 
         Directory.CreateDirectory(Path.Combine(_workspace, ".mcs"));
-        File.WriteAllText(BaselinePath, Serialize(seeded));
+        File.WriteAllText(BaselinePath, CopilotTestFixtures.CloudCacheJson(seeded));
 
         return seeded;
     }
@@ -74,13 +74,6 @@ public sealed class SyncConnectionAdapterReferenceRemovalTests : IDisposable
             ConnectionReferenceLogicalName = new ConnectionReferenceLogicalName(logicalName),
             ConnectorId = new ConnectorId("shared_onedriveforbusiness"),
         }.Build();
-
-    private static string Serialize(DefinitionBase definition)
-    {
-        using var context = YamlSerializationContext.UseYamlPassThroughSerializationContext();
-
-        return JsonSerializer.Serialize(definition, ElementSerializer.CreateOptions());
-    }
 
     private static IReadOnlyList<string> BaselineNames(string json)
     {
@@ -125,7 +118,7 @@ public sealed class SyncConnectionAdapterReferenceRemovalTests : IDisposable
 
         await RemoveAsync(Removing(), Holding());
 
-        Assert.Equal(Serialize(seeded.WithConnectionReferences([Reference(OtherLogicalName)])), ReadBaseline());
+        Assert.Equal(CopilotTestFixtures.CloudCacheJson(seeded.WithConnectionReferences([Reference(OtherLogicalName)])), ReadBaseline());
     }
 
     [Fact]

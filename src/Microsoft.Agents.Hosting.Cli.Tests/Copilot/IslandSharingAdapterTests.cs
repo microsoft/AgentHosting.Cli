@@ -31,7 +31,7 @@ public sealed class IslandSharingAdapterTests
         var handler = new RecordingHandler(responseBody, status);
         var tokens = new StubTokenProvider();
 
-        return (new IslandSharingAdapter(tokens, CloudMap, () => handler), handler, tokens);
+        return (new IslandSharingAdapter(tokens, CloudMap, CoreServicesClusterCategory.Prod, () => handler), handler, tokens);
     }
 
     private static readonly PowerPlatformCloudMap CloudMap = PowerPlatformCloudMap.ForCloud(CloudInstance.Public);
@@ -51,6 +51,20 @@ public sealed class IslandSharingAdapterTests
         await adapter.ReadAsync(Context(), Bot, CancellationToken.None);
 
         Assert.Equal(["api://96ff4394-9197-43aa-b393-6a41652e21f8/user_impersonation"], tokens.RequestedScopes);
+    }
+
+    [Theory]
+    [InlineData(CoreServicesClusterCategory.Test, "https://powervamg.us-il106.gateway.test.island.powerapps.com/", "api://a522f059-bb65-47c0-8934-7db6e5286414/user_impersonation")]
+    [InlineData(CoreServicesClusterCategory.Mooncake, "https://powervamg.cn-il101.gateway.prod.island.powerapps.cn/", "api://96ff4394-9197-43aa-b393-6a41652e21f8/user_impersonation")]
+    public async Task Read_RequestsTheDelegatedScopeOfTheClustersControlPlaneFromItsGateway(CoreServicesClusterCategory cluster, string gateway, string scope)
+    {
+        var handler = new RecordingHandler(StateJson(), HttpStatusCode.OK);
+        var tokens = new StubTokenProvider();
+
+        await new IslandSharingAdapter(tokens, CloudMap, cluster, () => handler).ReadAsync(Context(gateway), Bot, CancellationToken.None);
+
+        Assert.Equal([scope], tokens.RequestedScopes);
+        Assert.Equal($"{gateway}api/botmanagement/v1/environments/{Environment}/bots/{Bot}/shareV2", handler.Request!.RequestUri!.ToString());
     }
 
     [Fact]
@@ -406,7 +420,7 @@ public sealed class IslandSharingAdapterTests
     {
         var handler = new RecordingHandler(StateJson(), HttpStatusCode.OK);
         var created = 0;
-        var adapter = new IslandSharingAdapter(new StubTokenProvider(), CloudMap, () => { created++; return handler; });
+        var adapter = new IslandSharingAdapter(new StubTokenProvider(), CloudMap, CoreServicesClusterCategory.Prod, () => { created++; return handler; });
 
         await adapter.ReadAsync(Context(), Bot, CancellationToken.None);
         await adapter.ReadAsync(Context(), Bot, CancellationToken.None);
@@ -419,7 +433,7 @@ public sealed class IslandSharingAdapterTests
     public async Task Write_ReadsTheStateBackWhenTheServiceAcceptsTheWriteWithoutDescribingIt()
     {
         var handler = new RecordingHandler(string.Empty, HttpStatusCode.OK) { NextBody = StateJson((Ada, "Consumer")) };
-        var adapter = new IslandSharingAdapter(new StubTokenProvider(), CloudMap, () => handler);
+        var adapter = new IslandSharingAdapter(new StubTokenProvider(), CloudMap, CoreServicesClusterCategory.Prod, () => handler);
 
         var state = await adapter.WriteAsync(Context(), Bot, new AgentSharingState(), CancellationToken.None);
 

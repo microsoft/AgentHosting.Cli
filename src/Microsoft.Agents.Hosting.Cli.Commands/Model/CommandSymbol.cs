@@ -15,6 +15,27 @@ public abstract record CommandSymbol(string Name, string Description)
 
     /// <summary>Features that must all be enabled before help and parsing expose this symbol.</summary>
     public IReadOnlyList<FeatureName> RequiredFeatures { get; init; } = [];
+
+    /// <summary>Help text that replaces <see cref="Description"/> while every feature it names is enabled.</summary>
+    public FeatureDescription? EnabledDescription { get; init; }
+
+    /// <summary>Features that, all enabled, make a required symbol optional, for a symbol that a route those features add does not take.</summary>
+    public IReadOnlyList<FeatureName> OptionalWithFeatures { get; init; } = [];
+}
+
+/// <summary>Help text a symbol or command shows while every named feature is enabled.</summary>
+/// <param name="Features">The features that must all be enabled.</param>
+/// <param name="Text">The help text.</param>
+public sealed record FeatureDescription(IReadOnlyList<FeatureName> Features, string Text)
+{
+    /// <summary>The help text while every one of <see cref="Features"/> is enabled, or null otherwise.</summary>
+    /// <param name="featureFlags">The feature controls of this process.</param>
+    public string? TextFor(IFeatureFlags featureFlags)
+    {
+        ArgumentNullException.ThrowIfNull(featureFlags);
+
+        return Features.All(featureFlags.IsFeatureEnabled) ? Text : null;
+    }
 }
 
 /// <summary>A named option.</summary>

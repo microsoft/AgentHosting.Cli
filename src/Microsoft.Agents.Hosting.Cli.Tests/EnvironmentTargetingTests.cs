@@ -673,6 +673,8 @@ public sealed class PowerPlatformCloudMapTests
 {
     private static readonly PowerPlatformCloudMap Map = PowerPlatformCloudMap.ForCloud(CloudInstance.Public);
 
+    private static readonly PowerPlatformCloudMap TestRingMap = PowerPlatformCloudMap.ForTarget(PowerPlatformApiTargetConfig.Test);
+
     [Theory]
     [InlineData("https://attacker.example.com")]
     [InlineData("https://api.powerplatform.com.attacker.example")]
@@ -715,34 +717,7 @@ public sealed class PowerPlatformCloudMapTests
             var map = PowerPlatformCloudMap.ForCloud(cloud);
             Assert.Equal(cloud, map.Cloud);
             Assert.NotEmpty(map.TrustedHostSuffixes);
-            Assert.NotEmpty(map.TrustedAgentManagementHostSuffixes);
         }
-    }
-
-    [Theory]
-    [InlineData("https://powervamg.us-il301.gateway.prod.island.powerapps.com/", true)]
-    [InlineData("https://powervamg.us-il106.gateway.test.island.powerapps.com/", true)]
-    [InlineData("https://island.powerapps.com/", true)]
-    [InlineData("https://notisland.powerapps.com/", false)]
-    [InlineData("https://island.powerapps.com.attacker.example/", false)]
-    [InlineData("https://api.powerplatform.com/", false)]
-    [InlineData("http://island.powerapps.com/", false)]
-    [InlineData("https://island.powerapps.com:8443/", false)]
-    public void IsTrustedAgentManagementGateway_AcceptsOnlyTheGatewayHostsTheCloudServes(string endpoint, bool expected) =>
-        Assert.Equal(expected, Map.IsTrustedAgentManagementGateway(new Uri(endpoint)));
-
-    [Fact]
-    public void IsTrustedAgentManagementGateway_RejectsANullUri() => Assert.False(Map.IsTrustedAgentManagementGateway(null));
-
-    [Fact]
-    public void RequireTrustedAgentManagementGateway_NamesTheContextAndTheAllowlist_WithoutEchoingThePath()
-    {
-        var error = Assert.Throws<EndpointTrustException>(() =>
-            Map.RequireTrustedAgentManagementGateway(new Uri("https://attacker.example.com/secret-path"), "environment 'env-1' Copilot Studio agent-management"));
-
-        Assert.Contains("environment 'env-1' Copilot Studio agent-management", error.Message);
-        Assert.Contains("island.powerapps.com", error.Message);
-        Assert.DoesNotContain("secret-path", error.Message);
     }
 
     /// <summary>
@@ -840,6 +815,41 @@ public sealed class PowerPlatformCloudMapTests
     [InlineData(CloudInstance.China)]
     public void IsTrustedDataverseOrganization_RejectsACommercialOrganizationOnASovereignCloud(CloudInstance cloud) =>
         Assert.False(PowerPlatformCloudMap.ForCloud(cloud).IsTrustedDataverseOrganization(new Uri("https://contoso.crm.dynamics.com/")));
+
+    [Theory]
+    [InlineData("https://org42e69ad0.crmtest.dynamics.com/")]
+    [InlineData("https://ORG42E69AD0.CRMTEST.DYNAMICS.COM/")]
+    [InlineData("https://org42e69ad0.crmtest.dynamics.com./")]
+    [InlineData("https://org-with-dashes.crmtest.dynamics.com/")]
+    [InlineData("https://contoso.crm.dynamics.com/")]
+    [InlineData("https://contoso.crm4.dynamics.com/")]
+    public void IsTrustedDataverseOrganization_AcceptsATestGeographyOrCommercialOrganizationOnTheTestRing(string organization) =>
+        Assert.True(TestRingMap.IsTrustedDataverseOrganization(new Uri(organization)));
+
+    [Theory]
+    [InlineData("https://crmtest.dynamics.com/")]
+    [InlineData("https://contoso.crmtest.dynamics.com.attacker.example/")]
+    [InlineData("https://contoso.crmtest1.dynamics.com/")]
+    [InlineData("https://contoso.crm4test.dynamics.com/")]
+    [InlineData("https://contoso.notcrmtest.dynamics.com/")]
+    [InlineData("https://contoso.api.crmtest.dynamics.com/")]
+    [InlineData("https://contoso.crmtest.dynamics.cn/")]
+    [InlineData("http://contoso.crmtest.dynamics.com/")]
+    [InlineData("https://contoso.crmtest.dynamics.com:8443/")]
+    public void IsTrustedDataverseOrganization_RejectsATestGeographyLookalikeOnTheTestRing(string organization) =>
+        Assert.False(TestRingMap.IsTrustedDataverseOrganization(new Uri(organization)));
+
+    [Fact]
+    public void IsTrustedDataverseOrganization_RejectsEmbeddedCredentialsOnTheTestRing() =>
+        Assert.False(TestRingMap.IsTrustedDataverseOrganization(
+            new UriBuilder("https", "contoso.crmtest.dynamics.com") { UserName = "attacker", Password = "secret" }.Uri));
+
+    [Theory]
+    [InlineData(PowerPlatformApiRing.Production)]
+    [InlineData(PowerPlatformApiRing.Preprod)]
+    public void IsTrustedDataverseOrganization_RejectsATestGeographyOrganizationOutsideTheTestRing(PowerPlatformApiRing ring) =>
+        Assert.False(PowerPlatformCloudMap.ForTarget(PowerPlatformApiRingSelection.TargetFor(ring))
+            .IsTrustedDataverseOrganization(new Uri("https://org42e69ad0.crmtest.dynamics.com/")));
 
     [Fact]
     public void UntrustedDataverseOrganization_NamesTheOriginAndEnvironment_WithoutEchoingThePath()

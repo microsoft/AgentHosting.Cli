@@ -55,11 +55,21 @@ public static class TextGrid
     /// <returns>Both names quoted, or the record's name alone when the workflow's name is not known.</returns>
     public static string DescribeWorkflow(string? workflowName, string displayName) => string.IsNullOrWhiteSpace(workflowName) ? $"'{displayName}'" : $"'{workflowName}' (record '{displayName}')";
 
+    /// <summary>Says whether a deploy published the agent, which published version stays live when it did not, and how to publish content it left as a draft.</summary>
+    /// <param name="published">Whether the deploy published the agent.</param>
+    /// <param name="lastPublishedTime">When the agent was last published, or null when it never was or the time is not known.</param>
+    public static string DescribePublished(bool published, DateTimeOffset? lastPublishedTime) => published ? "yes \u2014 the content is live" : lastPublishedTime is { } publishedTime ? $"no \u2014 this deploy's content is a draft; the version published {DescribeTimestamp(publishedTime)} stays live. Re-run with --publish to make it live." : "no \u2014 the content is a draft. Re-run with --publish to make it live.";
+
     /// <summary>Formats a warning line whose label is padded to the width the other labels at that indent use.</summary>
     /// <param name="indent">The spaces the line starts with.</param>
     /// <param name="warning">The warning to show.</param>
     /// <returns>The line.</returns>
     public static string WarningLine(string indent, string warning) => $"{indent}warning      {warning}";
+
+    /// <summary>Formats a warning line under a status line, as pull and deploy print each warning.</summary>
+    /// <param name="warning">The warning to show.</param>
+    /// <returns>The line.</returns>
+    public static string StatusWarningLine(string warning) => $"  warning    {warning}";
 
     private static int[] ColumnWidths(string[] headers, IReadOnlyList<string[]> rows)
     {

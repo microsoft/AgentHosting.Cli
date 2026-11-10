@@ -3,9 +3,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
-using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.Platform.Content;
-using Microsoft.Agents.Platform.Content.Exceptions;
 using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 using Microsoft.CopilotStudio.Sync.Dataverse;
@@ -17,42 +15,31 @@ namespace Microsoft.Agents.Hosting.Cli.CopilotStudio;
 /// </summary>
 public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
 {
-    private const string MissingParentAgentMarker = "references a parent agent that could not be created";
-    private const string RemoteChangedMarker = "was changed in the cloud while you were editing it";
-    private const string ImproperResponseMarker = "Improper response, not implemented";
-    private const string MissingEntityMarker = "does not exist";
-    private const string DuplicateConnectionReferenceMarker = "ExportKeyInvalidCreate";
-    private const string ConnectionReferenceEntity = "connectionreference";
-    private const string ObjectDoesNotExistCode = "0x80040217";
-    private const int UnreadableResponseAttempts = 4;
     private readonly IWorkspaceSynchronizer _synchronizer;
-    private readonly IWorkspaceRetargetService _retargetService;
+    private readonly IWorkspacePushService _pushService;
     private readonly ISyncDataverseClient _dataverseClient;
     private readonly ISyncComponentCollectionDataverseClient _componentCollections;
     private readonly IOperationContextProvider _operationContexts;
     private readonly AgentHostDataverseHttpClientAccessor _httpClientAccessor;
     private readonly CopilotChangeMapper _changeMapper;
-    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
     /// <summary>Creates the adapter.</summary>
     /// <param name="synchronizer">The sync library's workspace synchronizer.</param>
-    /// <param name="retargetService">Re-images the cloud baseline before a push is resent.</param>
+    /// <param name="pushService">The sync library's service that pushes a connected workspace.</param>
     /// <param name="dataverseClient">The sync library's Dataverse client.</param>
     /// <param name="componentCollections">Resolves component collections by schema name.</param>
     /// <param name="operationContexts">Supplies authoring operation contexts.</param>
     /// <param name="httpClientAccessor">Targets the Dataverse organization for a given operation.</param>
     /// <param name="changeMapper">Translates sync library changes into transport-neutral records.</param>
-    /// <param name="delay">Waits between push attempts.</param>
-    public SyncWorkspaceAdapter(IWorkspaceSynchronizer synchronizer, IWorkspaceRetargetService retargetService, ISyncDataverseClient dataverseClient, ISyncComponentCollectionDataverseClient componentCollections, IOperationContextProvider operationContexts, AgentHostDataverseHttpClientAccessor httpClientAccessor, CopilotChangeMapper changeMapper, Func<TimeSpan, CancellationToken, Task>? delay = null)
+    public SyncWorkspaceAdapter(IWorkspaceSynchronizer synchronizer, IWorkspacePushService pushService, ISyncDataverseClient dataverseClient, ISyncComponentCollectionDataverseClient componentCollections, IOperationContextProvider operationContexts, AgentHostDataverseHttpClientAccessor httpClientAccessor, CopilotChangeMapper changeMapper)
     {
         _synchronizer = synchronizer ?? throw new ArgumentNullException(nameof(synchronizer));
-        _retargetService = retargetService ?? throw new ArgumentNullException(nameof(retargetService));
+        _pushService = pushService ?? throw new ArgumentNullException(nameof(pushService));
         _dataverseClient = dataverseClient ?? throw new ArgumentNullException(nameof(dataverseClient));
         _componentCollections = componentCollections ?? throw new ArgumentNullException(nameof(componentCollections));
         _operationContexts = operationContexts ?? throw new ArgumentNullException(nameof(operationContexts));
         _httpClientAccessor = httpClientAccessor ?? throw new ArgumentNullException(nameof(httpClientAccessor));
         _changeMapper = changeMapper ?? throw new ArgumentNullException(nameof(changeMapper));
-        _delay = delay ?? ((interval, cancellationToken) => Task.Delay(interval, cancellationToken));
     }
 
     /// <inheritdoc />
@@ -87,7 +74,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
 
         var agentId = Guid.Parse(command.AgentId);
         var agentInfo = await _dataverseClient.GetAgentInfoAsync(agentId, cancellationToken).ConfigureAwait(false);
-        var syncInfo = await AgentSyncInfoFactory.CreateAsync(_dataverseClient, command.Environment, agentId, cancellationToken).ConfigureAwait(false);
+        var syncInfo = await WorkspaceCloneSequence.ForAgentAsync(_dataverseClient, agentId, command.Environment.DataverseOrganization, command.Environment.EnvironmentId, DataverseTargeting.TenantOf(command.Environment), cancellationToken).ConfigureAwait(false);
 
         var collectionIds = command.IncludeLinkedComponentCollections
             ? [.. agentInfo.ComponentCollections.Select(collection => collection.Id)]
@@ -95,11 +82,10 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
 
         var assets = new AssetsToClone { CloneAgent = true, ComponentCollectionIds = collectionIds };
         var operationContexts = await _operationContexts.GetAllAsync(syncInfo, assets).ConfigureAwait(false);
-        var agentDisplayName = agentInfo.DisplayName ?? string.Empty;
+        var agentDisplayName = command.DisplayName ?? agentInfo.DisplayName ?? string.Empty;
 
-        var referenceTracker = new ReferenceTracker();
         var created = new List<CopilotClonedWorkspace>();
-        var folders = new List<DirectoryPath>();
+        var cloneTargets = new List<KeyValuePair<AuthoringOperationContextBase, DirectoryPath>>();
         var staged = new List<(string Path, bool Existed)>();
         string? agentWorkspacePath = null;
 
@@ -119,8 +105,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
 
                 staged.Add((path, Directory.Exists(path)));
                 Directory.CreateDirectory(path);
-                var folder = ToDirectoryPath(path);
-                folders.Add(folder);
+                cloneTargets.Add(new(operationContext, ToDirectoryPath(path)));
 
                 if (isAgent)
                 {
@@ -133,25 +118,17 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
                     Path = path,
                     DisplayName = displayName,
                 });
-
-                var folderSyncInfo = ScopeSyncInfo(syncInfo, operationContext);
-
-                await _synchronizer.SaveSyncInfoAsync(folder, folderSyncInfo).ConfigureAwait(false);
-                await _synchronizer.CloneChangesAsync(folder, referenceTracker, operationContext, _dataverseClient, folderSyncInfo, cancellationToken).ConfigureAwait(false);
             }
 
-            foreach (var folder in folders)
-            {
-                await _synchronizer.ApplyTouchupsAsync(folder, referenceTracker, cancellationToken).ConfigureAwait(false);
-            }
+            await WorkspaceCloneSequence.CloneAsync(_synchronizer, cloneTargets, syncInfo, _dataverseClient, cancellationToken).ConfigureAwait(false);
+            agentWorkspacePath ??= command.WorkspacePath;
+            AgentWorkspaceIdentity.DeclareDisplayName(WorkflowWorkspace.OpenWorkspace(agentWorkspacePath), command.DisplayName);
         }
         catch
         {
-            DiscardStagedClone(staged);
+            CloneStaging.Discard(staged);
             throw;
         }
-
-        agentWorkspacePath ??= command.WorkspacePath;
 
         return new CopilotCloneOutcome
         {
@@ -167,67 +144,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     /// Whether a directory already holds content a clone would overwrite.
     /// </summary>
     private static bool HoldsWorkspaceContent(string path) =>
-        Directory.EnumerateFileSystemEntries(path).Any(entry => !IsCliOwned(entry));
-
-    private static bool IsCliOwned(string entry) =>
-        string.Equals(Path.GetFileName(entry.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), AgentConfigLocator.ConfigDirectoryName, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Removes what a failed clone wrote.
-    /// </summary>
-    private static void DiscardStagedClone(IReadOnlyList<(string Path, bool Existed)> staged)
-    {
-        foreach (var (path, existed) in staged)
-        {
-            try
-            {
-                if (!Directory.Exists(path))
-                {
-                    continue;
-                }
-
-                if (existed)
-                {
-                    foreach (var entry in Directory.EnumerateFileSystemEntries(path).Where(candidate => !IsCliOwned(candidate)))
-                    {
-                        if (Directory.Exists(entry))
-                        {
-                            Directory.Delete(entry, recursive: true);
-                        }
-                        else
-                        {
-                            File.Delete(entry);
-                        }
-                    }
-                }
-                else
-                {
-                    Directory.Delete(path, recursive: true);
-                }
-            }
-            catch (IOException)
-            {
-            }
-            catch (UnauthorizedAccessException)
-            {
-            }
-        }
-    }
-
-    private static AgentSyncInfo ScopeSyncInfo(AgentSyncInfo syncInfo, AuthoringOperationContextBase operationContext) =>
-        operationContext is not BotComponentCollectionAuthoringOperationContext collection
-            ? syncInfo
-            : new AgentSyncInfo
-            {
-                AgentId = null,
-                ComponentCollectionId = collection.BotComponentCollectionReference.CdsId,
-                DataverseEndpoint = syncInfo.DataverseEndpoint,
-                EnvironmentId = syncInfo.EnvironmentId,
-                EnvironmentDisplayName = syncInfo.EnvironmentDisplayName,
-                SolutionVersions = syncInfo.SolutionVersions,
-                AccountInfo = syncInfo.AccountInfo,
-                AgentManagementEndpoint = syncInfo.AgentManagementEndpoint,
-            };
+        Directory.EnumerateFileSystemEntries(path).Any(entry => !CloneStaging.IsCliOwned(entry));
 
     private async Task<ImmutableArray<Guid>> ResolveComponentCollectionIdsAsync(IReadOnlyList<string> values, CancellationToken cancellationToken)
     {
@@ -308,162 +225,58 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
 
         DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, workspace);
 
-        var (workspaceFolder, syncInfo, operationContext) = await ReadWorkspaceAsync(workspace).ConfigureAwait(false);
-        var localDefinition = await WorkspaceDefinitionReader.ReadAsync(_synchronizer, workspaceFolder, checkKnowledgeFiles: true, cancellationToken).ConfigureAwait(false);
-        await WorkspaceDefinitionReader.RequireSynchronizableAsync(_synchronizer, workspaceFolder, localDefinition, cancellationToken).ConfigureAwait(false);
-        WorkflowToolIds.RequireNotEmpty(localDefinition);
-        var (_, localChanges) = await _synchronizer.GetLocalChangesAsync(workspaceFolder, localDefinition, _dataverseClient, syncInfo, cancellationToken).ConfigureAwait(false);
-
-        CloudFlowMetadata? cloudFlowMetadata = null;
-        var aiPrompts = ImmutableArray<SyncDataverseClient.AIPromptMetadata>.Empty;
-        var workflowResponses = ImmutableArray<WorkflowResponse>.Empty;
-        var promptResponses = ImmutableArray<SyncDataverseClient.AIPromptResponse>.Empty;
-        var warnings = new List<string>();
-        var pushedConnectors = await _synchronizer.PushCustomConnectorsAsync(workspaceFolder, _dataverseClient, cancellationToken, overwrite).ConfigureAwait(false);
-        warnings.AddRange(pushedConnectors.FailureReasons);
-
-        var provisionedReferences = await DeclaredConnectionReferences.ProvisionAsync(
-            workspace.WorkspacePath, _synchronizer, _dataverseClient,
-            pushedConnectors.PushedRowIds, cancellationToken).ConfigureAwait(false);
-
-        if (syncInfo.AgentId.HasValue)
-        {
-            (workflowResponses, cloudFlowMetadata) = await _synchronizer.UpsertWorkflowForAgentAsync(workspaceFolder, _dataverseClient, syncInfo.AgentId, cancellationToken, WorkflowActivationMode.DraftWhenConnectionsUnbound).ConfigureAwait(false);
-            warnings.AddRange(SyncResponseGuards.DescribeRefusedWorkflows(workflowResponses));
-
-            (promptResponses, aiPrompts) = await _synchronizer.UpsertAIPromptsForAgentAsync(workspaceFolder, _dataverseClient, syncInfo.AgentId, cancellationToken, overwrite).ConfigureAwait(false);
-            warnings.AddRange(SyncResponseGuards.DescribeRefusedPrompts(promptResponses));
-        }
-
-        await PushComponentsAsync(workspaceFolder, operationContext, localDefinition, syncInfo, DeclaredConnectionReferences.WithProvisioned(cloudFlowMetadata, provisionedReferences), aiPrompts, workspace.EnvironmentId, overwrite, warnings, cancellationToken).ConfigureAwait(false);
-
-        ImmutableArray<string> uploadedFiles;
-
-        try
-        {
-            uploadedFiles = await _synchronizer.UploadKnowledgeFilesAsync(workspaceFolder, _dataverseClient, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception failure) when (failure is not OperationCanceledException)
-        {
-            throw CopilotStudioException.KnowledgeUploadFailed(localChanges.Length, failure);
-        }
-
-        var changes = _changeMapper.Map(localChanges.WithoutFailedAssets(pushedConnectors, workflowResponses, promptResponses));
+        var pushed = await PushWorkspaceAsync(workspace, overwrite, cancellationToken).ConfigureAwait(false);
 
         return new CopilotPushOutcome
         {
-            Changes = changes,
-            AuxiliaryChangeCount = workflowResponses.Count(response => !changes.Any(change => string.Equals(change.SchemaName, WorkflowLayout.SchemaNamePrefix + response.WorkflowId, StringComparison.OrdinalIgnoreCase))),
-            UploadedFileNames = uploadedFiles,
-            Warnings = warnings,
+            Changes = _changeMapper.Map(pushed.Changes),
+            AuxiliaryChangeCount = pushed.AuxiliaryChangeCount,
+            UploadedFileNames = pushed.UploadedFileNames,
+            Warnings = [.. pushed.Diagnostics.Select(SyncResponseGuards.Describe)],
+            PublishedOn = pushed.PublishedOn,
         };
     }
 
     private static IReadOnlyList<string> DescribeConflicts(List<WorkspaceDiagnostic> conflicts) =>
         [.. conflicts.Select(conflict => conflict.ToString())];
 
-    private async Task PushComponentsAsync(
-        DirectoryPath workspaceFolder,
-        AuthoringOperationContextBase operationContext,
-        DefinitionBase localDefinition,
-        AgentSyncInfo syncInfo,
-        CloudFlowMetadata? cloudFlowMetadata,
-        ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts,
-        string environmentId,
-        bool overwrite,
-        List<string> priorWarnings,
-        CancellationToken cancellationToken)
+    private async Task<WorkspacePushResult> PushWorkspaceAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
     {
-        for (var attempt = 1; ; attempt++)
+        try
         {
-            try
-            {
-                await _synchronizer.PushLocalChangesAsync(workspaceFolder, operationContext, localDefinition, _dataverseClient, syncInfo, cloudFlowMetadata, aiPrompts, cancellationToken, overwriteRemoteChanges: overwrite).ConfigureAwait(false);
-                return;
-            }
-            catch (InvalidOperationException failure) when (failure.Message.Contains(MissingParentAgentMarker, StringComparison.OrdinalIgnoreCase))
-            {
-                throw CopilotStudioException.ConnectedAgentNotInTarget(environmentId, failure);
-            }
-            catch (InvalidOperationException failure) when (failure.Message.Contains(RemoteChangedMarker, StringComparison.OrdinalIgnoreCase))
-            {
-                throw CopilotStudioException.RemoteChangedDuringPush(failure);
-            }
-            catch (ArgumentException failure) when (failure.Message.Contains(ImproperResponseMarker, StringComparison.OrdinalIgnoreCase))
-            {
-                if (attempt >= UnreadableResponseAttempts)
-                {
-                    throw CopilotStudioException.PushResponseUnreadable(environmentId, attempt, failure);
-                }
-
-                await _delay(TimeSpan.FromSeconds(2 * attempt), cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception failure) when (failure is not OperationCanceledException && TypedConnectionReferenceFailure(failure, environmentId, priorWarnings) is { } typedFailure)
-            {
-                if (attempt > 1)
-                {
-                    throw typedFailure;
-                }
-            }
-            catch (Exception failure) when (
-                priorWarnings.Count > 0
-                && failure is not OperationCanceledException
-                && ChainContains(failure, MissingEntityMarker))
-            {
-                throw CopilotStudioException.PushFailedAfterRefusedComponents(environmentId, priorWarnings, failure);
-            }
-
-            await RefreshBaselineAsync(workspaceFolder, operationContext, syncInfo, cloudFlowMetadata, aiPrompts, cancellationToken).ConfigureAwait(false);
+            return await _pushService.PushAsync(new WorkspacePushRequest { WorkspaceFolder = ToDirectoryPath(workspace.WorkspacePath), Overwrite = overwrite }, _dataverseClient, cancellationToken).ConfigureAwait(false);
+        }
+        catch (WorkspaceValidationException failure)
+        {
+            throw WorkspaceDefinitionReader.Translate(failure);
+        }
+        catch (DeclaredConnectionReferenceException failure)
+        {
+            throw ConnectionReferenceFailureTranslation.Translate(failure, workspace.WorkspacePath);
+        }
+        catch (WorkspacePushException failure) when (Translate(failure, workspace.EnvironmentId) is { } translated)
+        {
+            throw translated;
         }
     }
 
-    private static bool ChainContains(Exception failure, string marker) => AnyInExceptionChain(failure, current => current.Message.Contains(marker, StringComparison.OrdinalIgnoreCase));
-
-    private static bool IsMissingConnectionReference(Exception failure) => AnyInExceptionChain(failure, NamesAMissingConnectionReference);
-
-    private static bool NamesAMissingConnectionReference(Exception failure) => (failure is DataverseNotFoundException || IsObjectDoesNotExist(failure)) && failure.Message.Contains(ConnectionReferenceEntity, StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsObjectDoesNotExist(Exception failure) => failure is DataverseException dataverse && string.Equals(dataverse.ErrorCodeValue, ObjectDoesNotExistCode, StringComparison.OrdinalIgnoreCase);
-
-    private static CopilotStudioException? TypedConnectionReferenceFailure(Exception failure, string environmentId, IReadOnlyList<string> refusals) => failure switch
+    private static CopilotStudioException? Translate(WorkspacePushException failure, string environmentId) => failure.Code switch
     {
-        _ when IsMissingConnectionReference(failure) => CopilotStudioException.MissingConnectionReference(environmentId, refusals, failure),
-        _ when ChainContains(failure, DuplicateConnectionReferenceMarker) => CopilotStudioException.DuplicateConnectionReference(environmentId, refusals, failure),
+        WorkspacePushErrorCodes.ConnectedAgentMissing => CopilotStudioException.ConnectedAgentNotInTarget(environmentId, failure),
+        WorkspacePushErrorCodes.RemoteChanged => CopilotStudioException.RemoteChangedDuringPush(failure),
+        WorkspacePushErrorCodes.ResponseUnreadable => CopilotStudioException.PushResponseUnreadable(environmentId, failure.Attempts, Cause(failure)),
+        WorkspacePushErrorCodes.ConnectionReferenceMissing => CopilotStudioException.MissingConnectionReference(environmentId, Refusals(failure), Cause(failure)),
+        WorkspacePushErrorCodes.ConnectionReferenceDuplicate => CopilotStudioException.DuplicateConnectionReference(environmentId, Refusals(failure), Cause(failure)),
+        WorkspacePushErrorCodes.MissingAfterRefusals => CopilotStudioException.PushFailedAfterRefusedComponents(environmentId, Refusals(failure), Cause(failure)),
+        WorkspacePushErrorCodes.WorkflowToolIdEmpty => CopilotStudioException.WorkflowToolIdEmpty(failure.WorkflowTools),
+        WorkspacePushErrorCodes.KnowledgeUploadFailed => CopilotStudioException.KnowledgeUploadFailed(failure.PushedChangeCount, Cause(failure)),
+        WorkspacePushErrorCodes.AgentNotProvisioned => CopilotStudioException.AgentNotProvisioned(failure.Message, failure),
         _ => null,
     };
 
-    private static bool AnyInExceptionChain(Exception failure, Func<Exception, bool> predicate)
-    {
-        for (var current = failure; current is not null; current = current.InnerException)
-        {
-            if (predicate(current))
-            {
-                return true;
-            }
-        }
+    private static Exception Cause(WorkspacePushException failure) => failure.InnerException ?? failure;
 
-        return false;
-    }
-
-    /// <summary>
-    /// Re-reads the cloud baseline from the service, writing only the cache.
-    /// </summary>
-    /// <remarks>
-    /// The components come from the service, and the flows and references are the ones this run
-    /// already confirmed the target holds, so nothing the workspace authored locally is recorded as
-    /// though the service had accepted it. Supplying them also keeps the sync from re-downloading
-    /// workflows and prompts, which rewrites and deletes the workspace's own component folders even
-    /// when the directory is not being updated.
-    /// </remarks>
-    private Task<WorkspaceSyncInfo> RefreshBaselineAsync(
-        DirectoryPath workspaceFolder,
-        AuthoringOperationContextBase operationContext,
-        AgentSyncInfo syncInfo,
-        CloudFlowMetadata? cloudFlowMetadata,
-        ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts,
-        CancellationToken cancellationToken) =>
-        WorkspaceCacheRefresh.RunAsync(_retargetService, workspaceFolder, operationContext, _dataverseClient, syncInfo, cloudFlowMetadata, aiPrompts, cancellationToken);
-
+    private static IReadOnlyList<string> Refusals(WorkspacePushException failure) => [.. failure.Refusals.Select(SyncResponseGuards.Describe)];
     private async Task<(DirectoryPath Folder, AgentSyncInfo SyncInfo, AuthoringOperationContextBase OperationContext)> ReadWorkspaceAsync(CopilotWorkspaceInfo workspace)
     {
         var workspaceFolder = ToDirectoryPath(workspace.WorkspacePath);

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "McsAgentFolderBound",
+    "message": "Folder 'ContosoHR' of repository 'cccccccc-3333-4333-8333-000000000003' is already leased by agent 'aaaaaaaa-1111-4111-8111-000000000021'."
+  }
+}

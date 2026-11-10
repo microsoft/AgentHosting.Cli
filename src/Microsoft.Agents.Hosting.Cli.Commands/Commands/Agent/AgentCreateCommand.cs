@@ -23,6 +23,7 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
         "--mcs-clone-workflow-id",
         "--mcs-clone-environment-id",
         "--project",
+        "--repository-id",
     ];
 
     private static readonly string[] McsAgentOnlyOptions =
@@ -51,6 +52,7 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
         OptionCatalog.Value("--idempotency-key", "Create-retry key. Generated when omitted. CodeAgent only.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
         OptionCatalog.Value("--environment-id", "Target environment id. Defaults to the active environment."),
         OptionCatalog.Value("--project", "Project directory to initialize. Defaults to the current directory, created if missing."),
+        OptionCatalog.Value("--repository-id", "GRS repository the project folder joins.") with { RequiredFeatures = [FeatureName.AmsMcsAgents] },
         OptionCatalog.Value("--agent-type", "Agent type. Use MCSAgent for an MCS project, or MCSWorkflow for a standalone cloud flow."),
         OptionCatalog.Value("--schema-name", "MCS schema name. Derived from --agent-name when omitted. MCS only."),
         OptionCatalog.Value("--mcs-agent-type", "Scaffold shape: CLI (default) or Classic. MCS only."),
@@ -165,6 +167,8 @@ public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, 
             EnvironmentId = input.GetString("--environment-id"),
             AgentType = RequestedAgentType(input),
             Project = input.GetString("--project"),
+            RepositoryId = input.GetString("--repository-id"),
+            NonInteractive = input.NonInteractive,
         };
     }
 

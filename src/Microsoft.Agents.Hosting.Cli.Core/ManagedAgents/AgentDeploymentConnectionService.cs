@@ -14,27 +14,33 @@ public sealed class AgentDeploymentConnectionService
 {
     private readonly AgentDeploymentConnectionResolver _targets;
     private readonly ICopilotConnectionPort _connections;
+    private readonly IConnectionBindingRules _rules;
     private readonly ConnectionBindingCoordinator _bindings;
     private readonly IConnectionSelectionPrompt _selectionPrompt;
     private readonly WorkflowStateCache _workflowStates;
+    private readonly IWorkflowStateRules _stateRules;
     private readonly ManagedAgentPrincipalResolver _principals;
     private readonly CoreServicesClusterCategory _cluster;
 
     /// <summary>Creates the service.</summary>
     /// <param name="targets">Resolves the deployment, environment and workspace the verb acts on.</param>
     /// <param name="connections">Reads references and candidates, and writes bindings.</param>
+    /// <param name="rules">Decides what each reference is, and which connection it may be bound to without asking.</param>
     /// <param name="bindings">Resolves one connector to a connection and points its references at it.</param>
     /// <param name="selectionPrompt">Asks which connector to resolve, and reports progress.</param>
     /// <param name="workflowStates">Records the workflow states the service reports back.</param>
+    /// <param name="stateRules">Names each workflow state and the label the portal shows for it.</param>
     /// <param name="principals">Names the identity a connection has to belong to before it is bound without asking.</param>
     /// <param name="cluster">The cluster category the environment belongs to.</param>
-    public AgentDeploymentConnectionService(AgentDeploymentConnectionResolver targets, ICopilotConnectionPort connections, ConnectionBindingCoordinator bindings, IConnectionSelectionPrompt selectionPrompt, WorkflowStateCache workflowStates, ManagedAgentPrincipalResolver principals, CoreServicesClusterCategory cluster)
+    public AgentDeploymentConnectionService(AgentDeploymentConnectionResolver targets, ICopilotConnectionPort connections, IConnectionBindingRules rules, ConnectionBindingCoordinator bindings, IConnectionSelectionPrompt selectionPrompt, WorkflowStateCache workflowStates, IWorkflowStateRules stateRules, ManagedAgentPrincipalResolver principals, CoreServicesClusterCategory cluster)
     {
         _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
+        _rules = rules ?? throw new ArgumentNullException(nameof(rules));
         _bindings = bindings ?? throw new ArgumentNullException(nameof(bindings));
         _selectionPrompt = selectionPrompt ?? throw new ArgumentNullException(nameof(selectionPrompt));
         _workflowStates = workflowStates ?? throw new ArgumentNullException(nameof(workflowStates));
+        _stateRules = stateRules ?? throw new ArgumentNullException(nameof(stateRules));
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
         _cluster = cluster;
     }
@@ -70,11 +76,11 @@ public sealed class AgentDeploymentConnectionService
     {
         var snapshot = await _connections.ReadConnectionsAsync(environment, workspaceDirectory, cancellationToken).ConfigureAwait(false);
         var principal = await _principals.ResolveUsernameAsync(cancellationToken).ConfigureAwait(false);
-        var observed = snapshot.References.Select(ConnectionReadinessPlanner.Observe).ToList();
+        var observed = snapshot.References.Select(_rules.Observe).ToList();
         var selected = ConnectionSelectionScope.Apply(observed, request, workspaceDirectory);
         var plan = Propose(observed, selected, principal);
         var diagnostics = new List<string>();
-        var settlement = new WorkflowSettlement(snapshot.Workflows);
+        var settlement = new WorkflowSettlement();
 
         if (!string.IsNullOrWhiteSpace(request.ConnectionId))
         {
@@ -90,9 +96,9 @@ public sealed class AgentDeploymentConnectionService
         diagnostics.AddRange(ConnectionReport.UnownedCandidates(selected.Select(index => plan[index])));
 
         var activation = settlement.Activation;
-        var workflows = WorkflowStateProjection.FromActivation(snapshot.Workflows, activation);
+        var workflows = WorkflowStateProjection.FromActivation(snapshot.Workflows, activation, _stateRules);
         var connectionsReady = ConnectionReadinessPlanner.IsReady(plan);
-        var workflowsReady = WorkflowStateProjection.AllActivated(workflows) && activation.Refused.Count == 0;
+        var workflowsReady = WorkflowStateProjection.AllActivated(workflows, _stateRules) && activation.Refused.Count == 0;
 
         _workflowStates.Write(workspaceDirectory, environment.EnvironmentId, WorkflowStateProjection.ToCacheEntries(snapshot.Workflows, activation));
 
@@ -125,11 +131,11 @@ public sealed class AgentDeploymentConnectionService
     /// <param name="selected">The references this run was scoped to.</param>
     /// <param name="principal">The signed-in identity a connection must belong to.</param>
     /// <returns>The decision for each reference, in the order given.</returns>
-    private static List<ConnectionPlanItem> Propose(IReadOnlyList<ConnectionPlanItem> observed, IReadOnlyList<int> selected, string? principal)
+    private List<ConnectionPlanItem> Propose(IReadOnlyList<ConnectionPlanItem> observed, IReadOnlyList<int> selected, string? principal)
     {
         var scoped = selected.ToHashSet();
 
-        return [.. observed.Select((item, index) => scoped.Contains(index) ? ConnectionReadinessPlanner.Plan(item.View, principal) : item)];
+        return [.. observed.Select((item, index) => scoped.Contains(index) ? _rules.Plan(item.View, principal) : item)];
     }
 
     /// <summary>
@@ -157,7 +163,7 @@ public sealed class AgentDeploymentConnectionService
             settlement.RecordBound(bindings);
         }
 
-        var changes = settlement.NewlyStartable(plan);
+        var changes = settlement.NewlyStartable(_connections.ReadWorkflows(workspaceDirectory, [.. plan.Where(ConnectionReadinessPlanner.IsResolved).Select(item => item.View.LogicalName)]));
 
         if (changes.Length == 0)
         {
@@ -199,38 +205,6 @@ public sealed class AgentDeploymentConnectionService
     /// the loop ends only when the operator says so: having fixed the last unbound reference is no
     /// reason to stop somebody who came to change a bound one.
     /// </summary>
-    private async Task ResolveInteractivelyAsync(AgentDeploymentConnectionRequest request, List<ConnectionPlanItem> plan, IReadOnlyList<int> selected, WorkflowSettlement settlement, AgentDeploymentConnectionTarget target, CopilotEnvironmentContext environment, string workspaceDirectory, List<string> diagnostics, CancellationToken cancellationToken)
-    {
-        var groups = ConnectionSelectionScope.Group(plan, selected, request.ByReference);
-        var openBrowser = !request.NonInteractive;
-
-        if (!groups.Any(group => ConnectionSelectionScope.IsSelectable(plan, group)))
-        {
-            return;
-        }
-
-        if (groups.Count == 1)
-        {
-            await _bindings.ResolveConnectorAsync(plan, groups[0], environment, null, openBrowser, diagnostics, cancellationToken).ConfigureAwait(false);
-            await SettleAsync(plan, selected, settlement, target, environment, workspaceDirectory, cancellationToken).ConfigureAwait(false);
-
-            return;
-        }
-
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            var chosen = await _selectionPrompt.ChooseConnectorsAsync(ConnectionSelectionScope.Menu(plan, groups), cancellationToken).ConfigureAwait(false);
-
-            if (chosen.Count == 0)
-            {
-                return;
-            }
-
-            foreach (var position in chosen.Where(position => position >= 0 && position < groups.Count))
-            {
-                await _bindings.ResolveConnectorAsync(plan, groups[position], environment, null, openBrowser, diagnostics, cancellationToken).ConfigureAwait(false);
-                await SettleAsync(plan, selected, settlement, target, environment, workspaceDirectory, cancellationToken).ConfigureAwait(false);
-            }
-        }
-    }
+    private Task ResolveInteractivelyAsync(AgentDeploymentConnectionRequest request, List<ConnectionPlanItem> plan, IReadOnlyList<int> selected, WorkflowSettlement settlement, AgentDeploymentConnectionTarget target, CopilotEnvironmentContext environment, string workspaceDirectory, List<string> diagnostics, CancellationToken cancellationToken) =>
+        _bindings.ResolveConnectorsAsync(plan, ConnectionSelectionScope.Group(plan, selected, request.ByReference), environment, !request.NonInteractive, diagnostics, () => SettleAsync(plan, selected, settlement, target, environment, workspaceDirectory, cancellationToken), cancellationToken);
 }

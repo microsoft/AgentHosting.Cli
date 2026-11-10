@@ -1,0 +1,23 @@
+{
+  "request": {
+    "method": "DELETE",
+    "path": "agents/aaaaaaaa-1111-4111-8111-000000000001/mcs",
+    "query": {},
+    "headers": {
+      "If-Match": "\"etag-1\""
+    },
+    "bodyFixture": null
+  },
+  "response": {
+    "status": 204,
+    "headers": {},
+    "bodyFixture": null
+  },
+  "startsOperation": false,
+  "errors": [
+    { "status": 400, "code": "InvalidAgentETag", "bodyFixture": "mcs-agent-delete.etag-required.error.json", "when": "If-Match is missing, weak or malformed" },
+    { "status": 404, "code": "AgentNotFound", "bodyFixture": "mcs-agent-delete.not-found.error.json", "when": "the agent is missing, already deleted (a repeated delete) or not a Copilot Studio agent or workflow" },
+    { "status": 409, "code": "McsDeploymentOperationInProgress", "bodyFixture": "mcs-deployment.operation-in-progress.error.json", "when": "a deployment of the agent runs an operation" },
+    { "status": 412, "code": "PreconditionFailed", "bodyFixture": "mcs-agent-delete.precondition-failed.error.json", "when": "If-Match isn't the agent's current ETag" }
+  ]
+}

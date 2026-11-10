@@ -41,6 +41,37 @@ public sealed class CommandLevelFeatureMetadataTests
     [RequiredFeatureFlag(FeatureName.IdentityFeatures)]
     public sealed class FlaggedNestedLeafCommand : FixtureCommand;
 
+    [CommandGroup("telemetryfixture", Description = "Telemetry metadata fixture.")]
+    public sealed class TelemetryFixtureGroup;
+
+    [Command("quiet", Description = "Runs without telemetry.", ParentGroup = typeof(TelemetryFixtureGroup), SuppressTelemetry = true)]
+    public sealed class QuietCommand : FixtureCommand;
+
+    [Command("inner", Description = "Nested under the quiet command.", ParentCommand = typeof(QuietCommand))]
+    public sealed class QuietInnerCommand : FixtureCommand;
+
+    [Command("loud", Description = "Records telemetry.", ParentGroup = typeof(TelemetryFixtureGroup))]
+    public sealed class LoudCommand : FixtureCommand;
+
+    [CommandGroup("describedfixture", Description = "Described metadata fixture.", NoCommandUsage = "Choose probe.")]
+    public sealed class DescribedFixtureGroup;
+
+    [Command("probe", Description = "Base command text.", ParentGroup = typeof(DescribedFixtureGroup))]
+    public sealed class FeatureDescribedCommand : ICommandImplementation
+    {
+        public IReadOnlyList<CommandSymbol> Symbols =>
+        [
+            OptionCatalog.Value("--message", "Base option text.") with { EnabledDescription = new([FeatureName.IdentityFeatures], "Identity option text.") },
+            OptionCatalog.Value("--name", "Probe value.", required: true) with { OptionalWithFeatures = [FeatureName.IdentityFeatures] },
+        ];
+
+        public FeatureDescription? EnabledDescription => new([FeatureName.IdentityFeatures], "Identity command text.");
+
+        public IReadOnlyList<Type> ResultTypes => [typeof(string)];
+
+        public Task<object> ExecuteAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken) => Task.FromResult<object>($"name={input.GetString("--name")}");
+    }
+
     public abstract class FixtureCommand : ICommandImplementation
     {
         public IReadOnlyList<CommandSymbol> Symbols =>
@@ -176,20 +207,76 @@ public sealed class CommandLevelFeatureMetadataTests
         Assert.Contains("invoked", result.Stdout, StringComparison.Ordinal);
     }
 
-    private static CommandGroupMetadata Fixture(IFeatureFlags flags) =>
+    [Theory]
+    [InlineData(new FeatureName[0], "Base option text.", "Base command text.")]
+    [InlineData(new[] { FeatureName.IdentityFeatures }, "Identity option text.", "Identity command text.")]
+    public async Task FeatureDescriptions_OfOptionsAndCommands_ReplaceTheBaseTextWhileTheirFeaturesAreOn(FeatureName[] enabled, string optionText, string commandText)
+    {
+        var command = await InvokeDescribedFixtureAsync(new TestFeatureFlags(enabled), "describedfixture", "probe", "--help");
+        var group = await InvokeDescribedFixtureAsync(new TestFeatureFlags(enabled), "describedfixture", "--help");
+
+        Assert.Contains(optionText, command.Stdout, StringComparison.Ordinal);
+        Assert.Contains(commandText, command.Stdout, StringComparison.Ordinal);
+        Assert.Contains(commandText, group.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain(enabled.Length == 0 ? "Identity option text." : "Base option text.", command.Stdout, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(new FeatureName[0], ExitCodes.Usage)]
+    [InlineData(new[] { FeatureName.IdentityFeatures }, ExitCodes.Success)]
+    public async Task OptionalWithFeatures_MakesARequiredOptionOptional_WhileItsFeaturesAreOn(FeatureName[] enabled, int exitCode)
+    {
+        var withoutName = await InvokeDescribedFixtureAsync(new TestFeatureFlags(enabled), "describedfixture", "probe");
+        var withName = await InvokeDescribedFixtureAsync(new TestFeatureFlags(enabled), "describedfixture", "probe", "--name", "given");
+
+        Assert.Equal(exitCode, withoutName.ExitCode);
+        Assert.Equal(ExitCodes.Success, withName.ExitCode);
+        Assert.Contains("name=given", withName.Stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SuppressTelemetry_OnACommand_CoversItsNestedCommandsButNotItsGroupOrSiblings()
+    {
+        var flags = new TestFeatureFlags();
+        var builder = Builder(flags);
+        var group = builder.Build(Fixture(flags, typeof(TelemetryFixtureGroup)));
+        var quiet = group.Subcommands.Single(command => command.Name == "quiet");
+
+        Assert.Equal(
+            (false, true, true, false),
+            (builder.SuppressesTelemetry(group), builder.SuppressesTelemetry(quiet), builder.SuppressesTelemetry(quiet.Subcommands.Single()), builder.SuppressesTelemetry(group.Subcommands.Single(command => command.Name == "loud"))));
+    }
+
+    private static CommandGroupMetadata Fixture(IFeatureFlags flags) => Fixture(flags, typeof(FeatureFixtureGroup));
+
+    private static CommandTreeBuilder Builder(IFeatureFlags flags) => new(new CliOutputRenderer(new StringWriter(), new StringWriter(), color: false), new EmptyServiceProvider(), flags, new Option<bool>("--json"), new Option<bool>("--debug"), new Option<bool>("--non-interactive"));
+
+    private static CommandGroupMetadata Fixture(IFeatureFlags flags, Type group) =>
         CommandReflector
             .Discover(typeof(CommandLevelFeatureMetadataTests).Assembly, flags)
-            .Single(group => group.DeclaringType == typeof(FeatureFixtureGroup));
+            .Single(candidate => candidate.DeclaringType == group);
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> InvokeAsync(
         IFeatureFlags flags,
         params string[] args)
-        => await InvokeAsync(flags, useCompatibilityConstructor: false, args);
+        => await InvokeAsync(flags, typeof(FeatureFixtureGroup), useCompatibilityConstructor: false, args);
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> InvokeAsync(
         IFeatureFlags flags,
         bool useCompatibilityConstructor,
         params string[] args)
+        => await InvokeAsync(flags, typeof(FeatureFixtureGroup), useCompatibilityConstructor, args);
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> InvokeDescribedFixtureAsync(
+        IFeatureFlags flags,
+        params string[] args)
+        => await InvokeAsync(flags, typeof(DescribedFixtureGroup), useCompatibilityConstructor: false, args);
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> InvokeAsync(
+        IFeatureFlags flags,
+        Type group,
+        bool useCompatibilityConstructor,
+        string[] args)
     {
         var stdout = new StringWriter();
         var stderr = new StringWriter();
@@ -218,7 +305,7 @@ public sealed class CommandLevelFeatureMetadataTests
             root.Add(debug);
         }
         root.Add(nonInteractive);
-        root.Add(builder.Build(Fixture(flags)));
+        root.Add(builder.Build(Fixture(flags, group)));
 
         var parseResult = root.Parse(args);
         if (parseResult.Errors.Count > 0)

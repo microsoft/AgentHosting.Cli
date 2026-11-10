@@ -44,6 +44,31 @@ public sealed class CopilotEnvironmentResolverTests
     }
 
     [Fact]
+    public async Task List_KeepsTheEnvironmentOfEveryReachableContext_InTheSameOrder()
+    {
+        var (resolver, _) = Create(
+            EnvironmentFixtures.Environment("env-c", displayName: "Contoso Prod", instanceUrl: CopilotTestFixtures.DataverseOrganization),
+            EnvironmentFixtures.Environment("env-b", instanceUrl: null),
+            EnvironmentFixtures.Environment("env-a", instanceUrl: CopilotTestFixtures.DataverseOrganization));
+
+        var inventory = await resolver.ListAsync(CancellationToken.None);
+
+        Assert.Equal(["env-a", "env-c"], inventory.ReachableEnvironments.Select(environment => environment.EnvironmentId));
+        Assert.Equal(inventory.Reachable.Select(context => context.EnvironmentId), inventory.ReachableEnvironments.Select(environment => environment.EnvironmentId));
+        Assert.Equal("Contoso Prod", inventory.ReachableEnvironments[1].DisplayName);
+    }
+
+    [Fact]
+    public async Task ResolveEnvironment_ForAnEnvironmentWithoutAnOrganizationUrl_ReturnsIt()
+    {
+        var (resolver, _) = Create(EnvironmentFixtures.Environment("env-1", instanceUrl: null));
+
+        var environment = await resolver.ResolveEnvironmentAsync("env-1", CancellationToken.None);
+
+        Assert.Equal(("env-1", null), (environment.EnvironmentId, environment.InstanceUrl));
+    }
+
+    [Fact]
     public async Task List_CarriesTheDataverseOrganizationFromTheListing()
     {
         var (resolver, _) = Create(EnvironmentFixtures.Environment("env-1", instanceUrl: CopilotTestFixtures.DataverseOrganization));

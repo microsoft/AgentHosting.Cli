@@ -3,9 +3,9 @@ using Microsoft.Agents.Hosting.Cli.Core.Ports;
 namespace Microsoft.Agents.Hosting.Cli.Ports;
 
 /// <summary>
-/// Confirms a destructive action by requiring the operator to type the subject's name.
+/// Confirms a destructive action by requiring the operator to type the subject's name, and asks yes-or-no questions.
 /// </summary>
-public sealed class ConsoleConfirmationPrompt : IConfirmationPrompt
+public sealed class ConsoleConfirmationPrompt : IConfirmationPrompt, IYesNoPrompt
 {
     private readonly TextReader _input;
     private readonly TextWriter _output;
@@ -35,6 +35,17 @@ public sealed class ConsoleConfirmationPrompt : IConfirmationPrompt
             : ConfirmationOutcome.Mismatched;
     }
 
+    /// <inheritdoc />
+    public async Task<bool> AskAsync(string question, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await _output.WriteAsync($"{question} ").ConfigureAwait(false);
+
+        var answer = (await _input.ReadLineAsync(cancellationToken).ConfigureAwait(false))?.Trim();
+
+        return answer is not null && (answer.Length == 0 || answer.Equals("y", StringComparison.OrdinalIgnoreCase) || answer.Equals("yes", StringComparison.OrdinalIgnoreCase));
+    }
     /// <summary>
     /// Removes one matching pair of surrounding quotes.
     /// </summary>

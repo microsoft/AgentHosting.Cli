@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
 public sealed class CopilotCompositionTests
 {
-    private static ServiceProvider BuildProvider()
+    internal static ServiceProvider BuildProvider()
     {
         var services = new ServiceCollection();
         services.AddSingleton<ITokenProvider>(new RecordingTokenProvider());
@@ -26,8 +26,11 @@ public sealed class CopilotCompositionTests
     [InlineData(typeof(IOperationContextProvider))]
     [InlineData(typeof(ICopilotWorkspacePort))]
     [InlineData(typeof(ICopilotCatalogPort))]
+    [InlineData(typeof(IAgentSharingPort))]
     [InlineData(typeof(ICopilotScaffoldPort))]
+    [InlineData(typeof(ICopilotComponentCollectionPort))]
     [InlineData(typeof(ICopilotWorkspaceAttachPort))]
+    [InlineData(typeof(ICopilotWorkspaceConnectPort))]
     [InlineData(typeof(IWorkspaceRetargetService))]
     [InlineData(typeof(ICopilotFileSystem))]
     [InlineData(typeof(IBotContentReader))]

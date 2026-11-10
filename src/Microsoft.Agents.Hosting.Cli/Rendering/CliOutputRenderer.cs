@@ -58,6 +58,12 @@ public sealed class CliOutputRenderer
     /// <summary>Renders a successful command result as the JSON or human success envelope.</summary>
     public void RenderSuccess(object payload, bool json, bool debug = false)
     {
+        if (payload is IRawOutputResult raw)
+        {
+            _stdout.Write(string.Concat(raw.ToTextLines().Select(line => line + "\n")));
+            return;
+        }
+
         if (debug && payload is IDeploymentResult deploymentResult)
         {
             var summary = DescribeDeploymentSummary(deploymentResult);
@@ -126,7 +132,7 @@ public sealed class CliOutputRenderer
             remediation = null;
         }
 
-        WriteFailure(exitCode, errorCode, Describe(error), errorKind, remediation, partialReport, json, error is ManagedAgentException { HasMultilineGuidance: true });
+        WriteFailure(exitCode, errorCode, Describe(error), errorKind, remediation, partialReport, json, error is AgentHostingException { HasMultilineGuidance: true });
         return exitCode;
     }
 
@@ -159,6 +165,16 @@ public sealed class CliOutputRenderer
             partialReport: null,
             json);
         return ExitCodes.Usage;
+    }
+
+    /// <summary>Writes to stderr that a canceled command may have left an operation running, and the command that checks on it.</summary>
+    /// <param name="interruption">The cancellation that stopped the wait for the operation's start.</param>
+    public void RenderInterruption(OperationStartInterruptedException interruption)
+    {
+        ArgumentNullException.ThrowIfNull(interruption);
+
+        WriteFailureLines(interruption.Message, Red, multiline: false);
+        WriteFailureLines(interruption.Remediation, Cyan, multiline: false);
     }
 
     private void WriteFailure(int exitCode, int errorCode, string message, string? errorKind, string? remediation, object? partialReport, bool json, bool multiline = false)

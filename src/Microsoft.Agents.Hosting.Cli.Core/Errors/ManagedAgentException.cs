@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Rendering;
 
@@ -15,9 +16,6 @@ public sealed class ManagedAgentException : AgentHostingException
         : base(message, exitCode, errorKind, remediation, innerException, errorCode)
     {
     }
-
-    /// <summary>Whether the message and remediation contain CLI-formatted lines.</summary>
-    public bool HasMultilineGuidance { get; private init; }
 
     /// <summary>No configuration exists in the directory the command was run from.</summary>
     /// <param name="searchedPath">The configuration path that was looked for.</param>
@@ -138,6 +136,20 @@ public sealed class ManagedAgentException : AgentHostingException
         "unverified-agent-in-target",
         "Nothing was pushed. Re-run with --overwrite to adopt that agent and replace its content, or with --schema-name to deploy under a name this project owns.");
 
+    /// <summary>The workspace is still connected to an agent outside the record's home environment that nothing the project holds shows is its own, such as the source of a clone from another environment.</summary>
+    /// <param name="displayName">The connected agent's display name.</param>
+    /// <param name="agentId">The connected agent.</param>
+    /// <param name="environmentId">The environment holding it.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException UnverifiedBoundAgent(string displayName, string agentId, string environmentId) => new(ErrorCodes.Deployment.UnverifiedAgentInTarget, $"The workspace is connected to agent '{displayName}' ({agentId}) in {environmentId}, outside this agent's home environment, and nothing here shows that agent is this deployment's: a project cloned from another environment stays connected to its source agent until it is first deployed to its home environment.", ExitCodes.Usage, "unverified-agent-in-target", "Nothing was pushed. Re-run with --overwrite only to replace that agent's content and name; to keep it, deploy to the dev deployment in the agent's home environment, which creates the agent's own copy.");
+
+    /// <summary>The environment outside the record's home environment already holds the workflow, and this deployment never deployed it, such as the source of a workflow cloned from another environment.</summary>
+    /// <param name="workflowName">The name of the workflow the environment holds.</param>
+    /// <param name="workflowId">The workflow, which keeps its id in every environment.</param>
+    /// <param name="environmentId">The environment holding it.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException UnverifiedWorkflowInTarget(string workflowName, string workflowId, string environmentId) => new(ErrorCodes.Deployment.UnverifiedAgentInTarget, $"Workflow '{workflowName}' ({workflowId}) already exists in {environmentId}, outside this workflow's home environment, and this deployment never deployed it: a workflow cloned from another environment keeps its source's id, so deploying it there writes over the source.", ExitCodes.Usage, "unverified-agent-in-target", "Nothing was pushed. Re-run with --overwrite only to replace that workflow's content and name; to keep it, deploy to a deployment in another environment, such as the dev deployment in the workflow's home environment.");
+
     /// <summary>No selector was supplied and the configuration holds more than one agent.</summary>
     /// <param name="candidates">The display names that could have been meant.</param>
     /// <returns>The typed failure.</returns>
@@ -217,11 +229,11 @@ public sealed class ManagedAgentException : AgentHostingException
         var agentSelector = $"--project {CommandArgument(projectDirectory)} --agent-id {CommandArgument(agentId)}";
 
         return deployments.Length == 0
-            ? $"Create a deployment for '{displayName}':{Environment.NewLine}  msagent deployment create {agentSelector} --deployment-name development --deployment-type dev{Environment.NewLine}Then deploy:{Environment.NewLine}  msagent agent deploy {agentSelector} --deployment-name development"
+            ? string.Join(Environment.NewLine, DeploymentCommandHints.CreateDevDeployment(displayName, agentSelector, $"--deployment-name {DeploymentCommandHints.DevDeploymentName}"))
             : $"Select --deployment-id or --deployment-name for '{displayName}', for example:{Environment.NewLine}  msagent agent deploy {agentSelector} --deployment-id {CommandArgument(deployments[0].DeploymentId)}";
     }
 
-    private static string CommandArgument(string value) => OperatingSystem.IsWindows() ? PowerShellCommandArgument(value) : PosixCommandArgument(value);
+    internal static string CommandArgument(string value) => OperatingSystem.IsWindows() ? PowerShellCommandArgument(value) : PosixCommandArgument(value);
 
     internal static string PowerShellCommandArgument(string value) => QuotedCommandArgument(value, "$`\"", "''");
 
@@ -805,13 +817,14 @@ public sealed class ManagedAgentException : AgentHostingException
 
     /// <summary>The directory holds files but is not connected to Copilot Studio.</summary>
     /// <param name="projectDirectory">The directory that was inspected.</param>
+    /// <param name="remediation">What to do instead of deploying the directory, or null for the advice to deploy it.</param>
     /// <returns>The typed failure.</returns>
-    public static ManagedAgentException WorkspaceDisconnected(string projectDirectory) => new(
+    public static ManagedAgentException WorkspaceDisconnected(string projectDirectory, string? remediation = null) => new(
         ErrorCodes.Workspace.WorkspaceDisconnected,
         $"{projectDirectory} holds a project that is not connected to Copilot Studio.",
         ExitCodes.Usage,
         "workspace-disconnected",
-        "Run `msagent agent deploy` to create the agent and connect this directory, or pull into an empty directory instead.");
+        remediation ?? "Run `msagent agent deploy` to create the agent and connect this directory, or pull into an empty directory instead.");
 
     /// <summary>The workspace is bound to a different agent than the selector resolved to.</summary>
     /// <param name="workspaceAgentId">The agent the workspace is bound to.</param>

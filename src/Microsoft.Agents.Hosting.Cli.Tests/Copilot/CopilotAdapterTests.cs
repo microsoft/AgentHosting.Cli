@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.CopilotStudio.Sync;
@@ -125,6 +126,18 @@ public sealed class AgentHostSyncAuthProviderTests
         var provider = new AgentHostSyncAuthProvider(new RecordingTokenProvider());
 
         await Assert.ThrowsAsync<ArgumentNullException>(() => provider.AcquireTokenAsync(null!, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("api://a522f059-bb65-47c0-8934-7db6e5286414", "api://a522f059-bb65-47c0-8934-7db6e5286414/user_impersonation")]
+    [InlineData("api://96ff4394-9197-43aa-b393-6a41652e21f8/", "api://96ff4394-9197-43aa-b393-6a41652e21f8/user_impersonation")]
+    public async Task AcquireToken_AsksForAnApplicationAudiencesUserImpersonationPermission(string audience, string expectedScope)
+    {
+        var tokenProvider = new RecordingTokenProvider();
+
+        await new AgentHostSyncAuthProvider(tokenProvider).AcquireTokenAsync(new Uri(audience), CancellationToken.None);
+
+        Assert.Equal([expectedScope], tokenProvider.RequestedResources);
     }
 }
 
@@ -253,5 +266,69 @@ public sealed class AgentHostDataverseHttpClientAccessorTests
         var accessor = new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider());
 
         Assert.Throws<ArgumentNullException>(() => accessor.SetDataverseOrganization(null!));
+    }
+
+    [Fact]
+    public void Constructor_WithoutATransportFactory_Throws()
+    {
+        Assert.Equal("innerHandlerFactory", Assert.Throws<ArgumentNullException>(() => new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider(), null!)).ParamName);
+    }
+
+    [Theory]
+    [InlineData("https://evil.example.com:8443/api/data/v9.2/bots?$top=1", "https://evil.example.com:8443")]
+    [InlineData(null, "(none)")]
+    public void Refusal_NamesTheRequestedOriginAndTheOrganizationsOrigin(string? requestUri, string requestedOrigin)
+    {
+        var refusal = AgentHostDataverseHttpClientAccessor.Refusal(requestUri is null ? null : new Uri(requestUri), new Uri("https://contoso.crm.dynamics.com/api/data/v9.2/"));
+
+        Assert.Equal(CopilotErrorKinds.UntrustedDataverseOrigin, refusal.ErrorKind);
+        Assert.Equal($"A Dataverse request targeted '{requestedOrigin}' but the credential is bound to 'https://contoso.crm.dynamics.com'.", refusal.Message);
+    }
+}
+
+public sealed class DataverseWebApiClientTests
+{
+    private const string Organization = "https://contoso.crm.dynamics.com/";
+
+    private static CopilotEnvironmentContext Environment() => new()
+    {
+        EnvironmentId = "env-1",
+        TenantId = "tenant-1",
+        DataverseOrganization = new Uri(Organization),
+    };
+
+    private static DataverseWebApiClient Create(ScriptedHttpMessageHandler handler)
+    {
+        var accessor = new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider(), () => handler);
+        accessor.SetDataverseOrganization(new Uri(Organization));
+
+        return new DataverseWebApiClient(new StubSolutionVersionsClient(), accessor);
+    }
+
+    [Fact]
+    public async Task Send_AFailedRequest_IsAServiceErrorThatNeverEchoesTheRawBody()
+    {
+        var handler = new ScriptedHttpMessageHandler().Respond(HttpStatusCode.Forbidden, """{"error":{"code":"0x80040220","message":"Principal user is missing prvReadBot privilege."},"trace":"sample.person@contoso.com"}""");
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(handler).SendAsync(Environment(), HttpMethod.Get, "api/data/v9.2/bots", CancellationToken.None));
+
+        Assert.Equal("The Copilot Studio service reported a failure during 'GET api/data/v9.2/bots'. HTTP 403 Forbidden. Principal user is missing prvReadBot privilege. (0x80040220)", failure.Message);
+        Assert.Null(failure.InnerException);
+    }
+
+    [Fact]
+    public async Task ReadCollection_ARunOfPagesPastTheCap_IsRefusedNamingTheFirstPage()
+    {
+        var handler = new ScriptedHttpMessageHandler();
+
+        for (var page = 1; page <= 1000; page++)
+        {
+            handler.Respond(HttpStatusCode.OK, $$"""{"value":[],"@odata.nextLink":"{{Organization}}api/data/v9.2/bots?$skiptoken={{page}}"}""");
+        }
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(handler).ReadCollectionAsync(Environment(), "api/data/v9.2/bots", row => row.GetRawText(), CancellationToken.None));
+
+        Assert.Equal("The Copilot Studio service reported a failure during 'GET api/data/v9.2/bots'. The service returned more than 1000 pages.", failure.Message);
+        Assert.Equal(1000, handler.Requests.Count);
     }
 }

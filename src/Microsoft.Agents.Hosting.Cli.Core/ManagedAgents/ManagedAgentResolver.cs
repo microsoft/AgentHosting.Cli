@@ -65,12 +65,6 @@ public sealed class ManagedAgentResolver
     /// <returns>The agent workspace directory, or <see langword="null"/> when it no longer exists.</returns>
     public string? FindAgentWorkspaceDirectory(string? projectDirectory, ManagedAgentRecord agent) => _locator.AgentWorkspaceDirectory(projectDirectory, agent.AgentLocation);
 
-    /// <summary>Resolves the component-collection workspaces an agent's workspace declares.</summary>
-    /// <param name="projectDirectory">The project root the collections must stay beneath.</param>
-    /// <param name="agentWorkspaceDirectory">The directory holding the agent's workspace.</param>
-    /// <returns>The collection directories that exist, and the declarations that resolve to nothing.</returns>
-    public (IReadOnlyList<string> Found, IReadOnlyList<string> Missing) ResolveComponentCollectionDirectories(string? projectDirectory, string agentWorkspaceDirectory) => _locator.ComponentCollectionDirectories(agentWorkspaceDirectory, projectDirectory);
-
     /// <summary>The schema name an agent deploys under, preferring the value the record carries.</summary>
     /// <param name="agent">The agent record.</param>
     /// <param name="projectSchemaName">The schema name the workspace declares, when it is available.</param>

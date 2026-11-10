@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "agents/aaaaaaaa-1111-4111-8111-000000000001/mcs/deployments/eeeeeeee-5555-4555-8555-000000000005/deploy-records",
+    "query": {},
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "bodyFixture": "mcs-deploy-record.request.json"
+  },
+  "response": {
+    "status": 200,
+    "headers": {},
+    "bodyFixture": "mcs-deploy-record.response.json"
+  },
+  "startsOperation": false,
+  "errors": [
+    { "status": 400, "code": "InvalidAgentFieldValue", "bodyFixture": null, "when": "a field is malformed, both or neither of botId and workflowId are set, the id doesn't fit the agent type, exact is true without commitSha, or deployedTime is more than 5 minutes ahead" },
+    { "status": 400, "code": "MissingAgentField", "bodyFixture": null, "when": "exact, published or deployedTime is missing" },
+    { "status": 400, "code": "McsSourceValidationFailed", "bodyFixture": null, "when": "the repository lacks the commit, or the agent folder at it; a detail carries GRS's CommitNotFound or PathNotFound" },
+    { "status": 404, "code": "DeploymentNotFound", "bodyFixture": "cmp-deployment-delete.not-found.error.json", "when": "the deployment is missing" },
+    { "status": 404, "code": "AgentNotFound", "bodyFixture": "mcs-agent-delete.not-found.error.json", "when": "the agent is missing, or the deployment isn't a Copilot Studio deployment" },
+    { "status": 404, "code": "McsBotNotFound", "bodyFixture": "mcs-agent-register.bot-not-found.error.json", "when": "the bot or flow doesn't exist in the deployment's environment" },
+    { "status": 409, "code": "McsBotClaimed", "bodyFixture": "mcs-agent-register.bot-claimed.error.json", "when": "another agent claims the bot or flow" },
+    { "status": 409, "code": "McsDeploymentOperationInProgress", "bodyFixture": "mcs-deployment.operation-in-progress.error.json", "when": "the deployment runs an operation" },
+    { "status": 409, "code": "AgentConcurrencyConflict", "bodyFixture": null, "when": "the deployment changed while the record was written; retry" }
+  ]
+}

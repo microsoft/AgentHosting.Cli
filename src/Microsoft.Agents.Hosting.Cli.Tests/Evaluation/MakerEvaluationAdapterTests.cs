@@ -30,19 +30,21 @@ public sealed class MakerEvaluationAdapterTests
         AgentManagementUrl = gateway is null ? null : new Uri(gateway),
     };
 
-    private static (MakerEvaluationAdapter Adapter, RecordingHandler Handler, StubTokens Tokens) Create(params string[] responses)
+    private static (MakerEvaluationAdapter Adapter, RecordingHandler Handler, StubTokens Tokens) Create(params string[] responses) => Create(CloudMap, CoreServicesClusterCategory.Prod, responses);
+
+    private static (MakerEvaluationAdapter Adapter, RecordingHandler Handler, StubTokens Tokens) Create(PowerPlatformCloudMap cloudMap, CoreServicesClusterCategory cluster, params string[] responses)
     {
         var handler = new RecordingHandler(responses);
         var tokens = new StubTokens();
 
-        return (new MakerEvaluationAdapter(tokens, CloudMap, () => handler), handler, tokens);
+        return (new MakerEvaluationAdapter(tokens, cloudMap, cluster, () => handler), handler, tokens);
     }
 
     [Fact]
     public async Task ListRuns_RefusesANotFoundRatherThanReportingNoRuns()
     {
         var handler = new RecordingHandler(["{}"], HttpStatusCode.NotFound);
-        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, () => handler);
+        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, CoreServicesClusterCategory.Prod, () => handler);
 
         await Assert.ThrowsAsync<CopilotStudioException>(() => adapter.ListRunsAsync(Context(), BotId, 20, CancellationToken.None));
     }
@@ -62,7 +64,7 @@ public sealed class MakerEvaluationAdapterTests
     public async Task ListTestSets_RefusesANotFoundRatherThanReportingNoTestSets()
     {
         var handler = new RecordingHandler(["{}"], HttpStatusCode.NotFound);
-        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, () => handler);
+        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, CoreServicesClusterCategory.Prod, () => handler);
 
         await Assert.ThrowsAsync<CopilotStudioException>(() => adapter.ListTestSetsAsync(Context(), BotId, CancellationToken.None));
     }
@@ -78,15 +80,19 @@ public sealed class MakerEvaluationAdapterTests
         await Assert.ThrowsAsync<CopilotStudioException>(() => adapter.ListTestSetsAsync(Context(), BotId, CancellationToken.None));
     }
 
-    [Fact]
-    public async Task ListRuns_RequestsTheIslandDelegatedScopeForTheEnvironmentTenant()
+    [Theory]
+    [InlineData(CoreServicesClusterCategory.Prod, Gateway, "api://96ff4394-9197-43aa-b393-6a41652e21f8/user_impersonation")]
+    [InlineData(CoreServicesClusterCategory.Test, "https://powervamg.us-il106.gateway.test.island.powerapps.com/", "api://a522f059-bb65-47c0-8934-7db6e5286414/user_impersonation")]
+    [InlineData(CoreServicesClusterCategory.Mooncake, "https://powervamg.cn-il101.gateway.prod.island.powerapps.cn/", "api://96ff4394-9197-43aa-b393-6a41652e21f8/user_impersonation")]
+    public async Task ListRuns_RequestsTheDelegatedScopeOfTheClustersControlPlaneForTheEnvironmentTenant(CoreServicesClusterCategory cluster, string gateway, string scope)
     {
-        var (adapter, _, tokens) = Create("[]");
+        var (adapter, handler, tokens) = Create(CloudMap, cluster, "[]");
 
-        await adapter.ListRunsAsync(Context(), BotId, 20, CancellationToken.None);
+        await adapter.ListRunsAsync(Context(gateway), BotId, 20, CancellationToken.None);
 
-        Assert.Equal(["api://96ff4394-9197-43aa-b393-6a41652e21f8/user_impersonation"], tokens.RequestedScopes);
+        Assert.Equal([scope], tokens.RequestedScopes);
         Assert.Equal(TenantId, tokens.RequestedTenantId);
+        Assert.StartsWith($"{gateway}{Base}", Assert.Single(handler.Requests).Url, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -208,9 +214,8 @@ public sealed class MakerEvaluationAdapterTests
     public async Task GetRun_ReturnsNullWhenTheServiceDoesNotKnowTheRun()
     {
         var handler = new RecordingHandler([], HttpStatusCode.NotFound);
-        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, () => handler);
 
-        Assert.Null(await adapter.GetRunAsync(Context(), BotId, RunId, CancellationToken.None));
+        Assert.Null(await new MakerEvaluationAdapter(new StubTokens(), CloudMap, CoreServicesClusterCategory.Prod, () => handler).GetRunAsync(Context(), BotId, RunId, CancellationToken.None));
     }
 
     [Fact]
@@ -270,7 +275,7 @@ public sealed class MakerEvaluationAdapterTests
     public async Task CreateTestSet_ReturnsTheIdTheServiceAssignedToTheSchemaNameItSent()
     {
         var handler = new RecordingHandler([]);
-        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, () => handler);
+        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, CoreServicesClusterCategory.Prod, () => handler);
 
         handler.Respond(request => """{"addedComponentsIdsBySchemaName":{"PLACEHOLDER":"testset-1"}}""".Replace("PLACEHOLDER", SchemaNameOf(request), StringComparison.Ordinal));
 
@@ -395,9 +400,8 @@ public sealed class MakerEvaluationAdapterTests
     public async Task GetTestSet_ReportsAbsenceWhenTheDetailsAreGone()
     {
         var handler = new RecordingHandler(["{}"], HttpStatusCode.NotFound);
-        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, () => handler);
 
-        Assert.Null(await adapter.GetTestSetAsync(Context(), BotId, Summary(), CancellationToken.None));
+        Assert.Null(await new MakerEvaluationAdapter(new StubTokens(), CloudMap, CoreServicesClusterCategory.Prod, () => handler).GetTestSetAsync(Context(), BotId, Summary(), CancellationToken.None));
     }
 
     [Fact]
@@ -427,7 +431,7 @@ public sealed class MakerEvaluationAdapterTests
     public async Task AnyVerb_MapsEveryServiceFailureToATypedFailure(HttpStatusCode status)
     {
         var handler = new RecordingHandler(["""{"Error":{"Code":"failed","Message":"Evaluation run not found."}}"""], status);
-        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, () => handler);
+        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, CoreServicesClusterCategory.Prod, () => handler);
 
         await Assert.ThrowsAsync<CopilotStudioException>(() => adapter.DeleteRunAsync(Context(), BotId, "run-9", CancellationToken.None));
     }
@@ -436,7 +440,7 @@ public sealed class MakerEvaluationAdapterTests
     public async Task AnyVerb_KeepsTheTokenOutOfTheFailureMessage()
     {
         var handler = new RecordingHandler(["""{"Error":{"Code":"failed","Message":"Evaluation run not found."}}"""], HttpStatusCode.NotFound);
-        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, () => handler);
+        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, CoreServicesClusterCategory.Prod, () => handler);
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => adapter.DeleteRunAsync(Context(), BotId, "run-9", CancellationToken.None));
 
@@ -638,7 +642,7 @@ public sealed class MakerEvaluationAdapterTests
     public async Task GenerateConversations_FailsWhenTheServiceAnswersNotFound()
     {
         var handler = new RecordingHandler(["{}"], HttpStatusCode.NotFound);
-        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, () => handler);
+        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, CoreServicesClusterCategory.Prod, () => handler);
 
         await Assert.ThrowsAsync<CopilotStudioException>(() => adapter.GenerateConversationsAsync(Context(), BotId, 10, 3, "1033", CancellationToken.None));
     }
@@ -703,7 +707,7 @@ public sealed class MakerEvaluationAdapterTests
     public async Task AnyVerb_SurfacesTheServiceFailureMessage()
     {
         var handler = new RecordingHandler(["""{"Error":{"Code":"internalservererror","Message":"System Error occurred."}}"""], HttpStatusCode.InternalServerError);
-        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, () => handler);
+        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, CoreServicesClusterCategory.Prod, () => handler);
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => adapter.ListRunsAsync(Context(), BotId, 20, CancellationToken.None));
 
@@ -719,16 +723,48 @@ public sealed class MakerEvaluationAdapterTests
     }
 
     [Theory]
-    [InlineData("https://powervamg.us-il301.gateway.prod.island.powerapps.com.attacker.example/")]
-    [InlineData("https://notisland.powerapps.com/")]
-    [InlineData("http://powervamg.us-il301.gateway.prod.island.powerapps.com/")]
-    [InlineData("https://powervamg.us-il301.gateway.prod.island.powerapps.com:8443/")]
-    public async Task AnyVerb_RefusesAGatewayThisCloudDoesNotServe(string gateway)
+    [InlineData("https://powervamg.us-il301.gateway.prod.island.powerapps.com.attacker.example/", CoreServicesClusterCategory.Prod)]
+    [InlineData("https://notisland.powerapps.com/", CoreServicesClusterCategory.Prod)]
+    [InlineData("http://powervamg.us-il301.gateway.prod.island.powerapps.com/", CoreServicesClusterCategory.Prod)]
+    [InlineData("https://powervamg.us-il301.gateway.prod.island.powerapps.com:8443/", CoreServicesClusterCategory.Prod)]
+    [InlineData("https://island.powerapps.com.attacker.example/", CoreServicesClusterCategory.Prod)]
+    [InlineData("https://api.powerplatform.com/", CoreServicesClusterCategory.Prod)]
+    [InlineData("https://powervamg.cn-il101.gateway.prod.island.powerapps.cn/", CoreServicesClusterCategory.Prod)]
+    [InlineData(Gateway, CoreServicesClusterCategory.Mooncake)]
+    [InlineData("https://powervamg.us-il101.gateway.gov.island.powerapps.us/", CoreServicesClusterCategory.Test)]
+    public async Task AnyVerb_RefusesAGatewayThisCloudDoesNotServe(string gateway, CoreServicesClusterCategory cluster)
     {
-        var (adapter, handler, _) = Create("[]");
+        var (adapter, handler, tokens) = Create(CloudMap, cluster, "[]");
 
-        await Assert.ThrowsAnyAsync<Exception>(() => adapter.ListRunsAsync(Context(gateway), BotId, 20, CancellationToken.None));
+        await Assert.ThrowsAsync<EndpointTrustException>(() => adapter.ListRunsAsync(Context(gateway), BotId, 20, CancellationToken.None));
         Assert.Empty(handler.Requests);
+        Assert.Null(tokens.RequestedScopes);
+    }
+
+    [Theory]
+    [InlineData("https://island.powerapps.com/", CoreServicesClusterCategory.Prod)]
+    [InlineData("https://powervamg.us-il106.gateway.test.island.powerapps.com/", CoreServicesClusterCategory.Prod)]
+    [InlineData("https://island.powerapps.cn/", CoreServicesClusterCategory.Mooncake)]
+    public async Task AnyVerb_SendsToAnyGatewayOnTheDomainOfTheClustersControlPlane(string gateway, CoreServicesClusterCategory cluster)
+    {
+        var (adapter, handler, _) = Create(CloudMap, cluster, "[]");
+
+        await adapter.ListRunsAsync(Context(gateway), BotId, 20, CancellationToken.None);
+
+        Assert.StartsWith($"{gateway}{Base}", Assert.Single(handler.Requests).Url, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(CloudInstance.Public, CoreServicesClusterCategory.Prod, "The environment 'env-1' Copilot Studio agent-management endpoint 'https://attacker.example.com' is not a trusted Public Power Platform host. Trusted hosts end with: island.powerapps.com.")]
+    [InlineData(CloudInstance.China, CoreServicesClusterCategory.Mooncake, "The environment 'env-1' Copilot Studio agent-management endpoint 'https://attacker.example.com' is not a trusted China Power Platform host. Trusted hosts end with: island.powerapps.cn.")]
+    public async Task AnyVerb_NamesTheEnvironmentAndTheTrustedDomainOfARefusedGateway_WithoutEchoingThePath(CloudInstance cloud, CoreServicesClusterCategory cluster, string message)
+    {
+        var (adapter, _, _) = Create(PowerPlatformCloudMap.ForCloud(cloud), cluster, "[]");
+
+        var failure = await Assert.ThrowsAsync<EndpointTrustException>(() => adapter.ListRunsAsync(Context("https://attacker.example.com/secret-path"), BotId, 20, CancellationToken.None));
+
+        Assert.Equal(message, failure.Message);
+        Assert.Equal("Re-run `msagent env list` to refresh the environment inventory; if the endpoint is still untrusted the inventory response cannot be used and the selection must not proceed.", failure.Remediation);
     }
 
     private static EvaluationConversation Conversation(string question, string? response = null) =>

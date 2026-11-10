@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "McsRepositoryNotSupported",
+    "message": "Repository 'cccccccc-3333-4333-8333-000000000013' cannot hold Microsoft Copilot Studio agents. The repository must be a git source repository in the agent's environment and contain no '.mcs' folder on any branch."
+  }
+}

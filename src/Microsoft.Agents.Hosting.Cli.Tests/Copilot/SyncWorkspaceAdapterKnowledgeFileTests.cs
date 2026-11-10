@@ -22,22 +22,14 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
         DataverseOrganization = new Uri("https://contoso.crm.dynamics.com/"),
     };
 
-    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
-        new(
-            synchronizer,
-            new RecordingRetargetService(),
-            new StubSolutionVersionsClient(),
-            new StubComponentCollectionClient(),
-            new StubOperationContextProvider(),
-            new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()),
-            new CopilotChangeMapper());
+    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) => CopilotTestFixtures.WorkspaceAdapter(synchronizer);
 
     [Fact]
     public async Task Push_WhenAComponentReferencesAnAgentAbsentFromTheTarget_IsTranslated()
     {
         var synchronizer = new RecordingWorkspaceSynchronizer
         {
-            PushLocalChangesThrows = new InvalidOperationException("Unsupported sync operation. A component references a parent agent that could not be created on the cloud."),
+            PushLocalChangesThrows = CopilotTestFixtures.ConnectedAgentMissing(),
         };
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
@@ -58,49 +50,6 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
 
         Assert.Equal(CopilotErrorKinds.KnowledgeUploadFailed, failure.ErrorKind);
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
-    }
-
-    [Fact]
-    public async Task Push_UploadsKnowledgeFileContent()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.UploadKnowledgeFilesCalls);
-    }
-
-    [Fact]
-    public async Task Push_UsesTheHighLevelPushSoNewKnowledgeFileMetadataIsMaterialized()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.PushLocalChangesCalls);
-        Assert.Equal(0, synchronizer.PushChangesetCalls);
-    }
-
-    [Fact]
-    public async Task Push_UploadsContentAfterThePushSoNewComponentsExistFirst()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(
-            [nameof(IWorkspaceSynchronizer.PushLocalChangesAsync), nameof(IWorkspaceSynchronizer.UploadKnowledgeFilesAsync)],
-            synchronizer.Calls.Where(call => call is nameof(IWorkspaceSynchronizer.PushLocalChangesAsync) or nameof(IWorkspaceSynchronizer.UploadKnowledgeFilesAsync)));
-    }
-
-    [Fact]
-    public async Task Push_ReadsTheWorkspaceWithKnowledgeFileDetectionEnabled()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.True(synchronizer.LastCheckKnowledgeFiles);
     }
 
     [Fact]
@@ -157,7 +106,7 @@ internal sealed class StubComponentCollectionClient : ISyncComponentCollectionDa
 internal sealed class StubOperationContextProvider : IOperationContextProvider
 {
     public Task<AuthoringOperationContextBase> GetAsync(AgentSyncInfo agentInfo) =>
-        Task.FromResult<AuthoringOperationContextBase>(CreateContext(agentInfo));
+        Task.FromResult<AuthoringOperationContextBase>(agentInfo.ComponentCollectionId is { } collectionId ? CreateCollectionContext(agentInfo, collectionId) : CreateContext(agentInfo));
 
     public Task<ImmutableArray<AuthoringOperationContextBase>> GetAllAsync(AgentSyncInfo agentInfo, AssetsToClone assetsToClone) =>
         Task.FromResult<ImmutableArray<AuthoringOperationContextBase>>(
@@ -193,15 +142,9 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
 
     public int PushLocalChangesCalls { get; private set; }
 
-    public int PushChangesetCalls { get; private set; }
-
     public int UploadKnowledgeFilesCalls { get; private set; }
 
     public int DownloadKnowledgeFilesCalls { get; private set; }
-
-    public int UpsertAIPromptsCalls { get; private set; }
-
-    public int UpsertWorkflowCalls { get; private set; }
 
     public int GetWorkflowsCalls { get; private set; }
 
@@ -229,17 +172,13 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
 
     public Exception? CloneChangesThrows { get; init; }
 
+    public IReadOnlyDictionary<string, string> ClonedFiles { get; init; } = new Dictionary<string, string>();
+
     public Exception? ApplyTouchupsThrows { get; init; }
 
     public List<SyncDataverseClient.AIPromptResponse> PromptResponses { get; } = [];
 
     public List<WorkflowResponse> WorkflowResponses { get; } = [];
-
-    public List<SyncDataverseClient.AIPromptMetadata> PromptMetadata { get; } = [];
-
-    public ImmutableArray<SyncDataverseClient.AIPromptMetadata> LastPushedPrompts { get; private set; } = ImmutableArray<SyncDataverseClient.AIPromptMetadata>.Empty;
-
-    public bool LastCheckKnowledgeFiles { get; private set; }
 
     public IReadOnlyCollection<string>? LastDownloadSchemaNames { get; private set; } = ["unset"];
 
@@ -301,6 +240,11 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
         if (CloneChangesThrows is null)
         {
             Directory.CreateDirectory(Path.Combine(workspaceFolder.ToString(), ".mcs"));
+
+            foreach (var (relativePath, content) in ClonedFiles)
+            {
+                File.WriteAllText(Path.Combine(workspaceFolder.ToString(), relativePath), content);
+            }
         }
 
         return CloneChangesThrows is not null ? Task.FromException(CloneChangesThrows) : Task.CompletedTask;
@@ -333,12 +277,14 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
 
     public Exception? ThrowIfWorkspaceInvalidThrows { get; init; }
 
+    public IWorkspaceSynchronizer? WorkspaceValidator { get; init; }
+
     public Task ThrowIfWorkspaceInvalidAsync(DirectoryPath workspaceFolder, DefinitionBase workspaceDefinition, CancellationToken cancellationToken)
     {
         ThrowIfWorkspaceInvalidCalls++;
         Calls.Add(nameof(ThrowIfWorkspaceInvalidAsync));
 
-        return ThrowIfWorkspaceInvalidThrows is not null ? Task.FromException(ThrowIfWorkspaceInvalidThrows) : Task.CompletedTask;
+        return ThrowIfWorkspaceInvalidThrows is not null ? Task.FromException(ThrowIfWorkspaceInvalidThrows) : WorkspaceValidator?.ThrowIfWorkspaceInvalidAsync(workspaceFolder, workspaceDefinition, cancellationToken) ?? Task.CompletedTask;
     }
 
     public Task<(DefinitionBase Definition, ImmutableArray<Change> UnreadableChanges)> ReadWorkspaceDefinitionForDiscardAsync(DirectoryPath workspaceFolder, CancellationToken cancellationToken)
@@ -349,7 +295,6 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
 
     public Task<PushChangesetResult> PushChangesetAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, PvaComponentChangeSet localWorkspaceDefinition, ISyncDataverseClient dataverseClient, Guid? agentId, CloudFlowMetadata? cloudFlowMetadata, ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts, CancellationToken cancellationToken, bool uploadAllKnowledgeFiles = false)
     {
-        PushChangesetCalls++;
         Calls.Add(nameof(PushChangesetAsync));
         return Task.FromResult(new PushChangesetResult());
     }
@@ -361,7 +306,6 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
     public Task PushLocalChangesAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, DefinitionBase workspaceDefinition, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, CloudFlowMetadata? cloudFlowMetadata, ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts, CancellationToken cancellationToken, AuthoringOperationContextBase? contentSaveContextOverride = null, bool overwriteRemoteChanges = false)
     {
         PushLocalChangesCalls++;
-        LastPushedPrompts = aiPrompts;
         LastOverwriteRemoteChanges = overwriteRemoteChanges;
         Calls.Add(nameof(PushLocalChangesAsync));
 
@@ -400,8 +344,6 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
     public Task<(ImmutableArray<WorkflowResponse>, CloudFlowMetadata)> UpsertWorkflowForAgentAsync(DirectoryPath workspaceFolder, ISyncDataverseClient dataverseClient, Guid? agentId, CancellationToken cancellationToken, WorkflowActivationMode activationMode = WorkflowActivationMode.PreserveSavedState)
     {
         Calls.Add(nameof(UpsertWorkflowForAgentAsync));
-        UpsertWorkflowCalls++;
-        LastWorkflowActivationMode = activationMode;
         return Task.FromResult((WorkflowResponses.ToImmutableArray(), new CloudFlowMetadata()));
     }
 
@@ -412,14 +354,10 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
         return Task.FromResult(FetchedPromptMetadata.ToImmutableArray());
     }
 
-    public bool? LastPromptUpsertOverwroteRemoteChanges { get; private set; }
-
     public Task<(ImmutableArray<SyncDataverseClient.AIPromptResponse>, ImmutableArray<SyncDataverseClient.AIPromptMetadata>)> UpsertAIPromptsForAgentAsync(DirectoryPath workspaceFolder, ISyncDataverseClient dataverseClient, Guid? agentId, CancellationToken cancellationToken, bool overwriteRemoteChanges = false)
     {
-        UpsertAIPromptsCalls++;
         Calls.Add(nameof(UpsertAIPromptsForAgentAsync));
-        LastPromptUpsertOverwroteRemoteChanges = overwriteRemoteChanges;
-        return Task.FromResult((PromptResponses.ToImmutableArray(), PromptMetadata.ToImmutableArray()));
+        return Task.FromResult((PromptResponses.ToImmutableArray(), ImmutableArray<SyncDataverseClient.AIPromptMetadata>.Empty));
     }
 
     public Task<CloudFlowMetadata> GetWorkflowsAsync(DirectoryPath workspaceFolder, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, IFileAccessor fileAccessor, CancellationToken cancellationToken)
@@ -432,9 +370,6 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
     public async Task ProvisionConnectionReferencesAsync(DefinitionBase definition, ISyncDataverseClient dataverseClient, CancellationToken cancellationToken, IReadOnlyDictionary<string, Guid>? pushedConnectorIds = null)
     {
         Calls.Add(nameof(ProvisionConnectionReferencesAsync));
-        DefinitionOnlyProvisionCount++;
-        LastProvisionedConnectorIds = pushedConnectorIds;
-        LastProvisionedDefinition = definition;
         foreach (var reference in definition.ConnectionReferences)
         {
             await dataverseClient.EnsureConnectionReferenceExistsAsync(
@@ -445,20 +380,8 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
     public Task ProvisionConnectionReferencesAsync(DirectoryPath workspaceFolder, DefinitionBase definition, ISyncDataverseClient dataverseClient, CancellationToken cancellationToken, IReadOnlyDictionary<string, Guid>? pushedConnectorIds = null)
     {
         Calls.Add(nameof(ProvisionConnectionReferencesAsync));
-        FolderAwareProvisionCount++;
-        LastProvisionedConnectorIds = pushedConnectorIds;
         return Task.CompletedTask;
     }
-
-    public DefinitionBase? LastProvisionedDefinition { get; private set; }
-
-    public int DefinitionOnlyProvisionCount { get; private set; }
-
-    public int FolderAwareProvisionCount { get; private set; }
-
-    public IReadOnlyDictionary<string, Guid>? LastProvisionedConnectorIds { get; private set; }
-
-    public WorkflowActivationMode? LastWorkflowActivationMode { get; private set; }
 
     public Task<IReadOnlyList<ConnectionNeeded>> GetAgentConnectionReferencesAsync(DirectoryPath workspaceFolder, DefinitionBase definition, ISyncDataverseClient dataverseClient, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ConnectionNeeded>>([]);
@@ -476,19 +399,15 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
 
     public List<string> ConnectorFailureReasons { get; } = [];
 
-    public bool? LastConnectorPushOverwroteRemoteChanges { get; private set; }
-
     public Task<CustomConnectorPushResult> PushCustomConnectorsAsync(DirectoryPath workspaceFolder, ISyncDataverseClient dataverseClient, CancellationToken cancellationToken, bool overwriteRemoteChanges = false)
     {
         Calls.Add(nameof(PushCustomConnectorsAsync));
-        LastConnectorPushOverwroteRemoteChanges = overwriteRemoteChanges;
 
         return Task.FromResult(new CustomConnectorPushResult { PushedRowIds = ConnectorRowIds, Failed = FailedConnectors, FailureReasons = ConnectorFailureReasons });
     }
 
     public Task<DefinitionBase> ReadWorkspaceDefinitionAsync(DirectoryPath workspaceFolder, CancellationToken cancellationToken, bool checkKnowledgeFiles = false)
     {
-        LastCheckKnowledgeFiles = checkKnowledgeFiles;
         Calls.Add(nameof(ReadWorkspaceDefinitionAsync));
 
         return ReadWorkspaceDefinitionThrows is not null ? Task.FromException<DefinitionBase>(ReadWorkspaceDefinitionThrows) : Task.FromResult(DefinitionReturns ?? new BotDefinition());

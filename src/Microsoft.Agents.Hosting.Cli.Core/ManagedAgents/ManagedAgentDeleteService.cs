@@ -18,6 +18,7 @@ public sealed class ManagedAgentDeleteService
     private readonly ICopilotCatalogPort _catalog;
     private readonly CopilotProjectIdentityReader _projectIdentities;
     private readonly IConfirmationPrompt _confirmations;
+    private readonly IAgentRecordMirror _mirror;
 
     /// <summary>Creates the service.</summary>
     /// <param name="resolver">Resolves records from selectors.</param>
@@ -27,7 +28,8 @@ public sealed class ManagedAgentDeleteService
     /// <param name="catalog">Resolves and deletes the cloud agent.</param>
     /// <param name="projectIdentities">Reads the project's declared schema name.</param>
     /// <param name="confirmations">Confirms the delete with the operator.</param>
-    public ManagedAgentDeleteService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, CopilotWorkspaceLocator workspaceLocator, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, CopilotProjectIdentityReader projectIdentities, IConfirmationPrompt confirmations)
+    /// <param name="mirror">Deletes AMS's records of the agent first, in AMS mode.</param>
+    public ManagedAgentDeleteService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, CopilotWorkspaceLocator workspaceLocator, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, CopilotProjectIdentityReader projectIdentities, IConfirmationPrompt confirmations, IAgentRecordMirror? mirror = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
@@ -36,6 +38,7 @@ public sealed class ManagedAgentDeleteService
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
         _confirmations = confirmations ?? throw new ArgumentNullException(nameof(confirmations));
+        _mirror = mirror ?? NoAgentRecordMirror.Instance;
     }
 
     /// <summary>Deletes the agent's cloud resources and its records.</summary>
@@ -78,13 +81,13 @@ public sealed class ManagedAgentDeleteService
             await _catalog.DeleteAgentAsync(target.Environment, target.AgentId, cancellationToken).ConfigureAwait(false);
         }
 
-        int removed;
+        AgentRecordMirrored<int> removed;
 
         cancellationToken.ThrowIfCancellationRequested();
 
         try
         {
-            removed = _agents.RemoveWithDeployments(projectDirectory, agent.AgentId, agent.EntityTag);
+            removed = await _mirror.ApplyAsync(projectDirectory, new AgentDeleted(agent), () => _agents.RemoveWithDeployments(projectDirectory, agent.AgentId, agent.EntityTag), cancellationToken).ConfigureAwait(false);
         }
         catch (Exception failure) when (target is not null && failure is not OperationCanceledException)
         {
@@ -99,8 +102,11 @@ public sealed class ManagedAgentDeleteService
             EnvironmentId = target?.EnvironmentId,
             DeploymentId = matchingDeployment?.DeploymentId,
             McsAgentAlreadyAbsent = target is null,
-            RemovedAgentDeployments = removed,
+            RemovedAgentDeployments = removed.Value,
             OrphanedTargets = orphaned,
+            Warnings = removed.Warning is null ? [] : [removed.Warning],
+            AmsRecordDeleted = removed.Mirrored ? true : null,
+            RepositoryId = removed.Mirrored ? agent.SourceControlMetadata?.RepositoryId : null,
         };
     }
 

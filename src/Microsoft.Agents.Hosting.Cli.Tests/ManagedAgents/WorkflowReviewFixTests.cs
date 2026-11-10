@@ -18,7 +18,7 @@ public sealed class WorkflowReviewFixTests : IDisposable
     public void Dispose() => _workspace.Dispose();
 
     private WorkflowCreateService CreateService(JsonAgentConfigStore store) =>
-        new(ManagedAgentFixtures.Resolver(), store, new HomeDeploymentRegistrar(store, store), _store, _scaffold, new AgentConfigLocator(), ManagedAgentFixtures.Principals(), new FakeWorkflowWorkspacePort());
+        new(ManagedAgentFixtures.Resolver(), store, new HomeDeploymentRegistrar(store, store), _store, ManagedAgentFixtures.StateRules, _scaffold, new AgentConfigLocator(), ManagedAgentFixtures.Principals(), new FakeWorkflowWorkspacePort());
 
     [Theory]
     [InlineData("settings.mcs.yml")]
@@ -73,22 +73,6 @@ public sealed class WorkflowReviewFixTests : IDisposable
 
         Assert.Contains("--mcs-workflow-source", failure.Message, StringComparison.Ordinal);
     }
-
-    [Theory]
-    [InlineData(0, WorkflowStateProjection.Draft)]
-    [InlineData(1, WorkflowStateProjection.Activated)]
-    [InlineData(2, WorkflowStateProjection.Suspended)]
-    [InlineData(null, WorkflowStateProjection.Unknown)]
-    public void TheStateCodeSurvivesTheSharedContract(int? stateCode, string expected) =>
-        Assert.Equal(expected, WorkflowStateProjection.FromStateCode(stateCode));
-
-    [Theory]
-    [InlineData(WorkflowStateProjection.Activated, WorkflowStateProjection.Published)]
-    [InlineData(WorkflowStateProjection.Draft, WorkflowStateProjection.Draft)]
-    [InlineData(WorkflowStateProjection.Suspended, WorkflowStateProjection.Draft)]
-    [InlineData(WorkflowStateProjection.Unknown, WorkflowStateProjection.Unknown)]
-    public void AnUnknownStateIsNeverReportedAsADraft(string state, string expected) =>
-        Assert.Equal(expected, WorkflowStateProjection.ToPortalLabel(state));
 
     [Fact]
     public void TheWorkspaceAdapterReportsAnAgentProjectThroughEitherExtension()

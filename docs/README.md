@@ -10,6 +10,7 @@ All docs live in the [AgentHosting.Cli repo](https://github.com/microsoft/AgentH
 | Connections | [Working with connections, locally](Working%20with%20connections%2C%20locally.md) |
 | Source control | [Source Control with msagent cli](Source%20Control%20with%20msagent%20cli.md) |
 | Deploy | [Deploying your Agent](Deploying%20your%20Agent%20from%20your%20local%20machine.md) |
+| AMS mode | [Managing agents with AMS](Managing%20agents%20with%20AMS.md) |
 | Test | [Testing your Agent](Testing%20your%20Agent%20from%20your%20local%20machine.md) |
 | Coding agent rules | [Additional coding agent instructions](Additional%20coding%20agent%20instructions.md) |
 

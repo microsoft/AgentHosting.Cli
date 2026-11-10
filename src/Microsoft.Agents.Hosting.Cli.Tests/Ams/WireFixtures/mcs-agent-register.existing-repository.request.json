@@ -1,0 +1,18 @@
+{
+  "agentId": "aaaaaaaa-1111-4111-8111-000000000001",
+  "displayName": "Contoso HR",
+  "description": "HR helper",
+  "agentType": "MCSAgent",
+  "origin": "AgentHostCLI",
+  "mcs": {
+    "schemaName": "cr1a2_contosoHr",
+    "authoringShape": "cliagent"
+  },
+  "sourceControl": {
+    "repository": "Existing",
+    "repositoryId": "cccccccc-3333-4333-8333-000000000003",
+    "branch": "main",
+    "agentFolder": "ContosoHR"
+  },
+  "deployments": []
+}

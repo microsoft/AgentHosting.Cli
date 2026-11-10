@@ -116,6 +116,7 @@ public sealed class CommandSurfaceSnapshotTests
     public void EveryGroupChildSetIsPinned()
     {
         Assert.Equal(["login", "status", "switch", "logout"], Children(Help("auth")));
+        Assert.Equal(["login", "status", "switch", "logout", "setup-git"], Children(Help(TestFeatureFlags.Everything, "auth")));
         Assert.Equal(["list", "select"], Children(Help("env")));
         Assert.Equal(["package", "create", "init", "list", "show", "pull", "delete", "deploy", "share", "unshare"], Children(Help("agent")));
         Assert.Equal(["show"], Children(Help("agent", "share")));

@@ -1,22 +1,25 @@
 using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Core.Environments;
 
 namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 
 public sealed class ConnectionProbe
 {
-    private const string PowerAppsHost = "api.powerapps.com";
-    private const string PowerAppsResource = "https://service.powerapps.com/";
     private const string ConnectedStatus = "Connected";
     private const int PageLimit = 50;
 
-    private readonly AzTokens _tokens;
+    private readonly IAccessTokens _tokens;
     private readonly Transcript _transcript;
     private readonly SessionCache<string, IReadOnlySet<string>> _usable = new();
+    private readonly PowerPlatformApiTargetConfig _target;
+    private readonly HttpMessageInvoker? _client;
 
-    public ConnectionProbe(AzTokens tokens, Transcript transcript)
+    public ConnectionProbe(IAccessTokens tokens, Transcript transcript, PowerPlatformApiTargetConfig? target = null, HttpMessageInvoker? client = null)
     {
         _tokens = tokens;
         _transcript = transcript;
+        _target = target ?? PowerPlatformApiTargetConfig.Public;
+        _client = client;
     }
 
     public Task<IReadOnlySet<string>> UsableConnectorsAsync(string environmentId, CancellationToken cancellationToken) => _usable.GetAsync(environmentId, () => ListUsableAsync(environmentId, cancellationToken));
@@ -25,18 +28,18 @@ public sealed class ConnectionProbe
     {
         DataverseProbe.RequireSafeSegment(environmentId, "environment id");
 
-        var token = await _tokens.TokenAsync(PowerAppsResource, cancellationToken).ConfigureAwait(false);
+        var token = await _tokens.TokenAsync(_target.Audience, cancellationToken).ConfigureAwait(false);
         var signedIn = SignedInUser(token);
         var usable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        Uri? next = new($"https://{PowerAppsHost}/providers/Microsoft.PowerApps/connections?api-version=2016-11-01&$filter=environment%20eq%20%27{environmentId}%27");
+        Uri? next = new(PowerPlatformApiDiscovery.GetEnvironmentEndpoint(_target, environmentId), $"connectivity/connections?api-version=1&$filter=environment%20eq%20%27{environmentId}%27");
 
         for (var page = 0; next is not null && page < PageLimit; page++)
         {
-            var response = await OracleHttp.GetAsync(next, token, _transcript, cancellationToken).ConfigureAwait(false);
+            var response = await OracleHttp.GetAsync(next, token, _transcript, cancellationToken, _client).ConfigureAwait(false);
 
             if (!response.Ok)
             {
-                throw new E2EException($"The Power Apps API refused the connection listing: {(int)response.Status}.");
+                throw new E2EException($"The Power Platform API refused the connection listing: {(int)response.Status}.");
             }
 
             using var document = JsonDocument.Parse(response.Body);
@@ -47,7 +50,7 @@ public sealed class ConnectionProbe
                 usable.UnionWith(connections.EnumerateArray().Select(connection => UsableConnector(Property(connection, "properties"), signedIn)).OfType<string>());
             }
 
-            next = OracleHttp.NextPage(Text(root, "nextLink"), next, "Power Apps");
+            next = OracleHttp.NextPage(Text(root, "nextLink"), next, "Power Platform");
         }
 
         return usable;
@@ -62,20 +65,7 @@ public sealed class ConnectionProbe
             : null;
     }
 
-    private static string SignedInUser(string token)
-    {
-        var parts = token.Split('.');
-
-        if (parts.Length != 3)
-        {
-            throw new E2EException("az returned a Power Apps token that is not a JWT.");
-        }
-
-        var payload = parts[1].Replace('-', '+').Replace('_', '/');
-        using var document = JsonDocument.Parse(Convert.FromBase64String(payload.PadRight(payload.Length + ((4 - (payload.Length % 4)) % 4), '=')));
-
-        return Text(document.RootElement, "upn") ?? Text(document.RootElement, "unique_name") ?? throw new E2EException("The Power Apps token names no signed-in user.");
-    }
+    private static string SignedInUser(string token) => AccessTokenPayload.Read(token) is { } payload ? Text(payload, "upn") ?? Text(payload, "unique_name") ?? throw new E2EException("The Power Platform API token names no signed-in user.") : throw new E2EException("The Power Platform API token is not a JWT.");
 
     private static JsonElement Property(JsonElement element, string name) => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) ? value : default;
 

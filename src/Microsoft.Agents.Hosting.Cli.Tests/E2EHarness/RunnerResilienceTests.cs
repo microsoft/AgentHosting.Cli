@@ -16,9 +16,9 @@ public sealed class RunnerResilienceTests : IDisposable
         }
     }
 
-    private RunContext Context()
+    private RunContext Context(AmsMcsServices? amsMcs = null, E2EConfig? configuration = null)
     {
-        var config = new E2EConfig();
+        var config = configuration ?? new E2EConfig();
         var transcript = new Transcript(_runDirectory);
         var msagent = new MsagentCli("msagent", transcript, Path.Combine(_runDirectory, "dumps"));
         var azure = new AzureCli(transcript);
@@ -40,6 +40,7 @@ public sealed class RunnerResilienceTests : IDisposable
             Session = new SessionResources(),
             Transcript = transcript,
             Reporter = new Reporter(useColour: false),
+            AmsMcs = amsMcs,
         };
     }
 
@@ -83,5 +84,46 @@ public sealed class RunnerResilienceTests : IDisposable
         await new Runner(run, TimeSpan.FromMinutes(1)).RunAsync([scenario], CancellationToken.None);
 
         Assert.Contains(run.Ledger.Entries, entry => entry.Kind == ResourceKind.LocalWorkspace);
+    }
+
+    [Fact]
+    public async Task AScenarioSeesTheRunsAmsServices()
+    {
+        var transcript = new Transcript(_runDirectory);
+        var services = new AmsMcsServices(new AmsMcsConfig(), "test-run", new MsagentCli("msagent", transcript, Path.Combine(_runDirectory, "dumps")), transcript, new FakeTokens());
+        AmsMcsServices? seen = null;
+
+        await new Runner(Context(services), TimeSpan.FromMinutes(1)).RunAsync([ScenarioThat(context => { seen = context.AmsMcs; return Task.CompletedTask; })], CancellationToken.None);
+
+        Assert.Same(services, seen);
+    }
+
+    [Fact]
+    public async Task AStoppedRingGuardBlocksEveryLaterAmsScenarioWithItsOwnReasonAndListsOnce()
+    {
+        var config = new E2EConfig { AmsMcs = AmsMcsTestKit.Config() };
+        var transcript = new Transcript(_runDirectory);
+        var msagent = new FakeMsagent().Answer("env list", string.Empty, exitCode: 1);
+        var services = new AmsMcsServices(config.AmsMcs, "test-run", msagent.Cli(transcript, _runDirectory), transcript, new FakeTokens());
+        var scenario = ScenarioThat(context => context.AmsMcs!.EnsureRingAsync(context.Ledger, context.ScenarioId, context.CancellationToken)) with { Feature = AmsMcsServices.Feature, Requires = [Capability.AmsMcs, Capability.AmsMcsRing] };
+
+        var results = await new Runner(Context(services, config), TimeSpan.FromMinutes(1)).RunAsync([scenario with { Id = "AM-02" }, scenario with { Id = "AM-03" }], CancellationToken.None);
+
+        Assert.Equal([Outcome.Blocked, Outcome.Blocked], results.Select(result => result.Outcome));
+        Assert.All(results, result => Assert.Equal("The test-ring guard stopped before changing anything: msagent env list exited 1.", result.Reason));
+        Assert.All(results, result => Assert.Equal("the test ring", result.BlockedCause));
+        Assert.Single(msagent.CallsTo("env list"));
+    }
+
+    [Fact]
+    public async Task AHungCommandEndsAsAnErrorNamingTheCommandAndItsTimeLimit()
+    {
+        var script = AmsMcsTestKit.Script(Directory.CreateDirectory(Path.Combine(_runDirectory, "bin")).FullName, "msagent", "ping -n 6 127.0.0.1 >nul\r\n", "sleep 5\n");
+        var hung = new MsagentCli(script, new Transcript(_runDirectory), Path.Combine(_runDirectory, "dumps"));
+
+        var result = Assert.Single(await new Runner(Context(), TimeSpan.FromMinutes(1)).RunAsync([ScenarioThat(_ => hung.RunAsync(["agent", "create", "--agent-name", "hung"], timeout: TimeSpan.FromSeconds(1)))], CancellationToken.None));
+
+        Assert.Equal(Outcome.Error, result.Outcome);
+        Assert.Equal($"Timed out after 1s: {script} agent create --agent-name hung", result.Reason);
     }
 }

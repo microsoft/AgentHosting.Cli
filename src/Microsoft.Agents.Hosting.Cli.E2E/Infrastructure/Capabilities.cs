@@ -1,3 +1,5 @@
+using Microsoft.Agents.Hosting.Cli.Core.Auth;
+
 namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 
 /// <summary>A prerequisite a scenario needs before it can run.</summary>
@@ -20,6 +22,20 @@ public enum Capability
     StandaloneOracle,
 
     StandaloneFlowRuns,
+
+    AmsMcs,
+
+    AmsMcsRing,
+
+    AmsMcsWorkspaceRoot,
+
+    Git,
+
+    AmsMcsOracle,
+
+    AmsMcsConnection,
+
+    AmsMcsEndpoints,
 }
 
 /// <summary>How much a scenario can disturb, used for scheduling and for the plan summary.</summary>
@@ -119,11 +135,18 @@ public sealed class Capabilities
 
         Add(Capability.StandaloneOracle, false, NotProbed);
         Add(Capability.StandaloneFlowRuns, false, NotProbed);
+        AddAmsMcs(Add, config.AmsMcs);
 
         return new Capabilities(states);
     }
 
     public const string StandaloneFixturesFolder = "StandaloneWorkflows";
+
+    public const string AmsMcsNotProbed = "not probed: the ams pack isn't named";
+
+    public static IReadOnlyList<Capability> ProbedAmsMcsCapabilities { get; } = [Capability.AmsMcsWorkspaceRoot, Capability.Git, Capability.AmsMcsOracle, Capability.AmsMcsConnection, Capability.AmsMcsEndpoints];
+
+    public static IReadOnlyList<Capability> AmsMcsCapabilities { get; } = [Capability.AmsMcs, Capability.AmsMcsRing, .. ProbedAmsMcsCapabilities];
 
     private const string NotProbed = "not probed: no mcs-standaloneworkflow scenario is scheduled";
 
@@ -148,6 +171,42 @@ public sealed class Capabilities
     }
 
     private static string AzureCliDetail() => AzureCli.Path is { Length: > 0 } path ? path : "resolved";
+
+    private static void AddAmsMcs(Action<Capability, bool, string> add, AmsMcsConfig config)
+    {
+        var missing = config.Settings.Select(setting => ConfigValues.Text(setting.Value, setting.Key, value => value)).FirstOrDefault(value => !value.Supplied);
+        var ring = RingProblem(config);
+
+        add(Capability.AmsMcs, config.AmsFlagOn && missing is null, !config.AmsFlagOn ? $"amsMcs.features '{config.FeatureValue}' doesn't hold {GitCredentialHelper.Feature}" : missing?.Detail ?? $"{config.FeatureValue}, data plane {config.DataPlane.Endpoint}");
+        add(Capability.AmsMcsRing, ring is null, ring ?? string.Join(", ", config.Environments.Select(environment => $"{environment.Role} {Short(environment.Id)}")));
+
+        foreach (var capability in ProbedAmsMcsCapabilities)
+        {
+            add(capability, false, AmsMcsNotProbed);
+        }
+    }
+
+    private static string? RingProblem(AmsMcsConfig config)
+    {
+        foreach (var environment in config.Environments)
+        {
+            var id = ConfigValues.Guid(environment.Id, environment.IdKey, value => value);
+            var organization = ConfigValues.Text(environment.Organization, environment.OrganizationKey, value => value);
+
+            var problem = !id.Supplied ? id.Detail
+                : !organization.Supplied ? organization.Detail
+                : !Uri.TryCreate(organization.Value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ? $"{environment.OrganizationKey} is not an https URL"
+                : config.ForbiddenEnvironmentIds?.Any(forbidden => AmsIds.Same(forbidden.Trim(), id.Value)) == true ? $"{environment.IdKey} {id.Value} is in amsMcs.forbiddenEnvironmentIds"
+                : null;
+
+            if (problem is not null)
+            {
+                return problem;
+            }
+        }
+
+        return config.Environments.Select(environment => environment.Id!.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() < config.Environments.Count ? "amsMcs.devEnvironmentId, amsMcs.testEnvironmentId and amsMcs.prodEnvironmentId must name three different environments" : null;
+    }
 
     private static string Short(string? value) =>
         string.IsNullOrWhiteSpace(value) ? string.Empty : value.Length <= 8 ? value : value[..8] + "…";

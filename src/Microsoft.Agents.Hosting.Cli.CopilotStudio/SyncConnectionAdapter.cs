@@ -1,4 +1,4 @@
-using Microsoft.Agents.Hosting.Cli.Core.Auth;
+using System.Runtime.ExceptionServices;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
@@ -14,7 +14,6 @@ namespace Microsoft.Agents.Hosting.Cli.CopilotStudio;
 /// </summary>
 public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCatalogPort
 {
-    private const string PowerAppsResource = "https://api.bap.microsoft.com";
     private const string ConnectionReferencesRoute = "api/data/v9.2/connectionreferences";
 
     private readonly IConnectionManagementService _connections;
@@ -22,35 +21,36 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
     private readonly IWorkspaceSynchronizer _synchronizer;
     private readonly ISyncDataverseClient _dataverseClient;
     private readonly IConnectionCatalogClient _catalogClient;
-    private readonly ITokenProvider _tokenProvider;
     private readonly AgentHostDataverseHttpClientAccessor _httpClientAccessor;
     private readonly IFileAccessorFactory _fileAccessors;
     private readonly DataverseWebApiClient _webApi;
-    private readonly Core.Environments.CoreServicesClusterCategory _cluster;
+    private readonly ConnectivityContextFactory _contexts;
+    private readonly WorkflowActivationPass _activationPass;
 
     /// <summary>Creates the adapter.</summary>
     /// <param name="connections">The library's connection-management service.</param>
     /// <param name="workflows">Reports which workflows exist and which references they need.</param>
+    /// <param name="activationPass">Binds what can be bound without asking and activates the drafts a push left.</param>
     /// <param name="synchronizer">Reads the workspace definition that declares the references.</param>
     /// <param name="dataverseClient">Reads and writes the binding state.</param>
     /// <param name="catalogClient">Lists existing connections per connector.</param>
-    /// <param name="tokenProvider">Acquires the Power Apps catalog token.</param>
+    /// <param name="tokenProvider">Acquires the Power Platform API token the connector catalog needs.</param>
     /// <param name="httpClientAccessor">Targets the Dataverse organization.</param>
     /// <param name="fileAccessors">Opens the workspace the sync library stores its state in.</param>
     /// <param name="webApi">Deletes the connectionreference record.</param>
-    /// <param name="cluster">The cluster category the environment belongs to.</param>
-    public SyncConnectionAdapter(IConnectionManagementService connections, IWorkflowActivationService workflows, IWorkspaceSynchronizer synchronizer, ISyncDataverseClient dataverseClient, IConnectionCatalogClient catalogClient, ITokenProvider tokenProvider, AgentHostDataverseHttpClientAccessor httpClientAccessor, IFileAccessorFactory fileAccessors, DataverseWebApiClient webApi, Core.Environments.CoreServicesClusterCategory cluster)
+    /// <param name="apiTarget">The Power Platform API that names the catalog token's audience and the environment's endpoint.</param>
+    public SyncConnectionAdapter(IConnectionManagementService connections, IWorkflowActivationService workflows, WorkflowActivationPass activationPass, IWorkspaceSynchronizer synchronizer, ISyncDataverseClient dataverseClient, IConnectionCatalogClient catalogClient, ITokenProvider tokenProvider, AgentHostDataverseHttpClientAccessor httpClientAccessor, IFileAccessorFactory fileAccessors, DataverseWebApiClient webApi, Core.Environments.PowerPlatformApiTargetConfig apiTarget)
     {
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
         _workflows = workflows ?? throw new ArgumentNullException(nameof(workflows));
+        _activationPass = activationPass ?? throw new ArgumentNullException(nameof(activationPass));
         _synchronizer = synchronizer ?? throw new ArgumentNullException(nameof(synchronizer));
         _dataverseClient = dataverseClient ?? throw new ArgumentNullException(nameof(dataverseClient));
         _catalogClient = catalogClient ?? throw new ArgumentNullException(nameof(catalogClient));
-        _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
         _httpClientAccessor = httpClientAccessor ?? throw new ArgumentNullException(nameof(httpClientAccessor));
         _fileAccessors = fileAccessors ?? throw new ArgumentNullException(nameof(fileAccessors));
         _webApi = webApi ?? throw new ArgumentNullException(nameof(webApi));
-        _cluster = cluster;
+        _contexts = new ConnectivityContextFactory(tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider)), apiTarget ?? throw new ArgumentNullException(nameof(apiTarget)));
     }
 
     /// <inheritdoc />
@@ -68,8 +68,16 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
         return new CopilotConnectionSnapshot
         {
             References = Translate(views),
-            Workflows = TranslateWorkflows(_workflows.GetWorkflowStatusViews(workspaceFolder, views), WorkflowWorkspace.IsStandaloneWorkspace(projectDirectory)),
+            Workflows = WorkflowsOf(workspaceFolder, projectDirectory, views),
         };
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<CopilotWorkflowView> ReadWorkflows(string projectDirectory, IReadOnlyCollection<string> boundReferences)
+    {
+        ArgumentNullException.ThrowIfNull(boundReferences);
+
+        return WorkflowsOf(Folder(projectDirectory), projectDirectory, [.. boundReferences.Select(logicalName => new AgentConnectionView { ConnectionReferenceLogicalName = logicalName, BoundConnectionExists = true })]);
     }
 
     /// <inheritdoc />
@@ -80,12 +88,8 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
         DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, environment);
 
         var (workspaceFolder, definition) = await ReadWorkspaceAsync(projectDirectory, cancellationToken).ConfigureAwait(false);
-        var views = await _connections.GetAgentConnectionViewsAsync(workspaceFolder, definition, _dataverseClient, _catalogClient, ContextFor(environment), cancellationToken).ConfigureAwait(false);
 
-        return [.. views
-            .Where(view => view.IsDeclared)
-            .Select(view => string.IsNullOrWhiteSpace(view.ConnectorId) ? view.ConnectorName ?? string.Empty : view.ConnectorId)
-            .Where(connectorId => !string.IsNullOrWhiteSpace(connectorId))];
+        return [.. (await _connections.GetAgentConnectionViewsAsync(workspaceFolder, definition, _dataverseClient, _catalogClient, new PowerAppsContext { EnvironmentId = environment.EnvironmentId }, cancellationToken).ConfigureAwait(false)).Where(view => view.IsDeclared).Select(view => string.IsNullOrWhiteSpace(view.ConnectorId) ? view.ConnectorName ?? string.Empty : view.ConnectorId).Where(connectorId => !string.IsNullOrWhiteSpace(connectorId))];
     }
 
     /// <summary>
@@ -127,9 +131,7 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
     {
         ArgumentNullException.ThrowIfNull(environment);
 
-        var connectors = await _catalogClient.ListConnectorsAsync(await PowerAppsContextAsync(environment, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
-
-        return [.. connectors.Select(connector => new CopilotConnectorInfo
+        return [.. (await _catalogClient.ListConnectorsAsync(await _contexts.CreateAsync(environment, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false)).Select(connector => new CopilotConnectorInfo
         {
             InternalId = connector.InternalId,
             DisplayName = string.IsNullOrWhiteSpace(connector.DisplayName) ? connector.InternalId : connector.DisplayName,
@@ -144,26 +146,18 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
         ArgumentNullException.ThrowIfNull(environment);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectorInternalId);
 
-        var connections = await ListConnectionsCoreAsync(environment, await PowerAppsTokenAsync(environment, cancellationToken).ConfigureAwait(false), connectorInternalId, cancellationToken).ConfigureAwait(false);
-
-        return [.. connections.Select(connection => new CopilotConnectionCandidate
-        {
-            ConnectionId = connection.Name,
-            DisplayName = string.IsNullOrWhiteSpace(connection.DisplayName) ? connection.Name : connection.DisplayName,
-            Status = connection.Status,
-            Owner = string.IsNullOrWhiteSpace(connection.Owner) ? null : connection.Owner,
-        })];
+        return [.. (await ListConnectionsCoreAsync(await _contexts.CreateAsync(environment, cancellationToken).ConfigureAwait(false), connectorInternalId, cancellationToken).ConfigureAwait(false)).Select(Candidate)];
     }
 
-    private async Task<IReadOnlyList<ConnectionInstance>> ListConnectionsCoreAsync(CopilotEnvironmentContext environment, string accessToken, string connectorInternalId, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<ConnectionInstance>> ListConnectionsCoreAsync(PowerAppsContext context, string connectorInternalId, CancellationToken cancellationToken)
     {
         try
         {
-            return await _catalogClient.ListConnectionsAsync(ContextFor(environment, accessToken), connectorInternalId, cancellationToken).ConfigureAwait(false);
+            return await _catalogClient.ListConnectionsAsync(context, connectorInternalId, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception failure) when (PowerAppsFailure.IsNotFound(failure))
         {
-            throw new ConnectorNotFoundException(connectorInternalId, environment.EnvironmentId, failure);
+            throw new ConnectorNotFoundException(connectorInternalId, context.EnvironmentId, failure);
         }
     }
 
@@ -191,14 +185,7 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
         var (workspaceFolder, definition) = await ReadWorkspaceAsync(projectDirectory, cancellationToken).ConfigureAwait(false);
         var result = await _connections.RemoveConnectionReferenceAsync(workspaceFolder, definition, logicalName, confirmed, cancellationToken).ConfigureAwait(false);
 
-        IReadOnlyList<CopilotConnectionUsage> usages =
-        [
-            .. result.Usages.Select(usage => new CopilotConnectionUsage
-            {
-                FilePath = usage.FilePath,
-                DisplayName = string.IsNullOrWhiteSpace(usage.DisplayName) ? null : usage.DisplayName,
-            }),
-        ];
+        IReadOnlyList<CopilotConnectionUsage> usages = [.. result.Usages.Select(Usage)];
 
         return result.Removed
             ? new CopilotConnectionReferenceRemoval(true, usages) { RecordDeleted = await RetireAsync(environment, workspaceFolder, logicalName, cancellationToken).ConfigureAwait(false) }
@@ -271,7 +258,7 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
 
         DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, environment);
 
-        var workspaceFolder = new DirectoryPath(projectDirectory.Replace('\\', '/'));
+        var workspaceFolder = Folder(projectDirectory);
         var requests = changes
             .Where(change => Guid.TryParse(change.WorkflowId, out _))
             .Select(change => new WorkflowActivationRequest { WorkflowId = Guid.Parse(change.WorkflowId), Activate = change.Activate })
@@ -288,6 +275,32 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
         };
     }
 
+    /// <inheritdoc />
+    public async Task<CopilotWorkflowActivationReport> ActivateWorkflowsAsync(CopilotEnvironmentContext environment, string projectDirectory, string? principal, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, environment);
+
+        var (workspaceFolder, definition, context) = await OpenAsync(environment, projectDirectory, cancellationToken).ConfigureAwait(false);
+        var pass = await _activationPass.RunAsync(workspaceFolder, definition, _dataverseClient, _catalogClient, context, principal, cancellationToken).ConfigureAwait(false);
+
+        if (pass.Failure is { } failure)
+        {
+            ExceptionDispatchInfo.Throw(failure);
+        }
+
+        return new CopilotWorkflowActivationReport
+        {
+            Workflows = [.. pass.Workflows.Select(workflow => workflow.DisplayName)],
+            Activated = pass.Activated,
+            Refused = pass.RefusalMessage is null ? [] : [pass.RefusalMessage],
+            ObservedById = pass.Workflows.Where(workflow => workflow.IsObserved && !string.IsNullOrWhiteSpace(workflow.WorkflowId)).DistinctBy(workflow => workflow.WorkflowId, StringComparer.OrdinalIgnoreCase).ToDictionary(workflow => workflow.WorkflowId, workflow => workflow.State == WorkflowState.Activated, StringComparer.OrdinalIgnoreCase),
+            NotRunningCount = pass.NotRunningCount,
+            UnboundConnectionCount = pass.UnresolvedConnections.Length,
+        };
+    }
+
     /// <summary>
     /// Targets the Dataverse organization for the operations that follow.
     /// </summary>
@@ -295,46 +308,36 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
     {
         var (workspaceFolder, definition) = await ReadWorkspaceAsync(projectDirectory, cancellationToken).ConfigureAwait(false);
 
-        return (workspaceFolder, definition, await PowerAppsContextAsync(environment, cancellationToken).ConfigureAwait(false));
+        return (workspaceFolder, definition, await _contexts.CreateAsync(environment, cancellationToken).ConfigureAwait(false));
     }
-
-    private async Task<PowerAppsContext> PowerAppsContextAsync(CopilotEnvironmentContext environment, CancellationToken cancellationToken) =>
-        ContextFor(environment, await PowerAppsTokenAsync(environment, cancellationToken).ConfigureAwait(false));
-
-    private PowerAppsContext ContextFor(CopilotEnvironmentContext environment, string? accessToken = null) =>
-        new()
-        {
-            AccessToken = accessToken!,
-            EnvironmentId = environment.EnvironmentId,
-            ClusterCategory = SyncClusterCategory.For(_cluster),
-        };
-
-    private async Task<string> PowerAppsTokenAsync(CopilotEnvironmentContext environment, CancellationToken cancellationToken) =>
-        AcquiredTokenTenant.Require(
-            await _tokenProvider.AcquireTokenSilentAsync(PowerAppsResource, environment.TenantId, cancellationToken).ConfigureAwait(false),
-            environment.TenantId);
 
     private async Task<(DirectoryPath Folder, DefinitionBase Definition)> ReadWorkspaceAsync(string projectDirectory, CancellationToken cancellationToken)
     {
-        var workspaceFolder = new DirectoryPath(projectDirectory.Replace('\\', '/'));
+        var workspaceFolder = Folder(projectDirectory);
 
         return WorkflowWorkspace.IsStandaloneWorkspace(projectDirectory)
             ? (workspaceFolder, BotDefinition.Empty)
             : (workspaceFolder, await WorkspaceDefinitionReader.ReadAsync(_synchronizer, workspaceFolder, checkKnowledgeFiles: false, cancellationToken).ConfigureAwait(false));
     }
 
-    private static IReadOnlyList<CopilotWorkflowView> TranslateWorkflows(IReadOnlyList<WorkflowStatusView> workflows, bool standalone) =>
-        [.. workflows
-            .Select(workflow => new CopilotWorkflowView
-            {
-                WorkflowId = workflow.WorkflowId,
-                DisplayName = string.IsNullOrWhiteSpace(workflow.DisplayName) ? workflow.WorkflowId : workflow.DisplayName,
-                FilePath = string.IsNullOrWhiteSpace(workflow.FilePath) ? null : workflow.FilePath,
-                ConnectionReferences = [.. workflow.ConnectionReferenceLogicalNames],
-                CanEnable = workflow.CanEnable,
-                IsActivatedLocally = standalone ? null : LocallyActivated(workflow.State),
-            })
-            .OrderBy(workflow => workflow.DisplayName, StringComparer.Ordinal)];
+    private static DirectoryPath Folder(string projectDirectory) => new(projectDirectory.Replace('\\', '/'));
+
+    private IReadOnlyList<CopilotWorkflowView> WorkflowsOf(DirectoryPath workspaceFolder, string projectDirectory, IReadOnlyList<AgentConnectionView> views)
+    {
+        var standalone = WorkflowWorkspace.IsStandaloneWorkspace(projectDirectory);
+
+        return [.. _workflows.GetWorkflowStatusViews(workspaceFolder, views).Select(workflow => Workflow(workflow, standalone)).OrderBy(workflow => workflow.DisplayName, StringComparer.Ordinal)];
+    }
+
+    private static CopilotWorkflowView Workflow(WorkflowStatusView workflow, bool standalone) => new()
+    {
+        WorkflowId = workflow.WorkflowId,
+        DisplayName = string.IsNullOrWhiteSpace(workflow.DisplayName) ? workflow.WorkflowId : workflow.DisplayName,
+        FilePath = string.IsNullOrWhiteSpace(workflow.FilePath) ? null : workflow.FilePath,
+        ConnectionReferences = [.. workflow.ConnectionReferenceLogicalNames],
+        CanEnable = workflow.CanEnable,
+        IsActivatedLocally = standalone ? null : LocallyActivated(workflow.State),
+    };
 
     /// <summary>Reads the workspace's recorded state, leaving one it cannot settle unanswered.</summary>
     /// <param name="state">The state the workspace scan produced.</param>
@@ -346,33 +349,22 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
         _ => null,
     };
 
-    private static bool IsVerifiedBinding(AgentConnectionView view) =>
-        view.BoundConnectionExists && !view.CatalogUnavailable && view.BoundConnectionId.Length > 0;
+    private static IReadOnlyList<CopilotConnectionView> Translate(IReadOnlyList<AgentConnectionView> views) => [.. views.Select(View).OrderBy(view => view.LogicalName, StringComparer.Ordinal)];
 
-    private static IReadOnlyList<CopilotConnectionView> Translate(IReadOnlyList<AgentConnectionView> views) =>
-        [.. views
-            .Select(view => new CopilotConnectionView
-            {
-                LogicalName = view.ConnectionReferenceLogicalName,
-                ConnectorId = string.IsNullOrWhiteSpace(view.ConnectorId) ? view.ConnectorName ?? string.Empty : view.ConnectorId,
-                ConnectorName = string.IsNullOrWhiteSpace(view.ConnectorName) ? null : view.ConnectorName,
-                BoundConnectionId = IsVerifiedBinding(view) ? view.BoundConnectionId : null,
-                RecordedConnectionId = string.IsNullOrWhiteSpace(view.BoundConnectionId) ? null : view.BoundConnectionId,
-                BoundConnectionExists = IsVerifiedBinding(view),
-                CatalogUnavailable = view.CatalogUnavailable,
-                IsDeclared = view.IsDeclared,
-                Usages = [.. view.Usages.Select(usage => new CopilotConnectionUsage
-                {
-                    FilePath = usage.FilePath,
-                    DisplayName = string.IsNullOrWhiteSpace(usage.DisplayName) ? null : usage.DisplayName,
-                })],
-                Candidates = [.. view.Candidates.Select(candidate => new CopilotConnectionCandidate
-                {
-                    ConnectionId = candidate.Name,
-                    DisplayName = string.IsNullOrWhiteSpace(candidate.DisplayName) ? candidate.Name : candidate.DisplayName,
-                    Status = candidate.Status,
-                    Owner = string.IsNullOrWhiteSpace(candidate.Owner) ? null : candidate.Owner,
-                })],
-            })
-            .OrderBy(view => view.LogicalName, StringComparer.Ordinal)];
+    private static CopilotConnectionView View(AgentConnectionView view) => new()
+    {
+        LogicalName = view.ConnectionReferenceLogicalName,
+        ConnectorId = string.IsNullOrWhiteSpace(view.ConnectorId) ? view.ConnectorName ?? string.Empty : view.ConnectorId,
+        ConnectorName = string.IsNullOrWhiteSpace(view.ConnectorName) ? null : view.ConnectorName,
+        BoundConnectionId = string.IsNullOrWhiteSpace(view.BoundConnectionId) ? null : view.BoundConnectionId,
+        BoundConnectionExists = view.BoundConnectionExists,
+        CatalogUnavailable = view.CatalogUnavailable,
+        IsDeclared = view.IsDeclared,
+        Usages = [.. view.Usages.Select(Usage)],
+        Candidates = [.. view.Candidates.Select(Candidate)],
+    };
+
+    private static CopilotConnectionUsage Usage(ConnectionReferenceUsage usage) => new() { FilePath = usage.FilePath, DisplayName = string.IsNullOrWhiteSpace(usage.DisplayName) ? null : usage.DisplayName };
+
+    private static CopilotConnectionCandidate Candidate(ConnectionInstance connection) => new() { ConnectionId = connection.Name, DisplayName = string.IsNullOrWhiteSpace(connection.DisplayName) ? connection.Name : connection.DisplayName, Status = connection.Status, Owner = string.IsNullOrWhiteSpace(connection.Owner) ? null : connection.Owner };
 }

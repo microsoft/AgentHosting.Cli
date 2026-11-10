@@ -4,6 +4,7 @@ using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -19,6 +20,7 @@ public sealed class WorkflowListServiceTests : IDisposable
         ManagedAgentFixtures.Resolver(environments),
         new FakeCopilotCatalogPort(),
         _store,
+        ManagedAgentFixtures.StateRules,
         ManagedAgentFixtures.AgentResolver(_config),
         new AgentConfigLocator(),
         ManagedAgentFixtures.Identities(),
@@ -34,7 +36,7 @@ public sealed class WorkflowListServiceTests : IDisposable
         Tenant = tenant,
     };
 
-    private Guid AddCloud(string name, string state = WorkflowStateProjection.Activated, DateTimeOffset? modifiedOn = null)
+    private Guid AddCloud(string name, string state = CopilotStudioStates.Activated, DateTimeOffset? modifiedOn = null)
     {
         var workflowId = Guid.NewGuid();
         _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = name, State = state, ModifiedOn = modifiedOn };
@@ -52,7 +54,7 @@ public sealed class WorkflowListServiceTests : IDisposable
         var row = Assert.Single(result.Agents);
         Assert.Equal(workflowId.ToString(), row.McsWorkflowId);
         Assert.Equal("WF Hook 2", row.DisplayName);
-        Assert.Equal(WorkflowStateProjection.Published, row.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Published, row.WorkflowState);
         Assert.Equal(AgentTypes.McsWorkflow, row.AgentType);
         Assert.Equal(AgentTypes.McsWorkflow, result.AgentType);
         Assert.Null(row.McsAgentId);
@@ -233,7 +235,7 @@ public sealed class WorkflowListServiceTests : IDisposable
 
 public sealed class WorkflowListRenderingTests
 {
-    private static ManagedAgentListItem Row(string? agentId = "wf-1", string state = WorkflowStateProjection.Activated, int? deployments = 1) => new()
+    private static ManagedAgentListItem Row(string? agentId = "wf-1", string state = CopilotStudioStates.Activated, int? deployments = 1) => new()
     {
         AgentId = agentId,
         McsWorkflowId = "36af9d18-cdab-eb87-8bdb-e11ba6806e75",
@@ -321,35 +323,4 @@ public sealed class WorkflowListRenderingTests
         Assert.Contains("SCHEMA NAME", lines, StringComparison.Ordinal);
         Assert.Contains("1 agent(s)", lines, StringComparison.Ordinal);
     }
-}
-
-public sealed class WorkflowStateProjectionStateCodeTests
-{
-    [Theory]
-    [InlineData(0, WorkflowStateProjection.Draft)]
-    [InlineData(1, WorkflowStateProjection.Activated)]
-    [InlineData(2, WorkflowStateProjection.Suspended)]
-    [InlineData(99, WorkflowStateProjection.Unknown)]
-    [InlineData(null, WorkflowStateProjection.Unknown)]
-    public void StateCodesMapToTheReportedNames(int? stateCode, string expected) =>
-        Assert.Equal(expected, WorkflowStateProjection.FromStateCode(stateCode));
-
-    [Theory]
-    [InlineData(WorkflowStateProjection.Activated, WorkflowStateProjection.Published)]
-    [InlineData(WorkflowStateProjection.Draft, WorkflowStateProjection.Draft)]
-    [InlineData(WorkflowStateProjection.Suspended, WorkflowStateProjection.Draft)]
-    [InlineData(WorkflowStateProjection.Unknown, WorkflowStateProjection.Unknown)]
-    public void ThePortalLabelIsDraftForEverythingObservedNotRunning(string state, string expected) =>
-        Assert.Equal(expected, WorkflowStateProjection.ToPortalLabel(state));
-
-    [Fact]
-    public void ThePortalLabelLeavesAnAbsentStateAbsent() =>
-        Assert.Null(WorkflowStateProjection.ToPortalLabel(null));
-
-    [Fact]
-    public void ThePortalLabelNeverReportsActivated() =>
-        Assert.DoesNotContain(
-            new[] { WorkflowStateProjection.Activated, WorkflowStateProjection.Draft, WorkflowStateProjection.Suspended, WorkflowStateProjection.Unknown }
-                .Select(WorkflowStateProjection.ToPortalLabel),
-            label => label == WorkflowStateProjection.Activated);
 }

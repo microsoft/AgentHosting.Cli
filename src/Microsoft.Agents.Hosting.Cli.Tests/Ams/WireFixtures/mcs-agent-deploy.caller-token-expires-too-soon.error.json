@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "McsOnBehalfOfUnavailable",
+    "message": "The service could not act on your behalf. Call this operation through the Power Platform API.",
+    "details": [
+      { "code": "CallerTokenExpiresTooSoon", "message": "The token this request carries expires at 2026-10-27T13:34:41Z, but an operation needs one valid until at least 2026-10-27T13:35:27Z. Send a freshly issued token." }
+    ]
+  }
+}

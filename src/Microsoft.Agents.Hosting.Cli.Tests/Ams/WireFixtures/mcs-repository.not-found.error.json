@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "McsRepositoryNotFound",
+    "message": "Repository 'cccccccc-3333-4333-8333-000000000013' was not found, or you do not have access to it."
+  }
+}

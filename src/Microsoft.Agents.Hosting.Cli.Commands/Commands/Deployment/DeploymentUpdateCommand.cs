@@ -79,6 +79,11 @@ public sealed class DeploymentUpdateCommand : CommandBase<AgentDeploymentUpdateR
             return null;
         }
 
+        if (FeatureGate.IsEnabled(services, FeatureName.AmsMcsAgents) && Resolve(input, services).IsMcs)
+        {
+            return "An MCS deployment takes no package revision. Deploy a commit with `msagent agent deploy --remote [--commit-id <commit>]`.";
+        }
+
         string[] incompatibleOptions =
         [
             "--project",

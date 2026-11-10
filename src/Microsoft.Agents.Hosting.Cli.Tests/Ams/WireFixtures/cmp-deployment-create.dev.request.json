@@ -1,0 +1,7 @@
+{
+  "deploymentId": "eeeeeeee-5555-4555-8555-000000000005",
+  "agentType": "MCSAgent",
+  "deploymentType": "Dev",
+  "deploymentName": "contoso-dev",
+  "environmentId": "22222222-2222-2222-2222-222222222222"
+}

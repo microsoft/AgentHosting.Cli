@@ -9,12 +9,13 @@ namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 /// <param name="State">One of <c>bound</c>, <c>bound-unverified</c>, <c>already-bound</c>, <c>no-candidate</c>, <c>created</c>, <c>unbound</c>, or <c>undeclared</c>.</param>
 /// <param name="ConnectionId">The connection to bind, when one was chosen.</param>
 /// <param name="Candidates">The connected candidates that were considered.</param>
-public sealed record ConnectionPlanItem(CopilotConnectionView View, string State, string? ConnectionId, IReadOnlyList<CopilotConnectionCandidate> Candidates);
+public sealed record ConnectionPlanItem(CopilotConnectionView View, string State, string? ConnectionId, IReadOnlyList<CopilotConnectionCandidate> Candidates)
+{
+    /// <summary>Every candidate that can satisfy the reference, in the order the binding rules consider them, whatever the decision.</summary>
+    public IReadOnlyList<CopilotConnectionCandidate> ConnectedCandidates { get; init; } = [];
+}
 
-/// <summary>
-/// Chooses which connection satisfies each reference. Pure selection: no I/O, so every rule here is
-/// provable offline.
-/// </summary>
+/// <summary>Names the states the binding rules leave a connection reference in, and shapes their decisions for the command results.</summary>
 public static class ConnectionReadinessPlanner
 {
     /// <summary>The reference was already bound before this command ran.</summary>
@@ -44,95 +45,6 @@ public static class ConnectionReadinessPlanner
 
     /// <summary>A connected connection could satisfy the reference, but nothing has bound it yet.</summary>
     public const string Unbound = "unbound";
-
-    private const string ConnectedStatus = "Connected";
-
-    /// <summary>Reports what is true of one reference, proposing nothing.</summary>
-    /// <param name="view">The reference to read.</param>
-    /// <returns>The reference's observed state.</returns>
-    public static ConnectionPlanItem Observe(CopilotConnectionView view)
-    {
-        ArgumentNullException.ThrowIfNull(view);
-
-        var connected = Connected(view);
-
-        if (!view.IsDeclared)
-        {
-            return connected.Length == 0 || !string.IsNullOrWhiteSpace(view.BoundConnectionId)
-                ? new ConnectionPlanItem(view, Undeclared, null, connected)
-                : new ConnectionPlanItem(view, Unbound, null, connected);
-        }
-
-        if (!string.IsNullOrWhiteSpace(view.BoundConnectionId))
-        {
-            return new ConnectionPlanItem(view, AlreadyBound, view.BoundConnectionId, []);
-        }
-
-        return connected.Length == 0
-            ? new ConnectionPlanItem(view, NoCandidate, null, [])
-            : new ConnectionPlanItem(view, Unbound, null, connected);
-    }
-
-    /// <summary>
-    /// Decides what a run that may write should do with one reference.
-    ///
-    /// Separate from <see cref="Observe"/> because choosing a connection is a proposal, not an
-    /// observation: a command that never writes must not report the proposal as though the service
-    /// had already accepted it.
-    /// </summary>
-    /// <param name="view">The reference to plan for, with its candidates.</param>
-    /// <param name="principal">The signed-in identity, which a connection has to belong to before it is bound without asking.</param>
-    /// <returns>The decision.</returns>
-    public static ConnectionPlanItem Plan(CopilotConnectionView view, string? principal)
-    {
-        var observed = Observe(view);
-
-        if (observed.State != Unbound)
-        {
-            return observed;
-        }
-
-        return Pick(observed.Candidates, principal) is { } chosen
-            ? observed with { State = Bound, ConnectionId = chosen }
-            : observed;
-    }
-
-    /// <summary>
-    /// Chooses a connection to bind without asking, and only one the operator already owns.
-    ///
-    /// A connection runs as the identity that created it, so binding one owned by somebody else
-    /// silently decides that the agent runs as them. Being able to see a connection proves it is
-    /// visible, not that it was meant for this agent, so anything not provably the operator's own is
-    /// left for them to choose. Where several are theirs the first by id is taken, which is
-    /// deterministic and keeps the same effective identity either way.
-    /// </summary>
-    /// <param name="connected">The candidates that could satisfy the reference, in id order.</param>
-    /// <param name="principal">The signed-in identity, or <see langword="null"/> when nobody is.</param>
-    /// <returns>The connection to bind, or <see langword="null"/> when none is provably the operator's.</returns>
-    private static string? Pick(IReadOnlyList<CopilotConnectionCandidate> connected, string? principal) =>
-        connected.FirstOrDefault(candidate => IsOwnedBy(candidate, principal))?.ConnectionId;
-
-    /// <summary>
-    /// The connections that can satisfy a reference, in a stable order.
-    /// </summary>
-    /// <param name="view">The reference to read candidates from.</param>
-    /// <returns>The connected candidates, ordered by id.</returns>
-    public static CopilotConnectionCandidate[] Connected(CopilotConnectionView view)
-    {
-        ArgumentNullException.ThrowIfNull(view);
-
-        return [.. view.Candidates.Where(IsConnected).OrderBy(candidate => candidate.ConnectionId, StringComparer.Ordinal)];
-    }
-
-    /// <summary>Whether a connection is in the one state that can satisfy a reference.</summary>
-    /// <param name="candidate">The connection the catalog reported.</param>
-    /// <returns><see langword="true"/> when the catalog reports it as connected.</returns>
-    public static bool IsConnected(CopilotConnectionCandidate candidate)
-    {
-        ArgumentNullException.ThrowIfNull(candidate);
-
-        return string.Equals(candidate.Status, ConnectedStatus, StringComparison.OrdinalIgnoreCase);
-    }
 
     /// <summary>
     /// Whether a connection provably belongs to an identity.
@@ -281,27 +193,29 @@ public static class ConnectionReadinessPlanner
             return item with { State = BoundUnverified, ConnectionId = ConnectionConsentLink.NormalizeResourceId(connectionId), Candidates = [] };
         }
 
-        var chosen = RequireConnected(item.View.Candidates, connectionId, $"'{item.View.LogicalName}'");
+        var chosen = RequireConnected(item.View.Candidates, item.ConnectedCandidates, connectionId, $"'{item.View.LogicalName}'");
 
         return item with { State = Bound, ConnectionId = chosen.ConnectionId, Candidates = [chosen] };
     }
 
     /// <summary>Requires a connection to exist for a connector and be able to satisfy a reference.</summary>
     /// <param name="candidates">Every connection the connector has.</param>
+    /// <param name="connected">The connections the binding rules accept as able to satisfy a reference.</param>
     /// <param name="connectionId">The connection the request named.</param>
     /// <param name="subject">What the connection has to satisfy, named for the rejection message.</param>
     /// <returns>The connection the id names, carrying the id the service reports for it.</returns>
     /// <exception cref="ManagedAgentException">There is no such connection.</exception>
     /// <exception cref="UsageException">The connection is not connected.</exception>
-    public static CopilotConnectionCandidate RequireConnected(IReadOnlyList<CopilotConnectionCandidate> candidates, string connectionId, string subject)
+    public static CopilotConnectionCandidate RequireConnected(IReadOnlyList<CopilotConnectionCandidate> candidates, IReadOnlyList<CopilotConnectionCandidate> connected, string connectionId, string subject)
     {
         ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(connected);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionId);
 
         var chosen = candidates.FirstOrDefault(candidate => candidate.ConnectionId.Equals(connectionId, StringComparison.OrdinalIgnoreCase))
             ?? throw ManagedAgentException.ConnectionNotACandidate(connectionId, subject, [.. candidates.Select(candidate => candidate.ConnectionId)]);
 
-        return IsConnected(chosen)
+        return connected.Contains(chosen)
             ? chosen
             : throw new UsageException($"Connection '{connectionId}' is {chosen.Status}, so it cannot satisfy {subject}. Choose a Connected connection.");
     }

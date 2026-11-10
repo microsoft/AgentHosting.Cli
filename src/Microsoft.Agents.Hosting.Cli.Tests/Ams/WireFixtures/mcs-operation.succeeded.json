@@ -1,0 +1,20 @@
+{
+  "id": "12345678-7777-4777-8777-000000000007",
+  "kind": "Deploy",
+  "status": "Succeeded",
+  "agentId": "aaaaaaaa-1111-4111-8111-000000000001",
+  "deploymentId": "ffffffff-6666-4666-8666-000000000006",
+  "sourceCommitSha": "9fceb02d0ae598e95dc970b74767f19372d61af8",
+  "resultCommitSha": null,
+  "startedBy": "99999999-0000-4000-8000-000000000099",
+  "startedTime": "2026-08-01T10:05:00Z",
+  "lastHeartbeatTime": "2026-08-01T10:06:40Z",
+  "completedTime": "2026-08-01T10:06:41Z",
+  "lastPublishedTime": "2026-08-01T10:06:40Z",
+  "error": null,
+  "notices": [
+    { "kind": "FlowLeftInDraft", "target": "Send HR reminder", "relatedItems": ["cr1a2_sharedoutlook", "cr1a2_sharedteams"], "code": null, "detail": null, "message": null },
+    { "kind": "CollectionSharedWithOtherBots", "target": "cr1a2_shared", "relatedItems": ["cr1a2_payroll", "cr1a2_benefits"], "code": null, "detail": null, "message": null },
+    { "kind": "PushWarning", "target": null, "relatedItems": [], "code": "PromptRefused", "detail": null, "message": "The environment refused the AI prompt 'HR summary prompt': The prompt model is unavailable." }
+  ]
+}

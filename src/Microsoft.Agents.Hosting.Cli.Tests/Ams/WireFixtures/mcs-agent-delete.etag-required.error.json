@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "InvalidAgentETag",
+    "message": "The If-Match header is required and must contain the strong ETag returned by the latest agent read."
+  }
+}

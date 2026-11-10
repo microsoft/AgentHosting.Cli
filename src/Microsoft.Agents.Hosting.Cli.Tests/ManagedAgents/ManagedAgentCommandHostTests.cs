@@ -6,18 +6,21 @@ using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Hosting;
 using Microsoft.Agents.Hosting.Cli.Commands.Common;
+using Microsoft.Agents.Hosting.Cli.Commands.Features;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
 public sealed class ManagedAgentCommandHostTests
 {
-    private static (int ExitCode, string Stdout, string Stderr) Run(IAgentHostingOperations operations, params string[] args)
+    private static (int ExitCode, string Stdout, string Stderr) Run(IAgentHostingOperations operations, params string[] args) => Run(operations, TestFeatureFlags.AllProductSurfaces, args);
+
+    private static (int ExitCode, string Stdout, string Stderr) Run(IAgentHostingOperations operations, IFeatureFlags featureFlags, params string[] args)
     {
         var stdout = new StringWriter();
         var stderr = new StringWriter();
         var exitCode = new AgentHostCli(
             operations,
-            featureFlags: TestFeatureFlags.AllProductSurfaces)
+            featureFlags: featureFlags)
             .InvokeAsync(args, stdout, stderr, color: false).GetAwaiter().GetResult();
 
         return (exitCode, stdout.ToString(), stderr.ToString());
@@ -617,6 +620,30 @@ public sealed class ManagedAgentCommandHostTests
         var operations = new FakeOperations();
 
         var (exitCode, _, _) = Run(operations, "agent", "list", "--limit", "many");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Null(operations.LastManagedAgentListRequest);
+    }
+
+    [Fact]
+    public void List_WithTheAmsFlagOn_SendsTheCloudViewToTheCloudListing()
+    {
+        var operations = new FakeOperations();
+
+        var (exitCode, _, _) = Run(operations, new TestFeatureFlags(FeatureName.AmsMcsAgents), "agent", "list", "-vw", "cloud");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Equal(("cloud", (string?)null), (operations.LastManagedAgentListRequest!.View, operations.LastManagedAgentListRequest.RepositoryId));
+    }
+
+    [Theory]
+    [InlineData("--view", "cloud")]
+    [InlineData("--repository-id", "repository-1")]
+    public void List_WithTheAmsFlagOff_HasNoAmsListOptions(string option, string value)
+    {
+        var operations = new FakeOperations();
+
+        var (exitCode, _, _) = Run(operations, "agent", "list", option, value);
 
         Assert.Equal(ExitCodes.Usage, exitCode);
         Assert.Null(operations.LastManagedAgentListRequest);

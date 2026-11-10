@@ -6,6 +6,12 @@ using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 
+/// <summary>Reads at most a number of <c>msagent agent list</c> rows from one environment.</summary>
+/// <param name="environment">The environment to read.</param>
+/// <param name="maximumCount">The most rows to return.</param>
+/// <param name="cancellationToken">Cancels the read.</param>
+public delegate Task<ManagedAgentListPage> ManagedAgentListReader(PowerPlatformEnvironment environment, int maximumCount, CancellationToken cancellationToken);
+
 /// <summary>
 /// <c>msagent agent list</c>: lists the MCS agents in one environment or across the tenant.
 /// </summary>
@@ -28,6 +34,7 @@ public sealed class ManagedAgentListService
     private readonly CopilotEnvironmentResolver _environmentResolver;
     private readonly ICopilotCatalogPort _catalog;
     private readonly IWorkflowStorePort _workflows;
+    private readonly IWorkflowStateRules _stateRules;
     private readonly ManagedAgentResolver _resolver;
     private readonly AgentConfigLocator _locator;
     private readonly CopilotProjectIdentityReader _projectIdentities;
@@ -38,16 +45,18 @@ public sealed class ManagedAgentListService
     /// <param name="environmentResolver">Resolves one environment, or the whole tenant inventory.</param>
     /// <param name="catalog">Reads each environment's agents.</param>
     /// <param name="workflows">Reads each environment's cloud flows.</param>
+    /// <param name="stateRules">Maps each cloud flow's state onto the label the portal shows.</param>
     /// <param name="resolver">Counts an annotated record's deployments.</param>
     /// <param name="locator">Detects whether the current directory holds a configuration.</param>
     /// <param name="projectIdentities">Reads the current project's schema name, for the annotation join.</param>
     /// <param name="agents">The managed-agent table.</param>
     /// <param name="deployments">The deployment table.</param>
-    public ManagedAgentListService(CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, IWorkflowStorePort workflows, ManagedAgentResolver resolver, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments)
+    public ManagedAgentListService(CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, IWorkflowStorePort workflows, IWorkflowStateRules stateRules, ManagedAgentResolver resolver, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments)
     {
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _workflows = workflows ?? throw new ArgumentNullException(nameof(workflows));
+        _stateRules = stateRules ?? throw new ArgumentNullException(nameof(stateRules));
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
@@ -59,9 +68,17 @@ public sealed class ManagedAgentListService
     /// <param name="request">The command input.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>The agents found, and any per-environment failures.</returns>
-    public async Task<ManagedAgentListResult> ListAsync(ManagedAgentListRequest request, CancellationToken cancellationToken)
+    public Task<ManagedAgentListResult> ListAsync(ManagedAgentListRequest request, CancellationToken cancellationToken) => ListAsync(request, LocalReaderFor, cancellationToken);
+
+    /// <summary>Lists the rows a reader returns for each environment in scope, with the scope rules, tenant fan-out, truncation and projection of the cloud listing.</summary>
+    /// <param name="request">The command input.</param>
+    /// <param name="readerFor">Creates the reader for the validated request, whose view and agent type are resolved; it runs before any environment is read.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The rows found, and any per-environment failures.</returns>
+    public async Task<ManagedAgentListResult> ListAsync(ManagedAgentListRequest request, Func<ManagedAgentListRequest, ManagedAgentListReader> readerFor, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(readerFor);
 
         if (request.Tenant && !string.IsNullOrWhiteSpace(request.EnvironmentId))
         {
@@ -73,24 +90,16 @@ public sealed class ManagedAgentListService
             throw new UsageException("--limit must be a positive integer.");
         }
 
-        var agentType = AgentTypes.IsMcsWorkflow(request.AgentType) ? AgentTypes.McsWorkflow : AgentTypes.McsAgent;
-
-        if (agentType != AgentTypes.McsWorkflow && !string.IsNullOrWhiteSpace(request.Filter))
-        {
-            throw new UsageException("--filter applies to MCSWorkflow only. Add --agent-type MCSWorkflow.");
-        }
-
+        var resolved = Validate(request);
         var limit = request.Limit ?? DefaultLimit;
-        var read = ReaderFor(agentType, request);
-        var rows = new List<ManagedAgentListItem>();
+        var read = readerFor(resolved);
         var diagnostics = new List<ManagedAgentListDiagnostic>();
 
         if (!request.Tenant)
         {
-            var environment = await _environmentResolver.ResolveAsync(request.EnvironmentId, cancellationToken).ConfigureAwait(false);
-            rows.AddRange(await read(environment, Probe(limit), cancellationToken).ConfigureAwait(false));
+            var environment = await _environmentResolver.ResolveEnvironmentAsync(request.EnvironmentId, cancellationToken).ConfigureAwait(false);
 
-            return Project("environment", environment.EnvironmentId, agentType, limit, rows, diagnostics);
+            return Project(resolved, environment, limit, await read(environment, Probe(limit), cancellationToken).ConfigureAwait(false), diagnostics);
         }
 
         var inventory = await _environmentResolver.ListAsync(cancellationToken).ConfigureAwait(false);
@@ -101,16 +110,33 @@ public sealed class ManagedAgentListService
             Message = "The environment carries no usable Dataverse organization url.",
         }));
 
-        await ReadTenantAsync(inventory.Reachable, read, limit, rows, diagnostics, cancellationToken).ConfigureAwait(false);
-
-        return Project("tenant", environmentId: null, agentType, limit, rows, diagnostics);
+        return Project(resolved, environment: null, limit, await ReadTenantAsync(inventory.ReachableEnvironments, read, limit, diagnostics, cancellationToken).ConfigureAwait(false), diagnostics);
     }
 
-    private static async Task ReadTenantAsync(IReadOnlyList<CopilotEnvironmentContext> environments, Func<CopilotEnvironmentContext, int, CancellationToken, Task<IReadOnlyList<ManagedAgentListItem>>> read, int limit, List<ManagedAgentListItem> rows, List<ManagedAgentListDiagnostic> diagnostics, CancellationToken cancellationToken)
+    private static ManagedAgentListRequest Validate(ManagedAgentListRequest request)
+    {
+        var view = ManagedAgentListViews.Parse(request.View) ?? throw new UsageException($"--view '{request.View}' is not a view. Use {ManagedAgentListViews.Cloud} or {ManagedAgentListViews.Ams}.");
+        if (view == ManagedAgentListViews.Cloud && !string.IsNullOrWhiteSpace(request.RepositoryId))
+        {
+            throw new UsageException("--repository-id applies to --view ams only. Add --view ams to list the AMS agents of one repository.");
+        }
+
+        var agentType = view == ManagedAgentListViews.Ams && string.IsNullOrWhiteSpace(request.AgentType) ? null : AgentTypes.IsMcsWorkflow(request.AgentType) ? AgentTypes.McsWorkflow : AgentTypes.McsAgent;
+        if (!string.IsNullOrWhiteSpace(request.Filter) && (view == ManagedAgentListViews.Ams || agentType != AgentTypes.McsWorkflow))
+        {
+            throw new UsageException(view == ManagedAgentListViews.Ams ? "--filter applies to --view cloud only, with --agent-type MCSWorkflow." : "--filter applies to MCSWorkflow only. Add --agent-type MCSWorkflow.");
+        }
+
+        return request with { View = view, AgentType = agentType, RepositoryId = string.IsNullOrWhiteSpace(request.RepositoryId) ? null : request.RepositoryId.Trim() };
+    }
+
+    private static async Task<ManagedAgentListPage> ReadTenantAsync(IReadOnlyList<PowerPlatformEnvironment> environments, ManagedAgentListReader read, int limit, List<ManagedAgentListDiagnostic> diagnostics, CancellationToken cancellationToken)
     {
         using var abandoned = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var pending = new Queue<(string EnvironmentId, Task<(IReadOnlyList<ManagedAgentListItem> Rows, string? Failure)> Read)>();
+        var pending = new Queue<(string EnvironmentId, Task<(ManagedAgentListPage Page, string? Failure)> Read)>();
+        var rows = new List<ManagedAgentListItem>();
         var started = 0;
+        var hasMore = false;
 
         try
         {
@@ -122,23 +148,26 @@ public sealed class ManagedAgentListService
                 }
 
                 var (environmentId, reading) = pending.Dequeue();
-                var (environmentRows, failure) = await reading.ConfigureAwait(false);
+                var (page, failure) = await reading.ConfigureAwait(false);
 
                 if (failure is not null)
                 {
                     diagnostics.Add(new ManagedAgentListDiagnostic { EnvironmentId = environmentId, Message = failure });
                 }
 
-                rows.AddRange(environmentRows.Take(Probe(limit) - rows.Count));
+                hasMore |= page.HasMore;
+                rows.AddRange(page.Agents.Take(Probe(limit) - rows.Count));
             }
         }
         finally
         {
             await abandoned.CancelAsync().ConfigureAwait(false);
         }
+
+        return new ManagedAgentListPage { Agents = rows, HasMore = hasMore };
     }
 
-    private static async Task<(IReadOnlyList<ManagedAgentListItem> Rows, string? Failure)> TryReadAsync(Func<CopilotEnvironmentContext, int, CancellationToken, Task<IReadOnlyList<ManagedAgentListItem>>> read, CopilotEnvironmentContext environment, int maximumCount, CancellationToken cancellationToken)
+    private static async Task<(ManagedAgentListPage Page, string? Failure)> TryReadAsync(ManagedAgentListReader read, PowerPlatformEnvironment environment, int maximumCount, CancellationToken cancellationToken)
     {
         try
         {
@@ -146,41 +175,42 @@ public sealed class ManagedAgentListService
         }
         catch (Exception failure) when (failure is not OperationCanceledException)
         {
-            return ([], failure.Message);
+            return (new ManagedAgentListPage { Agents = [] }, failure.Message);
         }
     }
 
-    private Func<CopilotEnvironmentContext, int, CancellationToken, Task<IReadOnlyList<ManagedAgentListItem>>> ReaderFor(string agentType, ManagedAgentListRequest request)
+    private ManagedAgentListReader LocalReaderFor(ManagedAgentListRequest request)
     {
-        if (agentType != AgentTypes.McsWorkflow)
+        if (request.AgentType != AgentTypes.McsWorkflow)
         {
             var annotations = ReadAnnotations(request.Project);
 
-            return (environment, maximumCount, cancellationToken) => ReadEnvironmentAsync(environment, annotations, maximumCount, cancellationToken);
+            return (environment, maximumCount, cancellationToken) => ReadEnvironmentAsync(_environmentResolver.ToContext(environment), annotations, maximumCount, cancellationToken);
         }
 
         var workflowAnnotations = ReadWorkflowAnnotations(request.Project);
 
-        return (environment, maximumCount, cancellationToken) => ReadWorkflowsAsync(environment, workflowAnnotations, request.Filter, maximumCount, cancellationToken);
+        return (environment, maximumCount, cancellationToken) => ReadWorkflowsAsync(_environmentResolver.ToContext(environment), workflowAnnotations, request.Filter, maximumCount, cancellationToken);
     }
 
-    private static ManagedAgentListResult Project(string scope, string? environmentId, string agentType, int limit, List<ManagedAgentListItem> rows, List<ManagedAgentListDiagnostic> diagnostics) => new()
+    private static ManagedAgentListResult Project(ManagedAgentListRequest request, PowerPlatformEnvironment? environment, int limit, ManagedAgentListPage page, List<ManagedAgentListDiagnostic> diagnostics) => new()
     {
-        Scope = scope,
-        EnvironmentId = environmentId,
-        AgentType = agentType,
+        View = request.View == ManagedAgentListViews.Ams ? request.View : null,
+        Scope = environment is null ? "tenant" : "environment",
+        EnvironmentId = environment?.EnvironmentId,
+        AgentType = request.AgentType,
         Limit = limit,
-        Truncated = rows.Count > limit,
-        Agents = [.. rows.Take(limit)],
+        Truncated = page.Agents.Count > limit || page.HasMore,
+        Agents = [.. page.Agents.Take(limit)],
         Diagnostics = diagnostics,
     };
 
     private sealed record WorkflowAnnotation(ManagedAgentListItem Item, IReadOnlySet<string> Environments);
 
-    private async Task<IReadOnlyList<ManagedAgentListItem>> ReadWorkflowsAsync(CopilotEnvironmentContext environment, IReadOnlyDictionary<string, WorkflowAnnotation> annotations, string? filter, int maximumCount, CancellationToken cancellationToken) =>
-        [.. (await _workflows.ListAsync(environment, filter, maximumCount, cancellationToken).ConfigureAwait(false)).Select(workflow => Describe(workflow, environment, annotations))];
+    private async Task<ManagedAgentListPage> ReadWorkflowsAsync(CopilotEnvironmentContext environment, IReadOnlyDictionary<string, WorkflowAnnotation> annotations, string? filter, int maximumCount, CancellationToken cancellationToken) =>
+        new() { Agents = [.. (await _workflows.ListAsync(environment, filter, maximumCount, cancellationToken).ConfigureAwait(false)).Select(workflow => Describe(workflow, environment, annotations))] };
 
-    private static ManagedAgentListItem Describe(WorkflowDocument workflow, CopilotEnvironmentContext environment, IReadOnlyDictionary<string, WorkflowAnnotation> annotations)
+    private ManagedAgentListItem Describe(WorkflowDocument workflow, CopilotEnvironmentContext environment, IReadOnlyDictionary<string, WorkflowAnnotation> annotations)
     {
         var annotation = annotations.TryGetValue(workflow.WorkflowId.ToString(), out var candidate) && candidate.Environments.Contains(environment.EnvironmentId)
             ? candidate.Item
@@ -194,7 +224,7 @@ public sealed class ManagedAgentListService
             EnvironmentId = environment.EnvironmentId,
             DisplayName = workflow.Name,
             AgentType = AgentTypes.McsWorkflow,
-            WorkflowState = WorkflowStateProjection.ToPortalLabel(workflow.State),
+            WorkflowState = _stateRules.PortalLabel(workflow.State),
             LastChangedOn = workflow.ModifiedOn,
             DeploymentSlotCount = annotation?.DeploymentSlotCount,
         };
@@ -251,8 +281,8 @@ public sealed class ManagedAgentListService
             environments);
     }
 
-    private async Task<IReadOnlyList<ManagedAgentListItem>> ReadEnvironmentAsync(CopilotEnvironmentContext environment, IReadOnlyList<ManagedAgentAnnotation> annotations, int maximumCount, CancellationToken cancellationToken) =>
-        [.. (await _catalog.ListAgentsAsync(environment, maximumCount, cancellationToken).ConfigureAwait(false)).Select(agent => Describe(agent, environment, annotations.FirstOrDefault(annotation => annotation.Matches(agent.SchemaName, environment.EnvironmentId))))];
+    private async Task<ManagedAgentListPage> ReadEnvironmentAsync(CopilotEnvironmentContext environment, IReadOnlyList<ManagedAgentAnnotation> annotations, int maximumCount, CancellationToken cancellationToken) =>
+        new() { Agents = [.. (await _catalog.ListAgentsAsync(environment, maximumCount, cancellationToken).ConfigureAwait(false)).Select(agent => Describe(agent, environment, annotations.FirstOrDefault(annotation => annotation.Matches(agent.SchemaName, environment.EnvironmentId))))] };
 
     private static ManagedAgentListItem Describe(CopilotAgentSummary agent, CopilotEnvironmentContext environment, ManagedAgentAnnotation? annotation) => new()
     {

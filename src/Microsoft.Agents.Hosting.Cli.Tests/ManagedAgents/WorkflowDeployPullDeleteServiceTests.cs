@@ -5,6 +5,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 using Microsoft.CopilotStudio.Sync;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -25,8 +26,9 @@ public sealed class WorkflowDeployServiceTests : IDisposable
         _config,
         _config,
         _store,
-        ManagedAgentFixtures.ActivationPass(_connections, States()),
+        ManagedAgentFixtures.ActivationReporter(_connections, States()),
         States(),
+        ManagedAgentFixtures.StateRules,
         ManagedAgentFixtures.Principals(),
         new FixedClock(ManagedAgentFixtures.Now));
 
@@ -83,7 +85,7 @@ public sealed class WorkflowDeployServiceTests : IDisposable
     public async Task PromotingToAnotherEnvironmentKeepsTheSameIdentifier()
     {
         var workflowId = Register();
-        ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment(deploymentName: "testwf", deploymentId: "dep-2", environmentId: "env-2"));
+        ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment(deploymentName: "testwf", deploymentId: "dep-2", environmentId: "env-2", deploymentType: DeploymentStages.Test));
 
         await Service().DeployAsync(Request(), CancellationToken.None);
         var promoted = await Service().DeployAsync(Request() with { DeploymentName = "testwf" }, CancellationToken.None);
@@ -100,7 +102,7 @@ public sealed class WorkflowDeployServiceTests : IDisposable
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Published, result.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Published, result.WorkflowState);
     }
 
     [Fact]
@@ -108,12 +110,12 @@ public sealed class WorkflowDeployServiceTests : IDisposable
     {
         Register();
         _store.DraftOnPush = true;
-        _connections.Views.Add(new CopilotConnectionView { LogicalName = "shared_office365", ConnectorId = "shared_office365", BoundConnectionId = null, IsDeclared = true });
+        _connections.UnboundConnectionCount = 1;
         _connections.Workflows.Add(new CopilotWorkflowView { WorkflowId = Guid.NewGuid().ToString(), DisplayName = "WF Hook 2", CanEnable = false, ConnectionReferences = ["shared_office365"] });
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Draft, result.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Draft, result.WorkflowState);
         Assert.Equal(1, result.UnboundConnectionCount);
         Assert.Contains(result.Warnings, warning => warning.Contains("deployment connection", StringComparison.Ordinal));
     }
@@ -123,14 +125,14 @@ public sealed class WorkflowDeployServiceTests : IDisposable
     {
         Register();
         _store.DraftOnPush = true;
-        _connections.Views.Add(new CopilotConnectionView { LogicalName = "shared_office365", ConnectorId = "shared_office365", BoundConnectionId = null, IsDeclared = true });
+        _connections.UnboundConnectionCount = 1;
         _connections.Workflows.Add(new CopilotWorkflowView { WorkflowId = Guid.NewGuid().ToString(), DisplayName = "WF Hook 2", CanEnable = false, ConnectionReferences = ["shared_office365"] });
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Draft, result.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Draft, result.WorkflowState);
         Assert.Equal(1, result.UnboundConnectionCount);
-        Assert.NotEqual(0, _connections.ReadCalls);
+        Assert.NotEmpty(_connections.PassPrincipals);
     }
 
     [Fact]
@@ -143,7 +145,7 @@ public sealed class WorkflowDeployServiceTests : IDisposable
 
         Assert.Equal(3, result.UnboundConnectionCount);
         Assert.Contains(result.Warnings, warning => warning.Contains("3 connection reference(s) have no connection: cr_teams, cr_outlook, cr_sharepoint.", StringComparison.Ordinal));
-        Assert.Equal(0, _connections.ReadCalls);
+        Assert.Empty(_connections.PassPrincipals);
     }
 
     [Fact]
@@ -165,14 +167,11 @@ public sealed class WorkflowDeployServiceTests : IDisposable
         Register();
         _store.DraftOnPush = true;
         _store.UnboundConnectionReferencesOnPush.AddRange(["cr_teams", "cr_outlook", "cr_sharepoint"]);
-        _connections.Views.Add(new CopilotConnectionView { LogicalName = "cr_teams", ConnectorId = "shared_teams", Candidates = [ManagedAgentFixtures.Candidate("conn-1")] });
-        _connections.Views.Add(new CopilotConnectionView { LogicalName = "cr_outlook", ConnectorId = "shared_office365", IsDeclared = true });
-        _connections.Views.Add(new CopilotConnectionView { LogicalName = "cr_sharepoint", ConnectorId = "shared_sharepointonline", IsDeclared = true });
+        _connections.UnboundConnectionCount = 2;
         _connections.Workflows.Add(new CopilotWorkflowView { WorkflowId = Guid.NewGuid().ToString(), DisplayName = "WF Hook 2", CanEnable = false, ConnectionReferences = ["cr_teams", "cr_outlook", "cr_sharepoint"] });
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal("cr_teams", Assert.Single(_connections.Bound).LogicalName);
         Assert.Equal(2, result.UnboundConnectionCount);
         Assert.DoesNotContain(result.Warnings, warning => warning.Contains("have no connection", StringComparison.Ordinal));
     }
@@ -187,18 +186,18 @@ public sealed class WorkflowDeployServiceTests : IDisposable
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Published, result.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Published, result.WorkflowState);
     }
 
     [Fact]
     public async Task ADeployReportsTheObservedStateWhenAStopWasRefused()
     {
         Register(activated: false);
-        _store.ObservedStateOnPush = WorkflowStateProjection.Activated;
+        _store.ObservedStateOnPush = CopilotStudioStates.Activated;
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Published, result.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Published, result.WorkflowState);
         Assert.True(result.Published);
     }
 
@@ -206,11 +205,11 @@ public sealed class WorkflowDeployServiceTests : IDisposable
     public async Task ADeployNeverReportsAnUnknownStateAsADraft()
     {
         Register(activated: false);
-        _store.ObservedStateOnPush = WorkflowStateProjection.Unknown;
+        _store.ObservedStateOnPush = CopilotStudioStates.Unknown;
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Unknown, result.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Unknown, result.WorkflowState);
         Assert.False(result.Published);
         Assert.Null(result.PublishedOn);
     }
@@ -252,7 +251,7 @@ public sealed class WorkflowDeployServiceTests : IDisposable
 
         var folder = WorkflowWorkspaceFixtures.Single(_workspace.Root);
         File.WriteAllText(folder.MetadataPath, File.ReadAllText(folder.MetadataPath).Replace("stateCode: 1", "stateCode: 0", StringComparison.Ordinal).Replace("statusCode: 2", "statusCode: 1", StringComparison.Ordinal));
-        _store.Cloud[workflowId] = _store.Cloud[workflowId] with { State = WorkflowStateProjection.Draft };
+        _store.Cloud[workflowId] = _store.Cloud[workflowId] with { State = CopilotStudioStates.Draft };
 
         await Service().DeployAsync(Request(), CancellationToken.None);
 
@@ -284,8 +283,8 @@ public sealed class WorkflowDeployServiceTests : IDisposable
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Draft, result.WorkflowState);
-        Assert.Equal(0, _connections.ReadCalls);
+        Assert.Equal(CopilotStudioStates.Draft, result.WorkflowState);
+        Assert.Empty(_connections.PassPrincipals);
     }
 
     [Fact]
@@ -322,7 +321,7 @@ public sealed class WorkflowDeployServiceTests : IDisposable
 
         var result = await Service().DeployAsync(Request(publish: true), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Published, result.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Published, result.WorkflowState);
     }
 
     [Fact]
@@ -364,7 +363,7 @@ public sealed class WorkflowDeployServiceTests : IDisposable
         Assert.Equal($"'{WorkflowWorkspace.FolderNameFor("WF Hook 2", workflowId)}' has conflict remote change, and a deploy would replace them.", failure.Message);
         Assert.Equal("Run `msagent agent pull` to get them, or deploy again with --overwrite to replace them.", failure.Remediation);
         Assert.Equal([$"unpulled:{workflowId}"], _store.Calls);
-        Assert.Equal(0, _connections.ReadCalls);
+        Assert.Empty(_connections.PassPrincipals);
         Assert.Equal(WorkflowStateCache.Activated, Assert.Single(States().Read(_workspace.Root, "env-1")).Value);
         Assert.Equal(configuration, File.ReadAllBytes(_workspace.ConfigPath));
     }
@@ -411,7 +410,7 @@ public sealed class WorkflowDeployServiceTests : IDisposable
 
         Assert.Equal("--schema-name does not apply to a workflow, which is addressed by its workflow id. Remove --schema-name.", failure.Message);
         Assert.Empty(_store.Calls);
-        Assert.Equal(0, _connections.ReadCalls);
+        Assert.Empty(_connections.PassPrincipals);
         Assert.Equal(configuration, File.ReadAllBytes(_workspace.ConfigPath));
     }
 
@@ -449,7 +448,7 @@ public sealed class WorkflowDeployServiceTests : IDisposable
         Assert.Equal(withSelector ? "deployment-not-found" : hasDeployment ? "deployment-selector-required" : "deployment-records-empty", failure.ErrorKind);
         Assert.Contains(hasDeployment ? withSelector ? "no-such-slot" : "Available deployments: devwf" : "no deployment records", failure.Message, StringComparison.Ordinal);
         Assert.Empty(_store.Calls);
-        Assert.Equal(0, _connections.ReadCalls);
+        Assert.Empty(_connections.PassPrincipals);
         Assert.Equal(WorkflowStateCache.Activated, Assert.Single(States().Read(_workspace.Root, "env-1")).Value);
         Assert.Equal(configuration, File.ReadAllBytes(_workspace.ConfigPath));
         Assert.Equal(cache, File.ReadAllBytes(cachePath));
@@ -497,6 +496,87 @@ public sealed class WorkflowDeployServiceTests : IDisposable
         Assert.Equal("workspace-missing", failure.ErrorKind);
         Assert.DoesNotContain(_store.Calls, call => call.StartsWith("upsert:", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public async Task ADevDeployIntoAnotherEnvironmentThatHoldsTheWorkflowIsRefusedWithoutOverwrite()
+    {
+        var workflowId = RegisterClonedFromAnotherEnvironment();
+        var configuration = File.ReadAllBytes(_workspace.ConfigPath);
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service().DeployAsync(Request() with { DeploymentName = "sourcewf" }, CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.Deployment.UnverifiedAgentInTarget, ExitCodes.Usage, "unverified-agent-in-target"), (failure.ErrorCode, failure.ExitCode, failure.ErrorKind));
+        Assert.Equal($"Workflow 'Source Flow' ({workflowId}) already exists in env-1, outside this workflow's home environment, and this deployment never deployed it: a workflow cloned from another environment keeps its source's id, so deploying it there writes over the source.", failure.Message);
+        Assert.StartsWith("Nothing was pushed. Re-run with --overwrite only to replace that workflow's content and name", failure.Remediation, StringComparison.Ordinal);
+        Assert.Equal([$"get:{workflowId}"], _store.Calls);
+        Assert.Equal("Source Flow", _store.Cloud[workflowId].Name);
+        Assert.Equal(configuration, File.ReadAllBytes(_workspace.ConfigPath));
+    }
+
+    [Fact]
+    public async Task OverwriteDeploysIntoAnotherEnvironmentThatHoldsTheWorkflow()
+    {
+        var workflowId = RegisterClonedFromAnotherEnvironment();
+
+        var result = await Service().DeployAsync(Request(overwrite: true) with { DeploymentName = "sourcewf" }, CancellationToken.None);
+
+        Assert.Equal(("update", "env-1"), (result.Action, result.TargetEnvironmentId));
+        Assert.Equal([$"upsert:{workflowId}"], _store.Calls);
+        Assert.Equal("WF Hook 2", _store.Cloud[workflowId].Name);
+    }
+
+    [Theory]
+    [InlineData(DeploymentStages.Test)]
+    [InlineData(DeploymentStages.Prod)]
+    public async Task ATestOrProdDeployIntoAnotherEnvironmentThatHoldsTheWorkflowStillReplacesIt(string deploymentType)
+    {
+        var workflowId = RegisterClonedFromAnotherEnvironment(deploymentType);
+
+        var result = await Service().DeployAsync(Request() with { DeploymentName = "sourcewf" }, CancellationToken.None);
+
+        Assert.Equal(("update", "env-1"), (result.Action, result.TargetEnvironmentId));
+        Assert.Equal([$"upsert:{workflowId}"], _store.Calls);
+    }
+
+    [Fact]
+    public async Task TheHomeDeployOfAWorkflowClonedFromAnotherEnvironmentIsNotChecked()
+    {
+        var workflowId = RegisterClonedFromAnotherEnvironment();
+
+        Assert.Equal("env-2", (await Service().DeployAsync(Request() with { DeploymentName = "develop" }, CancellationToken.None)).TargetEnvironmentId);
+        Assert.Equal([$"unpulled:{workflowId}", $"upsert:{workflowId}"], _store.Calls);
+    }
+
+    [Fact]
+    public async Task ADevDeploymentThatDeployedBeforeIsNotChecked()
+    {
+        var workflowId = RegisterClonedFromAnotherEnvironment(lastDeployedTime: ManagedAgentFixtures.Now);
+
+        Assert.Equal("update", (await Service().DeployAsync(Request() with { DeploymentName = "sourcewf" }, CancellationToken.None)).Action);
+        Assert.Equal([$"unpulled:{workflowId}", $"upsert:{workflowId}"], _store.Calls);
+    }
+
+    [Fact]
+    public async Task ADevDeployIntoAnotherEnvironmentWithoutTheWorkflowCreatesIt()
+    {
+        var workflowId = RegisterClonedFromAnotherEnvironment();
+        _store.Cloud.Remove(workflowId);
+
+        Assert.Equal("create", (await Service().DeployAsync(Request() with { DeploymentName = "sourcewf" }, CancellationToken.None)).Action);
+        Assert.Equal([$"get:{workflowId}", $"unpulled:{workflowId}", $"upsert:{workflowId}"], _store.Calls);
+    }
+
+    private Guid RegisterClonedFromAnotherEnvironment(string sourceDeploymentType = DeploymentStages.Dev, DateTimeOffset? lastDeployedTime = null)
+    {
+        var workflowId = WorkflowFixtures.Write(_workspace.Root, "WF Hook 2");
+
+        _config.Add(_workspace.Root, WorkflowFixtures.Record(workflowId: workflowId.ToString(), environmentId: "env-2"));
+        ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment(deploymentName: "develop", deploymentId: "dep-home", environmentId: "env-2", homeEnvironmentId: "env-2"));
+        ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment(deploymentName: "sourcewf", deploymentId: "dep-source", environmentId: "env-1", homeEnvironmentId: "env-2", deploymentType: sourceDeploymentType) with { LastDeployedTime = lastDeployedTime });
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Source Flow", State = CopilotStudioStates.Activated };
+
+        return workflowId;
+    }
 }
 
 public sealed class WorkflowPullServiceTests : IDisposable
@@ -513,7 +593,8 @@ public sealed class WorkflowPullServiceTests : IDisposable
     private WorkflowPullService Service() => new(
         new WorkflowProjectResolver(ManagedAgentFixtures.AgentResolver(_config), new AgentConfigLocator(), ManagedAgentFixtures.Resolver(), new FakeWorkflowWorkspacePort()),
         _store,
-        States());
+        States(),
+        ManagedAgentFixtures.StateRules);
 
     private Guid Register(string name = "WF Hook 2")
     {
@@ -521,7 +602,7 @@ public sealed class WorkflowPullServiceTests : IDisposable
 
         _config.Add(_workspace.Root, WorkflowFixtures.Record(workflowId: workflowId.ToString()));
         ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment());
-        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = name, State = WorkflowStateProjection.Activated };
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = name, State = CopilotStudioStates.Activated };
 
         return workflowId;
     }
@@ -534,7 +615,7 @@ public sealed class WorkflowPullServiceTests : IDisposable
     {
         var workflowId = WorkflowFixtures.RegisterNested(_config, _workspace.Root, NestedFolder);
 
-        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "WF Hook 2", State = WorkflowStateProjection.Activated };
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "WF Hook 2", State = CopilotStudioStates.Activated };
 
         return workflowId;
     }
@@ -601,7 +682,7 @@ public sealed class WorkflowPullServiceTests : IDisposable
     {
         var workflowId = Register();
         var previousFolder = WorkflowWorkspaceFixtures.Single(_workspace.Root).FolderPath;
-        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Renamed In Portal", State = WorkflowStateProjection.Activated };
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Renamed In Portal", State = CopilotStudioStates.Activated };
 
         var result = await Service().PullAsync(Request(), CancellationToken.None);
 
@@ -697,7 +778,7 @@ public sealed class WorkflowPullServiceTests : IDisposable
 
         await Service().PullAsync(Request(), CancellationToken.None);
 
-        _store.Cloud[workflowId] = _store.Cloud[workflowId] with { State = WorkflowStateProjection.Draft };
+        _store.Cloud[workflowId] = _store.Cloud[workflowId] with { State = CopilotStudioStates.Draft };
 
         await Service().PullAsync(Request(), CancellationToken.None);
 
@@ -708,15 +789,16 @@ public sealed class WorkflowPullServiceTests : IDisposable
     public async Task TheStatePullRecordedIsTheStateAReportReads()
     {
         var workflowId = Register();
-        _store.Cloud[workflowId] = _store.Cloud[workflowId] with { State = WorkflowStateProjection.Draft };
+        _store.Cloud[workflowId] = _store.Cloud[workflowId] with { State = CopilotStudioStates.Draft };
 
         await Service().PullAsync(Request(), CancellationToken.None);
 
         var reported = WorkflowStateProjection.FromCache(
             [new CopilotWorkflowView { WorkflowId = workflowId.ToString(), DisplayName = "WF Hook 2", IsActivatedLocally = null }],
-            States().Read(_workspace.Root, "env-1"));
+            States().Read(_workspace.Root, "env-1"),
+            ManagedAgentFixtures.StateRules);
 
-        Assert.Equal(WorkflowStateProjection.Draft, Assert.Single(reported).State);
+        Assert.Equal(CopilotStudioStates.Draft, Assert.Single(reported).State);
     }
 
     [Fact]
@@ -726,7 +808,7 @@ public sealed class WorkflowPullServiceTests : IDisposable
 
         await Service().PullAsync(Request(), CancellationToken.None);
 
-        _store.Cloud[workflowId] = _store.Cloud[workflowId] with { State = WorkflowStateProjection.Suspended };
+        _store.Cloud[workflowId] = _store.Cloud[workflowId] with { State = CopilotStudioStates.Suspended };
 
         await Service().PullAsync(Request(), CancellationToken.None);
 
@@ -773,7 +855,7 @@ public sealed class WorkflowDeleteServiceTests : IDisposable
 
         if (inCloud)
         {
-            _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "WF Hook 2", State = WorkflowStateProjection.Activated };
+            _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "WF Hook 2", State = CopilotStudioStates.Activated };
         }
 
         return workflowId;
@@ -844,7 +926,7 @@ public sealed class WorkflowDeleteServiceTests : IDisposable
     public async Task ARenamedCloudWorkflowIsStillDeletable()
     {
         var workflowId = Register();
-        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Renamed In Portal", State = WorkflowStateProjection.Activated };
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Renamed In Portal", State = CopilotStudioStates.Activated };
 
         var result = await Service().DeleteAsync(Request(), CancellationToken.None);
 

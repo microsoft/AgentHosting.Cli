@@ -1,8 +1,10 @@
+using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Hosting;
 using Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -696,6 +698,33 @@ public class UnifiedDeploymentCommandTests
         Run(operations, "deployment", "connection", "list", "--deployment-name", "dev");
 
         Assert.False(operations.LastAgentDeploymentConnectionShowRequest?.ByReference);
+    }
+
+    [Fact]
+    public void ConnectionList_ShowsAWorkflowsPortalLabelAsText_AndOnlyItsStateAsJson()
+    {
+        var operations = new FakeOperations
+        {
+            OnResolveDeploymentAgentType = _ => new DeploymentAgentTypeResult { AgentType = AgentTypes.McsAgent, Source = DeploymentAgentTypeSource.DeploymentRecord },
+            OnAgentDeploymentConnectionShow = _ => new AgentDeploymentConnectionResult
+            {
+                Status = "connections-previewed",
+                AgentId = "agent-1",
+                DeploymentId = "slot-1",
+                DeploymentName = "dev",
+                EnvironmentId = "env-1",
+                Workflows = WorkflowStateProjection.FromActivation([new CopilotWorkflowView { WorkflowId = "wf-1", DisplayName = "SubmitExpense" }], new CopilotWorkflowActivation { ObservedById = new Dictionary<string, bool> { ["wf-1"] = true } }, ManagedAgentFixtures.StateRules),
+            },
+        };
+
+        var (_, text, _) = Run(operations, "deployment", "connection", "list", "--deployment-name", "dev");
+        var (_, json, _) = Run(operations, "deployment", "connection", "list", "--deployment-name", "dev", "--json");
+
+        using var document = JsonDocument.Parse(json);
+        var workflow = Assert.Single(document.RootElement.GetProperty("workflows").EnumerateArray());
+        Assert.Contains(text.Split('\n'), line => line.Contains("SubmitExpense", StringComparison.Ordinal) && line.TrimEnd().EndsWith("published", StringComparison.Ordinal));
+        Assert.Equal(["workflowId", "displayName", "filePath", "connectionReferences", "state"], workflow.EnumerateObject().Select(property => property.Name));
+        Assert.Equal("activated", workflow.GetProperty("state").GetString());
     }
 
     [Fact]

@@ -1,0 +1,21 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "agents/mcs",
+    "query": {},
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "bodyFixture": "mcs-workflow-register.clone.request.json"
+  },
+  "response": {
+    "status": 201,
+    "headers": {},
+    "bodyFixture": "mcs-workflow-register.clone.response.json"
+  },
+  "startsOperation": false,
+  "errors": [
+    { "status": 400, "code": "InvalidAgentFieldValue", "bodyFixture": null, "when": "a field has an unsupported value, such as the agent folder" },
+    { "status": 404, "code": "McsBotNotFound", "bodyFixture": "mcs-workflow-register.workflow-not-found.error.json", "when": "the claimed flow doesn't exist in the Dev environment" }
+  ]
+}

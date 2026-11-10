@@ -1,70 +1,32 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
+using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.CopilotStudio.McsCore;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
 public sealed class CopilotProjectIdentityReaderTests
 {
-    private static CopilotProjectIdentityReader Reader() => new(new AgentConfigLocator());
+    private static CopilotProjectIdentityReader Reader() => new(new AgentConfigLocator(), new SyncAgentWorkspaceIdentityReader());
+
+    public static TheoryData<string> UnreadableSettings => ["", "   \n", "displayName: \"Contoso Helpdesk\"\n", "schemaName: \"con_agent\nconfiguration: [unclosed\n", "<<<<<<< HEAD\nschemaName: con_agent\n=======\nschemaName: con_other\n>>>>>>> branch\n"];
 
     [Fact]
-    public void Find_ReadsAQuotedSchemaAndDisplayName()
+    public void Find_ReadsTheIdentityTheSettingsFileDeclares()
     {
         using var workspace = new TemporaryWorkspace(schemaName: "con_helpdesk", displayName: "Contoso Helpdesk");
 
-        var identity = Reader().Find(workspace.Root);
-
-        Assert.Equal("con_helpdesk", identity!.SchemaName);
-        Assert.Equal("Contoso Helpdesk", identity.DisplayName);
+        Assert.Equal(new ProjectIdentity { SchemaName = "con_helpdesk", DisplayName = "Contoso Helpdesk" }, Reader().Find(workspace.Root));
     }
 
     [Fact]
-    public void Find_ReadsAnUnquotedScalar()
+    public void Find_ReadsTheClassicAgentFileOfAWorkspaceWithoutASettingsFile()
     {
         using var workspace = new TemporaryWorkspace(withProjectFile: false);
-        workspace.AddFile(AgentConfigLocator.ProjectSettingsFileName, "displayName: Contoso Helpdesk\nschemaName: con_helpdesk\n");
-
-        var identity = Reader().Find(workspace.Root);
-
-        Assert.Equal("con_helpdesk", identity!.SchemaName);
-        Assert.Equal("Contoso Helpdesk", identity.DisplayName);
-    }
-
-    [Fact]
-    public void Find_ReadsTheClassicProjectFile()
-    {
-        using var workspace = new TemporaryWorkspace(withProjectFile: false);
-        workspace.AddFile(AgentConfigLocator.ClassicProjectFileName, "displayName: \"Classic Agent\"\nschemaName: \"con_classic\"\n");
+        workspace.AddFile(WorkspaceFileNames.Agent, "displayName: \"Classic Agent\"\nschemaName: \"con_classic\"\n");
 
         Assert.Equal("con_classic", Reader().Find(workspace.Root)!.SchemaName);
-    }
-
-    [Fact]
-    public void Find_UnescapesAQuotedDisplayName()
-    {
-        using var workspace = new TemporaryWorkspace(withProjectFile: false);
-        workspace.AddFile(AgentConfigLocator.ProjectSettingsFileName, "displayName: \"He said \\\"hi\\\"\"\nschemaName: \"con_agent\"\n");
-
-        Assert.Equal("He said \"hi\"", Reader().Find(workspace.Root)!.DisplayName);
-    }
-
-    [Fact]
-    public void Find_FallsBackToTheSchemaNameWhenThereIsNoDisplayName()
-    {
-        using var workspace = new TemporaryWorkspace(withProjectFile: false);
-        workspace.AddFile(AgentConfigLocator.ProjectSettingsFileName, "schemaName: \"con_agent\"\n");
-
-        Assert.Equal("con_agent", Reader().Find(workspace.Root)!.DisplayName);
-    }
-
-    [Fact]
-    public void Find_IgnoresANestedKeyOfTheSameName()
-    {
-        using var workspace = new TemporaryWorkspace(withProjectFile: false);
-        workspace.AddFile(AgentConfigLocator.ProjectSettingsFileName, "schemaName: \"con_agent\"\nconfiguration:\n  gPTSettings:\n    defaultSchemaName: con_agent.gpt.default\n");
-
-        Assert.Equal("con_agent", Reader().Find(workspace.Root)!.SchemaName);
     }
 
     [Fact]
@@ -76,12 +38,29 @@ public sealed class CopilotProjectIdentityReaderTests
     }
 
     [Fact]
-    public void Find_WithNoSchemaName_ReturnsNull()
+    public void Find_InAFolderThatDoesNotExist_ReturnsNull()
     {
         using var workspace = new TemporaryWorkspace(withProjectFile: false);
-        workspace.AddFile(AgentConfigLocator.ProjectSettingsFileName, "displayName: \"Contoso Helpdesk\"\n");
+
+        Assert.Null(Reader().Find(Path.Combine(workspace.Root, "missing")));
+    }
+
+    [Theory]
+    [MemberData(nameof(UnreadableSettings))]
+    public void Find_WithASettingsFileThatDeclaresNoReadableIdentity_ReturnsNull(string settings)
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        workspace.AddFile(WorkspaceFileNames.Settings, settings);
 
         Assert.Null(Reader().Find(workspace.Root));
+    }
+
+    [Fact]
+    public void Require_ReturnsTheDeclaredIdentity()
+    {
+        using var workspace = new TemporaryWorkspace(schemaName: "con_helpdesk", displayName: "Contoso Helpdesk");
+
+        Assert.Equal("con_helpdesk", Reader().Require(workspace.Root, "agent-1").SchemaName);
     }
 
     [Fact]
@@ -93,5 +72,31 @@ public sealed class CopilotProjectIdentityReaderTests
 
         Assert.Equal("schema-name-unavailable", failure.ErrorKind);
         Assert.Contains(workspace.Root, failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(UnreadableSettings))]
+    public void Require_WithASettingsFileThatDeclaresNoReadableIdentity_NamesTheFileToFix(string settings)
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        workspace.AddFile(WorkspaceFileNames.Settings, settings);
+
+        var failure = Assert.Throws<CopilotStudioException>(() => Reader().Require(workspace.Root, "agent-1"));
+
+        Assert.Equal((ErrorCodes.Workspace.CopilotWorkspaceFilesUnreadable, ExitCodes.Usage, CopilotErrorKinds.WorkspaceFilesUnreadable), (failure.ErrorCode, failure.ExitCode, failure.ErrorKind));
+        Assert.Equal($"Agent 'agent-1' has no readable schema name: '{Path.Combine(workspace.Root, WorkspaceFileNames.Settings)}' is empty, is not valid YAML, or names no schemaName.", failure.Message);
+        Assert.Equal("Fix settings.mcs.yml so it is valid YAML that names the agent's schemaName, then run the command again.", failure.Remediation);
+    }
+
+    [Fact]
+    public void Require_WithAnUnreadableClassicAgentFile_NamesTheAgentFile()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        workspace.AddFile(WorkspaceFileNames.Agent, "kind: GptComponentMetadata\ninstructions: Help people.\n");
+
+        var failure = Assert.Throws<CopilotStudioException>(() => Reader().Require(workspace.Root, "agent-1"));
+
+        Assert.Contains($"'{Path.Combine(workspace.Root, WorkspaceFileNames.Agent)}'", failure.Message, StringComparison.Ordinal);
+        Assert.StartsWith("Fix agent.mcs.yml ", failure.Remediation, StringComparison.Ordinal);
     }
 }

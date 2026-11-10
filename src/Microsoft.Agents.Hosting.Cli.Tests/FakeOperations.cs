@@ -152,6 +152,8 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
 
     public Func<ManagedAgentDeployRequest, ManagedAgentDeployResult>? OnManagedAgentDeploy { get; init; }
 
+    public Func<ManagedAgentShowRequest, ManagedAgentShowResult>? OnManagedAgentShow { get; init; }
+
     public Func<AgentDeploymentCreateRequest, AgentDeploymentCreateResult>? OnAgentDeploymentCreate { get; init; }
 
     public Func<AgentDeploymentListRequest, AgentDeploymentListResult>? OnAgentDeploymentList { get; init; }
@@ -195,7 +197,7 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
     {
         LastManagedAgentShowRequest = request;
 
-        return Task.FromResult(new ManagedAgentShowResult
+        return Task.FromResult(OnManagedAgentShow?.Invoke(request) ?? new ManagedAgentShowResult
         {
             ProjectDirectory = "/work",
             ConfigPath = "/work/.config/agent.config.json",
@@ -261,11 +263,13 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
     /// <summary>Records the last deployment delete request the host built.</summary>
     public AgentDeploymentDeleteRequest? LastAgentDeploymentDeleteRequest { get; private set; }
 
+    public Func<AgentDeploymentDeleteRequest, AgentDeploymentDeleteResult>? OnAgentDeploymentDelete { get; init; }
+
     public Task<AgentDeploymentDeleteResult> DeleteAgentDeploymentAsync(AgentDeploymentDeleteRequest request, CancellationToken cancellationToken)
     {
         LastAgentDeploymentDeleteRequest = request;
 
-        return Task.FromResult(new AgentDeploymentDeleteResult
+        return Task.FromResult((OnAgentDeploymentDelete ?? (_ => new AgentDeploymentDeleteResult
         {
             Status = "deployment-deleted",
             AgentId = request.AgentId ?? "agent-1",
@@ -281,7 +285,7 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
                     EnvironmentId = "env-1",
                 },
             ],
-        });
+        }))(request));
     }
 
     /// <summary>Records the last deployment update request the host built.</summary>

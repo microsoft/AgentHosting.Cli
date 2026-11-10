@@ -4,14 +4,20 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Commands.Features;
+using Microsoft.Agents.Hosting.Cli.Core.Ams;
+using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Diagnostics;
+using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Core.Playground;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Hosting;
 using Microsoft.Agents.Hosting.Cli.Telemetry;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -444,6 +450,42 @@ public sealed class CommandTelemetryTests
             item.GetProperty("data").GetProperty("operation_Name").GetString()));
     }
 
+    [Theory]
+    [InlineData("auth.setup-git", "auth", "setup-git")]
+    [InlineData(null, "auth", "git-credential", "erase")]
+    public async Task GitSignInCommandsRecordTheirMetadataPathUnlessGitRunsThem(
+        string? expectedPath,
+        params string[] args)
+    {
+        var transport = new CapturingTransport();
+        var gitDirectory = Path.Combine(Path.GetTempPath(), "git-telemetry", "cmd");
+        var signIn = new GitSignInService(
+            PowerPlatformApiTargetConfig.Test,
+            new AmsEndpointProfile(),
+            new FakePpapiTokenProvider(),
+            new PlaygroundToolLocatorTests.RecordingProcessRunner(_ => new PlaygroundProcessResult(0, string.Empty, string.Empty)),
+            new PlaygroundToolLocatorTests.FakePlaygroundEnvironment(isWindows: true, pathValue: gitDirectory, existingPaths: [Path.Combine(gitDirectory, "git.exe")]),
+            new StringReader(string.Empty));
+        using var services = new ServiceCollection()
+            .AddSingleton<ICommandHandler<AuthSetupGitRequest, AuthSetupGitResult>>(signIn)
+            .AddSingleton<ICommandHandler<AuthGitCredentialRequest, AuthGitCredentialResult>>(signIn)
+            .BuildServiceProvider();
+
+        var actual = await InvokeAsync(
+            args,
+            Factory(
+                new FixedDestinationResolver(
+                    Destination(new Uri("http://127.0.0.1:1/OneCollector/1.0/"))),
+                transport: transport),
+            services: services,
+            featureFlags: TestFeatureFlags.Everything);
+
+        Assert.Equal(ExitCodes.Success, actual.ExitCode);
+        Assert.Equal(
+            expectedPath is null ? [] : ["AgentHostingCLI." + expectedPath, "AgentHostingCLI." + expectedPath],
+            transport.Payload is null ? [] : Parse(transport.Payload).Select(item => item.GetProperty("data").GetProperty("operation_Name").GetString()));
+    }
+
     [Fact]
     public async Task DeploymentPathIsStableAcrossMcsAndCodeAgentRouting()
     {
@@ -630,6 +672,64 @@ public sealed class CommandTelemetryTests
             "synthetic",
             Assert.IsType<string>(transport.Payload),
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("deploy-incomplete")]
+    [InlineData("deploy-recorded-nowhere")]
+    [InlineData("bootstrap-reattach-failed")]
+    [InlineData("knowledge-upload-failed")]
+    [InlineData("push-response-unreadable")]
+    [InlineData("deployment-target-delete-failed")]
+    [InlineData("connection-reference-not-bound")]
+    [InlineData("connection-reference-not-declared")]
+    [InlineData("connection-not-deleted-after-reference-removed")]
+    [InlineData("connection-reference-not-deleted")]
+    [InlineData("workflow-activation-failed")]
+    [InlineData("clone-not-registered")]
+    [InlineData("clone-not-materialised")]
+    [InlineData("workflow-delete")]
+    public async Task ADataverseRefusal_IsReportedWithoutItsResponseBody_InOutputLogsAndTelemetry(string site)
+    {
+        var refusal = new DataverseRequestException(
+            HttpStatusCode.Forbidden,
+            "{\"error\":{\"code\":\"0x80040220\",\"message\":\"Principal user is missing prvDeletebot privilege.\"},\"trace\":\"sample.person@contoso.com\"}");
+        var (args, operations, thrown) = RefusalScenario(site, refusal);
+        var expected = thrown as AgentHostingException
+            ?? CopilotStudioException.ServiceError("msagent agent delete", refusal.Describe());
+
+        var text = await InvokeWithTelemetryAsync(args, operations);
+        var json = await InvokeWithTelemetryAsync([.. args, "--json"], operations);
+        var debug = await InvokeWithTelemetryAsync([.. args, "--debug"], operations);
+        using var envelope = JsonDocument.Parse(json.Stdout);
+
+        Assert.All([text, json, debug], run =>
+        {
+            Assert.Equal(expected.ExitCode, run.ExitCode);
+            Assert.Equal(
+                expected.ErrorCode.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Dimensions(Parse(run.Payload)[1]).GetProperty("errorCode").GetString());
+            Assert.All(
+                [run.Stdout, run.Stderr, run.Payload],
+                channel =>
+                {
+                    Assert.DoesNotContain("sample.person@contoso.com", channel, StringComparison.Ordinal);
+                    Assert.DoesNotContain("Dataverse request failed", channel, StringComparison.Ordinal);
+                });
+        });
+        Assert.Contains(refusal.Describe(), text.Stderr, StringComparison.Ordinal);
+        Assert.Contains(refusal.Describe(), debug.Stderr, StringComparison.Ordinal);
+        Assert.Contains(
+            refusal.Describe(),
+            envelope.RootElement.GetProperty("errorMessage").GetString(),
+            StringComparison.Ordinal);
+        Assert.Equal(expected.ErrorCode, envelope.RootElement.GetProperty("errorCode").GetInt32());
+        Assert.Equal(expected.ErrorKind, envelope.RootElement.GetProperty("errorKind").GetString());
+        Assert.Equal(expected.Remediation, envelope.RootElement.GetProperty("remediation").GetString());
+        if (thrown is not AgentHostingException)
+        {
+            Assert.Equal(expected.Message, envelope.RootElement.GetProperty("errorMessage").GetString());
+        }
     }
 
     [Theory]
@@ -1005,6 +1105,7 @@ public sealed class CommandTelemetryTests
         CommandTelemetrySessionFactory? telemetryFactory = null,
         FakeOperations? operations = null,
         IServiceProvider? services = null,
+        IFeatureFlags? featureFlags = null,
         CancellationToken cancellationToken = default)
     {
         operations ??= new FakeOperations();
@@ -1019,7 +1120,7 @@ public sealed class CommandTelemetryTests
             operations,
             telemetryFactory,
             services: commandServices,
-            featureFlags: TestFeatureFlags.AllProductSurfaces);
+            featureFlags: featureFlags ?? TestFeatureFlags.AllProductSurfaces);
 
         int exitCode = await cli.InvokeAsync(
             args,
@@ -1029,6 +1130,109 @@ public sealed class CommandTelemetryTests
             cancellationToken);
         return (exitCode, stdout.ToString(), stderr.ToString());
     }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr, string Payload)> InvokeWithTelemetryAsync(
+        string[] args,
+        FakeOperations operations)
+    {
+        var transport = new CapturingTransport();
+        var (exitCode, stdout, stderr) = await InvokeAsync(
+            args,
+            Factory(
+                new FixedDestinationResolver(
+                    Destination(new Uri("http://127.0.0.1:1/OneCollector/1.0/"))),
+                transport: transport),
+            operations);
+        return (exitCode, stdout, stderr, Assert.IsType<string>(transport.Payload));
+    }
+
+    private static (string[] Args, FakeOperations Operations, Exception Thrown) RefusalScenario(
+        string site,
+        DataverseRequestException refusal) => site switch
+        {
+            "deploy-incomplete" => Deploy(ManagedAgentException.DeployIncomplete(
+                "push",
+                "cr_agent",
+                "env-1",
+                "(target 9d2c)",
+                new InvalidOperationException($"The push stopped: {refusal.Message}", refusal))),
+            "deploy-recorded-nowhere" => Deploy(
+                ManagedAgentException.DeployRecordedNowhere("cr_agent", "env-1", "9d2c", "dev", refusal)),
+            "bootstrap-reattach-failed" => Deploy(
+                CopilotStudioException.BootstrapReattachFailed("9d2c", "cr_agent", refusal)),
+            "knowledge-upload-failed" => Deploy(CopilotStudioException.KnowledgeUploadFailed(3, refusal)),
+            "push-response-unreadable" => Deploy(CopilotStudioException.PushResponseUnreadable("env-1", 3, refusal)),
+            "deployment-target-delete-failed" => DeploymentDelete(
+                ManagedAgentException.DeploymentTargetDeleteFailed("Contoso Agent", "dev", "env-1", "9d2c", refusal)),
+            "connection-reference-not-bound" => ConnectionAdd(
+                ManagedAgentException.ConnectionReferenceNotBound("cr_teams", "shared_teams", refusal, "msagent deployment connection update")),
+            "connection-reference-not-declared" => ConnectionAdd(
+                ManagedAgentException.ConnectionReferenceNotDeclared("shared_teams", "env-1", refusal, "msagent deployment connection list")),
+            "connection-not-deleted-after-reference-removed" => ConnectionRemove(
+                ManagedAgentException.ConnectionNotDeletedAfterReferenceRemoved("conn-1", "cr_teams", refusal, "msagent deployment connection remove")),
+            "connection-reference-not-deleted" => ConnectionRemove(
+                CopilotStudioException.ConnectionReferenceNotDeleted("cr_teams", "env-1", refusal)),
+            "workflow-activation-failed" => ConnectionUpdate(
+                ManagedAgentException.WorkflowActivationFailed("agent-1", "env-1", refusal)),
+            "clone-not-registered" => Clone(ManagedAgentException.CloneNotRegistered("Contoso Agent", refusal)),
+            "clone-not-materialised" => Clone(
+                ManagedAgentException.CloneNotMaterialised("9d2c", "env-1", "C:\\src\\agent", refusal)),
+            "workflow-delete" => (
+                ["agent", "delete", "--agent-id", "agent-1", "--non-interactive"],
+                new FakeOperations { OnManagedAgentDelete = _ => throw refusal },
+                refusal),
+            _ => throw new ArgumentOutOfRangeException(nameof(site), site, null),
+        };
+
+    private static (string[] Args, FakeOperations Operations, Exception Thrown) Deploy(Exception thrown) => (
+        ["agent", "deploy", "--deployment-name", "dev"],
+        new FakeOperations
+        {
+            OnResolveDeploymentAgentType = McsOperations().OnResolveDeploymentAgentType,
+            OnManagedAgentDeploy = _ => throw thrown,
+        },
+        thrown);
+
+    private static (string[] Args, FakeOperations Operations, Exception Thrown) DeploymentDelete(Exception thrown) => (
+        ["deployment", "delete", "--agent-id", "agent-1", "--deployment-name", "dev", "--delete-deployed-mcs-agent"],
+        new FakeOperations
+        {
+            OnResolveDeploymentAgentType = McsOperations().OnResolveDeploymentAgentType,
+            OnAgentDeploymentDelete = _ => throw thrown,
+        },
+        thrown);
+
+    private static (string[] Args, FakeOperations Operations, Exception Thrown) ConnectionAdd(Exception thrown) => (
+        ["deployment", "connection", "add", "--deployment-name", "dev", "--connector", "shared_teams"],
+        new FakeOperations
+        {
+            OnResolveDeploymentAgentType = McsOperations().OnResolveDeploymentAgentType,
+            OnAgentDeploymentConnectionReferenceCreate = _ => throw thrown,
+        },
+        thrown);
+
+    private static (string[] Args, FakeOperations Operations, Exception Thrown) ConnectionRemove(Exception thrown) => (
+        ["deployment", "connection", "remove", "--deployment-name", "dev", "--connection-reference", "cr_teams"],
+        new FakeOperations
+        {
+            OnResolveDeploymentAgentType = McsOperations().OnResolveDeploymentAgentType,
+            OnAgentDeploymentConnectionRemove = _ => throw thrown,
+        },
+        thrown);
+
+    private static (string[] Args, FakeOperations Operations, Exception Thrown) ConnectionUpdate(Exception thrown) => (
+        ["deployment", "connection", "update", "--agent-id", "agent-1", "--deployment-name", "dev"],
+        new FakeOperations
+        {
+            OnResolveDeploymentAgentType = McsOperations().OnResolveDeploymentAgentType,
+            OnAgentDeploymentConnection = _ => throw thrown,
+        },
+        thrown);
+
+    private static (string[] Args, FakeOperations Operations, Exception Thrown) Clone(Exception thrown) => (
+        ["agent", "create", "--agent-type", "MCSAgent", "--mcs-clone-agent-id", "9d2c0b8e-6f4a-4c1d-9e57-3a8b2f1d6c40"],
+        new FakeOperations { OnManagedAgentCreate = _ => throw thrown },
+        thrown);
 
     private static CommandTelemetrySessionFactory Factory(
         ITelemetryDestinationResolver resolver,

@@ -69,6 +69,14 @@ public static class DeploymentStages
     /// <summary>Every stage, in promotion order.</summary>
     public static readonly IReadOnlyList<string> All = [Dev, Test, Prod];
 
+    /// <summary>The names the Agent Management Service gives the stages, in promotion order.</summary>
+    public static readonly IReadOnlyList<string> ServiceNames = ["Dev", "Test", "Prod"];
+
+    /// <summary>The name the Agent Management Service gives a stage.</summary>
+    /// <param name="stage">A canonical stage, one of <see cref="All"/>.</param>
+    /// <returns>Dev, Test or Prod.</returns>
+    public static string ServiceName(string stage) => ServiceNames[Rank(stage) is var rank and < 3 ? rank : throw new ArgumentOutOfRangeException(nameof(stage), stage, "Not a deployment stage.")];
+
     /// <summary>Matches <paramref name="value"/> against a known stage, ignoring case.</summary>
     /// <param name="value">The caller-supplied stage text.</param>
     /// <param name="stage">The canonical lower-case stage when matched.</param>
@@ -130,8 +138,8 @@ public sealed record PrincipalReference
 ///
 /// Field names follow the service's schema rather than .NET convention, so a row written here and a
 /// row read from the Agent Management Service line up without a translation table. Service fields this
-/// build has no source for — the EDS geography, the Git repository, CodeAgent runtime data, and the
-/// Cosmos storage artifacts — are omitted rather than carried as columns that can only ever be null.
+/// build has no source for — the EDS geography, CodeAgent runtime data, and the Cosmos storage
+/// artifacts — are omitted rather than carried as columns that can only ever be null.
 /// </summary>
 public sealed record ManagedAgentRecord
 {
@@ -171,6 +179,10 @@ public sealed record ManagedAgentRecord
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? McsWorkflowId { get; init; }
 
+    /// <summary>The GRS repository folder AMS registered the agent with, which only AMS mode writes.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AgentSourceControlMetadata? SourceControlMetadata { get; init; }
+
     /// <summary>What created the record.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Origin { get; init; }
@@ -199,6 +211,12 @@ public sealed record ManagedAgentRecord
     /// <summary>Concurrency token, replaced on every write.</summary>
     public required string EntityTag { get; init; }
 }
+
+/// <summary>The repository folder of an agent AMS registered, named as AMS's <c>AppSourceControlMetadata</c> names it.</summary>
+/// <param name="RepositoryId">The GRS repository.</param>
+/// <param name="Branch">The branch remote deploys take, main.</param>
+/// <param name="Directory">The agent's top-level folder in the repository.</param>
+public sealed record AgentSourceControlMetadata(string RepositoryId, string Branch, string Directory);
 
 /// <summary>
 /// One deployment slot for a managed agent, mirroring the <c>AgentDeployment</c> ESP entity.

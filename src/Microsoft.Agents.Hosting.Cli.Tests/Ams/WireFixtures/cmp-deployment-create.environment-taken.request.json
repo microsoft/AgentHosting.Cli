@@ -1,0 +1,7 @@
+{
+  "deploymentId": "ffffffff-6666-4666-8666-000000000026",
+  "agentType": "MCSAgent",
+  "deploymentType": "Test",
+  "deploymentName": "contoso-qa",
+  "environmentId": "33333333-3333-3333-3333-333333333333"
+}

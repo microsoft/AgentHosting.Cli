@@ -30,6 +30,11 @@ internal static class DataverseOperationScope
 /// </summary>
 internal static class DataverseTargeting
 {
+    /// <summary>The tenant an environment belongs to, or <see cref="Guid.Empty"/> when it names none.</summary>
+    /// <param name="environment">The environment.</param>
+    /// <returns>The tenant identifier.</returns>
+    public static Guid TenantOf(CopilotEnvironmentContext environment) => Guid.TryParse(environment.TenantId, out var tenantId) ? tenantId : Guid.Empty;
+
     /// <summary>Targets the organization and tenant behind an environment.</summary>
     /// <param name="dataverseClient">The sync library's Dataverse client.</param>
     /// <param name="httpClientAccessor">Creates authenticated clients for the organization.</param>
@@ -43,10 +48,10 @@ internal static class DataverseTargeting
     }
 
     /// <summary>Targets the organization and tenant behind an environment.</summary>
-    /// <param name="dataverseClient">The sync library's standalone workflow client.</param>
+    /// <param name="dataverseClient">A sync library client that targets one environment at a time.</param>
     /// <param name="httpClientAccessor">Creates authenticated clients for the organization.</param>
     /// <param name="environment">The environment to target.</param>
-    public static void Connect(IStandaloneWorkflowDataverseClient dataverseClient, AgentHostDataverseHttpClientAccessor httpClientAccessor, CopilotEnvironmentContext environment)
+    public static void Connect(IDataverseEnvironmentTarget dataverseClient, AgentHostDataverseHttpClientAccessor httpClientAccessor, CopilotEnvironmentContext environment)
     {
         ArgumentNullException.ThrowIfNull(dataverseClient);
         ArgumentNullException.ThrowIfNull(environment);

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "PreconditionFailed",
+    "message": "Deployment 'contoso-test' (ffffffff-6666-4666-8666-000000000006) of this agent already targets environment '33333333-3333-3333-3333-333333333333', and an agent has one deployment per environment."
+  }
+}

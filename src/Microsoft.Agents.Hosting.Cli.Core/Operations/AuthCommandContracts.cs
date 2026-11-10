@@ -16,3 +16,13 @@ public sealed record AuthSwitchRequest
     /// <summary>The ring to retarget the active account at, when one is named.</summary>
     public PowerPlatformApiRing? Ring { get; init; }
 }
+
+/// <summary>Input for <c>msagent auth setup-git</c>.</summary>
+public sealed record AuthSetupGitRequest;
+
+/// <summary>Input for <c>msagent auth git-credential</c>, which git runs as its credential helper.</summary>
+public sealed record AuthGitCredentialRequest
+{
+    /// <summary>The action git asks for: get, store or erase.</summary>
+    public required string Operation { get; init; }
+}

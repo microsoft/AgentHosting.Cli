@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
@@ -25,14 +26,16 @@ public sealed partial class Cleanup
     private readonly CloudProbe _cloud;
     private readonly Transcript _transcript;
     private readonly StandaloneServices? _standalone;
+    private readonly AmsMcsServices? _amsMcs;
 
-    public Cleanup(MsagentCli msagent, AzureCli azure, CloudProbe cloud, Transcript transcript, StandaloneServices? standalone = null)
+    public Cleanup(MsagentCli msagent, AzureCli azure, CloudProbe cloud, Transcript transcript, StandaloneServices? standalone = null, AmsMcsServices? amsMcs = null)
     {
         _msagent = msagent;
         _azure = azure;
         _cloud = cloud;
         _transcript = transcript;
         _standalone = standalone;
+        _amsMcs = amsMcs;
     }
 
     /// <summary>Walks the ledger newest-first within each cleanup phase, removing or restoring each outstanding entry.</summary>
@@ -49,6 +52,9 @@ public sealed partial class Cleanup
     private static int CleanupPhase(LedgerEntry entry) => entry.Kind switch
     {
         ResourceKind.StandaloneConnectionReference => 1,
+        ResourceKind.AmsFlow or ResourceKind.LeftoverBot or ResourceKind.GrsRepository => 1,
+        ResourceKind.AmsConnectionReference => 2,
+        ResourceKind.AmsConnector => 3,
         ResourceKind.LocalWorkspace => 2,
         _ => 0,
     };
@@ -59,6 +65,12 @@ public sealed partial class Cleanup
 
         try
         {
+            if (entry.Kind == ResourceKind.GrsRepository && await AgentsInRepositoryAsync(entry, cancellationToken).ConfigureAwait(false) is { } agents)
+            {
+                ledger.MarkRetained(entry.Id, agents);
+                return;
+            }
+
             var failure = entry.Kind switch
             {
                 ResourceKind.McsAgent => await RemoveMcsAgentAsync(entry, cancellationToken).ConfigureAwait(false),
@@ -71,6 +83,12 @@ public sealed partial class Cleanup
                 ResourceKind.EvaluationRun => await RemoveEvaluationRunAsync(entry, cancellationToken).ConfigureAwait(false),
                 ResourceKind.StandaloneWorkflow => await RemoveStandaloneWorkflowAsync(entry, cancellationToken).ConfigureAwait(false),
                 ResourceKind.StandaloneConnectionReference => await RemoveStandaloneConnectionReferenceAsync(entry, cancellationToken).ConfigureAwait(false),
+                ResourceKind.AmsAgent => await RemoveAmsAgentAsync(entry, cancellationToken).ConfigureAwait(false),
+                ResourceKind.AmsFlow => await RemoveAmsFlowAsync(entry, cancellationToken).ConfigureAwait(false),
+                ResourceKind.LeftoverBot => await RemoveLeftoverBotAsync(entry, cancellationToken).ConfigureAwait(false),
+                ResourceKind.GrsRepository => await RemoveGrsRepositoryAsync(entry, cancellationToken).ConfigureAwait(false),
+                ResourceKind.AmsConnector => await RemoveAmsConnectorAsync(entry, cancellationToken).ConfigureAwait(false),
+                ResourceKind.AmsConnectionReference => await RemoveAmsConnectionReferenceAsync(entry, cancellationToken).ConfigureAwait(false),
                 _ => $"no cleanup is defined for {entry.Kind}",
             };
 
@@ -429,7 +447,7 @@ public sealed partial class Cleanup
     private static string? RemoveLocalWorkspace(LedgerEntry entry, Ledger ledger)
     {
         if (ledger.Entries.Any(candidate =>
-                candidate.Kind is ResourceKind.McsAgent or ResourceKind.McsWorkflow or ResourceKind.StandaloneWorkflow
+                candidate.Kind is ResourceKind.McsAgent or ResourceKind.McsWorkflow or ResourceKind.StandaloneWorkflow or ResourceKind.AmsAgent
                 && candidate.State == ResourceState.Orphaned
                 && IsUnder(candidate.Cleanup.ProjectDirectory, entry.Id)))
         {
@@ -438,11 +456,13 @@ public sealed partial class Cleanup
 
         if (Directory.Exists(entry.Id))
         {
-            Directory.Delete(entry.Id, recursive: true);
+            LocalDirectories.Delete(entry.Id);
         }
 
         return null;
     }
+
+    public static bool PointsInto(LedgerEntry entry, string directory) => IsUnder(entry.Cleanup.ProjectDirectory, directory) || (entry.Kind == ResourceKind.LocalWorkspace && IsUnder(entry.Id, directory));
 
     /// <summary>
     /// Whether an orphan's project is this workspace or sits inside it. The project a workflow is
@@ -492,6 +512,12 @@ public sealed partial class Cleanup
         ResourceKind.EvaluationRun => entry.Resolved
             ? $"msagent agent eval cancel --run-id {entry.Id} --agent-id {entry.Cleanup.McsAgentId} --environment-id {entry.Cleanup.EnvironmentId}, then the same with delete once it stops"
             : $"msagent agent eval list --agent-id {entry.Cleanup.McsAgentId} --environment-id {entry.Cleanup.EnvironmentId}, then cancel and delete any run named '{entry.Cleanup.Correlation}' (the run was never named, so {entry.Id} will not match)",
+        ResourceKind.AmsAgent => $"{(entry.Cleanup.AmsOff ? string.Empty : $"with {GitCredentialHelper.FeatureVariable}={GitCredentialHelper.Feature} and the amsMcs variables set, ")}msagent deployment delete --project \"{entry.Cleanup.ProjectDirectory}\" --deployment-id <each test and prod deployment> [--delete-deployed-mcs-agent], then msagent agent delete --project \"{entry.Cleanup.ProjectDirectory}\" --agent-id {entry.Id} --deployment-id <its dev deployment>",
+        ResourceKind.AmsFlow => $"turn off, then delete, the flow named exactly '{entry.Cleanup.Correlation}' in environment {entry.Cleanup.EnvironmentId}",
+        ResourceKind.LeftoverBot => $"delete the bot whose schema name is {entry.Cleanup.SchemaName}, with its bot components, from the Dev, Test and Prod organizations",
+        ResourceKind.GrsRepository => $"Invoke-WebRequest -Method Delete -Uri '{entry.Cleanup.GitUrl}' -Headers @{{ Authorization = 'Bearer <token>' }}, with <token> the password= line of msagent auth git-credential get, once agent list --view ams --repository-id {entry.Id} lists no agent",
+        ResourceKind.AmsConnector => $"delete the custom connector named exactly '{entry.Cleanup.Correlation}' from environment {entry.Cleanup.EnvironmentId}, after its connection references",
+        ResourceKind.AmsConnectionReference => $"delete the connection reference named exactly '{entry.Cleanup.Correlation}' from environment {entry.Cleanup.EnvironmentId}",
         _ => $"remove {entry.Kind} {entry.Id} by hand",
     };
 

@@ -15,26 +15,31 @@ namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 /// </summary>
 public sealed class AgentDeploymentUpdateService
 {
+    internal const string NewNameRequired = "`msagent deployment update` requires --new-name. Deployment type and environment cannot be changed.";
+
     private readonly ManagedAgentResolver _resolver;
     private readonly IAgentDeploymentRegistry _deployments;
     private readonly AgentConfigLocator _locator;
+    private readonly IAgentRecordMirror _mirror;
 
     /// <summary>Creates the service.</summary>
     /// <param name="resolver">Resolves the project, agent, and deployment.</param>
     /// <param name="deployments">The deployment table.</param>
     /// <param name="locator">Resolves the configuration path.</param>
-    public AgentDeploymentUpdateService(ManagedAgentResolver resolver, IAgentDeploymentRegistry deployments, AgentConfigLocator locator)
+    /// <param name="mirror">Applies the rename to AMS's copy of the records first, in AMS mode.</param>
+    public AgentDeploymentUpdateService(ManagedAgentResolver resolver, IAgentDeploymentRegistry deployments, AgentConfigLocator locator, IAgentRecordMirror? mirror = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
+        _mirror = mirror ?? NoAgentRecordMirror.Instance;
     }
 
     /// <summary>Renames a deployment.</summary>
     /// <param name="request">The command input.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>The updated record.</returns>
-    public Task<AgentDeploymentUpdateResult> UpdateAsync(AgentDeploymentUpdateRequest request, CancellationToken cancellationToken)
+    public async Task<AgentDeploymentUpdateResult> UpdateAsync(AgentDeploymentUpdateRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
@@ -46,16 +51,16 @@ public sealed class AgentDeploymentUpdateService
 
         if (string.IsNullOrWhiteSpace(request.NewName))
         {
-            throw new UsageException("`msagent deployment update` requires --new-name. Deployment type and environment cannot be changed.");
+            throw new UsageException(NewNameRequired);
         }
 
         var projectDirectory = _resolver.ResolveProjectDirectory(request.Project);
         var (owner, deployment) = _resolver.ResolveAgentDeployment(projectDirectory, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName);
         var agent = ManagedAgentResolver.RequireMcsAgentOrWorkflow(owner, "msagent deployment update");
         var newName = request.NewName.Trim();
-        var updated = string.Equals(deployment.DeploymentName, newName, StringComparison.Ordinal) ? deployment : _deployments.Update(projectDirectory, deployment with { DeploymentName = DeploymentNameRule.Validate("--new-name", newName) });
+        var (updated, warning, _) = string.Equals(deployment.DeploymentName, newName, StringComparison.Ordinal) ? new AgentRecordMirrored<AgentDeploymentRecord>(deployment, null) : await RenameAsync(projectDirectory, agent, deployment, DeploymentNameRule.Validate("--new-name", newName), cancellationToken).ConfigureAwait(false);
 
-        return Task.FromResult(new AgentDeploymentUpdateResult
+        return new AgentDeploymentUpdateResult
         {
             AgentId = agent.AgentId,
             DeploymentId = updated.DeploymentId,
@@ -64,6 +69,10 @@ public sealed class AgentDeploymentUpdateService
             DeploymentType = updated.DeploymentType,
             EnvironmentId = updated.McsEnvironmentId(),
             ConfigPath = _locator.ConfigFilePath(projectDirectory),
-        });
+            Warnings = warning is null ? null : [warning],
+        };
     }
+
+    private Task<AgentRecordMirrored<AgentDeploymentRecord>> RenameAsync(string projectDirectory, ManagedAgentRecord agent, AgentDeploymentRecord deployment, string newName, CancellationToken cancellationToken) =>
+        _mirror.ApplyAsync(projectDirectory, new DeploymentRenamed(agent, deployment, newName), () => _deployments.Update(projectDirectory, deployment with { DeploymentName = newName }), cancellationToken);
 }

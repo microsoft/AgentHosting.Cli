@@ -1,9 +1,11 @@
+using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
+using Microsoft.CopilotStudio.McsCore;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -303,7 +305,7 @@ public sealed class ManagedAgentDeleteServiceTests
         using var scope = new CurrentDirectoryScope(workspace.Root);
         var store = ManagedAgentFixtures.Store();
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
-        var settingsPath = Path.Combine(workspace.Root, AgentConfigLocator.ProjectSettingsFileName);
+        var settingsPath = Path.Combine(workspace.Root, WorkspaceFileNames.Settings);
         var before = File.ReadAllBytes(settingsPath);
 
         await Create(store, new FakeCopilotCatalogPort { ResolveReturns = "bot-1" }, Disconnected(), new ScriptedConfirmationPrompt()).DeleteAsync(
@@ -345,6 +347,8 @@ public sealed class ManagedAgentDeleteServiceTests
 [Collection("CurrentDirectory")]
 public sealed class ManagedAgentListServiceTests
 {
+    private static readonly JsonSerializerOptions CamelCase = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
     private static ManagedAgentListService Create(JsonAgentConfigStore store, FakeCopilotCatalogPort catalog, params PowerPlatformEnvironmentSpec[] environments) =>
         CreateTracked(store, catalog, environments).Service;
 
@@ -361,6 +365,7 @@ public sealed class ManagedAgentListServiceTests
             resolver,
             catalog,
             workflows,
+            ManagedAgentFixtures.StateRules,
             ManagedAgentFixtures.AgentResolver(store),
             new AgentConfigLocator(),
             ManagedAgentFixtures.Identities(),
@@ -647,6 +652,43 @@ public sealed class ManagedAgentListServiceTests
         var result = await Create(ManagedAgentFixtures.Store(), Catalog("con_agent")).ListAsync(new ManagedAgentListRequest(), CancellationToken.None);
 
         Assert.All(result.Agents, agent => Assert.Equal(AgentTypes.McsAgent, agent.AgentType));
+    }
+
+    [Fact]
+    public async Task List_ViewCloud_ChangesNothing_AndKeepsTheJsonShape()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var service = Create(ManagedAgentFixtures.Store(), Catalog("con_agent"));
+
+        var listed = await service.ListAsync(new ManagedAgentListRequest(), CancellationToken.None);
+        var cloud = await service.ListAsync(new ManagedAgentListRequest { View = " Cloud " }, CancellationToken.None);
+
+        Assert.Equal(listed.Agents, cloud.Agents);
+        Assert.Equal(listed.ToTextLines(), cloud.ToTextLines());
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(cloud, CamelCase));
+        Assert.Equal(["schemaVersion", "status", "scope", "agentType", "environmentId", "limit", "truncated", "agents", "diagnostics"], document.RootElement.EnumerateObject().Select(property => property.Name));
+        Assert.Equal(["agentId", "mcsAgentId", "mcsWorkflowId", "tenantId", "environmentId", "displayName", "schemaName", "agentType", "workflowState", "lifecycleState", "lastChangedOn", "deploymentSlotCount"], document.RootElement.GetProperty("agents")[0].EnumerateObject().Select(property => property.Name));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("cloud")]
+    public async Task List_RepositoryIdWithTheCloudView_IsAUsageError(string? view)
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+
+        Assert.Equal("--repository-id applies to --view ams only. Add --view ams to list the AMS agents of one repository.", (await Assert.ThrowsAsync<UsageException>(() => Create(ManagedAgentFixtures.Store(), Catalog()).ListAsync(new ManagedAgentListRequest { View = view, RepositoryId = "cccccccc-3333-4333-8333-000000000003" }, CancellationToken.None))).Message);
+    }
+
+    [Fact]
+    public async Task List_AnUnknownView_IsAUsageError()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+
+        Assert.Equal("--view 'records' is not a view. Use cloud or ams.", (await Assert.ThrowsAsync<UsageException>(() => Create(ManagedAgentFixtures.Store(), Catalog()).ListAsync(new ManagedAgentListRequest { View = "records" }, CancellationToken.None))).Message);
     }
 }
 

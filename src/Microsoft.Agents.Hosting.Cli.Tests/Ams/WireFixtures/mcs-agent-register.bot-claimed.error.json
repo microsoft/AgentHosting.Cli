@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "McsBotClaimed",
+    "message": "Copilot Studio resource 'b0b0b0b0-4444-4444-8444-000000000014' in environment '22222222-2222-2222-2222-222222222222' is already claimed by agent 'aaaaaaaa-1111-4111-8111-000000000021' in folder 'ContosoHR' of repository 'cccccccc-3333-4333-8333-000000000013'."
+  }
+}

@@ -179,6 +179,9 @@ public interface ITokenProvider
         IReadOnlyList<string> scopes,
         string? targetTenantId,
         CancellationToken cancellationToken);
+
+    /// <summary>Acquires a newly issued token silently for <paramref name="resource"/> instead of a cached one, which a provider that keeps no token cache acquires as usual.</summary>
+    Task<TokenAcquisitionResult> RenewTokenSilentAsync(string resource, string? targetTenantId, CancellationToken cancellationToken) => AcquireTokenSilentAsync(resource, targetTenantId, cancellationToken);
 }
 
 /// <summary>

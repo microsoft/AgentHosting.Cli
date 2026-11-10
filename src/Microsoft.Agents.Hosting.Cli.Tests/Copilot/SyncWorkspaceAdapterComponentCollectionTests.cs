@@ -22,15 +22,7 @@ public sealed class SyncWorkspaceAdapterComponentCollectionTests : IDisposable
         }
     }
 
-    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer, CloneSourceClient client) =>
-        new(
-            synchronizer,
-            new RecordingRetargetService(),
-            client,
-            new StubComponentCollectionClient(),
-            new StubOperationContextProvider(),
-            new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()),
-            new CopilotChangeMapper());
+    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer, CloneSourceClient client) => CopilotTestFixtures.WorkspaceAdapter(synchronizer, dataverseClient: client);
 
     private static CloneSourceClient Linked() => new()
     {

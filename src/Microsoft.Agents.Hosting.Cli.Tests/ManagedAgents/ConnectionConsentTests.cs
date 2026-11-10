@@ -265,6 +265,7 @@ public sealed class BrowserConnectionConsentFlowTests
             browser,
             presenter,
             connectors ?? new CallbackCatalog(_ => []),
+            ManagedAgentFixtures.Rules,
             principals ?? ManagedAgentFixtures.Principals(),
             CoreServicesClusterCategory.Prod,
             interrupt,

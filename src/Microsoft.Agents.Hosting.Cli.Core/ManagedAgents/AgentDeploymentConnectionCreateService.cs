@@ -16,18 +16,21 @@ public sealed class AgentDeploymentConnectionCreateService
 
     private readonly ConnectionTargetResolver _targets;
     private readonly ConnectorResolver _connectorResolver;
+    private readonly IConnectionBindingRules _rules;
     private readonly ConnectionCreationFlow _creationFlow;
     private readonly ManagedAgentPrincipalResolver _principals;
 
     /// <summary>Creates the service.</summary>
     /// <param name="targets">Resolves the environment the connection is created in.</param>
     /// <param name="connectorResolver">Resolves the connector the connection is created for, and its connections.</param>
+    /// <param name="rules">Tells which of the connector's connections can satisfy a reference.</param>
     /// <param name="creationFlow">Waits for the connector, then runs the consent experience.</param>
     /// <param name="principals">Names the signed-in identity, to report the connections already owned.</param>
-    public AgentDeploymentConnectionCreateService(ConnectionTargetResolver targets, ConnectorResolver connectorResolver, ConnectionCreationFlow creationFlow, ManagedAgentPrincipalResolver principals)
+    public AgentDeploymentConnectionCreateService(ConnectionTargetResolver targets, ConnectorResolver connectorResolver, IConnectionBindingRules rules, ConnectionCreationFlow creationFlow, ManagedAgentPrincipalResolver principals)
     {
         _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _connectorResolver = connectorResolver ?? throw new ArgumentNullException(nameof(connectorResolver));
+        _rules = rules ?? throw new ArgumentNullException(nameof(rules));
         _creationFlow = creationFlow ?? throw new ArgumentNullException(nameof(creationFlow));
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
     }
@@ -91,13 +94,7 @@ public sealed class AgentDeploymentConnectionCreateService
 
         try
         {
-            string[] owned =
-            [
-                .. (await _connectorResolver.ConnectionsAsync(environment, resolution, cancellationToken).ConfigureAwait(false))
-                    .Where(connection => ConnectionReadinessPlanner.IsConnected(connection) && ConnectionReadinessPlanner.IsOwnedBy(connection, principal))
-                    .Select(connection => connection.ConnectionId)
-                    .OrderBy(connectionId => connectionId, StringComparer.Ordinal),
-            ];
+            string[] owned = [.. _rules.Connected(await _connectorResolver.ConnectionsAsync(environment, resolution, cancellationToken).ConfigureAwait(false)).Where(connection => ConnectionReadinessPlanner.IsOwnedBy(connection, principal)).Select(connection => connection.ConnectionId).OrderBy(connectionId => connectionId, StringComparer.Ordinal)];
 
             return owned.Length == 0
                 ? []

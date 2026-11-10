@@ -12,8 +12,9 @@ public sealed class WorkflowDeployService
     private readonly IManagedAgentRegistry _agents;
     private readonly IAgentDeploymentRegistry _deployments;
     private readonly IWorkflowStorePort _workflows;
-    private readonly WorkflowActivationPass _activation;
+    private readonly WorkflowActivationReporter _activation;
     private readonly WorkflowStateCache _workflowStates;
+    private readonly IWorkflowStateRules _stateRules;
     private readonly ManagedAgentPrincipalResolver _principals;
     private readonly IClock _clock;
 
@@ -24,9 +25,10 @@ public sealed class WorkflowDeployService
     /// <param name="workflows">Uploads the workflow.</param>
     /// <param name="activation">Binds connections and activates what is eligible.</param>
     /// <param name="workflowStates">Holds what the environment last reported about each workflow.</param>
+    /// <param name="stateRules">Names each workflow state and the label the portal shows for it.</param>
     /// <param name="principals">Resolves the signed-in operator recorded as the deployer.</param>
     /// <param name="clock">Timestamps the deploy.</param>
-    public WorkflowDeployService(WorkflowProjectResolver resolver, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, IWorkflowStorePort workflows, WorkflowActivationPass activation, WorkflowStateCache workflowStates, ManagedAgentPrincipalResolver principals, IClock clock)
+    public WorkflowDeployService(WorkflowProjectResolver resolver, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, IWorkflowStorePort workflows, WorkflowActivationReporter activation, WorkflowStateCache workflowStates, IWorkflowStateRules stateRules, ManagedAgentPrincipalResolver principals, IClock clock)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
@@ -34,6 +36,7 @@ public sealed class WorkflowDeployService
         _workflows = workflows ?? throw new ArgumentNullException(nameof(workflows));
         _activation = activation ?? throw new ArgumentNullException(nameof(activation));
         _workflowStates = workflowStates ?? throw new ArgumentNullException(nameof(workflowStates));
+        _stateRules = stateRules ?? throw new ArgumentNullException(nameof(stateRules));
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
     }
@@ -53,6 +56,8 @@ public sealed class WorkflowDeployService
 
         var (target, deployment, environment) = await _resolver.ResolveDeploymentAsync(request.Project, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName, "msagent agent deploy", cancellationToken, requireExplicitDeployment: true).ConfigureAwait(false);
 
+        await RequireWorkflowOwnedAsync(target, deployment, environment, request.Overwrite, cancellationToken).ConfigureAwait(false);
+
         if (!request.Overwrite && deployment.DeploymentType == DeploymentStages.Dev)
         {
             await _workflows.RequireNoUnpulledChangesAsync(environment, target.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
@@ -67,7 +72,8 @@ public sealed class WorkflowDeployService
             : new WorkflowActivationOutcome();
 
         var running = activating && activation.Activated.Contains(upserted.Workflow.Name, StringComparer.OrdinalIgnoreCase);
-        var observedState = running ? WorkflowStateProjection.Activated : upserted.Workflow.State;
+        var observedState = running ? _stateRules.StateOf(true) : upserted.Workflow.State;
+        var published = _stateRules.RunningOf(observedState) == true;
         var reportedByActivation = activation.Reported.Count > 0;
 
         var deployedOn = _clock.UtcNow;
@@ -96,14 +102,22 @@ public sealed class WorkflowDeployService
             Action = upserted.Created ? "create" : upserted.Replaced ? "replace" : "update",
             TargetEnvironmentId = environment.EnvironmentId,
             TargetAgentCreated = upserted.Created,
-            WorkflowState = WorkflowStateProjection.ToPortalLabel(observedState),
-            Published = observedState == WorkflowStateProjection.Activated,
-            PublishedOn = observedState == WorkflowStateProjection.Activated ? deployedOn : null,
+            WorkflowState = _stateRules.PortalLabel(observedState),
+            Published = published,
+            PublishedOn = published ? deployedOn : null,
             UnboundConnectionCount = reportedByActivation ? activation.UnboundConnectionCount : upserted.UnboundConnectionReferences.Count,
             PushedComponentCount = 1,
             DeployedOn = deployedOn,
             Warnings = [.. DeclaredConnectionReferenceWarnings(upserted.CreatedConnectionReferences), .. PushWarnings(upserted, running), .. activation.Warnings, .. (reportedByActivation ? [] : UnboundConnectionReferenceWarnings(upserted))],
         };
+    }
+
+    private async Task RequireWorkflowOwnedAsync(WorkflowTarget target, AgentDeploymentRecord deployment, CopilotEnvironmentContext environment, bool acknowledged, CancellationToken cancellationToken)
+    {
+        if (UnownedTargetGuard.Applies(target.Agent, deployment, environment.EnvironmentId, acknowledged) && deployment.LastDeployedTime is null && await _workflows.GetAsync(environment, target.WorkflowId, cancellationToken).ConfigureAwait(false) is { } existing)
+        {
+            throw ManagedAgentException.UnverifiedWorkflowInTarget(existing.Name, target.WorkflowId.ToString(), environment.EnvironmentId);
+        }
     }
 
     private static IEnumerable<string> PushWarnings(WorkflowUpsertOutcome upserted, bool activatedByThisDeploy) =>

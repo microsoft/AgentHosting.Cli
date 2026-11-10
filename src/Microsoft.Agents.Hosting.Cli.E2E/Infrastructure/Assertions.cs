@@ -122,6 +122,35 @@ public sealed class Assertions
         Pass(check);
     }
 
+    public void True(bool condition, string check, string detail)
+    {
+        if (!condition)
+        {
+            throw new AssertionException(check, "true", "false", detail, null);
+        }
+
+        Pass(check);
+    }
+
+    public MsagentOutcome Refused(MsagentResult result, int errorCode, string check, int? exitCode = null, string? fragment = null)
+    {
+        if (result.ExitCode == NotSignedIn && exitCode != NotSignedIn)
+        {
+            throw ConsentRequired(result);
+        }
+
+        var outcome = MsagentOutcome.Read(result);
+        var refused = (!outcome.Success || result.ExitCode != 0) && outcome.ErrorCode == errorCode && (exitCode is null || result.ExitCode == exitCode) && (fragment is null || outcome.FailureText.Contains(fragment, StringComparison.OrdinalIgnoreCase));
+
+        if (!refused)
+        {
+            throw new AssertionException(check, $"errorCode {errorCode}{(exitCode is { } exit ? $" and exit {exit}" : string.Empty)}{(fragment is null ? string.Empty : $" with {Quote(fragment)}")}", $"exit {result.ExitCode}, errorCode {outcome.ErrorCode}: {outcome.FailureText.Trim()}", Tail(result), result);
+        }
+
+        Pass(check);
+        return outcome;
+    }
+
     /// <summary>Asserts a condition does not hold.</summary>
     public void False(bool condition, string check) => True(!condition, check);
 

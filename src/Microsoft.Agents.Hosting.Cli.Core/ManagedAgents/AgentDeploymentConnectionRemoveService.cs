@@ -270,5 +270,5 @@ public sealed class AgentDeploymentConnectionRemoveService
     }
 
     private static bool Holds(CopilotConnectionView view, string connectionId) =>
-        connectionId.Equals(ConnectionConsentLink.NormalizeOptionalResourceId(view.RecordedConnectionId), StringComparison.OrdinalIgnoreCase);
+        connectionId.Equals(ConnectionConsentLink.NormalizeOptionalResourceId(view.BoundConnectionId), StringComparison.OrdinalIgnoreCase);
 }

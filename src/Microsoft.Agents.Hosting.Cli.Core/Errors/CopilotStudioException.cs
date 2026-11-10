@@ -95,6 +95,12 @@ public static class CopilotErrorKinds
     /// <summary>Publishing did not complete within the maximum wait.</summary>
     public const string PublishTimeout = "publish-timeout";
 
+    /// <summary>Copilot Studio finished a publish with a status other than Succeeded, or its progress could not be read.</summary>
+    public const string PublishFailed = "publish-failed";
+
+    /// <summary>Copilot Studio was still provisioning the classic agent when the wait ran out.</summary>
+    public const string AgentNotProvisioned = "agent-not-provisioned";
+
     /// <summary>The workspace was scaffolded and the agent created, but the link could not be written.</summary>
     public const string BootstrapReattachFailed = "bootstrap-reattach-failed";
 
@@ -111,6 +117,8 @@ public static class CopilotErrorKinds
 /// </summary>
 public sealed class CopilotStudioException : AgentHostingException
 {
+    private const string ConnectedWorkspaceRemediation = "Deploy to the deployment this workspace is already bound to, or use a deployment in a different environment to rebind it.";
+
     private CopilotStudioException(int errorCode, string message, int exitCode, string errorKind, string? remediation, Exception? innerException = null) : base(message, exitCode, errorKind, remediation, innerException, errorCode)
     {
     }
@@ -342,16 +350,24 @@ public sealed class CopilotStudioException : AgentHostingException
         "Retry the operation. If it persists, check your permissions on the environment.",
         innerException);
 
-    /// <summary>Publishing did not complete within the maximum wait.</summary>
+    /// <summary>Copilot Studio did not finish publishing within the maximum wait, and the publish it was asked for keeps running.</summary>
     /// <param name="agentId">The agent that was published.</param>
-    /// <param name="maximumWait">How long polling ran.</param>
+    /// <param name="maximumWait">How long the command waited for Copilot Studio.</param>
     /// <returns>The typed failure.</returns>
-    public static CopilotStudioException PublishTimeout(string agentId, TimeSpan maximumWait) => new(
-        ErrorCodes.CopilotStudio.PublishTimeout,
-        $"Publishing agent '{agentId}' was not confirmed complete after {maximumWait}.",
-        ExitCodes.Failure,
-        CopilotErrorKinds.PublishTimeout,
-        "The publish may still be in progress. Increase --max-wait, or check the agent in Copilot Studio.");
+    public static CopilotStudioException PublishTimeout(string agentId, TimeSpan maximumWait) => new(ErrorCodes.CopilotStudio.PublishTimeout, $"Copilot Studio did not finish publishing agent '{agentId}' within {maximumWait.TotalMinutes:0} minutes. The publish was not cancelled and may still complete.", ExitCodes.Failure, CopilotErrorKinds.PublishTimeout, "Run the deploy again to confirm the publish finished.");
+
+    /// <summary>Copilot Studio finished publishing with a status other than Succeeded, or the publish's progress could not be read.</summary>
+    /// <param name="agentId">The agent that was published.</param>
+    /// <param name="status">The status Copilot Studio finished the publish with, or <see langword="null"/> when its progress could not be read.</param>
+    /// <param name="failureReason">Why the progress could not be read, naming no service response.</param>
+    /// <returns>The typed failure.</returns>
+    public static CopilotStudioException PublishFailed(string agentId, string? status, string? failureReason) => new(ErrorCodes.CopilotStudio.PublishFailed, status is null ? $"Copilot Studio was asked to publish agent '{agentId}', but the publish's progress could not be read. {failureReason}" : $"Copilot Studio finished publishing agent '{agentId}' with status '{status}'.", ExitCodes.Failure, CopilotErrorKinds.PublishFailed, status is null ? "Check the agent's publish state in Copilot Studio, then run the deploy again to confirm the publish finished." : "The pushed content is saved as a draft. Open the agent in Copilot Studio to see why the publish failed, fix it, then run the deploy again.");
+
+    /// <summary>Copilot Studio was still provisioning the classic agent when the wait ran out, so nothing was pushed into it or published.</summary>
+    /// <param name="reason">What the sync library reported, naming the agent and the wait.</param>
+    /// <param name="innerException">The sync library's failure, when it raised one.</param>
+    /// <returns>The typed failure.</returns>
+    public static CopilotStudioException AgentNotProvisioned(string reason, Exception? innerException = null) => new(ErrorCodes.CopilotStudio.AgentNotProvisioned, reason, ExitCodes.Failure, CopilotErrorKinds.AgentNotProvisioned, "Wait until Copilot Studio finishes provisioning the agent, then run the same command again; it reuses the same agent.", innerException);
 
     /// <summary>A requested component collection could not be resolved.</summary>
     /// <param name="value">The value that could not be resolved.</param>
@@ -395,7 +411,13 @@ public sealed class CopilotStudioException : AgentHostingException
         $"The workspace at '{directory}' is already connected to a cloud agent.",
         ExitCodes.Usage,
         CopilotErrorKinds.WorkspaceAlreadyConnected,
-        "Deploy to the deployment this workspace is already bound to, or use a deployment in a different environment to rebind it.");
+        ConnectedWorkspaceRemediation);
+
+    /// <summary>A folder a connect would write is already connected to another agent, component collection or environment, which a connect never rebinds.</summary>
+    /// <param name="reason">What the sync library reported, naming each such folder.</param>
+    /// <param name="innerException">The sync library's failure.</param>
+    /// <returns>The typed failure.</returns>
+    public static CopilotStudioException WorkspaceConnectedElsewhere(string reason, Exception innerException) => new(ErrorCodes.Workspace.CopilotWorkspaceAlreadyConnected, reason, ExitCodes.Usage, CopilotErrorKinds.WorkspaceAlreadyConnected, ConnectedWorkspaceRemediation, innerException);
 
     /// <summary>The workspace's authoring shape does not support being reattached.</summary>
     /// <param name="directory">The workspace directory.</param>
@@ -423,15 +445,21 @@ public sealed class CopilotStudioException : AgentHostingException
 
     /// <summary>The workspace holds files that must be fixed before it can be synchronized.</summary>
     /// <param name="summary">The diagnostic summary naming each file and position.</param>
-    /// <param name="innerException">The failure the sync library raised.</param>
+    /// <param name="innerException">The failure the sync library raised, when it raised one.</param>
     /// <returns>The typed failure.</returns>
-    public static CopilotStudioException WorkspaceFilesUnreadable(string summary, Exception innerException) => new(
+    public static CopilotStudioException WorkspaceFilesUnreadable(string summary, Exception? innerException = null) => new(
         ErrorCodes.Workspace.CopilotWorkspaceFilesUnreadable,
         summary,
         ExitCodes.Usage,
         CopilotErrorKinds.WorkspaceFilesUnreadable,
         "Fix the files listed above, then run the command again. A file left with merge conflict markers must have them resolved first.",
         innerException);
+
+    /// <summary>A workspace holds a settings or agent file that is empty, is not valid YAML, or names no schema name, so the agent's identity cannot be read.</summary>
+    /// <param name="agentId">The record whose identity was read.</param>
+    /// <param name="projectFile">The settings or agent file that could not be read.</param>
+    /// <returns>The typed failure.</returns>
+    public static CopilotStudioException ProjectIdentityUnreadable(string agentId, string projectFile) => new(ErrorCodes.Workspace.CopilotWorkspaceFilesUnreadable, $"Agent '{agentId}' has no readable schema name: '{projectFile}' is empty, is not valid YAML, or names no schemaName.", ExitCodes.Usage, CopilotErrorKinds.WorkspaceFilesUnreadable, $"Fix {Path.GetFileName(projectFile)} so it is valid YAML that names the agent's schemaName, then run the command again.");
 
     /// <summary>
     /// One connection reference name is declared twice, for different connectors.

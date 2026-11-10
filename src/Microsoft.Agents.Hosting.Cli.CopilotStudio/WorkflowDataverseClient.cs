@@ -1,5 +1,4 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
-using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
@@ -33,16 +32,21 @@ public sealed class WorkflowDataverseClient : IWorkflowStorePort
     public Task<WorkflowDocument?> GetAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) => ConnectedAsync(environment, async () => await _synchronizer.GetAsync(workflowId, cancellationToken).ConfigureAwait(false) is { } workflow ? Describe(workflow) : null);
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<WorkflowDocument>> ListAsync(CopilotEnvironmentContext environment, string? nameFilter, int? maximumCount, CancellationToken cancellationToken) => ConnectedAsync(environment, async () => (IReadOnlyList<WorkflowDocument>)[.. (await _synchronizer.ListAsync(nameFilter, maximumCount, cancellationToken).ConfigureAwait(false)).Select(Describe)]);
+    public Task<IReadOnlyList<WorkflowDocument>> ListAsync(CopilotEnvironmentContext environment, string? nameFilter, int? maximumCount, CancellationToken cancellationToken) => SyncDataverseCall.RunAsync("list workflows", () => ConnectedAsync(environment, async () => (IReadOnlyList<WorkflowDocument>)[.. (await _synchronizer.ListAsync(nameFilter, maximumCount, cancellationToken).ConfigureAwait(false)).Select(Describe)]));
 
     /// <inheritdoc />
-    public Task<WorkflowDownloadOutcome> DownloadAsync(CopilotEnvironmentContext environment, Guid workflowId, string workspaceRoot, CancellationToken cancellationToken, bool overwriteLocalChanges = false)
+    public Task<WorkflowDownloadOutcome> DownloadAsync(CopilotEnvironmentContext environment, Guid workflowId, string workspaceRoot, CancellationToken cancellationToken, bool overwriteLocalChanges = false) => DownloadAsync(environment, workflowId, workspaceRoot, new StandaloneWorkflowDownloadOptions { OverwriteLocalChanges = overwriteLocalChanges }, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<WorkflowDownloadOutcome> CloneAsync(CopilotEnvironmentContext environment, Guid workflowId, string workspaceRoot, string? name, CancellationToken cancellationToken) => DownloadAsync(environment, workflowId, workspaceRoot, new StandaloneWorkflowDownloadOptions { Name = name }, cancellationToken);
+
+    private Task<WorkflowDownloadOutcome> DownloadAsync(CopilotEnvironmentContext environment, Guid workflowId, string workspaceRoot, StandaloneWorkflowDownloadOptions options, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceRoot);
 
         return ConnectedAsync(environment, async () =>
         {
-            var download = await _synchronizer.DownloadAsync(workflowId, Workspace(workspaceRoot), environment.EnvironmentId, cancellationToken, new StandaloneWorkflowDownloadOptions { OverwriteLocalChanges = overwriteLocalChanges }).ConfigureAwait(false);
+            var download = await _synchronizer.DownloadAsync(workflowId, Workspace(workspaceRoot), environment.EnvironmentId, cancellationToken, options).ConfigureAwait(false);
 
             return new WorkflowDownloadOutcome
             {
@@ -108,7 +112,7 @@ public sealed class WorkflowDataverseClient : IWorkflowStorePort
         WorkflowId = workflow.WorkflowId,
         Name = workflow.Name,
         Description = workflow.Description,
-        State = WorkflowStateProjection.FromStateCode(workflow.StateCode),
+        State = CopilotStudioStates.WorkflowStateName(workflow.StateCode),
         ModifiedOn = workflow.ModifiedOn,
         ConnectionReferences = workflow.ConnectionReferences,
     };

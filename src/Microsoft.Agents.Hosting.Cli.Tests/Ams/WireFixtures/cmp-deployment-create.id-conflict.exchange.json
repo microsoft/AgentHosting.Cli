@@ -1,0 +1,18 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "agents/aaaaaaaa-1111-4111-8111-000000000001/deployments",
+    "query": {},
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "bodyFixture": "cmp-deployment-create.id-conflict.request.json"
+  },
+  "response": {
+    "status": 409,
+    "headers": {},
+    "bodyFixture": "cmp-deployment-create.id-conflict.error.json"
+  },
+  "startsOperation": false,
+  "errors": []
+}

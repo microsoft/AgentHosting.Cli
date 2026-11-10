@@ -4,6 +4,7 @@ using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 using Microsoft.CopilotStudio.Sync;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -143,11 +144,33 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
         return Task.FromResult<IReadOnlyList<WorkflowDocument>>([.. maximumCount > 0 ? rows.Take(maximumCount.Value) : rows]);
     }
 
+    public List<string?> CloneNames { get; } = [];
+
+    public Exception? DownloadThrows { get; set; }
+
     public Task<WorkflowDownloadOutcome> DownloadAsync(CopilotEnvironmentContext environment, Guid workflowId, string workspaceRoot, CancellationToken cancellationToken, bool overwriteLocalChanges = false)
     {
         Calls.Add($"download:{workflowId}");
 
-        var document = Cloud[workflowId];
+        return WriteAsync(workflowId, workspaceRoot, overwriteLocalChanges, null);
+    }
+
+    public Task<WorkflowDownloadOutcome> CloneAsync(CopilotEnvironmentContext environment, Guid workflowId, string workspaceRoot, string? name, CancellationToken cancellationToken)
+    {
+        Calls.Add($"clone:{workflowId}");
+        CloneNames.Add(name);
+
+        return WriteAsync(workflowId, workspaceRoot, false, name);
+    }
+
+    private Task<WorkflowDownloadOutcome> WriteAsync(Guid workflowId, string workspaceRoot, bool overwriteLocalChanges, string? name)
+    {
+        if (DownloadThrows is not null)
+        {
+            return Task.FromException<WorkflowDownloadOutcome>(DownloadThrows);
+        }
+
+        var document = name is null ? Cloud[workflowId] : Cloud[workflowId] with { Name = name };
         var folderPath = Path.Combine(WorkflowWorkspace.WorkflowsDirectory(workspaceRoot), WorkflowWorkspace.FolderNameFor(document.Name, workflowId));
 
         if (!overwriteLocalChanges
@@ -168,7 +191,7 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
         Directory.CreateDirectory(folderPath);
 
         var definition = CloudDefinition.TryGetValue(workflowId, out var body) ? body : "{\"properties\":{}}";
-        var metadata = $"workflowId: {workflowId}\nname: {document.Name}\nstateCode: {(document.IsActivated ? 1 : 0)}\nstatusCode: {(document.IsActivated ? 2 : 1)}\n";
+        var metadata = $"workflowId: {workflowId}\nname: {document.Name}\nstateCode: {(Running(document) ? 1 : 0)}\nstatusCode: {(Running(document) ? 2 : 1)}\n";
         var definitionPath = Path.Combine(folderPath, WorkflowWorkspace.DefinitionFileName);
         var metadataPath = Path.Combine(folderPath, WorkflowWorkspace.MetadataFileName);
         var changed = !File.Exists(definitionPath) || File.ReadAllText(definitionPath) != definition || !File.Exists(metadataPath) || File.ReadAllText(metadataPath) != metadata;
@@ -191,11 +214,11 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
 
         var created = !Cloud.ContainsKey(folder.WorkflowId);
         var document = Describe(folder);
-        var activationRequested = document.IsActivated;
+        var activationRequested = Running(document);
 
         if (DraftOnPush && activationRequested)
         {
-            document = document with { State = WorkflowStateProjection.Draft };
+            document = document with { State = CopilotStudioStates.Draft };
         }
 
         if (ObservedStateOnPush is { Length: > 0 } observed)
@@ -245,7 +268,7 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
             return Task.FromResult(false);
         }
 
-        DeactivatedBeforeDelete = !document.IsActivated || Calls.Contains($"deactivate:{workflowId}");
+        DeactivatedBeforeDelete = !Running(document) || Calls.Contains($"deactivate:{workflowId}");
         Calls.Add($"deactivate:{workflowId}");
         Calls.Add($"delete:{workflowId}");
         Cloud.Remove(workflowId);
@@ -269,6 +292,8 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
 
     private static WorkflowFolder Single(string workspaceRoot) => WorkflowWorkspace.FindAll(workspaceRoot).Single();
 
+    private static bool Running(WorkflowDocument document) => document.State == CopilotStudioStates.Activated;
+
     private static WorkflowDocument Describe(WorkflowFolder folder)
     {
         var metadata = File.ReadAllText(folder.MetadataPath);
@@ -277,7 +302,7 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
         {
             WorkflowId = folder.WorkflowId,
             Name = ValueOf(metadata, "name") ?? folder.WorkflowId.ToString(),
-            State = ValueOf(metadata, "stateCode") == "1" ? WorkflowStateProjection.Activated : WorkflowStateProjection.Draft,
+            State = ValueOf(metadata, "stateCode") == "1" ? CopilotStudioStates.Activated : CopilotStudioStates.Draft,
         };
     }
 

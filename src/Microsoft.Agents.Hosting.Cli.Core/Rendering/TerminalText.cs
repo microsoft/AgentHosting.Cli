@@ -10,6 +10,7 @@ public static class TerminalText
     private const char Replacement = '\uFFFD';
     private const char ZeroWidthNonJoiner = '\u200C';
     private const char ZeroWidthJoiner = '\u200D';
+    private const int MaximumServiceDetailLength = 600;
 
     /// <summary>Returns <paramref name="text"/> with control characters replaced, preserving tabs.</summary>
     public static string Sanitize(string? text)
@@ -31,6 +32,14 @@ public static class TerminalText
                 destination[index] = IsUnsafe(source[index]) ? Replacement : source[index];
             }
         });
+    }
+
+    /// <summary>Returns detail a service supplied, sanitized and cut to a length one message can carry.</summary>
+    /// <param name="text">The detail the service supplied.</param>
+    public static string ServiceDetail(string? text)
+    {
+        var sanitized = Sanitize(text);
+        return sanitized.Length <= MaximumServiceDetailLength ? sanitized.Trim() : string.Concat(sanitized.AsSpan(0, MaximumServiceDetailLength).TrimEnd(), "...");
     }
 
     private static bool NeedsSanitizing(string text)

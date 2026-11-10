@@ -36,7 +36,6 @@ public sealed class ManagedAgentCompositionTests
         services.AddSingleton<CopilotWorkspaceLocator>();
         services.AddSingleton<CopilotCatalogService>();
         services.AddSingleton<CopilotWorkspaceService>();
-        services.AddSingleton<CopilotScaffoldService>();
 
         services.AddSingleton<AgentConfigLocator>();
         services.AddSingleton<CopilotProjectIdentityReader>();
@@ -67,34 +66,40 @@ public sealed class ManagedAgentCompositionTests
         services.AddSingleton<AgentDeploymentConnectionResolver>();
         services.AddSingleton<ConnectionTargetResolver>();
         services.AddSingleton<WorkflowStateCache>();
-        services.AddSingleton<WorkflowActivationPass>();
+        services.AddSingleton<WorkflowActivationReporter>();
         services.AddSingleton<IConnectionSelectionPrompt>(_ => new ScriptedSelectionPrompt());
         services.AddSingleton(_ => new ConnectionCreationFlow(ManagedAgentFixtures.ConnectorReadiness(), new ScriptedConsentFlow()));
         services.AddSingleton<ConnectionBindingCoordinator>();
         services.AddSingleton(sp => new AgentDeploymentConnectionService(
             sp.GetRequiredService<AgentDeploymentConnectionResolver>(),
             sp.GetRequiredService<ICopilotConnectionPort>(),
+            sp.GetRequiredService<IConnectionBindingRules>(),
             sp.GetRequiredService<ConnectionBindingCoordinator>(),
             sp.GetRequiredService<IConnectionSelectionPrompt>(),
             sp.GetRequiredService<WorkflowStateCache>(),
+            sp.GetRequiredService<IWorkflowStateRules>(),
             sp.GetRequiredService<ManagedAgentPrincipalResolver>(),
             CoreServicesClusterCategory.Prod));
         services.AddSingleton(sp => new AgentDeploymentConnectionReader(
             sp.GetRequiredService<AgentDeploymentConnectionResolver>(),
             sp.GetRequiredService<ICopilotConnectionPort>(),
+            sp.GetRequiredService<IConnectionBindingRules>(),
             sp.GetRequiredService<WorkflowStateCache>(),
+            sp.GetRequiredService<IWorkflowStateRules>(),
             CoreServicesClusterCategory.Prod));
         services.AddSingleton<AgentDeploymentConnectorListService>();
         services.AddSingleton<ConnectorResolver>();
         services.AddSingleton(sp => new AgentDeploymentConnectionCreateService(
             sp.GetRequiredService<ConnectionTargetResolver>(),
             sp.GetRequiredService<ConnectorResolver>(),
+            sp.GetRequiredService<IConnectionBindingRules>(),
             sp.GetRequiredService<ConnectionCreationFlow>(),
             sp.GetRequiredService<ManagedAgentPrincipalResolver>()));
         services.AddSingleton(sp => new AgentDeploymentConnectionReferenceCreateService(
             sp.GetRequiredService<AgentDeploymentConnectionResolver>(),
             sp.GetRequiredService<ConnectorResolver>(),
             sp.GetRequiredService<ICopilotConnectionPort>(),
+            sp.GetRequiredService<IConnectionBindingRules>(),
             sp.GetRequiredService<ConnectionBindingCoordinator>(),
             sp.GetRequiredService<ManagedAgentPrincipalResolver>()));
         services.AddSingleton<IConnectionLifecyclePort, FakeConnectionLifecyclePort>();
@@ -146,5 +151,13 @@ public sealed class ManagedAgentCompositionTests
         using var provider = BuildProvider();
 
         Assert.Same(provider.GetRequiredService<IManagedAgentRegistry>(), provider.GetRequiredService<IAgentDeploymentRegistry>());
+    }
+
+    [Fact]
+    public void PublishingGoesThroughTheSyncLibrary()
+    {
+        using var provider = BuildProvider();
+
+        Assert.IsType<SyncAgentPublishAdapter>(provider.GetRequiredService<ICopilotPublishPort>());
     }
 }

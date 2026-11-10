@@ -22,15 +22,12 @@ public sealed class LiveTestTargetResolver
     private readonly CopilotProjectIdentityReader _projectIdentities;
 
     /// <summary>Creates a resolver over the existing read-only registry ports.</summary>
-    public LiveTestTargetResolver(
-        IManagedAgentRegistry agents,
-        IAgentDeploymentRegistry deployments,
-        AgentConfigLocator locator)
+    public LiveTestTargetResolver(IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities)
     {
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
-        _projectIdentities = new CopilotProjectIdentityReader(locator);
+        _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
     }
 
     /// <summary>Resolves one target without authentication, network access or configuration writes.</summary>

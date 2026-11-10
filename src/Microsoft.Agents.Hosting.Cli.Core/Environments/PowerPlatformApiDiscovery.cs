@@ -31,8 +31,7 @@ public static class PowerPlatformApiDiscovery
         }
 
         var cloudMap = PowerPlatformCloudMap.ForTarget(target);
-        Uri globalEndpoint =
-            cloudMap.RequireTrusted(target.GlobalEndpoint, "Power Platform API global");
+        var hostSuffix = EnvironmentHostSuffix(target);
         string normalized = environmentId
             .Trim()
             .ToLowerInvariant()
@@ -49,9 +48,29 @@ public static class PowerPlatformApiDiscovery
         string prefix = normalized[..^suffixLength];
         string suffix = normalized[^suffixLength..];
         var endpoint = new Uri(
-            $"https://{prefix}.{suffix}.environment.{globalEndpoint.Host}");
+            $"https://{prefix}.{suffix}.{hostSuffix}");
         return cloudMap.RequireTrusted(
             endpoint,
             "Power Platform API environment");
+    }
+
+    /// <summary>The host suffix every environment-scoped front door of a ring ends with, after its two identifier labels.</summary>
+    /// <param name="target">The Power Platform API ring.</param>
+    public static string EnvironmentHostSuffix(PowerPlatformApiTargetConfig target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        return $"environment.{PowerPlatformCloudMap.ForTarget(target).RequireTrusted(target.GlobalEndpoint, "Power Platform API global").Host}";
+    }
+
+    /// <summary>Whether a host has the shape of an environment-scoped front door of a ring: two identifier labels before its environment host suffix.</summary>
+    /// <param name="target">The Power Platform API ring.</param>
+    /// <param name="host">The host.</param>
+    public static bool IsEnvironmentHost(PowerPlatformApiTargetConfig target, string host)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+
+        var suffix = $".{EnvironmentHostSuffix(target)}";
+        return host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) && host[..^suffix.Length].Split('.') is [{ Length: > 0 }, { Length: > 0 }];
     }
 }

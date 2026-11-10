@@ -21,3 +21,8 @@ public sealed class AgentEvalGroup;
 [CommandGroup("testset", Description = "Manage the conversation sets an evaluation runs.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 10, NoCommandUsage = "No testset command specified. Valid commands: list, show, create, update, export, delete. Run `msagent agent eval testset --help` for usage.")]
 [RequiredFeatureFlag(FeatureName.EvaluationFeatures)]
 public sealed class AgentEvalTestSetGroup;
+
+/// <summary>The <c>agent operation</c> group.</summary>
+[CommandGroup("operation", Description = "Inspect the operations of an AMS agent.", ParentGroup = typeof(AgentGroup), SortPriority = 95, NoCommandUsage = "No operation command specified. Valid commands: show. Run `msagent agent operation --help` for usage.")]
+[RequiredFeatureFlag(FeatureName.AmsMcsAgents)]
+public sealed class AgentOperationGroup;

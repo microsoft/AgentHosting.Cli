@@ -16,6 +16,7 @@ public sealed class BrowserConnectionConsentFlow : IConnectionConsentFlow
     private readonly IBrowserLauncher _browser;
     private readonly IInteractiveMessagePresenter _presenter;
     private readonly IConnectorCatalogPort _connectors;
+    private readonly IConnectionBindingRules _rules;
     private readonly ManagedAgentPrincipalResolver _principals;
     private readonly CoreServicesClusterCategory _cluster;
     private readonly IOperatorInterrupt _interrupt;
@@ -30,6 +31,7 @@ public sealed class BrowserConnectionConsentFlow : IConnectionConsentFlow
     /// <param name="browser">Opens the consent link.</param>
     /// <param name="presenter">Explains the wait on stderr.</param>
     /// <param name="connectors">Reads the connections an environment holds, so a connection left behind can still be named.</param>
+    /// <param name="rules">Tells whether a connection that appeared can satisfy a reference.</param>
     /// <param name="principals">Names the signed-in operator, so a connection read from the service can be told from somebody else's.</param>
     /// <param name="cluster">The cluster category the environment belongs to.</param>
     /// <param name="interrupt">Reports that the operator gave up waiting. Omitted when nothing can interrupt.</param>
@@ -38,22 +40,12 @@ public sealed class BrowserConnectionConsentFlow : IConnectionConsentFlow
     /// <param name="callbackGrace">How long a sighted connection waits for the browser to report one of its own. Defaults to five seconds.</param>
     /// <param name="timeProvider">Supplies the clock and the delay, replaced in tests.</param>
     /// <param name="confirmations">Asks the operator to accept a connection the browser never reported. Omitted when nothing can ask, which refuses it instead.</param>
-    public BrowserConnectionConsentFlow(
-        IBrowserLauncher browser,
-        IInteractiveMessagePresenter presenter,
-        IConnectorCatalogPort connectors,
-        ManagedAgentPrincipalResolver principals,
-        CoreServicesClusterCategory cluster,
-        IOperatorInterrupt? interrupt = null,
-        TimeSpan? timeout = null,
-        TimeSpan? interval = null,
-        TimeSpan? callbackGrace = null,
-        TimeProvider? timeProvider = null,
-        IConfirmationPrompt? confirmations = null)
+    public BrowserConnectionConsentFlow(IBrowserLauncher browser, IInteractiveMessagePresenter presenter, IConnectorCatalogPort connectors, IConnectionBindingRules rules, ManagedAgentPrincipalResolver principals, CoreServicesClusterCategory cluster, IOperatorInterrupt? interrupt = null, TimeSpan? timeout = null, TimeSpan? interval = null, TimeSpan? callbackGrace = null, TimeProvider? timeProvider = null, IConfirmationPrompt? confirmations = null)
     {
         _browser = browser ?? throw new ArgumentNullException(nameof(browser));
         _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
         _connectors = connectors ?? throw new ArgumentNullException(nameof(connectors));
+        _rules = rules ?? throw new ArgumentNullException(nameof(rules));
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
         _cluster = cluster;
         _interrupt = interrupt ?? NeverInterrupts.Instance;
@@ -225,8 +217,7 @@ public sealed class BrowserConnectionConsentFlow : IConnectionConsentFlow
         }
     }
 
-    private static CopilotConnectionCandidate? Unambiguous(List<CopilotConnectionCandidate> appeared, DiscoveryScope scope) =>
-        Owned(appeared, scope) is [var only] && ConnectionReadinessPlanner.IsConnected(only) ? only : null;
+    private CopilotConnectionCandidate? Unambiguous(List<CopilotConnectionCandidate> appeared, DiscoveryScope scope) => Owned(appeared, scope) is [var only] && _rules.Connected([only]).Count > 0 ? only : null;
 
     private static ConnectionConsentResult Sighted(CopilotConnectionCandidate candidate) =>
         new(

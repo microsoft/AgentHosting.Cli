@@ -102,6 +102,10 @@ public sealed class TerminalTextTests
 
         Assert.DoesNotContain('\u001b', sanitized);
     }
+
+    [Fact]
+    public void AServiceDetailOverTheLimitIsCutToItAndEndsWithThreeDots() =>
+        Assert.Equal(new string('a', 600) + "...", TerminalText.ServiceDetail(new string('a', 601)));
 }
 
 public sealed class ServiceIdentifierTests

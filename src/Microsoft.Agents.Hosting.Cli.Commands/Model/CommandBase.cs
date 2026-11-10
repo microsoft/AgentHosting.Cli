@@ -19,6 +19,9 @@ public interface ICommandImplementation
     /// <summary>The required-option patterns help renders as usage lines; empty derives one from the required options.</summary>
     IReadOnlyList<UsageRoute> UsageRoutes => [];
 
+    /// <summary>Help text that replaces the command's description while the features it names are enabled, or null to keep the description.</summary>
+    FeatureDescription? EnabledDescription => null;
+
     /// <summary>Runs the command.</summary>
     /// <param name="input">The parsed command line.</param>
     /// <param name="services">The resolved service provider.</param>
@@ -40,6 +43,9 @@ public abstract class CommandBase<TRequest, TResult> : ICommandImplementation
 
     /// <inheritdoc />
     public virtual IReadOnlyList<UsageRoute> UsageRoutes => [];
+
+    /// <inheritdoc />
+    public virtual FeatureDescription? EnabledDescription => null;
 
     /// <inheritdoc />
     public IReadOnlyList<Type> ResultTypes => Routes.Count == 0 ? [typeof(TResult)] : [.. Routes.Select(route => route.ResultType)];

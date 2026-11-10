@@ -2,6 +2,7 @@ using System.CommandLine;
 using Microsoft.Agents.Hosting.Cli.Commands.Common;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
+using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Rendering;
@@ -180,9 +181,10 @@ public sealed class CommandTreeBuilder
             clauses.Add($"Valid subgroups: {string.Join(", ", group.Groups.Select(child => child.Name))}");
         }
 
-        if (group.Commands.Count > 0)
+        var listedCommands = group.Commands.Where(child => !child.Hidden).Select(child => child.Name).ToArray();
+        if (listedCommands.Length > 0)
         {
-            clauses.Add($"Valid commands: {string.Join(", ", group.Commands.Select(child => child.Name))}");
+            clauses.Add($"Valid commands: {string.Join(", ", listedCommands)}");
         }
 
         var advertised = clauses.Count > 0 ? string.Join(". ", clauses) + ". " : string.Empty;
@@ -193,7 +195,7 @@ public sealed class CommandTreeBuilder
         symbols.OfType<CommandOption>().Where(option => option.Recursive).Select(option => option.Name).ToHashSet(StringComparer.Ordinal);
 
     private IReadOnlyList<CommandSymbol> Visible(IEnumerable<CommandSymbol> symbols) =>
-        [.. symbols.Where(symbol => symbol.RequiredFeatures.All(_featureFlags.IsFeatureEnabled))];
+        [.. symbols.Where(symbol => symbol.RequiredFeatures.All(_featureFlags.IsFeatureEnabled)).Select(symbol => symbol.EnabledDescription?.TextFor(_featureFlags) is { } text ? symbol with { Description = text } : symbol).Select(symbol => symbol.IsRequired && symbol.OptionalWithFeatures.Count > 0 && symbol.OptionalWithFeatures.All(_featureFlags.IsFeatureEnabled) ? symbol with { IsRequired = false } : symbol)];
 
     private Command Build(
         CommandMetadata metadata,
@@ -202,7 +204,8 @@ public sealed class CommandTreeBuilder
         string parentPath,
         bool suppressTelemetry)
     {
-        var command = new Command(metadata.Name, metadata.Description);
+        suppressTelemetry |= metadata.SuppressTelemetry;
+        var command = new Command(metadata.Name, metadata.Implementation.EnabledDescription?.TextFor(_featureFlags) ?? metadata.Description) { Hidden = metadata.Hidden };
         if (suppressTelemetry)
         {
             _telemetrySuppressedCommands.Add(command);
@@ -354,11 +357,16 @@ public sealed class CommandTreeBuilder
 
             return exitCode;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException failure) when (cancellationToken.IsCancellationRequested)
         {
             if (streamingOutputOwned)
             {
                 return ReportStreamingFailure(telemetry, CommandTelemetryOutcome.Cancellation);
+            }
+
+            if (failure is OperationStartInterruptedException interruption)
+            {
+                _renderer.RenderInterruption(interruption);
             }
 
             telemetry.RecordOutcome(CommandTelemetryOutcome.Cancellation);
@@ -378,8 +386,10 @@ public sealed class CommandTreeBuilder
 
             return exitCode;
         }
-        catch (Exception failure)
+        catch (Exception caught)
         {
+            var failure = DataverseFailureRedaction.ForReport(caught, $"msagent {path}");
+
             if (streamingOutputOwned)
             {
                 // The streaming operation owns stdout, even when its sink fails. Never append a

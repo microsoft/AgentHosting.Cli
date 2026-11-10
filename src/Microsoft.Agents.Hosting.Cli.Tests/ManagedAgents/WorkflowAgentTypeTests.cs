@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
+using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
@@ -191,9 +192,9 @@ public sealed class WorkflowWorkspaceTests : IDisposable
     }
 
     [Theory]
-    [InlineData(AgentConfigLocator.ProjectSettingsFileName)]
-    [InlineData(AgentConfigLocator.ClassicProjectFileName)]
-    [InlineData(AgentConfigLocator.CollectionProjectFileName)]
+    [InlineData(WorkspaceFileNames.Settings)]
+    [InlineData(WorkspaceFileNames.Agent)]
+    [InlineData(WorkspaceFileNames.Collection)]
     public void AnAgentWorkspaceWithWorkflowsIsNotStandalone(string projectFileName)
     {
         WorkflowFixtures.Write(_root, "Alpha");

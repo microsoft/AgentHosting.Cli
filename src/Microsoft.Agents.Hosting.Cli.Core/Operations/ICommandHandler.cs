@@ -7,6 +7,9 @@ public interface ITextGridRenderable
     IReadOnlyList<string> ToTextLines();
 }
 
+/// <summary>A command result whose text lines go to stdout exactly as they are, with no colour or JSON envelope, for a program that reads them.</summary>
+public interface IRawOutputResult : ITextGridRenderable;
+
 /// <summary>Runs one command's request and produces its result.</summary>
 /// <typeparam name="TRequest">The request the command binds.</typeparam>
 /// <typeparam name="TResult">The result produced.</typeparam>

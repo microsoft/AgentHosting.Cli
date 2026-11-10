@@ -16,6 +16,7 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
     private readonly AgentDeploymentConnectionResolver _targets;
     private readonly ConnectorResolver _connectorResolver;
     private readonly ICopilotConnectionPort _connections;
+    private readonly IConnectionBindingRules _rules;
     private readonly ConnectionBindingCoordinator _bindings;
     private readonly ManagedAgentPrincipalResolver _principals;
 
@@ -23,13 +24,15 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
     /// <param name="targets">Resolves the deployment, environment and workspace the verb acts on.</param>
     /// <param name="connectorResolver">Resolves the connector the reference targets, and its connections.</param>
     /// <param name="connections">Declares the reference, reads candidates, and writes the binding.</param>
+    /// <param name="rules">Decides what the reference is, and which connection it may be bound to without asking.</param>
     /// <param name="bindings">Resolves the connector to a connection when one is not named.</param>
     /// <param name="principals">Names the identity a connection has to belong to before it is bound without asking.</param>
-    public AgentDeploymentConnectionReferenceCreateService(AgentDeploymentConnectionResolver targets, ConnectorResolver connectorResolver, ICopilotConnectionPort connections, ConnectionBindingCoordinator bindings, ManagedAgentPrincipalResolver principals)
+    public AgentDeploymentConnectionReferenceCreateService(AgentDeploymentConnectionResolver targets, ConnectorResolver connectorResolver, ICopilotConnectionPort connections, IConnectionBindingRules rules, ConnectionBindingCoordinator bindings, ManagedAgentPrincipalResolver principals)
     {
         _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _connectorResolver = connectorResolver ?? throw new ArgumentNullException(nameof(connectorResolver));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
+        _rules = rules ?? throw new ArgumentNullException(nameof(rules));
         _bindings = bindings ?? throw new ArgumentNullException(nameof(bindings));
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
     }
@@ -53,12 +56,7 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
         var resolution = await _connectorResolver.RequireAsync(environment, request.Connector, ConnectionCommandHints.ListConnectors(request, environmentId: null), cancellationToken).ConfigureAwait(false);
         var connector = resolution.Connector;
 
-        var explicitConnectionId = string.IsNullOrWhiteSpace(request.ConnectionId)
-            ? null
-            : ConnectionReadinessPlanner.RequireConnected(
-                await _connectorResolver.ConnectionsAsync(environment, resolution, cancellationToken).ConfigureAwait(false),
-                request.ConnectionId.Trim(),
-                $"connector '{connector.InternalId}'").ConnectionId;
+        var explicitConnectionId = string.IsNullOrWhiteSpace(request.ConnectionId) ? null : await RequireConnectedAsync(environment, resolution, request.ConnectionId.Trim(), cancellationToken).ConfigureAwait(false);
 
         var logicalName = await DeclareAsync(request, target, connector, cancellationToken).ConfigureAwait(false);
 
@@ -70,6 +68,13 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
         {
             throw ManagedAgentException.ConnectionReferenceNotBound(logicalName, connector.InternalId, failure, ConnectionCommandHints.BindReference(request, logicalName));
         }
+    }
+
+    private async Task<string> RequireConnectedAsync(CopilotEnvironmentContext environment, ConnectorResolution resolution, string connectionId, CancellationToken cancellationToken)
+    {
+        var connections = await _connectorResolver.ConnectionsAsync(environment, resolution, cancellationToken).ConfigureAwait(false);
+
+        return ConnectionReadinessPlanner.RequireConnected(connections, _rules.Connected(connections), connectionId, $"connector '{resolution.Connector.InternalId}'").ConnectionId;
     }
 
     private async Task<string> DeclareAsync(AgentDeploymentConnectionReferenceCreateRequest request, AgentDeploymentConnectionTarget target, CopilotConnectorInfo connector, CancellationToken cancellationToken)
@@ -89,7 +94,7 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
         var environment = target.Environment;
         var connector = resolution.Connector;
         var snapshot = await _connections.ReadConnectionsAsync(environment, target.WorkspaceDirectory, cancellationToken).ConfigureAwait(false);
-        var plan = snapshot.References.Select(ConnectionReadinessPlanner.Observe).ToList();
+        var plan = snapshot.References.Select(_rules.Observe).ToList();
         var index = plan.FindIndex(item => item.View.LogicalName.Equals(logicalName, StringComparison.OrdinalIgnoreCase));
 
         if (index < 0)
@@ -97,7 +102,7 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
             return Describe(request, logicalName, connector.InternalId, environment.EnvironmentId, null, null, ready: false, [$"The reference was declared, but the service did not report it, so nothing was bound. Run `{ConnectionCommandHints.BindReference(request, logicalName)}` once it appears."]);
         }
 
-        plan[index] = ConnectionReadinessPlanner.Plan(plan[index].View, await _principals.ResolveUsernameAsync(cancellationToken).ConfigureAwait(false));
+        plan[index] = _rules.Plan(plan[index].View, await _principals.ResolveUsernameAsync(cancellationToken).ConfigureAwait(false));
 
         var group = new ConnectorGroup(ConnectionConsentLink.NormalizeOptionalResourceId(plan[index].View.ConnectorId), [index]);
         var diagnostics = new List<string>();

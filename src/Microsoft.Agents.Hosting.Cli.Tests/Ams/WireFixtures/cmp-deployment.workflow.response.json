@@ -1,0 +1,24 @@
+{
+  "id": "ffffffff-6666-4666-8666-000000000016",
+  "agentId": "aaaaaaaa-1111-4111-8111-000000000011",
+  "tenantId": "11111111-1111-1111-1111-111111111111",
+  "homeEnvironmentId": "22222222-2222-2222-2222-222222222222",
+  "environmentId": "33333333-3333-3333-3333-333333333333",
+  "agentType": "MCSWorkflow",
+  "deploymentType": "Test",
+  "deploymentName": "approvals-test",
+  "lastDeployedById": "99999999-0000-4000-8000-000000000099",
+  "lastDeployedTime": "2026-08-01T10:06:41Z",
+  "mcs": {
+    "botId": null,
+    "workflowId": "0a1b2c3d-2222-4222-8222-00000000000b",
+    "schemaName": null,
+    "state": "Deployed",
+    "activeOperationId": null,
+    "lastAttestationId": "abcdefab-9999-4999-8999-000000000019",
+    "lastDeployedCommitSha": "9fceb02d0ae598e95dc970b74767f19372d61af8",
+    "lastDeployOrigin": "Remote",
+    "cloudBaseCommitSha": "9fceb02d0ae598e95dc970b74767f19372d61af8",
+    "cloudBaseExact": true
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "McsPackageUploadNotSupported",
+    "message": "Agents of type 'MCSAgent' take their source from git. Commit and push the agent folder with git push instead of uploading a package."
+  }
+}

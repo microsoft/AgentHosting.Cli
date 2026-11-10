@@ -7,6 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
+using Microsoft.CopilotStudio.McsCore;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -34,17 +35,14 @@ public sealed class ManagedAgentCreateServiceTests
         InitialPrompt = "Help users resolve support issues.",
     };
 
-    private static ManagedAgentCreateService Create(JsonAgentConfigStore store, FakeCopilotCatalogPort catalog, ICopilotScaffoldPort? scaffolder = null, CopilotEnvironmentResolver? resolver = null, FakeCopilotWorkspacePort? workspaces = null, IAgentDeploymentRegistry? deployments = null)
+    private static ManagedAgentCreateService Create(JsonAgentConfigStore store, FakeCopilotCatalogPort catalog, ICopilotScaffoldPort? scaffolder = null, CopilotEnvironmentResolver? resolver = null, FakeCopilotWorkspacePort? workspaces = null, IAgentDeploymentRegistry? deployments = null, IAgentCreationHook? creation = null)
     {
         var environments = resolver ?? ManagedAgentFixtures.Resolver();
-        var fileSystem = new SystemCopilotFileSystem();
         var workspacePort = workspaces ?? new FakeCopilotWorkspacePort();
 
         return new ManagedAgentCreateService(
-            new CopilotScaffoldService(
-                scaffolder ?? new EmbeddedTemplateScaffolder(),
-                new CopilotSchemaName(),
-                fileSystem),
+            scaffolder ?? new SyncScaffoldAdapter(),
+            new CopilotSchemaName(),
             environments,
             catalog,
             store,
@@ -53,7 +51,8 @@ public sealed class ManagedAgentCreateServiceTests
             new AgentConfigLocator(),
             ManagedAgentFixtures.Identities(),
             new ManagedAgentPrincipalResolver(InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant)),
-            workspacePort);
+            workspacePort,
+            creation);
     }
 
     [Fact]
@@ -167,7 +166,7 @@ public sealed class ManagedAgentCreateServiceTests
     private static FakeCopilotWorkspacePort DescribedClone(string root) => new()
     {
         OnClone = () => File.WriteAllText(
-            Path.Combine(root, "Contoso Agent", AgentConfigLocator.ProjectSettingsFileName),
+            Path.Combine(root, "Contoso Agent", WorkspaceFileNames.Settings),
             "displayName: \"Contoso Agent\"\nschemaName: \"con_agent\"\ndescription: \"From the source\"\n"),
     };
 
@@ -216,6 +215,39 @@ public sealed class ManagedAgentCreateServiceTests
     }
 
     [Fact]
+    public async Task Create_HandsTheCreationHookTheFoldersACloneWrote_AndAScaffoldNone()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        var creation = new RecordingAgentCreationHook();
+
+        await Create(store, new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() }, creation: creation).CreateAsync(
+            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            CancellationToken.None);
+        await Create(store, new FakeCopilotCatalogPort(), creation: creation).CreateAsync(Scaffold(), CancellationToken.None);
+
+        Assert.Collection(creation.ClonedFolders, folders => Assert.Equal([Path.Combine(workspace.Root, "Fork")], folders), folders => Assert.Empty(folders));
+    }
+
+    [Fact]
+    public async Task Create_FromACloneWhoseFolderAlreadyHoldsTheAgent_HandsTheCreationHookNoFolders()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort();
+        var creation = new RecordingAgentCreationHook { OnPrepare = plan => File.WriteAllText(Path.Combine(Directory.CreateDirectory(Path.Combine(plan.ProjectDirectory, plan.AgentLocation)).FullName, WorkspaceFileNames.Settings), "displayName: Fork\nschemaName: cr1a2_fork\n") };
+
+        var result = await Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() }, workspaces: workspaces, creation: creation).CreateAsync(
+            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            CancellationToken.None);
+
+        Assert.Equal(0, workspaces.CloneCalls);
+        Assert.Empty(result.ClonedWorkspaces);
+        Assert.Empty(Assert.Single(creation.ClonedFolders));
+    }
+
+    [Fact]
     public async Task Scaffold_NestsTheProjectUnderTheName()
     {
         using var workspace = new TemporaryWorkspace(withProjectFile: false);
@@ -224,8 +256,8 @@ public sealed class ManagedAgentCreateServiceTests
         var result = await Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort()).CreateAsync(Scaffold(), CancellationToken.None);
 
         Assert.Equal(workspace.Root, result.ProjectDirectory);
-        Assert.True(File.Exists(Path.Combine(workspace.Root, "Contoso Agent", AgentConfigLocator.ProjectSettingsFileName)));
-        Assert.False(File.Exists(Path.Combine(workspace.Root, AgentConfigLocator.ProjectSettingsFileName)));
+        Assert.True(File.Exists(Path.Combine(workspace.Root, "Contoso Agent", WorkspaceFileNames.Settings)));
+        Assert.False(File.Exists(Path.Combine(workspace.Root, WorkspaceFileNames.Settings)));
     }
 
     [Fact]
@@ -412,6 +444,69 @@ public sealed class ManagedAgentCreateServiceTests
         await Assert.ThrowsAsync<UsageException>(() => Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort()).CreateAsync(
             Scaffold() with { SchemaName = "not valid!!" },
             CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("not valid!!", null, "The schema name 'not valid!!' contains unsupported characters. Use letters, digits, and the characters _ - . { } !")]
+    [InlineData(null, "default", "--init-template applies to --mcs-agent-type Classic. The cli-copilot scaffold has a single shape.")]
+    public async Task Scaffold_WithASchemaNameOrTemplateTheChecksRefuse_FailsBeforeTheCreationHookPrepares(string? schemaName, string? initTemplate, string reason)
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var creation = new RecordingAgentCreationHook();
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort(), creation: creation).CreateAsync(
+            Scaffold() with { SchemaName = schemaName, InitTemplate = initTemplate },
+            CancellationToken.None));
+
+        Assert.Equal((ExitCodes.Usage, reason), (failure.ExitCode, failure.Message));
+        Assert.Empty(creation.Prepared);
+    }
+
+    [Fact]
+    public void Constructor_WithoutSchemaNames_Throws()
+    {
+        var store = ManagedAgentFixtures.Store();
+        var workspaces = new FakeCopilotWorkspacePort();
+
+        Assert.Equal("schemaNames", Assert.Throws<ArgumentNullException>(() => new ManagedAgentCreateService(new SyncScaffoldAdapter(), null!, ManagedAgentFixtures.Resolver(), new FakeCopilotCatalogPort(), store, new HomeDeploymentRegistrar(store, store), ManagedAgentFixtures.Materialiser(workspaces), new AgentConfigLocator(), ManagedAgentFixtures.Identities(), new ManagedAgentPrincipalResolver(InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant)), workspaces)).ParamName);
+    }
+
+    [Theory]
+    [InlineData(43)]
+    [InlineData(101)]
+    public async Task Scaffold_WithANameLongerThanAnAgentCanTake_ReportsTheDisplayNameLimitRatherThanTheSchemaNameItWouldDerive_BeforeAnyCall(int length)
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        var scaffolder = new RecordingScaffoldPort();
+        var (resolver, client) = ManagedAgentFixtures.TrackedResolver(EnvironmentFixtures.Environment("env-1", instanceUrl: CopilotTestFixtures.DataverseOrganization));
+        var inventoryReads = client.ListCalls;
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store, new FakeCopilotCatalogPort(), scaffolder, resolver).CreateAsync(
+            Scaffold() with { Name = new string('a', length) },
+            CancellationToken.None));
+
+        Assert.Equal((ExitCodes.Usage, $"An agent display name can hold at most 42 characters, and this one holds {length}."), (failure.ExitCode, failure.Message));
+        Assert.Equal(inventoryReads, client.ListCalls);
+        Assert.Null(scaffolder.LastCommand);
+        Assert.Empty(store.List(workspace.Root));
+    }
+
+    [Fact]
+    public async Task Scaffold_WithANameOfTheMostCharactersAnAgentCanTake_ScaffoldsItWithoutTheSurroundingSpaces()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var scaffolder = new RecordingScaffoldPort();
+
+        var result = await Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort(), scaffolder).CreateAsync(
+            Scaffold() with { Name = $" {CopilotTestFixtures.NameOfFortyThreeCharacters[..^1]} " },
+            CancellationToken.None);
+
+        Assert.Equal(CopilotTestFixtures.NameOfFortyThreeCharacters[..^1], scaffolder.LastCommand!.DisplayName);
+        Assert.Equal(scaffolder.LastCommand.DisplayName, result.DisplayName);
     }
 
     [Fact]
@@ -690,7 +785,7 @@ public sealed class ManagedAgentCreateServiceTests
         var workspaces = new FakeCopilotWorkspacePort
         {
             OnClone = () => File.WriteAllText(
-                Path.Combine(workspace.Root, "Fork", AgentConfigLocator.ProjectSettingsFileName),
+                Path.Combine(workspace.Root, "Fork", WorkspaceFileNames.Settings),
                 "displayName: \"Fork\"\nschemaName: \"con_frommaterialised\"\ntemplate: cliagent-1.0.0\n"),
         };
 
@@ -805,6 +900,81 @@ public sealed class ManagedAgentCreateServiceTests
     }
 
     [Fact]
+    public async Task Clone_AcrossEnvironments_DeclaresTheRequestedNameInTheCopy()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort();
+
+        var result = await Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() }, resolver: SourceAndHome().Resolver, workspaces: workspaces).CreateAsync(
+            new ManagedAgentCreateRequest { Name = " Fork ", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-2" },
+            CancellationToken.None);
+
+        Assert.Equal("Fork", workspaces.LastCloneCommand!.DisplayName);
+        Assert.Equal("Fork", result.DisplayName);
+    }
+
+    [Fact]
+    public async Task Clone_AcrossEnvironments_WithoutAName_DeclaresNone()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort();
+
+        var result = await Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() }, resolver: SourceAndHome().Resolver, workspaces: workspaces).CreateAsync(
+            new ManagedAgentCreateRequest { CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-2" },
+            CancellationToken.None);
+
+        Assert.Null(workspaces.LastCloneCommand!.DisplayName);
+        Assert.Equal("Contoso Agent", result.DisplayName);
+    }
+
+    [Fact]
+    public async Task Clone_WithinOneEnvironment_LeavesTheAgentItsOwnName()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort();
+
+        var result = await Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() }, workspaces: workspaces).CreateAsync(
+            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-1" },
+            CancellationToken.None);
+
+        Assert.Null(workspaces.LastCloneCommand!.DisplayName);
+        Assert.Equal("Fork", result.DisplayName);
+    }
+
+    [Theory]
+    [InlineData("!!!", "The name '!!!' cannot name an agent.")]
+    [InlineData("Contoso\tCopy", "The name 'Contoso\tCopy' cannot name an agent.")]
+    [InlineData(CopilotTestFixtures.NameOfFortyThreeCharacters, CopilotTestFixtures.AgentNameTooLongReason)]
+    public async Task Clone_WithANameNoAgentCanTake_IsAUsageErrorBeforeAnyCall(string name, string reason)
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        var catalog = new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() };
+        var workspaces = new FakeCopilotWorkspacePort();
+        var (resolver, client) = SourceAndHome();
+        var inventoryReads = client.ListCalls;
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store, catalog, resolver: resolver, workspaces: workspaces).CreateAsync(
+            new ManagedAgentCreateRequest { Name = name, CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-2" },
+            CancellationToken.None));
+
+        Assert.StartsWith(reason, failure.Message, StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Equal(inventoryReads, client.ListCalls);
+        Assert.Empty(catalog.ResolvedValues);
+        Assert.Equal(0, workspaces.CloneCalls);
+        Assert.Empty(store.List(workspace.Root));
+    }
+
+    private static (CopilotEnvironmentResolver Resolver, FakeEnvironmentClient Client) SourceAndHome() => ManagedAgentFixtures.TrackedResolver(
+        EnvironmentFixtures.Environment("env-1", instanceUrl: CopilotTestFixtures.DataverseOrganization),
+        EnvironmentFixtures.Environment("env-2", instanceUrl: CopilotTestFixtures.DataverseOrganization));
+
+    [Fact]
     public async Task Clone_WithinOneEnvironment_KeepsTheSourceAsItsDeploymentTarget()
     {
         using var workspace = new TemporaryWorkspace(withProjectFile: false);
@@ -906,6 +1076,30 @@ internal sealed class UnwritableDeploymentRegistry : IAgentDeploymentRegistry
     public AgentDeploymentRecord Update(string projectDirectory, AgentDeploymentRecord record) => _inner.Update(projectDirectory, record);
 
     public void Remove(string projectDirectory, string deploymentId, string expectedETag) => _inner.Remove(projectDirectory, deploymentId, expectedETag);
+}
+
+internal sealed class RecordingAgentCreationHook : IAgentCreationHook
+{
+    public List<AgentCreationPlan> Prepared { get; } = [];
+
+    public List<IReadOnlyList<string>> ClonedFolders { get; } = [];
+
+    public Action<AgentCreationPlan>? OnPrepare { get; init; }
+
+    public Task<AgentCreationTicket?> PrepareAsync(AgentCreationPlan plan, CancellationToken cancellationToken)
+    {
+        Prepared.Add(plan);
+        OnPrepare?.Invoke(plan);
+
+        return NoAgentCreationHook.Instance.PrepareAsync(plan, cancellationToken);
+    }
+
+    public Task<AmsAgentRegistration?> CompleteAsync(AgentCreationTicket ticket, ManagedAgentRecord stored, AgentDeploymentRecord? homeDeployment, IReadOnlyList<string> clonedFolders, CancellationToken cancellationToken)
+    {
+        ClonedFolders.Add(clonedFolders);
+
+        return NoAgentCreationHook.Instance.CompleteAsync(ticket, stored, homeDeployment, clonedFolders, cancellationToken);
+    }
 }
 
 public sealed class HomeDeploymentRegistrarTests : IDisposable

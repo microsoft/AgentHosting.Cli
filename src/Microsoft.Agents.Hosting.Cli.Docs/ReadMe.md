@@ -71,9 +71,9 @@ normal success envelope.
 
 | Module | Subcommands | Description |
 | --- | --- | --- |
-| [`msagent auth`](Command_Auth.md) | `login`, `status`, `switch`, `logout` | Authenticate operators and manage stored accounts. |
+| [`msagent auth`](Command_Auth.md) | `login`, `status`, `switch`, `logout`, `setup-git` (**Gated**) | Authenticate operators and manage stored accounts. |
 | [`msagent env`](Command_Env.md) | `list`, `select` | List and select Power Platform environments. |
-| [`msagent agent`](Command_Agent.md) | `create`, `init` (**MCS-specific**), `list` (**MCS-specific**), `show`, `pull` (**MCS-specific**), `delete` (**MCS-specific**), `deploy`, `share` (**MCSAgent-only**), `share show` (**MCSAgent-only**), `unshare` (**MCSAgent-only**), `package upload` (**Gated**), [`eval`](Command_Agent_Eval.md) {`run`, `list`, `show`, `cancel`, `delete`, `generate`, `testset`} (**Gated**, **MCSAgent-only**) | Create, list, inspect, and delete hosted agents or standalone workflows; initialize or pull MCS source; deploy agents and workflows; manage MCS agent sharing; run MCS evaluations; and upload agent packages. |
+| [`msagent agent`](Command_Agent.md) | `create`, `init` (**MCS-specific**), `list` (**MCS-specific**), `show`, `pull` (**MCS-specific**), `delete` (**MCS-specific**), `deploy`, `share` (**MCSAgent-only**), `share show` (**MCSAgent-only**), `unshare` (**MCSAgent-only**), `package upload` (**Gated**), `capture` (**Gated**), `operation show` (**Gated**), [`eval`](Command_Agent_Eval.md) {`run`, `list`, `show`, `cancel`, `delete`, `generate`, `testset`} (**Gated**, **MCSAgent-only**) | Create, list, inspect, and delete hosted agents or standalone workflows; initialize or pull MCS source; deploy agents and workflows; manage MCS agent sharing; run MCS evaluations; upload agent packages; and, in AMS mode, capture Copilot Studio edits and follow operations. |
 | [`msagent deployment`](Command_Deployment.md) | `create`, `list`, `show`, `update`, `delete`, `channel` {`create`, `update`, `delete`, `show`, `list`} (**CodeAgent-specific**), [`connection`](Command_Deployment_Connection.md) {`list`, `add`, `update`, `remove`, `connectors`} (**MCS-specific**), [`oauth`](Command_Deployment_OAuth.md) {`create`, `delete`, `list`, `list-providers`, `show`, `update`} (**CodeAgent-specific**) | Manage deployment records, CodeAgent channels and OAuth settings, and MCS connections. |
 | [`msagent test`](Command_Test.md) (**Gated**, **MCS-specific**) | `ask`, `playground` | Send a live query or launch the M365 Agents Playground. Actions can have real effects. |
 | [`msagent abs`](Command_Abs.md) (**Gated**) | `preview`, `apply` | Preview and apply Azure Bot Service configuration. |
@@ -85,8 +85,8 @@ enabled for a given run. Run `msagent --help` (or `--help` on any group) to see 
 available.
 
 The intermediate groups `auth`, `env`, `agent`, `agent eval`, `agent eval testset`, `deployment`,
-`deployment connection`, `deployment channel`, `deployment oauth`, `agent package`, `abs`, `identity`, `identity create`,
-`test`, and `telemetry` are navigation commands. Invoking one without a leaf command returns a usage error
+`deployment connection`, `deployment channel`, `deployment oauth`, `agent package`, `agent operation`, `abs`, `identity`, `identity create`,
+`test`, `telemetry`, and `config` are navigation commands. Invoking one without a leaf command returns a usage error
 and lists its valid subcommands.
 
 > [!IMPORTANT]

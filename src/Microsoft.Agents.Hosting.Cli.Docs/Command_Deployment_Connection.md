@@ -40,6 +40,15 @@ the loopback callback. `connection update` still reads menu answers from stdin; 
 the selection flow after any automatic bindings already made. Use `--connection-id` with a scope
 resolving exactly one connector for an explicit update without a selection menu.
 
+### AMS mode (Gated)
+
+In [AMS mode](Command_Agent.md#ams-mode-gated), that is, while `AmsMcsAgents` is enabled, these
+commands work exactly as described here: the Agent Management Service keeps no connection bindings,
+and `add` and `remove` change the agent's folder, which reaches its GRS repository when you commit
+and push it. A `msagent agent deploy --remote` keeps the bindings each environment already holds but
+binds no reference itself, so after the first remote deploy into a new Test or Prod environment, run
+`update` once for that deployment; it turns on each flow whose references are then all bound.
+
 ## `msagent deployment connection list` - MCS-specific
 
 Reports the agent's connection references and the connection behind each. Changes nothing.

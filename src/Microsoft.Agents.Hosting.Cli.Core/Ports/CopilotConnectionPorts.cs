@@ -1,3 +1,5 @@
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
+
 namespace Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 /// <summary>A connection that could satisfy a reference.</summary>
@@ -46,31 +48,10 @@ public sealed record CopilotConnectionView
     /// <summary>The connector's display name, when the catalog reports one.</summary>
     public string? ConnectorName { get; init; }
 
-    /// <summary>
-    /// The connection the reference is bound to, or <see langword="null"/> when unbound or when the
-    /// catalog could not confirm the recorded connection still exists. A value here means the binding
-    /// was checked and held.
-    /// </summary>
+    /// <summary>The connection the reference records, whether or not the catalog could confirm it still exists.</summary>
     public string? BoundConnectionId { get; init; }
 
-    /// <summary>
-    /// The connection the reference records, whether or not the catalog could confirm it still
-    /// exists. Deletion protection reads this rather than <see cref="BoundConnectionId"/>: a
-    /// connection that is in use must stay protected even when the catalog cannot be read, because an
-    /// unverifiable binding is not an absent one.
-    ///
-    /// Defaults to <see cref="BoundConnectionId"/> so that a reference read from a source which does
-    /// not distinguish the two still protects what it holds.
-    /// </summary>
-    public string? RecordedConnectionId
-    {
-        get => _recordedConnectionId ?? BoundConnectionId;
-        init => _recordedConnectionId = value;
-    }
-
-    private readonly string? _recordedConnectionId;
-
-    /// <summary>Whether the bound connection still exists.</summary>
+    /// <summary>Whether the recorded connection still exists, which confirms the binding only when the catalog could be read.</summary>
     public bool BoundConnectionExists { get; init; }
 
     /// <summary>
@@ -195,6 +176,12 @@ public interface ICopilotConnectionPort
 
     Task<CopilotConnectionReferenceRemoval> RemoveConnectionReferenceAsync(CopilotEnvironmentContext environment, string projectDirectory, string logicalName, bool confirmed, CancellationToken cancellationToken);
 
+    /// <summary>Reads the workflows the workspace defines, judging by the sync library's rule whether each can start once the given references are bound.</summary>
+    /// <param name="projectDirectory">The workspace defining the workflows.</param>
+    /// <param name="boundReferences">The logical names of the references bound to a confirmed connection.</param>
+    /// <returns>One view per workflow, ordered by display name.</returns>
+    IReadOnlyList<CopilotWorkflowView> ReadWorkflows(string projectDirectory, IReadOnlyCollection<string> boundReferences);
+
     /// <summary>
     /// Sets workflow activation states directly, without re-uploading the workflows.
     /// </summary>
@@ -204,6 +191,56 @@ public interface ICopilotConnectionPort
     /// <param name="cancellationToken">Cancels the change.</param>
     /// <returns>The workflows the service activated, and any it declined.</returns>
     Task<CopilotWorkflowActivation> SetWorkflowStatesAsync(CopilotEnvironmentContext environment, string projectDirectory, IReadOnlyList<CopilotWorkflowStateChange> changes, CancellationToken cancellationToken);
+
+    /// <summary>Runs the activation pass that follows a push, binding what can be bound without asking and activating every eligible draft.</summary>
+    /// <param name="environment">The environment the push targeted.</param>
+    /// <param name="projectDirectory">The workspace that was pushed.</param>
+    /// <param name="principal">The identity a connection has to belong to before it is bound without asking, or <see langword="null"/> to bind nothing.</param>
+    /// <param name="cancellationToken">Cancels the pass.</param>
+    /// <returns>What the pass observed.</returns>
+    Task<CopilotWorkflowActivationReport> ActivateWorkflowsAsync(CopilotEnvironmentContext environment, string projectDirectory, string? principal, CancellationToken cancellationToken);
+}
+
+/// <summary>Decides connection references by the sync library's binding rules: what each reference is, and which connection may be bound to it without asking.</summary>
+public interface IConnectionBindingRules
+{
+    /// <summary>Reports what is true of one reference without proposing a binding.</summary>
+    /// <param name="view">The reference to read.</param>
+    /// <returns>The reference's observed state.</returns>
+    ConnectionPlanItem Observe(CopilotConnectionView view);
+
+    /// <summary>Decides what a run that may write does with one reference, binding an unbound one only to a connected connection the principal owns.</summary>
+    /// <param name="view">The reference to plan for, with its candidates.</param>
+    /// <param name="principal">The signed-in identity a connection has to belong to, or <see langword="null"/> to bind nothing.</param>
+    /// <returns>The decision.</returns>
+    ConnectionPlanItem Plan(CopilotConnectionView view, string? principal);
+
+    /// <summary>Picks the connections that can satisfy a reference, in the order the rules consider them.</summary>
+    /// <param name="candidates">The connections the catalog reported.</param>
+    /// <returns>The connected ones.</returns>
+    IReadOnlyList<CopilotConnectionCandidate> Connected(IReadOnlyList<CopilotConnectionCandidate> candidates);
+}
+
+/// <summary>What the activation pass that follows a push observed.</summary>
+public sealed record CopilotWorkflowActivationReport
+{
+    /// <summary>The display name of every workflow the workspace defines, in ordinal order.</summary>
+    public IReadOnlyList<string> Workflows { get; init; } = [];
+
+    /// <summary>The workflows the service reports as running.</summary>
+    public IReadOnlyList<string> Activated { get; init; } = [];
+
+    /// <summary>The explanations the service gave for refusing an activation.</summary>
+    public IReadOnlyList<string> Refused { get; init; } = [];
+
+    /// <summary>Whether the service reported each workflow it observed as running, keyed by the identifier it assigned.</summary>
+    public IReadOnlyDictionary<string, bool> ObservedById { get; init; } = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>How many workflows are not known to be running.</summary>
+    public int NotRunningCount { get; init; }
+
+    /// <summary>How many connection references the pass left without a confirmed binding.</summary>
+    public int UnboundConnectionCount { get; init; }
 }
 
 /// <summary>What activating an agent's connection-dependent workflows achieved.</summary>

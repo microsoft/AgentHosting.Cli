@@ -9,16 +9,19 @@ public sealed class WorkflowPullService
     private readonly WorkflowProjectResolver _resolver;
     private readonly IWorkflowStorePort _workflows;
     private readonly WorkflowStateCache _workflowStates;
+    private readonly IWorkflowStateRules _stateRules;
 
     /// <summary>Creates the service.</summary>
     /// <param name="resolver">Resolves the record, files and environment the pull reads from.</param>
     /// <param name="workflows">Downloads the workflow.</param>
     /// <param name="workflowStates">Holds what the environment last reported about each workflow.</param>
-    public WorkflowPullService(WorkflowProjectResolver resolver, IWorkflowStorePort workflows, WorkflowStateCache workflowStates)
+    /// <param name="stateRules">Reads whether a workflow state means it runs.</param>
+    public WorkflowPullService(WorkflowProjectResolver resolver, IWorkflowStorePort workflows, WorkflowStateCache workflowStates, IWorkflowStateRules stateRules)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _workflows = workflows ?? throw new ArgumentNullException(nameof(workflows));
         _workflowStates = workflowStates ?? throw new ArgumentNullException(nameof(workflowStates));
+        _stateRules = stateRules ?? throw new ArgumentNullException(nameof(stateRules));
     }
 
     /// <summary>Downloads the workflow, replacing whatever is on disk once nothing unpushed is at stake.</summary>
@@ -62,7 +65,7 @@ public sealed class WorkflowPullService
     /// </summary>
     private void Record(WorkflowTarget target, string environmentId, WorkflowDocument workflow)
     {
-        if (workflow.State is not (WorkflowStateProjection.Activated or WorkflowStateProjection.Draft))
+        if (_stateRules.RunningOf(workflow.State) is not { } running)
         {
             _workflowStates.Invalidate(target.WorkspaceRoot, environmentId);
 
@@ -71,7 +74,7 @@ public sealed class WorkflowPullService
 
         _workflowStates.Write(target.WorkspaceRoot, environmentId, new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         {
-            [target.WorkflowId.ToString()] = workflow.IsActivated ? WorkflowStateCache.Activated : WorkflowStateCache.Draft,
+            [target.WorkflowId.ToString()] = running ? WorkflowStateCache.Activated : WorkflowStateCache.Draft,
         });
     }
 }

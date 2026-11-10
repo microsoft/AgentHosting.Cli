@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json.Serialization;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 
@@ -52,6 +53,12 @@ public sealed record ManagedAgentCreateRequest
     /// The project directory the command acts on. The current directory when omitted.
     /// </summary>
     public string? Project { get; init; }
+
+    /// <summary>The GRS repository the project folder joins, in AMS mode.</summary>
+    public string? RepositoryId { get; init; }
+
+    /// <summary>Whether the command may not ask questions.</summary>
+    public bool NonInteractive { get; init; }
 }
 
 /// <summary>Result of <c>msagent agent create</c> on the MCS path.</summary>
@@ -132,9 +139,14 @@ public sealed record ManagedAgentCreateResult : ITextGridRenderable
     /// <summary>Advisories that did not stop the command, such as options ignored in clone mode.</summary>
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
+    /// <summary>What AMS mode added: the registration, the repository and the commit, or null outside AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AmsAgentRegistration? Ams { get; init; }
+
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines() =>
-        AgentType == AgentTypes.McsWorkflow ? WorkflowLines() : CreatedFrom == "clone" ? CloneLines() : ScaffoldLines();
+        Status == "cancelled" ? ["Cancelled. Nothing was created."]
+        : [.. AgentType == AgentTypes.McsWorkflow ? WorkflowLines() : CreatedFrom == "clone" ? CloneLines() : ScaffoldLines(), .. Ams?.ToTextLines() ?? []];
 
     private List<string> WorkflowLines()
     {
@@ -247,6 +259,14 @@ public sealed record ManagedAgentShowResult : ITextGridRenderable
     /// </summary>
     public IReadOnlyList<AgentDeploymentRecord> Deployments { get; init; } = [];
 
+    /// <summary>What AMS holds for each registered agent shown, in AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<AmsAgentDetails>? Ams { get; init; }
+
+    /// <summary>Why AMS couldn't be read, in AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Warnings { get; init; }
+
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines()
     {
@@ -277,11 +297,23 @@ public sealed record ManagedAgentShowResult : ITextGridRenderable
             lines.Add($"    changedTime    {agent.ChangedTime:yyyy-MM-dd HH:mm:ssZ}");
             lines.Add($"    agentState     {agent.AgentState}");
             lines.Add($"    entityTag      {agent.EntityTag}");
+
+            if (AmsOf(agent.AgentId) is { } ams)
+            {
+                lines.Add($"    repositoryId   {ams.RepositoryId}");
+                lines.Add($"    folder         {ams.Folder}");
+                lines.Add($"    gitUrl         {TextGrid.DescribeOrDash(ams.GitUrl)}");
+            }
+
             lines.AddRange(DeploymentLines(agent.AgentId));
         }
 
+        lines.AddRange((Warnings ?? []).Select(TextGrid.StatusWarningLine));
+
         return lines;
     }
+
+    private AmsAgentDetails? AmsOf(string agentId) => Ams?.FirstOrDefault(details => string.Equals(details.AgentId, agentId, StringComparison.OrdinalIgnoreCase));
 
     private IEnumerable<string> DeploymentLines(string agentId)
     {
@@ -312,6 +344,11 @@ public sealed record ManagedAgentShowResult : ITextGridRenderable
             yield return $"        isQuarantined     {deployment.IsQuarantined}";
             yield return $"        quarantinedReason {TextGrid.DescribeOrDash(deployment.QuarantinedReason)}";
             yield return $"        entityTag         {deployment.EntityTag}";
+
+            if (Ams is not null)
+            {
+                yield return $"        lastCommit        {TextGrid.DescribeOrDash(AmsOf(agentId)?.Deployments.FirstOrDefault(state => string.Equals(state.DeploymentId, deployment.DeploymentId, StringComparison.OrdinalIgnoreCase))?.LastDeployedCommitSha)}";
+            }
         }
     }
 }
@@ -330,6 +367,15 @@ public sealed record ManagedAgentInitRequest
 
     /// <summary>The directory holding the workflow. Defaults to the current directory.</summary>
     public string? McsWorkflowSource { get; init; }
+
+    /// <summary>The GRS repository the project folder joins, in AMS mode.</summary>
+    public string? RepositoryId { get; init; }
+
+    /// <summary>Whether the command may not ask questions.</summary>
+    public bool NonInteractive { get; init; }
+
+    /// <summary>The project folder a workflow's record goes into, which AMS mode sets to the repository's root; null takes the project enclosing the workflow.</summary>
+    public string? ProjectDirectory { get; init; }
 }
 
 /// <summary>Result of <c>msagent agent init</c>.</summary>
@@ -377,8 +423,14 @@ public sealed record ManagedAgentInitResult : ITextGridRenderable
     /// <summary>Whether the workflow is activated or a draft, for a standalone workflow.</summary>
     public string? WorkflowState { get; init; }
 
+    /// <summary>What AMS mode added: the registration, the repository, the restored agents and the commit, or null outside AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AmsAgentRegistration? Ams { get; init; }
+
     /// <inheritdoc />
-    public IReadOnlyList<string> ToTextLines() => AgentType == AgentTypes.McsWorkflow
+    public IReadOnlyList<string> ToTextLines() => Status == "cancelled" ? ["Cancelled. Nothing was registered."] : [.. MainLines(), .. Ams?.ToTextLines() ?? []];
+
+    private IReadOnlyList<string> MainLines() => AgentType == AgentTypes.McsWorkflow
         ?
         [
             $"Registered workflow {TextGrid.DescribeWorkflow(WorkflowName, DisplayName)} in {ProjectDirectory}.",
@@ -421,6 +473,26 @@ public sealed record ManagedAgentListRequest
     /// The project directory the command acts on. The current directory when omitted.
     /// </summary>
     public string? Project { get; init; }
+
+    /// <summary>The rows to list, one of <see cref="ManagedAgentListViews"/>; the cloud view when omitted.</summary>
+    public string? View { get; init; }
+
+    /// <summary>Lists only the AMS agents of this repository, in the AMS view.</summary>
+    public string? RepositoryId { get; init; }
+}
+
+/// <summary>The rows <c>msagent agent list</c> can show.</summary>
+public static class ManagedAgentListViews
+{
+    /// <summary>The Copilot Studio agents or standalone cloud flows in the cloud environment.</summary>
+    public const string Cloud = "cloud";
+
+    /// <summary>The agent records AMS holds, deployed or not.</summary>
+    public const string Ams = "ams";
+
+    /// <summary>The view a value names in any letter case, the cloud view for a blank value, or null when it names none.</summary>
+    /// <param name="value">The value supplied.</param>
+    public static string? Parse(string? value) => string.IsNullOrWhiteSpace(value) ? Cloud : new[] { Cloud, Ams }.FirstOrDefault(view => string.Equals(view, value.Trim(), StringComparison.OrdinalIgnoreCase));
 }
 
 /// <summary>One agent in an <c>msagent agent list</c> result.</summary>
@@ -461,6 +533,36 @@ public sealed record ManagedAgentListItem
 
     /// <summary>How many deployments reference the matching record, or <see langword="null"/>.</summary>
     public int? DeploymentSlotCount { get; init; }
+
+    /// <summary>The GRS repository of the AMS agent the row belongs to, in the AMS view only.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RepositoryId { get; init; }
+
+    /// <summary>The agent's top-level folder in the repository, in the AMS view only.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AgentFolder { get; init; }
+
+    /// <summary>The repository branch, in the AMS view only.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Branch { get; init; }
+
+    /// <summary>The home Dev deployment, in the AMS view only.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? HomeDeploymentId { get; init; }
+
+    /// <summary>NotDeployed until a deployment of the agent completes its first deploy, then Deployed, in the AMS view only.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CloudState { get; init; }
+}
+
+/// <summary>The rows one environment returned for <c>msagent agent list</c>.</summary>
+public sealed record ManagedAgentListPage
+{
+    /// <summary>The rows.</summary>
+    public required IReadOnlyList<ManagedAgentListItem> Agents { get; init; }
+
+    /// <summary>Whether the environment holds more rows than it returned.</summary>
+    public bool HasMore { get; init; }
 }
 
 /// <summary>One environment that could not be read during a tenant-wide listing.</summary>
@@ -482,11 +584,15 @@ public sealed record ManagedAgentListResult : ITextGridRenderable
     /// <summary>Machine-readable status string (<c>agents-listed</c>).</summary>
     public string Status { get; init; } = "agents-listed";
 
+    /// <summary>The rows listed, <see cref="ManagedAgentListViews.Ams"/> for AMS records, omitted for the cloud listing.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? View { get; init; }
+
     /// <summary>What was listed: <c>environment</c> or <c>tenant</c>.</summary>
     public required string Scope { get; init; }
 
-    /// <summary>The agent type that was listed.</summary>
-    public string AgentType { get; init; } = AgentTypes.McsAgent;
+    /// <summary>The agent type that was listed, or null when the AMS view listed every type.</summary>
+    public string? AgentType { get; init; } = AgentTypes.McsAgent;
 
     /// <summary>The environment listed, omitted under tenant scope.</summary>
     public string? EnvironmentId { get; init; }
@@ -507,15 +613,18 @@ public sealed record ManagedAgentListResult : ITextGridRenderable
     public IReadOnlyList<string> ToTextLines()
     {
         var isWorkflow = AgentType == AgentTypes.McsWorkflow;
+        var isAmsView = View == ManagedAgentListViews.Ams;
         var noun = isWorkflow ? "workflow" : "agent";
 
         if (Agents.Count == 0)
         {
             return
             [
-                isWorkflow
-                    ? "No workflows found. A workflow that has never been deployed is not listed."
-                    : "No agents found. An agent that has never been deployed is not listed.",
+                isAmsView
+                    ? $"No AMS {noun}s found."
+                    : isWorkflow
+                        ? "No workflows found. A workflow that has never been deployed is not listed."
+                        : "No agents found. An agent that has never been deployed is not listed.",
                 .. Diagnostics.Select(diagnostic => $"  {diagnostic.EnvironmentId}: {diagnostic.Message}"),
             ];
         }
@@ -523,23 +632,31 @@ public sealed record ManagedAgentListResult : ITextGridRenderable
         var isTenantScope = Scope == "tenant";
         var lines = new List<string> { $"{Agents.Count} {noun}(s){(Truncated ? $", truncated at --limit {Limit}" : string.Empty)}." };
 
-        string[] headers = isWorkflow
+        string[] headers = isAmsView
             ? isTenantScope
-                ? ["WORKFLOW ID", "NAME", "STATE", "ENVIRONMENT", "AGENT ID", "DEPLOYMENTS", "LAST CHANGED"]
-                : ["WORKFLOW ID", "NAME", "STATE", "AGENT ID", "DEPLOYMENTS", "LAST CHANGED"]
-            : isTenantScope
-                ? ["MCS AGENT ID", "SCHEMA NAME", "DISPLAY NAME", "ENVIRONMENT", "TENANT", "STATE", "LAST CHANGED"]
-                : ["MCS AGENT ID", "SCHEMA NAME", "DISPLAY NAME", "TENANT", "STATE", "LAST CHANGED"];
+                ? ["AGENT ID", "DISPLAY NAME", "ENVIRONMENT", "TYPE", "SCHEMA NAME", "REPOSITORY ID", "FOLDER", "HOME DEPLOYMENT", "DEPLOYMENTS", "CLOUD STATE"]
+                : ["AGENT ID", "DISPLAY NAME", "TYPE", "SCHEMA NAME", "REPOSITORY ID", "FOLDER", "HOME DEPLOYMENT", "DEPLOYMENTS", "CLOUD STATE"]
+            : isWorkflow
+                ? isTenantScope
+                    ? ["WORKFLOW ID", "NAME", "STATE", "ENVIRONMENT", "AGENT ID", "DEPLOYMENTS", "LAST CHANGED"]
+                    : ["WORKFLOW ID", "NAME", "STATE", "AGENT ID", "DEPLOYMENTS", "LAST CHANGED"]
+                : isTenantScope
+                    ? ["MCS AGENT ID", "SCHEMA NAME", "DISPLAY NAME", "ENVIRONMENT", "TENANT", "STATE", "LAST CHANGED"]
+                    : ["MCS AGENT ID", "SCHEMA NAME", "DISPLAY NAME", "TENANT", "STATE", "LAST CHANGED"];
 
         lines.AddRange(TextGrid.RenderTable(
             isWorkflow ? "Workflows" : "Agents",
             headers,
-            [.. Agents.Select(agent => isWorkflow ? WorkflowRow(agent, isTenantScope) : AgentRow(agent, isTenantScope))]));
+            [.. Agents.Select(agent => isAmsView ? AmsRow(agent, isTenantScope) : isWorkflow ? WorkflowRow(agent, isTenantScope) : AgentRow(agent, isTenantScope))]));
 
         lines.AddRange(Diagnostics.Select(diagnostic => $"  {diagnostic.EnvironmentId}: {diagnostic.Message}"));
 
         return lines;
     }
+
+    private static string[] AmsRow(ManagedAgentListItem agent, bool isTenantScope) => isTenantScope
+        ? [TextGrid.DescribeOrDash(agent.AgentId), agent.DisplayName, agent.EnvironmentId, agent.AgentType, TextGrid.DescribeOrDash(agent.SchemaName), TextGrid.DescribeOrDash(agent.RepositoryId), TextGrid.DescribeOrDash(agent.AgentFolder), TextGrid.DescribeOrDash(agent.HomeDeploymentId), TextGrid.DescribeCount(agent.DeploymentSlotCount), TextGrid.DescribeOrDash(agent.CloudState)]
+        : [TextGrid.DescribeOrDash(agent.AgentId), agent.DisplayName, agent.AgentType, TextGrid.DescribeOrDash(agent.SchemaName), TextGrid.DescribeOrDash(agent.RepositoryId), TextGrid.DescribeOrDash(agent.AgentFolder), TextGrid.DescribeOrDash(agent.HomeDeploymentId), TextGrid.DescribeCount(agent.DeploymentSlotCount), TextGrid.DescribeOrDash(agent.CloudState)];
 
     private static string[] WorkflowRow(ManagedAgentListItem workflow, bool isTenantScope) => isTenantScope
         ? [TextGrid.DescribeOrDash(workflow.McsWorkflowId), workflow.DisplayName, TextGrid.DescribeOrDash(workflow.WorkflowState), workflow.EnvironmentId, TextGrid.DescribeOrDash(workflow.AgentId), TextGrid.DescribeCount(workflow.DeploymentSlotCount), TextGrid.DescribeTimestamp(workflow.LastChangedOn)]
@@ -622,6 +739,14 @@ public sealed record ManagedAgentDeleteResult : ITextGridRenderable
     /// <summary>Advisories about the delete, such as the Copilot Studio agents that lost the deleted workflow.</summary>
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
+    /// <summary>Whether AMS's records of the agent were deleted, in AMS mode for a registered agent.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? AmsRecordDeleted { get; init; }
+
+    /// <summary>The GRS repository that keeps the agent's folder, in AMS mode for a registered agent.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RepositoryId { get; init; }
+
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines()
     {
@@ -648,6 +773,12 @@ public sealed record ManagedAgentDeleteResult : ITextGridRenderable
                 : $"  {cloudLabel}  deleted from {EnvironmentId}",
             $"  records      1 ManagedAgent + {RemovedAgentDeployments} AgentDeployment row(s)",
         };
+
+        if (AmsRecordDeleted is true)
+        {
+            lines.Add("  ams record   deleted");
+            lines.Add($"  repository   {RepositoryId} (kept)");
+        }
 
         lines.AddRange(Warnings.Select(warning => TextGrid.WarningLine("  ", warning)));
 
@@ -747,7 +878,7 @@ public sealed record ManagedAgentPullResult : ITextGridRenderable
             lines.Add($"  renamed    {PreviousFolder} -> {WorkflowFolder}");
         }
 
-        lines.AddRange(Warnings.Select(warning => $"  warning    {warning}"));
+        lines.AddRange(Warnings.Select(TextGrid.StatusWarningLine));
 
         return lines;
     }
@@ -857,6 +988,9 @@ public sealed record ManagedAgentDeployResult : ITextGridRenderable
     /// <summary>When the publish completed.</summary>
     public DateTimeOffset? PublishedOn { get; init; }
 
+    /// <summary>When the agent was last published, by this deploy or before it, or null when it never was or the time is not known.</summary>
+    public DateTimeOffset? LastPublishedTime { get; init; }
+
     /// <summary>Advisories that did not stop the deploy.</summary>
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
@@ -877,10 +1011,10 @@ public sealed record ManagedAgentDeployResult : ITextGridRenderable
                 $"  action     {Action}{(TargetAgentCreated ? " — cloud agent created" : string.Empty)}",
                 $"  agent      {TargetMcsAgentId}",
                 $"  pushed     {PushedComponentCount + AuxiliaryChangeCount}{(UploadedFileCount > 0 ? $"; {UploadedFileCount} file(s) uploaded" : string.Empty)}",
-                Published ? "  published  yes — the content is live" : "  published  no — the content is a draft. Re-run with --publish to make it live.",
+                $"  published  {TextGrid.DescribePublished(Published, LastPublishedTime)}",
             };
 
-        lines.AddRange(Warnings.Select(warning => $"  warning    {warning}"));
+        lines.AddRange(Warnings.Select(TextGrid.StatusWarningLine));
 
         return lines;
     }
@@ -977,6 +1111,10 @@ public sealed record AgentDeploymentDeleteResult : ITextGridRenderable
     /// <summary>The configuration file the records were removed from.</summary>
     public string? ConfigPath { get; init; }
 
+    /// <summary>Why AMS's copy of the records wasn't changed, in AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Warnings { get; init; }
+
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines()
     {
@@ -1008,6 +1146,7 @@ public sealed record AgentDeploymentDeleteResult : ITextGridRenderable
         }
 
         lines.Add($"  config       {ConfigPath}");
+        lines.AddRange((Warnings ?? []).Select(TextGrid.StatusWarningLine));
 
         return lines;
     }
@@ -1068,6 +1207,10 @@ public sealed record AgentDeploymentUpdateResult : ITextGridRenderable
     /// <summary>The configuration file the record was written to.</summary>
     public required string ConfigPath { get; init; }
 
+    /// <summary>Why AMS's copy of the records wasn't changed, in AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Warnings { get; init; }
+
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines() =>
     [
@@ -1078,6 +1221,7 @@ public sealed record AgentDeploymentUpdateResult : ITextGridRenderable
         $"  deployment   {DeploymentId}",
         $"  environment  {EnvironmentId}",
         $"  config       {ConfigPath}",
+        .. (Warnings ?? []).Select(TextGrid.StatusWarningLine),
     ];
 }
 
@@ -1111,12 +1255,17 @@ public sealed record AgentDeploymentCreateResult : ITextGridRenderable
     /// <summary>The schema name the deployment will use, read live and not stored. Absent for a workflow.</summary>
     public string? SchemaName { get; init; }
 
+    /// <summary>Why AMS's copy of the records wasn't changed, in AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Warnings { get; init; }
+
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines() =>
     [
         $"Created deployment {DeploymentName} ({DeploymentType}) for agent {AgentId}.",
         $"  environment  {TargetEnvironmentId}",
         .. SchemaName is null ? Array.Empty<string>() : [$"  schema name  {SchemaName}"],
+        .. (Warnings ?? []).Select(TextGrid.StatusWarningLine),
     ];
 }
 
@@ -1194,6 +1343,22 @@ public sealed record AgentDeploymentShowResult : ITextGridRenderable
     /// <summary>Why the deployment was quarantined.</summary>
     public string? QuarantinedReason { get; init; }
 
+    /// <summary>The commit AMS says the deployment last deployed, in AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LastDeployedCommitSha { get; init; }
+
+    /// <summary>NotDeployed or Deployed, as AMS reports the deployment, in AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? State { get; init; }
+
+    /// <summary>Why AMS couldn't be read, in AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Warnings { get; init; }
+
+    /// <summary>Whether the table shows AMS's columns, which AMS mode adds.</summary>
+    [JsonIgnore]
+    public bool ShowsAms { get; init; }
+
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines()
     {
@@ -1211,7 +1376,9 @@ public sealed record AgentDeploymentShowResult : ITextGridRenderable
                 ["Last deployed", TextGrid.DescribeTimestamp(LastDeployedOn)],
                 ["Enabled", IsEnabled ? "yes" : "no"],
                 ["Quarantined", IsQuarantined ? QuarantinedReason ?? "yes" : "no"],
+                .. ShowsAms ? (string[][])[["Last commit", TextGrid.DescribeOrDash(LastDeployedCommitSha)], ["State", TextGrid.DescribeOrDash(State)]] : [],
             ]));
+        lines.AddRange((Warnings ?? []).Select(TextGrid.StatusWarningLine));
 
         return lines;
     }
@@ -1240,6 +1407,14 @@ public sealed record AgentDeploymentListItem
 
     /// <summary>The agent's name, when the project still registers it.</summary>
     public string? AgentName { get; init; }
+
+    /// <summary>The commit AMS says the deployment last deployed, in AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LastDeployedCommitSha { get; init; }
+
+    /// <summary>NotDeployed or Deployed, as AMS reports the deployment, in AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? State { get; init; }
 }
 
 /// <summary>Result of <c>msagent deployment list</c>.</summary>
@@ -1256,6 +1431,14 @@ public sealed record AgentDeploymentListResult : ITextGridRenderable
 
     /// <summary>The deployments, in promotion order.</summary>
     public IReadOnlyList<AgentDeploymentListItem> Slots { get; init; } = [];
+
+    /// <summary>Why AMS couldn't be read, in AMS mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Warnings { get; init; }
+
+    /// <summary>Whether the table shows AMS's columns, which AMS mode adds.</summary>
+    [JsonIgnore]
+    public bool ShowsAms { get; init; }
 
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines()
@@ -1283,6 +1466,7 @@ public sealed record AgentDeploymentListResult : ITextGridRenderable
                 "STAGE",
                 "ENVIRONMENT",
                 "LAST DEPLOYED",
+                .. ShowsAms ? (string[])["COMMIT", "STATE"] : [],
             ],
             [.. Slots.Select(slot => (string[])
             [
@@ -1292,7 +1476,9 @@ public sealed record AgentDeploymentListResult : ITextGridRenderable
                 slot.DeploymentType,
                 TextGrid.DescribeOrDash(slot.EnvironmentId),
                 TextGrid.DescribeTimestamp(slot.LastDeployedOn),
+                .. ShowsAms ? (string[])[slot.LastDeployedCommitSha is { } commit ? McsAmsCommits.Short(commit) : TextGrid.Dash, TextGrid.DescribeOrDash(slot.State)] : [],
             ])]));
+        lines.AddRange((Warnings ?? []).Select(TextGrid.StatusWarningLine));
 
         return lines;
     }
@@ -1438,8 +1624,12 @@ public sealed record AgentDeploymentWorkflowItem
     /// <summary>The connection references the workflow needs.</summary>
     public IReadOnlyList<string> ConnectionReferences { get; init; } = [];
 
-    /// <summary>The state last observed in this environment, rendered through the portal label for display.</summary>
+    /// <summary>The state last observed in this environment.</summary>
     public required string State { get; init; }
+
+    /// <summary>The label the Copilot Studio portal shows for the state, which the text output displays.</summary>
+    [JsonIgnore]
+    public string PortalLabel { get; init; } = string.Empty;
 }
 
 /// <summary>Result of <c>msagent deployment update connection</c>.</summary>
@@ -1520,7 +1710,7 @@ public sealed record AgentDeploymentConnectionResult : ITextGridRenderable
             lines.Add(string.Empty);
             lines.AddRange(TextGrid.RenderRows(
                 ["WORKFLOW", "STATUS"],
-                [.. Workflows.Select(workflow => new[] { workflow.DisplayName, WorkflowStateProjection.ToPortalLabel(workflow.State) })]));
+                [.. Workflows.Select(workflow => new[] { workflow.DisplayName, workflow.PortalLabel })]));
         }
 
         if (Diagnostics.Count > 0)

@@ -14,11 +14,6 @@ public interface ICopilotFileSystem
     /// <returns>The absolute path.</returns>
     string ResolveFullPath(string path);
 
-    /// <summary>Reports whether a directory is absent or contains no entries.</summary>
-    /// <param name="path">The directory to inspect.</param>
-    /// <returns><see langword="true"/> when the directory does not exist or is empty.</returns>
-    bool IsEmptyDirectory(string path);
-
     /// <summary>Reports whether a file exists.</summary>
     /// <param name="path">The file to test.</param>
     /// <returns><see langword="true"/> when the file exists.</returns>

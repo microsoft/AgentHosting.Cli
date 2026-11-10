@@ -56,9 +56,7 @@ public static class Commands
             orphans = await ReleaseResourcesAsync(environment, cancellationToken).ConfigureAwait(false);
         }
 
-        RemovePassingWorkspaces(results, environment.Run);
-
-        var report = RunReport.From(environment.Run.RunId, startedUtc, stopwatch.Elapsed, environment.Run.Binary, results, environment.Run.Ledger.Entries);
+        var report = RunReport.From(environment.Run.RunId, startedUtc, stopwatch.Elapsed, environment.Run.Binary, results, environment.Run.Ledger.Entries) with { KeptWorkspaces = RemovePassingWorkspaces(results, environment.Run.WorkspaceRoot, environment.Run.Ledger.Entries) };
         environment.Run.Reporter.Summary(report, environment.Run.Ledger.Entries);
         Reporter.Persist(environment.Run.RunDirectory, report, environment.Run.Ledger.Entries);
 
@@ -78,7 +76,7 @@ public static class Commands
     /// <param name="cancellationToken">Cancels the operation.</param>
     private static async Task<IReadOnlyList<LedgerEntry>> ReleaseResourcesAsync(HarnessEnvironment environment, CancellationToken cancellationToken)
     {
-        var cleanup = new Cleanup(environment.Run.Msagent, environment.Run.Azure, environment.Run.Cloud, environment.Run.Transcript, environment.Run.Standalone);
+        var cleanup = new Cleanup(environment.Run.Msagent, environment.Run.Azure, environment.Run.Cloud, environment.Run.Transcript, environment.Run.Standalone, environment.Run.AmsMcs);
 
         return await cleanup.RunAsync(environment.Run.Ledger, cancellationToken).ConfigureAwait(false);
     }
@@ -107,7 +105,7 @@ public static class Commands
         var msagent = new MsagentCli(binary, transcript, CrashDumps.DirectoryFor(runDirectory));
         var azure = new AzureCli(transcript);
         var standalone = await StandaloneForCleanupAsync(ledger, config, runDirectory, transcript, cancellationToken).ConfigureAwait(false);
-        var cleanup = new Cleanup(msagent, azure, new CloudProbe(msagent, azure), transcript, standalone);
+        var cleanup = new Cleanup(msagent, azure, new CloudProbe(msagent, azure), transcript, standalone, new AmsMcsServices(config.AmsMcs, runId, msagent, transcript, new AzTokens(config.TenantId)));
         var orphans = await cleanup.RunAsync(ledger, cancellationToken).ConfigureAwait(false);
 
         new Reporter(!options.NoColour).Summary(
@@ -171,8 +169,9 @@ public static class Commands
         Console.WriteLine("Capabilities");
 
         var standaloneScheduled = environment.Run.Standalone is not null;
+        var amsMcsScheduled = environment.Run.AmsMcs is not null;
 
-        foreach (var state in environment.Run.Capabilities.All.Where(state => standaloneScheduled || !IsStandalone(state.Capability)))
+        foreach (var state in environment.Run.Capabilities.All.Where(state => (standaloneScheduled || !IsStandalone(state.Capability)) && (amsMcsScheduled || !Capabilities.AmsMcsCapabilities.Contains(state.Capability))))
         {
             var mark = state.Available ? "yes" : "NO ";
             Console.WriteLine($"  {Name(state.Capability),-18} {mark}   {state.Detail}");
@@ -203,6 +202,18 @@ public static class Commands
         Console.WriteLine($"Binary   {environment.Run.Binary.Origin} — {environment.Run.Binary.Path}");
         Console.WriteLine($"Run      {environment.Run.RunDirectory}");
 
+        if (amsMcsScheduled)
+        {
+            Console.WriteLine($"Projects {environment.Run.WorkspaceRoot}");
+            Console.WriteLine();
+            Console.WriteLine("If a run stops before its cleanup, `cleanup --run-id` removes what it made; by hand:");
+
+            foreach (var example in AmsMcsServices.ManualCleanup)
+            {
+                Console.WriteLine($"  {example.Kind,-14} {Cleanup.ManualCommand(example)}");
+            }
+        }
+
         if (options.Command == "plan")
         {
             Console.WriteLine();
@@ -225,17 +236,28 @@ public static class Commands
         return Console.ReadLine()?.Trim() is "y" or "Y" or "yes";
     }
 
-    private static void RemovePassingWorkspaces(IReadOnlyList<ScenarioResult> results, RunContext run)
+    public static IReadOnlyList<string> RemovePassingWorkspaces(IReadOnlyList<ScenarioResult> results, string workspaceRoot, IReadOnlyList<LedgerEntry> ledger)
     {
+        var kept = new List<string>();
+
         foreach (var result in results.Where(candidate => candidate.Outcome == Outcome.Pass))
         {
-            var directory = Path.Combine(run.WorkspaceRoot, result.Scenario.Id);
+            var directory = Path.Combine(workspaceRoot, result.Scenario.Id);
 
-            foreach (var candidate in EnumerateScenarioDirectories(run.WorkspaceRoot, result.Scenario.Id, directory))
+            foreach (var candidate in EnumerateScenarioDirectories(workspaceRoot, result.Scenario.Id, directory))
             {
-                TryDelete(candidate);
+                if (ledger.Any(entry => entry.State is ResourceState.Created or ResourceState.Orphaned && Cleanup.PointsInto(entry, candidate)))
+                {
+                    kept.Add(candidate);
+                }
+                else
+                {
+                    TryDelete(candidate);
+                }
             }
         }
+
+        return kept;
     }
 
     private static IEnumerable<string> EnumerateScenarioDirectories(string workspaceRoot, string scenarioId, string exact) =>
@@ -249,7 +271,7 @@ public static class Commands
         {
             if (Directory.Exists(directory))
             {
-                Directory.Delete(directory, recursive: true);
+                LocalDirectories.Delete(directory);
             }
         }
         catch (IOException)
@@ -276,6 +298,12 @@ public static class Commands
         Capability.StandaloneFixtures => "sw.fixtures",
         Capability.StandaloneOracle => "sw.oracle",
         Capability.StandaloneFlowRuns => "sw.flowRuns",
+        Capability.AmsMcs => "amsMcs",
+        Capability.AmsMcsRing => "amsMcs.ring",
+        Capability.AmsMcsWorkspaceRoot => "amsMcs.root",
+        Capability.AmsMcsOracle => "amsMcs.oracle",
+        Capability.AmsMcsConnection => "amsMcs.connection",
+        Capability.AmsMcsEndpoints => "amsMcs.endpoints",
         _ => capability.ToString().ToLowerInvariant(),
     };
 

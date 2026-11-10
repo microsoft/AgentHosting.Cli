@@ -14,19 +14,25 @@ public sealed class ManagedAgentPullService
     private readonly ManagedAgentResolver _resolver;
     private readonly CopilotWorkspaceLocator _workspaceLocator;
     private readonly CopilotWorkspaceService _workspaces;
+    private readonly ICopilotComponentCollectionPort _collections;
     private readonly CopilotEnvironmentResolver _environmentResolver;
+    private readonly IWorkspaceDisconnectedRemediation? _disconnectedRemediation;
 
     /// <summary>Creates the service.</summary>
     /// <param name="resolver">Resolves records from selectors.</param>
     /// <param name="workspaceLocator">Reads the project's cloud baseline when it has one.</param>
     /// <param name="workspaces">Applies remote changes, merging where both sides changed.</param>
+    /// <param name="collections">Resolves the component collections the agent declares.</param>
     /// <param name="environmentResolver">Resolves the environment the content comes from.</param>
-    public ManagedAgentPullService(ManagedAgentResolver resolver, CopilotWorkspaceLocator workspaceLocator, CopilotWorkspaceService workspaces, CopilotEnvironmentResolver environmentResolver)
+    /// <param name="disconnectedRemediation">Words what to do about a folder that isn't connected, or null for the advice to deploy it.</param>
+    public ManagedAgentPullService(ManagedAgentResolver resolver, CopilotWorkspaceLocator workspaceLocator, CopilotWorkspaceService workspaces, ICopilotComponentCollectionPort collections, CopilotEnvironmentResolver environmentResolver, IWorkspaceDisconnectedRemediation? disconnectedRemediation = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _workspaceLocator = workspaceLocator ?? throw new ArgumentNullException(nameof(workspaceLocator));
         _workspaces = workspaces ?? throw new ArgumentNullException(nameof(workspaces));
+        _collections = collections ?? throw new ArgumentNullException(nameof(collections));
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
+        _disconnectedRemediation = disconnectedRemediation;
     }
 
     /// <summary>Pulls the agent's content into the connected project.</summary>
@@ -60,7 +66,7 @@ public sealed class ManagedAgentPullService
 
         return workspace is not null
             ? await PullConnectedAsync(projectDirectory, workspaceDirectory, agent, workspace, cancellationToken).ConfigureAwait(false)
-            : throw ManagedAgentException.WorkspaceDisconnected(projectDirectory);
+            : throw ManagedAgentException.WorkspaceDisconnected(projectDirectory, _disconnectedRemediation?.For(agent));
     }
 
     private async Task<ManagedAgentPullResult> PullConnectedAsync(string projectDirectory, string workspaceDirectory, ManagedAgentRecord agent, CopilotWorkspaceInfo workspace, CancellationToken cancellationToken)
@@ -71,7 +77,7 @@ public sealed class ManagedAgentPullService
         var changes = new List<CopilotChange>();
         var warnings = new List<string>();
 
-        foreach (var collection in _resolver.ResolveComponentCollectionDirectories(projectDirectory, workspaceDirectory).Found)
+        foreach (var collection in _collections.Resolve(projectDirectory, workspaceDirectory).Found)
         {
             var collectionWorkspace = await _workspaceLocator.FindAsync(collection, cancellationToken).ConfigureAwait(false);
 

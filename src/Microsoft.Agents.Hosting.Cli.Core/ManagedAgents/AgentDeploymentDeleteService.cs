@@ -25,6 +25,7 @@ public sealed class AgentDeploymentDeleteService
     private readonly CopilotProjectIdentityReader _projectIdentities;
     private readonly IConfirmationPrompt _confirmations;
     private readonly AgentConfigLocator _locator;
+    private readonly IAgentRecordMirror _mirror;
 
     /// <summary>Creates the service.</summary>
     /// <param name="resolver">Resolves the project, agent, and deployment.</param>
@@ -35,7 +36,8 @@ public sealed class AgentDeploymentDeleteService
     /// <param name="projectIdentities">Reads the schema name the workspace declares.</param>
     /// <param name="confirmations">Confirms the delete with the operator.</param>
     /// <param name="locator">Resolves the configuration path.</param>
-    public AgentDeploymentDeleteService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, CopilotProjectIdentityReader projectIdentities, IConfirmationPrompt confirmations, AgentConfigLocator locator)
+    /// <param name="mirror">Applies each delete to AMS's copy of the records first, in AMS mode.</param>
+    public AgentDeploymentDeleteService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, CopilotProjectIdentityReader projectIdentities, IConfirmationPrompt confirmations, AgentConfigLocator locator, IAgentRecordMirror? mirror = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
@@ -45,6 +47,7 @@ public sealed class AgentDeploymentDeleteService
         _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
         _confirmations = confirmations ?? throw new ArgumentNullException(nameof(confirmations));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
+        _mirror = mirror ?? NoAgentRecordMirror.Instance;
     }
 
     /// <summary>Deletes a deployment record, and the agent it targets when asked.</summary>
@@ -77,8 +80,10 @@ public sealed class AgentDeploymentDeleteService
 
         if (outcome != ConfirmationOutcome.Confirmed)
         {
-            return Result(outcome == ConfirmationOutcome.Mismatched ? "name-mismatch" : "cancelled", agent, planned, request.DeleteDeployedMcsAgent, null);
+            return Result(outcome == ConfirmationOutcome.Mismatched ? "name-mismatch" : "cancelled", agent, planned, request.DeleteDeployedMcsAgent, null, []);
         }
+
+        var warnings = new List<string>();
 
         foreach (var (deployment, targetAgentId) in planned)
         {
@@ -90,8 +95,13 @@ public sealed class AgentDeploymentDeleteService
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                _deployments.Remove(projectDirectory, deployment.DeploymentId, deployment.EntityTag);
-                ForgetDeletedCloudAgent(projectDirectory, agent, targetAgentId);
+                var mirrored = await _mirror.ApplyAsync(projectDirectory, new DeploymentDeleted(agent, deployment), () =>
+                {
+                    _deployments.Remove(projectDirectory, deployment.DeploymentId, deployment.EntityTag);
+                    ForgetDeletedCloudAgent(projectDirectory, agent, targetAgentId);
+                    return deployment;
+                }, cancellationToken).ConfigureAwait(false);
+                warnings.AddRange(mirrored.Warning is { } warning && !warnings.Contains(warning) ? [warning] : []);
             }
             catch (Exception failure) when (targetAgentId is not null && failure is not OperationCanceledException)
             {
@@ -99,7 +109,7 @@ public sealed class AgentDeploymentDeleteService
             }
         }
 
-        return Result("deployment-deleted", agent, planned, request.DeleteDeployedMcsAgent, _locator.ConfigFilePath(projectDirectory));
+        return Result("deployment-deleted", agent, planned, request.DeleteDeployedMcsAgent, _locator.ConfigFilePath(projectDirectory), warnings);
     }
 
     private void ForgetDeletedCloudAgent(string projectDirectory, ManagedAgentRecord agent, string? deletedAgentId)
@@ -137,12 +147,13 @@ public sealed class AgentDeploymentDeleteService
         }
     }
 
-    private static AgentDeploymentDeleteResult Result(string status, ManagedAgentRecord agent, IReadOnlyList<(AgentDeploymentRecord Deployment, string? TargetAgentId)> planned, bool deleteTargetAgent, string? configPath) => new()
+    private static AgentDeploymentDeleteResult Result(string status, ManagedAgentRecord agent, IReadOnlyList<(AgentDeploymentRecord Deployment, string? TargetAgentId)> planned, bool deleteTargetAgent, string? configPath, List<string> warnings) => new()
     {
         Status = status,
         AgentId = agent.AgentId,
         DisplayName = agent.DisplayName,
         ConfigPath = configPath,
+        Warnings = warnings.Count == 0 ? null : warnings,
         Deployments = [.. planned.Select(entry => new DeletedDeployment
         {
             DeploymentId = entry.Deployment.DeploymentId,

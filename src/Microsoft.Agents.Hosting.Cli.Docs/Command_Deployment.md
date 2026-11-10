@@ -30,6 +30,8 @@ the `channel` and `oauth` groups are **CodeAgent-specific**. The `connection` gr
 >   deployment create, show, update, and delete fail with a message that the capability is
 >   disabled.
 > - The `--package-revision` and `--environment-id` options on `update` are gated by `AmsFeatures`.
+> - [AMS mode](#ams-mode-gated) is on while `AmsMcsAgents` is enabled. Then `update --package-revision`
+>   refuses an MCS deployment and names `msagent agent deploy --remote`, which deploys a commit.
 > - The `channel`, `connection`, and `oauth` groups have no feature gate of their own. Channel and
 >   OAuth deployment operations still require an existing local CodeAgent deployment record.
 >
@@ -354,6 +356,38 @@ refreshed snapshot locally; with an agent ID and deployment name it can import a
 An Azure 404 removes a stale local record and reports not found. Existing CodeAgent records pin the
 Azure coordinates, so `--resource-group`, `--subscription`, and `--tenant` are used for discovery only
 when no local record supplies them.
+
+## AMS mode (Gated)
+
+> **Gated.** Applies only in [AMS mode](Command_Agent.md#ams-mode-gated), that is, while
+> `AmsMcsAgents` is enabled. While it is off, every deployment command works as described above.
+
+With AMS mode on, the deployment commands of an MCS agent or standalone workflow that AMS knows
+also keep the Agent Management Service's copy of its deployment records in step with `.config`. They
+take the same options and print the same results, except where noted.
+
+- `create` runs its checks first, then creates the deployment in AMS under the id it gives the new
+  record, then writes `.config`. AMS applies its stage rules: an agent has one Dev deployment, in its
+  home environment, and each Test or Prod deployment targets another environment in the same tenant,
+  cloud, and geography. It refuses any other deployment with [19003](ErrorCodes/19003.md) before
+  `.config` is written.
+- `update --new-name` renames the deployment in AMS, then in `.config`.
+- `delete` deletes the Copilot Studio agent first when `--delete-deployed-mcs-agent` asks for it,
+  then the deployment's AMS record, then its `.config` record. A deployment AMS no longer holds
+  counts as deleted.
+- When `.config` cannot be written after a `create` or `update --new-name`, the AMS change is undone
+  and the command fails as it would without AMS.
+- For an agent AMS does not know, `create` and `update --new-name` change only `.config` and warn that
+  AMS was not updated; `msagent agent init` registers the agent with its deployments.
+- `list` adds the `COMMIT` and `STATE` columns, and `show` the `Last commit` and `State` rows: the
+  commit the deployment deployed last, shortened in `list`, and whether AMS has seen a deploy to it
+  (`NotDeployed` or `Deployed`). They come from one AMS read per command and show `-` where AMS has
+  nothing. The JSON carries them as `lastDeployedCommitSha` and `state` when AMS has them.
+
+```text
+msagent deployment create --deployment-name test --deployment-type test --environment-id <test-environment-id>
+msagent deployment list
+```
 
 ## `msagent deployment channel` - CodeAgent-specific
 

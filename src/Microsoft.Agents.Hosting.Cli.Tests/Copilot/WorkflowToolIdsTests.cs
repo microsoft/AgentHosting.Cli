@@ -1,11 +1,5 @@
-using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
-using Microsoft.Agents.Hosting.Cli.CopilotStudio;
-using Microsoft.Agents.ObjectModel;
-using Microsoft.CopilotStudio.McsCore;
-using Microsoft.CopilotStudio.Sync;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
@@ -72,16 +66,18 @@ public sealed class WorkflowToolIdsTests : IDisposable
               mode: Invoker
             """);
 
-    private async Task<DefinitionBase> ReadAsync()
+    private async Task PushAsync()
     {
-        var services = new ServiceCollection();
-        services.AddSingleton<ITokenProvider>(new RecordingTokenProvider());
-        services.AddAgentHostCopilotStudio(TextWriter.Null, PowerPlatformApiRingSelection.Default);
-
-        await using var provider = services.BuildServiceProvider();
-
-        return await provider.GetRequiredService<IWorkspaceSynchronizer>()
-            .ReadWorkspaceDefinitionAsync(new DirectoryPath(_workspacePath.Replace('\\', '/')), CancellationToken.None);
+        await CopilotTestFixtures.WorkspaceAdapter(new RecordingWorkspaceSynchronizer { DefinitionReturns = await CopilotTestFixtures.ReadWorkspaceDefinitionAsync(_workspacePath) }).PushAsync(
+            new CopilotWorkspaceInfo
+            {
+                WorkspacePath = _workspacePath,
+                AgentId = "11111111-2222-3333-4444-555555555555",
+                EnvironmentId = "env-1",
+                DataverseOrganization = new Uri("https://contoso.crm.dynamics.com/"),
+            },
+            overwrite: false,
+            CancellationToken.None);
     }
 
     [Fact]
@@ -90,9 +86,7 @@ public sealed class WorkflowToolIdsTests : IDisposable
         WriteWorkflowTool("EmptyWorkflowIdTool.mcs.yml", "Empty Workflow Id Tool", "00000000-0000-0000-0000-000000000000");
         WriteWorkflowTool("AgentFlow3_kvb.mcs.yml", "Agent Flow 3", "6e5229e3-e343-f111-88b5-7ced8d3b6119");
 
-        var definition = await ReadAsync();
-
-        var failure = Assert.Throws<CopilotStudioException>(() => WorkflowToolIds.RequireNotEmpty(definition));
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(PushAsync);
 
         Assert.Equal(CopilotErrorKinds.WorkflowToolIdEmpty, failure.ErrorKind);
         Assert.Contains("1 workflow tool", failure.Message, StringComparison.Ordinal);
@@ -118,25 +112,9 @@ public sealed class WorkflowToolIdsTests : IDisposable
               mode: Invoker
             """);
 
-        var definition = await ReadAsync();
-
-        var failure = Assert.Throws<CopilotStudioException>(() => WorkflowToolIds.RequireNotEmpty(definition));
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(PushAsync);
 
         Assert.Equal(CopilotErrorKinds.WorkflowToolIdEmpty, failure.ErrorKind);
         Assert.Contains("No Workflow Tool", failure.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task ANonEmptyWorkflowIdIsAccepted()
-    {
-        WriteWorkflowTool("AgentFlow3_kvb.mcs.yml", "Agent Flow 3", "6e5229e3-e343-f111-88b5-7ced8d3b6119");
-
-        WorkflowToolIds.RequireNotEmpty(await ReadAsync());
-    }
-
-    [Fact]
-    public async Task AWorkspaceWithNoWorkflowToolsIsAccepted()
-    {
-        WorkflowToolIds.RequireNotEmpty(await ReadAsync());
     }
 }

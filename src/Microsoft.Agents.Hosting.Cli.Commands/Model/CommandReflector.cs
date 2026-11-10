@@ -58,6 +58,12 @@ public sealed class CommandMetadata
     /// <summary>Whether the progress spinner stays hidden while the command runs.</summary>
     public bool SuppressProgress { get; init; }
 
+    /// <summary>Whether help and the commands a group lists leave the command out.</summary>
+    public bool Hidden { get; init; }
+
+    /// <summary>Whether this command and every command nested under it suppress command telemetry.</summary>
+    public bool SuppressTelemetry { get; init; }
+
     /// <summary>The declaring type.</summary>
     public required Type DeclaringType { get; init; }
 
@@ -154,6 +160,8 @@ public static class CommandReflector
                 SortPriority = ExplicitPriority(attribute.SortPriority),
                 ProgressLabel = attribute.ProgressLabel,
                 SuppressProgress = attribute.SuppressProgress,
+                Hidden = attribute.Hidden,
+                SuppressTelemetry = attribute.SuppressTelemetry,
                 DeclaringType = type,
                 RequiredFeatures = RequiredFeatures(type),
                 Implementation = Instantiate(type),
@@ -312,6 +320,8 @@ public static class CommandReflector
             SortPriority = source.SortPriority,
             ProgressLabel = source.ProgressLabel,
             SuppressProgress = source.SuppressProgress,
+            Hidden = source.Hidden,
+            SuppressTelemetry = source.SuppressTelemetry,
             DeclaringType = source.DeclaringType,
             RequiredFeatures = source.RequiredFeatures,
             Implementation = source.Implementation,

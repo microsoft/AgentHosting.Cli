@@ -14,9 +14,6 @@ public sealed class SystemCopilotFileSystem : ICopilotFileSystem
     public string ResolveFullPath(string path) => Path.GetFullPath(path);
 
     /// <inheritdoc />
-    public bool IsEmptyDirectory(string path) => !Directory.Exists(path) || !Directory.EnumerateFileSystemEntries(path).Any();
-
-    /// <inheritdoc />
     public bool FileExists(string path) => File.Exists(path);
 
     /// <inheritdoc />

@@ -1,11 +1,11 @@
-using System.Text.RegularExpressions;
+using Microsoft.Agents.Hosting.Cli.Core.Errors;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 
 /// <summary>
 /// Resolves where <c>agent.config.json</c> lives for a command.
 /// </summary>
-public sealed partial class AgentConfigLocator
+public sealed class AgentConfigLocator
 {
     /// <summary>The directory holding the configuration file, relative to a project.</summary>
     public const string ConfigDirectoryName = ".config";
@@ -19,22 +19,22 @@ public sealed partial class AgentConfigLocator
     /// <summary>The legacy project file some classic workspaces carry instead.</summary>
     public const string ClassicProjectFileName = "agent.mcs.yml";
 
-    /// <summary>The root file marking a directory as a component-collection workspace.</summary>
-    public const string CollectionProjectFileName = "collection.mcs.yml";
-
-    /// <summary>The file in which a workspace declares the collections it references.</summary>
-    public const string ReferencesFileName = "references.mcs.yml";
-
     /// <summary>The location of a workspace that is the project root itself.</summary>
     public const string CurrentDirectoryLocation = ".";
 
     /// <summary>How many parent directories a command searches for the project it is standing inside.</summary>
     public const int MaximumProjectSearchDepth = 5;
 
+    private static readonly string[] ProjectFileNames = [ProjectSettingsFileName, ClassicProjectFileName];
+
     /// <summary>Resolves the project directory a command acts on.</summary>
     /// <param name="projectDirectory">An explicit directory, or <see langword="null"/> to discover the enclosing project.</param>
     /// <returns>The absolute project directory.</returns>
     public string ResolveProjectDirectory(string? projectDirectory) => string.IsNullOrWhiteSpace(projectDirectory) ? EnclosingProjectDirectory(Directory.GetCurrentDirectory()) : Path.GetFullPath(projectDirectory);
+
+    /// <summary>Returns the directory a command reads its source from, refusing one that does not exist.</summary>
+    /// <param name="directory">The absolute directory.</param>
+    public static string RequireExistingDirectory(string directory) => Directory.Exists(directory) ? directory : throw new UsageException($"The directory '{directory}' does not exist.");
 
     /// <summary>Finds the nearest ancestor holding a configuration, or the starting directory when none does.</summary>
     /// <param name="startingDirectory">The directory to search from.</param>
@@ -171,43 +171,11 @@ public sealed partial class AgentConfigLocator
             : [];
     }
 
-    private static bool HoldsProjectFile(string directory) =>
-        File.Exists(Path.Combine(directory, ProjectSettingsFileName)) || File.Exists(Path.Combine(directory, ClassicProjectFileName));
+    private static bool HoldsProjectFile(string directory) => ProjectFile(directory) is not null;
 
-    /// <summary>The component-collection workspaces an agent's workspace declares, in declaration order.</summary>
-    /// <param name="agentWorkspaceDirectory">The directory holding the agent's workspace.</param>
-    /// <param name="projectDirectory">The project root the collections must stay beneath.</param>
-    /// <returns>The collection workspace directories that exist, and the declarations that resolve to nothing.</returns>
-    public (IReadOnlyList<string> Found, IReadOnlyList<string> Missing) ComponentCollectionDirectories(string? agentWorkspaceDirectory, string? projectDirectory)
-    {
-        var resolved = ResolveProjectDirectory(agentWorkspaceDirectory);
-        var referencesPath = Path.Combine(resolved, ReferencesFileName);
-
-        if (!File.Exists(referencesPath))
-        {
-            return ([], []);
-        }
-
-        var root = PhysicalPath(ResolveProjectDirectory(projectDirectory));
-        var declared = ReferencedDirectories(File.ReadAllText(referencesPath)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var contained = declared.Select(directory => (Declared: directory, Path: ContainedCollection(resolved, directory, root))).ToArray();
-
-        return (
-            [.. contained.Where(candidate => candidate.Path is not null).Select(candidate => candidate.Path!).Distinct(StringComparer.OrdinalIgnoreCase)],
-            [.. contained.Where(candidate => candidate.Path is null).Select(candidate => candidate.Declared)]);
-    }
-
-    private static string? ContainedCollection(string workspaceDirectory, string declaredDirectory, string projectRoot)
-    {
-        var located = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(workspaceDirectory, declaredDirectory)));
-
-        return IsContainedIn(PhysicalPath(located), projectRoot) && File.Exists(Path.Combine(located, CollectionProjectFileName)) ? located : null;
-    }
-
-    private static IEnumerable<string> ReferencedDirectories(string references) =>
-        ReferencedDirectoryPattern().Matches(references).Select(match => match.Groups["directory"].Value.Trim());
-
-    [GeneratedRegex(@"^\s*directory:\s*(?<directory>\S.*?)\s*$", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
-    private static partial Regex ReferencedDirectoryPattern();
+    /// <summary>The settings file a directory holds, or the agent file of a classic workspace that holds no settings file.</summary>
+    /// <param name="directory">The directory to look in.</param>
+    /// <returns>The project file's path, or <see langword="null"/> when the directory holds neither file.</returns>
+    public static string? ProjectFile(string directory) => ProjectFileNames.Select(name => Path.Combine(directory, name)).FirstOrDefault(File.Exists);
 }
 

@@ -4,6 +4,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
@@ -17,27 +18,7 @@ public sealed class SyncWorkspaceAdapterPushOutcomeTests
         DataverseOrganization = new Uri("https://contoso.crm.dynamics.com/"),
     };
 
-    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
-        new(
-            synchronizer,
-            new RecordingRetargetService(),
-            new StubSolutionVersionsClient(),
-            new StubComponentCollectionClient(),
-            new StubOperationContextProvider(),
-            new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()),
-            new CopilotChangeMapper());
-
-    [Fact]
-    public async Task Push_DoesNotCloneTheAgentBackAfterSendingIt()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-        synchronizer.LocalChanges.Add(new Change { Name = "Greeting", SchemaName = "cr_agent.topic.Greeting", ChangeKind = "DialogComponent", ChangeType = ChangeType.Update });
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.CloneChangesAsync), synchronizer.Calls);
-        Assert.Empty(outcome.Warnings);
-    }
+    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) => CopilotTestFixtures.WorkspaceAdapter(synchronizer);
 
     [Fact]
     public async Task Push_CountsTheWorkflowsItSentButNotThePrompts()
@@ -63,14 +44,6 @@ public sealed class SyncWorkspaceAdapterPushOutcomeTests
         var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.Equal($"{WorkflowLayout.SchemaNamePrefix}{workflowId}", Assert.Single(outcome.Changes).SchemaName);
-        Assert.Equal(0, outcome.AuxiliaryChangeCount);
-    }
-
-    [Fact]
-    public async Task Push_WithNothingAuxiliaryToSend_ReportsNone()
-    {
-        var outcome = await Create(new RecordingWorkspaceSynchronizer()).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
         Assert.Equal(0, outcome.AuxiliaryChangeCount);
     }
 

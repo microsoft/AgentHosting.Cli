@@ -18,6 +18,7 @@ public sealed class WorkflowDeleteService
     private readonly CopilotEnvironmentResolver _environmentResolver;
     private readonly IWorkflowStorePort _workflows;
     private readonly IConfirmationPrompt _confirmations;
+    private readonly IAgentRecordMirror _mirror;
 
     /// <summary>Creates the service.</summary>
     /// <param name="resolver">Resolves records and deployments from selectors.</param>
@@ -26,7 +27,8 @@ public sealed class WorkflowDeleteService
     /// <param name="environmentResolver">Resolves the environment the target lives in.</param>
     /// <param name="workflows">Reads which Copilot Studio agents use the cloud workflow, and deletes it.</param>
     /// <param name="confirmations">Confirms the delete with the operator.</param>
-    public WorkflowDeleteService(ManagedAgentResolver resolver, WorkflowProjectResolver workflowResolver, IManagedAgentRegistry agents, CopilotEnvironmentResolver environmentResolver, IWorkflowStorePort workflows, IConfirmationPrompt confirmations)
+    /// <param name="mirror">Deletes AMS's records of the workflow first, in AMS mode.</param>
+    public WorkflowDeleteService(ManagedAgentResolver resolver, WorkflowProjectResolver workflowResolver, IManagedAgentRegistry agents, CopilotEnvironmentResolver environmentResolver, IWorkflowStorePort workflows, IConfirmationPrompt confirmations, IAgentRecordMirror? mirror = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _workflowResolver = workflowResolver ?? throw new ArgumentNullException(nameof(workflowResolver));
@@ -34,6 +36,7 @@ public sealed class WorkflowDeleteService
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
         _workflows = workflows ?? throw new ArgumentNullException(nameof(workflows));
         _confirmations = confirmations ?? throw new ArgumentNullException(nameof(confirmations));
+        _mirror = mirror ?? NoAgentRecordMirror.Instance;
     }
 
     /// <summary>Deletes the cloud workflow and every record for it.</summary>
@@ -75,11 +78,11 @@ public sealed class WorkflowDeleteService
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        int removed;
+        AgentRecordMirrored<int> removed;
 
         try
         {
-            removed = _agents.RemoveWithDeployments(projectDirectory, agent.AgentId, agent.EntityTag);
+            removed = await _mirror.ApplyAsync(projectDirectory, new AgentDeleted(agent), () => _agents.RemoveWithDeployments(projectDirectory, agent.AgentId, agent.EntityTag), cancellationToken).ConfigureAwait(false);
         }
         catch (Exception failure) when (deleted && failure is not OperationCanceledException)
         {
@@ -95,9 +98,11 @@ public sealed class WorkflowDeleteService
             EnvironmentId = environment.EnvironmentId,
             DeploymentId = deployment?.DeploymentId,
             McsAgentAlreadyAbsent = !deleted,
-            RemovedAgentDeployments = removed,
+            RemovedAgentDeployments = removed.Value,
             OrphanedTargets = orphaned,
-            Warnings = agentUseWarning.Length == 0 ? [] : [agentUseWarning],
+            Warnings = [.. new[] { agentUseWarning, removed.Warning ?? string.Empty }.Where(warning => warning.Length > 0)],
+            AmsRecordDeleted = removed.Mirrored ? true : null,
+            RepositoryId = removed.Mirrored ? agent.SourceControlMetadata?.RepositoryId : null,
         };
     }
 

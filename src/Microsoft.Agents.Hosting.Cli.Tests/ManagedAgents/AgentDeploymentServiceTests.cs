@@ -6,6 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
+using Microsoft.CopilotStudio.McsCore;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -234,7 +235,7 @@ public sealed class AgentDeploymentCreateServiceTests
         using var scope = new CurrentDirectoryScope(workspace.Root);
         var store = ManagedAgentFixtures.Store();
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
-        File.Delete(Path.Combine(workspace.Root, AgentConfigLocator.ProjectSettingsFileName));
+        File.Delete(Path.Combine(workspace.Root, WorkspaceFileNames.Settings));
 
         await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store).CreateAsync(
             new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop" },
@@ -367,7 +368,7 @@ public sealed class AgentDeploymentCreateServiceTests
     {
         using var workspace = new TemporaryWorkspace();
         using var scope = new CurrentDirectoryScope(workspace.Root);
-        workspace.AddFile(Path.Combine("second", AgentConfigLocator.ProjectSettingsFileName), "displayName: \"Second\"\nschemaName: \"con_second\"\n");
+        workspace.AddFile(Path.Combine("second", WorkspaceFileNames.Settings), "displayName: \"Second\"\nschemaName: \"con_second\"\n");
         var store = ManagedAgentFixtures.Store();
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
         store.Add(workspace.Root, ManagedAgentFixtures.Agent(agentId: "agent-2", displayName: "Second") with { AgentLocation = "second" });
@@ -859,7 +860,7 @@ public sealed class AgentDeploymentUpdateServiceTests
 public sealed class AgentDeploymentDeleteServiceTests
 {
     private static AgentDeploymentDeleteService Create(JsonAgentConfigStore store, FakeCopilotCatalogPort catalog, IConfirmationPrompt confirmations, CopilotEnvironmentResolver? environments = null) =>
-        new(ManagedAgentFixtures.AgentResolver(store), store, store, environments ?? ManagedAgentFixtures.Resolver(), catalog, new CopilotProjectIdentityReader(new AgentConfigLocator()), confirmations, new AgentConfigLocator());
+        new(ManagedAgentFixtures.AgentResolver(store), store, store, environments ?? ManagedAgentFixtures.Resolver(), catalog, ManagedAgentFixtures.Identities(), confirmations, new AgentConfigLocator());
 
     private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) Registered()
     {
@@ -1116,7 +1117,7 @@ public sealed class AgentDeploymentDeleteServiceTests
             new UnremovableDeploymentRegistry(store),
             ManagedAgentFixtures.Resolver(),
             catalog,
-            new CopilotProjectIdentityReader(new AgentConfigLocator()),
+            ManagedAgentFixtures.Identities(),
             new ScriptedConfirmationPrompt(),
             new AgentConfigLocator()).DeleteAsync(
                 new AgentDeploymentDeleteRequest { AgentId = "agent-1", DeploymentName = "dev", DeleteDeployedMcsAgent = true },

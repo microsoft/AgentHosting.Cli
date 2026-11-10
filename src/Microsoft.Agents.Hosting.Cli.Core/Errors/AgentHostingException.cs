@@ -69,6 +69,9 @@ public abstract class AgentHostingException : Exception
 
     /// <summary>Optional actionable remediation hint emitted as <c>remediation</c>.</summary>
     public string? Remediation { get; }
+
+    /// <summary>Whether the message and remediation contain CLI-formatted lines.</summary>
+    public bool HasMultilineGuidance { get; protected init; }
 }
 
 /// <summary>

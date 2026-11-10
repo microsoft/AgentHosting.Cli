@@ -1,5 +1,6 @@
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Commands.Common;
+using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Groups;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -130,4 +131,33 @@ public sealed class AuthLogoutCommand : CommandBase<AuthLogoutRequest, AuthLogou
 
     /// <inheritdoc />
     protected override AuthLogoutRequest Bind(ICommandInput input) => new();
+}
+
+/// <summary><c>msagent auth setup-git</c>: points git's credential helper at msagent for the Power Platform git hosts of the signed-in ring.</summary>
+[Command("setup-git", Description = "Set up git to sign in to the Power Platform git hosts with msagent.", ParentGroup = typeof(AuthGroup), SortPriority = 50)]
+[RequiredFeatureFlag(FeatureName.AmsMcsAgents)]
+public sealed class AuthSetupGitCommand : CommandBase<AuthSetupGitRequest, AuthSetupGitResult>
+{
+    /// <inheritdoc />
+    public override IReadOnlyList<CommandSymbol> Symbols => [];
+
+    /// <inheritdoc />
+    protected override AuthSetupGitRequest Bind(ICommandInput input) => new();
+}
+
+/// <summary><c>msagent auth git-credential</c>: the credential helper git runs, which help leaves out.</summary>
+[Command("git-credential", Description = "Answer a git credential request with msagent's token.", ParentGroup = typeof(AuthGroup), SortPriority = 60, SuppressProgress = true, Hidden = true, SuppressTelemetry = true)]
+[RequiredFeatureFlag(FeatureName.AmsMcsAgents)]
+public sealed class AuthGitCredentialCommand : CommandBase<AuthGitCredentialRequest, AuthGitCredentialResult>
+{
+    /// <inheritdoc />
+    public override IReadOnlyList<CommandSymbol> Symbols => [OptionCatalog.Argument("operation", "The action git asks for: get, store or erase.")];
+
+    /// <inheritdoc />
+    protected override AuthGitCredentialRequest Bind(ICommandInput input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+
+        return new AuthGitCredentialRequest { Operation = input.GetArgument("operation") ?? string.Empty };
+    }
 }

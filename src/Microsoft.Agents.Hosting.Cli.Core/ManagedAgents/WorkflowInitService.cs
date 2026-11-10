@@ -6,6 +6,11 @@ using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 
+/// <summary>The standalone workflow <c>msagent agent init</c> registers or creates a record from, with the folder that holds it.</summary>
+/// <param name="WorkspaceRoot">The folder that holds the workflow.</param>
+/// <param name="Workflow">The workflow folder it holds.</param>
+public sealed record WorkflowInitWorkspace(string WorkspaceRoot, LocalWorkflow Workflow);
+
 /// <summary><c>msagent agent init --agent-type MCSWorkflow</c>, registering a workflow already on disk.</summary>
 public sealed class WorkflowInitService
 {
@@ -46,16 +51,9 @@ public sealed class WorkflowInitService
             throw new UsageException("`msagent agent init --agent-type MCSWorkflow` requires --agent-name.");
         }
 
-        var workspaceRoot = Path.GetFullPath(SourceDirectory(request) ?? Directory.GetCurrentDirectory());
-
-        if (!Directory.Exists(workspaceRoot))
-        {
-            throw new UsageException($"The directory '{workspaceRoot}' does not exist.");
-        }
-
-        var folder = _workspace.RequireSingle(workspaceRoot);
+        var (workspaceRoot, folder) = FindInitWorkflow(_workspace, request.McsWorkflowSource, request.McsAgentSource);
         var local = await _workflows.ReadLocalAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
-        var projectDirectory = _locator.EnclosingProjectDirectory(workspaceRoot);
+        var projectDirectory = request.ProjectDirectory ?? _locator.EnclosingProjectDirectory(workspaceRoot);
         var agentLocation = Path.GetRelativePath(projectDirectory, workspaceRoot).Replace('\\', '/');
         var displayName = request.Name.Trim();
 
@@ -99,17 +97,16 @@ public sealed class WorkflowInitService
         };
     }
 
-    /// <summary>
-    /// The directory the operator named as the workflow to register.
-    ///
-    /// The current directory is taken literally rather than resolved to an enclosing project: init is
-    /// run from inside the workflow being registered, and discovering an ancestor project instead would
-    /// scan the whole project and register a workflow the operator never pointed at.
-    /// </summary>
-    /// <param name="request">The command input.</param>
-    /// <returns>The named source, or <see langword="null"/> when none was supplied.</returns>
-    private static string? SourceDirectory(ManagedAgentInitRequest request) =>
-        !string.IsNullOrWhiteSpace(request.McsWorkflowSource) ? request.McsWorkflowSource
-        : !string.IsNullOrWhiteSpace(request.McsAgentSource) ? request.McsAgentSource
-        : null;
+    /// <summary>Finds the only workflow in the folder --mcs-workflow-source, or else --mcs-agent-source, names, or else in the current directory itself rather than its enclosing project, refusing a folder that does not exist or holds no workflow or several.</summary>
+    /// <param name="workspace">Finds the workflows the folder holds.</param>
+    /// <param name="workflowSource">The --mcs-workflow-source folder.</param>
+    /// <param name="agentSource">The --mcs-agent-source folder.</param>
+    /// <returns>The folder and the workflow it holds.</returns>
+    public static WorkflowInitWorkspace FindInitWorkflow(IWorkflowWorkspacePort workspace, string? workflowSource, string? agentSource)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+
+        var workspaceRoot = AgentConfigLocator.RequireExistingDirectory(Path.GetFullPath(!string.IsNullOrWhiteSpace(workflowSource) ? workflowSource : !string.IsNullOrWhiteSpace(agentSource) ? agentSource : Directory.GetCurrentDirectory()));
+        return new WorkflowInitWorkspace(workspaceRoot, workspace.RequireSingle(workspaceRoot));
+    }
 }

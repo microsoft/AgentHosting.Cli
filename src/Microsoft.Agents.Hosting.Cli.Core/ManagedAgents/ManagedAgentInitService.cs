@@ -50,45 +50,7 @@ public sealed class ManagedAgentInitService
             throw new UsageException($"`msagent agent init` applies only to MCS agent types, and '{request.AgentType}' is not one.");
         }
 
-        if (!string.IsNullOrWhiteSpace(request.McsWorkflowSource))
-        {
-            throw new UsageException("--mcs-workflow-source applies only to `--agent-type MCSWorkflow`. Use --mcs-agent-source, or add --agent-type MCSWorkflow.");
-        }
-
-        var projectDirectory = _locator.ResolveProjectDirectory(request.McsAgentSource);
-
-        if (!Directory.Exists(projectDirectory))
-        {
-            throw new UsageException($"The directory '{projectDirectory}' does not exist.");
-        }
-
-        if (_locator.WorkspaceLocations(projectDirectory) is not { Count: > 0 } locations)
-        {
-            throw ManagedAgentException.ProjectNotFound(projectDirectory);
-        }
-
-        var registered = _agents.List(projectDirectory).Select(agent => agent.AgentLocation).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var unregistered = locations.Where(location => !registered.Contains(location)).ToArray();
-
-        if (unregistered.Length == 0)
-        {
-            throw ManagedAgentException.AlreadyRegistered(_agents.List(projectDirectory)[0].DisplayName, _agents.List(projectDirectory)[0].AgentId, _locator.ConfigFilePath(projectDirectory));
-        }
-
-        if (unregistered.Length > 1)
-        {
-            throw ManagedAgentException.WorkspaceAmbiguous(unregistered);
-        }
-
-        var agentLocation = unregistered[0];
-        var workspaceDirectory = _locator.AgentWorkspaceDirectory(projectDirectory, agentLocation) ?? throw ManagedAgentException.WorkspaceMissing(request.Name.Trim(), agentLocation, projectDirectory);
-        var schemaName = _projectIdentities.Find(workspaceDirectory)?.SchemaName;
-
-        if (string.IsNullOrWhiteSpace(schemaName))
-        {
-            throw ManagedAgentException.WorkspaceSchemaUnreadable(workspaceDirectory, agentLocation);
-        }
-
+        var (projectDirectory, agentLocation, workspaceDirectory, schemaName) = _projectIdentities.FindInitWorkspace(request.McsAgentSource, request.McsWorkflowSource, request.Name, Unregistered);
         var workspace = await _workspaceLocator.FindAsync(workspaceDirectory, cancellationToken).ConfigureAwait(false);
         var environment = await _environmentResolver.ResolveAsync(workspace?.EnvironmentId, cancellationToken).ConfigureAwait(false);
 
@@ -118,6 +80,19 @@ public sealed class ManagedAgentInitService
             ProjectDirectory = projectDirectory,
             ConfigPath = _locator.ConfigFilePath(projectDirectory),
         };
+    }
+
+    private IReadOnlyList<string> Unregistered(string projectDirectory, IReadOnlyList<string> locations)
+    {
+        var registered = _agents.List(projectDirectory).Select(agent => agent.AgentLocation).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var unregistered = locations.Where(location => !registered.Contains(location)).ToArray();
+
+        if (unregistered.Length == 0)
+        {
+            throw ManagedAgentException.AlreadyRegistered(_agents.List(projectDirectory)[0].DisplayName, _agents.List(projectDirectory)[0].AgentId, _locator.ConfigFilePath(projectDirectory));
+        }
+
+        return unregistered;
     }
 }
 

@@ -754,6 +754,51 @@ public sealed class PlaygroundToolLocatorTests
         Assert.DoesNotContain(malformedPath, rejection.Failure.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true, "git", "git.exe")]
+    [InlineData(false, "git", "git")]
+    [InlineData(true, "msagent", "msagent.exe")]
+    [InlineData(true, "msagent", "msagent.cmd")]
+    [InlineData(false, "msagent", "msagent")]
+    public void FindOnPath_ReturnsTheFirstExecutableCandidateOnPath_WithoutRunningIt(bool isWindows, string commandName, string fileName)
+    {
+        var skippedDirectory = Path.Combine(Path.GetTempPath(), $"{commandName}-not-executable");
+        var directory = Path.Combine(Path.GetTempPath(), $"{commandName}-on-path");
+        var environment = new FakePlaygroundEnvironment(
+            isWindows,
+            pathValue: JoinPathEntries(isWindows, skippedDirectory, directory),
+            existingPaths: [Path.Combine(skippedDirectory, fileName), Path.Combine(directory, fileName)]);
+        environment.NonExecutablePaths.Add(environment.GetFullPath(Path.Combine(skippedDirectory, fileName)));
+        var runner = new RecordingProcessRunner(_ => throw new InvalidOperationException($"{commandName} must not run."));
+
+        Assert.Equal(environment.GetFullPath(Path.Combine(directory, fileName)), CreateLocator(environment, runner).FindOnPath(commandName));
+        Assert.Empty(runner.Requests);
+    }
+
+    [Fact]
+    public void FindOnPath_ForMsagentOnWindows_TakesTheExeBeforeTheCmd_AndSkipsAnExtensionlessFile()
+    {
+        var extensionlessDirectory = Path.Combine(Path.GetTempPath(), "msagent-extensionless");
+        var directory = Path.Combine(Path.GetTempPath(), "msagent-launchers");
+        var environment = new FakePlaygroundEnvironment(
+            isWindows: true,
+            pathValue: JoinPathEntries(true, extensionlessDirectory, directory),
+            existingPaths: [Path.Combine(extensionlessDirectory, "msagent"), Path.Combine(directory, "msagent.cmd"), Path.Combine(directory, "msagent.exe")]);
+
+        Assert.Equal(environment.GetFullPath(Path.Combine(directory, "msagent.exe")), CreateLocator(environment, new RecordingProcessRunner(_ => throw new InvalidOperationException("msagent must not run."))).FindOnPath("msagent"));
+    }
+
+    [Fact]
+    public void FindOnPath_WithoutTheCommandOnPath_ReturnsNull()
+    {
+        var environment = new FakePlaygroundEnvironment(
+            isWindows: true,
+            pathValue: Path.Combine(Path.GetTempPath(), "no-git-here"),
+            existingPaths: [Path.Combine(Path.GetTempPath(), "no-git-here", "node.exe")]);
+
+        Assert.Null(CreateLocator(environment, new RecordingProcessRunner(_ => throw new InvalidOperationException("git must not run."))).FindOnPath("git"));
+    }
+
     [Fact]
     public void ProcessRequest_CarriesLaunchEnvironmentAndWorkingDirectoryWithoutShellText()
     {
@@ -792,7 +837,7 @@ public sealed class PlaygroundToolLocatorTests
         RecordingProcessRunner runner) =>
         new(runner, environment);
 
-    private sealed class FakePlaygroundEnvironment(
+    internal sealed class FakePlaygroundEnvironment(
         bool isWindows,
         string pathValue,
         IEnumerable<string> existingPaths) : IPlaygroundToolEnvironment
@@ -835,7 +880,7 @@ public sealed class PlaygroundToolLocatorTests
                     : path);
     }
 
-    private sealed class RecordingProcessRunner(
+    internal sealed class RecordingProcessRunner(
         Func<PlaygroundProcessRequest, PlaygroundProcessResult> handler) : IPlaygroundProcessRunner
     {
         public List<PlaygroundProcessRequest> Requests { get; } = [];

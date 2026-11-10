@@ -30,6 +30,7 @@
     <!-- Link the provisional ABS conformance fixtures into the output so the contract runner reads
          their LF-pinned raw bytes from the test base directory. -->
     <None Include="..\AgentHostCli.Conformance\fixtures\*.json" Link="ConformanceFixtures\%(FileName)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Ams\WireFixtures\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Target Name="RemoveTransitiveAgentsCoreAnalyzer" BeforeTargets="CoreCompile">

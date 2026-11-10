@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "McsCaptureBaseUnknown",
+    "message": "The service doesn't know which commit Dev holds, so it cannot tell whether this deploy would overwrite edits made in Dev. Run a local deploy, which records the commit Dev holds, or deploy with overwrite to replace Dev's content."
+  }
+}

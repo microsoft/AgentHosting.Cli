@@ -1,4 +1,3 @@
-using CoreCluster = Microsoft.Agents.Hosting.Cli.Core.Environments.CoreServicesClusterCategory;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
@@ -41,8 +40,8 @@ public sealed class SyncConnectionAdapterCacheTests
         DataverseOrganization = new Uri("https://contoso.crm.dynamics.com/"),
     };
 
-    private static SyncConnectionAdapter Create(RecordingConnectionManagementService connections, RecordingWorkflowActivationService workflows, StubConnectionCatalogClient? catalog = null, CoreCluster cluster = CoreCluster.Prod) =>
-        CopilotTestFixtures.ConnectionAdapter(connections, workflows, catalogClient: catalog, cluster: cluster);
+    private static SyncConnectionAdapter Create(RecordingConnectionManagementService connections, RecordingWorkflowActivationService workflows, StubConnectionCatalogClient? catalog = null) =>
+        CopilotTestFixtures.ConnectionAdapter(connections, workflows, catalogClient: catalog);
 
     [Fact]
     public async Task ReadConnections_ForAStandaloneWorkflow_LeavesActivationUnknownRatherThanTrustingTheLocalFile()
@@ -175,10 +174,13 @@ internal sealed class StubConnectionCatalogClient : IConnectionCatalogClient
 {
     public List<string> ConnectionLookups { get; } = [];
 
+    public List<PowerAppsContext> Contexts { get; } = [];
+
     public Exception? ConnectionsThrow { get; init; }
 
     public Task<IReadOnlyList<ConnectionInstance>> ListConnectionsAsync(PowerAppsContext context, string connectorName, CancellationToken cancellationToken)
     {
+        Contexts.Add(context);
         ConnectionLookups.Add(connectorName);
 
         return ConnectionsThrow is not null
@@ -186,8 +188,12 @@ internal sealed class StubConnectionCatalogClient : IConnectionCatalogClient
             : Task.FromResult<IReadOnlyList<ConnectionInstance>>([]);
     }
 
-    public Task<IReadOnlyList<ConnectorInfo>> ListConnectorsAsync(PowerAppsContext context, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<ConnectorInfo>>([]);
+    public Task<IReadOnlyList<ConnectorInfo>> ListConnectorsAsync(PowerAppsContext context, CancellationToken cancellationToken)
+    {
+        Contexts.Add(context);
+
+        return Task.FromResult<IReadOnlyList<ConnectorInfo>>([]);
+    }
 }
 
 internal sealed class RecordingConnectionManagementService : IConnectionManagementService
@@ -202,18 +208,24 @@ internal sealed class RecordingConnectionManagementService : IConnectionManageme
 
     public List<string?> CatalogTokens { get; } = [];
 
-    public List<CoreServicesClusterCategory> CatalogClusters { get; } = [];
+    public List<Uri?> CatalogEndpoints { get; } = [];
 
     public Task<IReadOnlyList<AgentConnectionView>> GetAgentConnectionViewsAsync(DirectoryPath workspaceFolder, DefinitionBase definition, ISyncDataverseClient dataverseClient, IConnectionCatalogClient catalogClient, PowerAppsContext catalogContext, CancellationToken cancellationToken)
     {
         CatalogTokens.Add(catalogContext?.AccessToken);
-        CatalogClusters.Add(catalogContext?.ClusterCategory ?? default);
+        CatalogEndpoints.Add(catalogContext?.PowerPlatformApiEndpoint);
 
         return Task.FromResult<IReadOnlyList<AgentConnectionView>>(Views);
     }
 
-    public Task<IReadOnlyList<AgentConnectionView>> ApplyConnectionBindingsAsync(DirectoryPath workspaceFolder, DefinitionBase definition, ISyncDataverseClient dataverseClient, IConnectionCatalogClient catalogClient, PowerAppsContext catalogContext, IReadOnlyList<ConnectionBindingRequest> bindings, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<AgentConnectionView>>(Views);
+    public List<ConnectionBindingRequest> AppliedBindings { get; } = [];
+
+    public Task<IReadOnlyList<AgentConnectionView>> ApplyConnectionBindingsAsync(DirectoryPath workspaceFolder, DefinitionBase definition, ISyncDataverseClient dataverseClient, IConnectionCatalogClient catalogClient, PowerAppsContext catalogContext, IReadOnlyList<ConnectionBindingRequest> bindings, CancellationToken cancellationToken)
+    {
+        AppliedBindings.AddRange(bindings);
+
+        return Task.FromResult<IReadOnlyList<AgentConnectionView>>(Views);
+    }
 
     public void WriteConnectionsCache(DirectoryPath workspaceFolder, IReadOnlyList<AgentConnectionView> views)
     {
@@ -251,6 +263,8 @@ internal sealed class RecordingWorkflowActivationService : IWorkflowActivationSe
 
     public IReadOnlyList<WorkflowStatusView> GetWorkflowStatusViews(DirectoryPath workspaceFolder, IReadOnlyList<AgentConnectionView> views) => Workflows;
 
+    public WorkflowActivationResult ActivationReturns { get; init; } = new() { Succeeded = true };
+
     public Task<WorkflowActivationResult> SetWorkflowActivationsAsync(DirectoryPath workspaceFolder, IReadOnlyList<WorkflowActivationRequest> requests, ISyncDataverseClient dataverseClient, CancellationToken cancellationToken) =>
-        Task.FromResult(new WorkflowActivationResult { Succeeded = true });
+        Task.FromResult(ActivationReturns);
 }

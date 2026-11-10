@@ -27,7 +27,7 @@ public sealed class ManagedAgentShareServiceTests
                 EnvironmentFixtures.Environment("env-1", instanceUrl: CopilotTestFixtures.DataverseOrganization),
                 EnvironmentFixtures.Environment("env-2", instanceUrl: CopilotTestFixtures.DataverseOrganization)),
             catalog,
-            new CopilotProjectIdentityReader(new AgentConfigLocator()),
+            ManagedAgentFixtures.Identities(),
             sharing,
             directory,
             tenantDirectory,

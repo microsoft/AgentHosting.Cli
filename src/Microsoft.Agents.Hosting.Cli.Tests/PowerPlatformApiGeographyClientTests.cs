@@ -60,6 +60,28 @@ public sealed class PowerPlatformApiDiscoveryTests
             PowerPlatformApiDiscovery.GetEnvironmentEndpoint(
                 PowerPlatformApiTargetConfig.Public,
                 environmentId));
+
+    [Fact]
+    public void EnvironmentHostSuffix_IsTheSuffixEveryEnvironmentEndpointOfTheRingEndsWith()
+    {
+        Assert.Equal("environment.api.powerplatform.com", PowerPlatformApiDiscovery.EnvironmentHostSuffix(PowerPlatformApiTargetConfig.Public));
+        Assert.Equal("environment.api.test.powerplatform.com", PowerPlatformApiDiscovery.EnvironmentHostSuffix(PowerPlatformApiTargetConfig.Test));
+        Assert.EndsWith($".{PowerPlatformApiDiscovery.EnvironmentHostSuffix(PowerPlatformApiTargetConfig.Test)}", PowerPlatformApiDiscovery.GetEnvironmentEndpoint(PowerPlatformApiTargetConfig.Test, "11111111-2222-3333-4444-555555555555").Host, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("1111111122223333444455555555555.5.environment.api.test.powerplatform.com", true)]
+    [InlineData("F4A0925EACDFEC858A82DEE7EE3A47A.D.ENVIRONMENT.API.TEST.POWERPLATFORM.COM", true)]
+    [InlineData("5.environment.api.test.powerplatform.com", false)]
+    [InlineData("a.b.5.environment.api.test.powerplatform.com", false)]
+    [InlineData(".5.environment.api.test.powerplatform.com", false)]
+    [InlineData("environment.api.test.powerplatform.com", false)]
+    [InlineData("1111111122223333444455555555555.55.environment.api.powerplatform.com", false)]
+    [InlineData("a.b.environment.api.test.powerplatform.com.example.com", false)]
+    public void IsEnvironmentHost_TakesOnlyTwoIdentifierLabelsBeforeTheRingsEnvironmentSuffix(string host, bool expected)
+    {
+        Assert.Equal(expected, PowerPlatformApiDiscovery.IsEnvironmentHost(PowerPlatformApiTargetConfig.Test, host));
+    }
 }
 
 public sealed class PowerPlatformApiEnvironmentGeographyClientTests

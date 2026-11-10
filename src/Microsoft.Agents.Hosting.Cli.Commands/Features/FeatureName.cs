@@ -6,6 +6,9 @@ public enum FeatureName
     /// <summary>AMS CodeAgent creation, package upload, and package-revision deployment.</summary>
     AmsFeatures,
 
+    /// <summary>MCS agents in the Agent Management Service: AMS mode, its options and its commands.</summary>
+    AmsMcsAgents,
+
     /// <summary>Azure Bot Service commands and CodeAgent deployment routes backed by ABS.</summary>
     AzureBotServiceFeatures,
 

@@ -10,6 +10,7 @@
 | [`msagent auth status`](#msagent-auth-status) | Show the current sign-in and active-environment state. |
 | [`msagent auth switch`](#msagent-auth-switch) | Activate a stored account and/or retarget it at a Power Platform API ring. |
 | [`msagent auth logout`](#msagent-auth-logout) | Sign out and clear cached accounts. |
+| [`msagent auth setup-git`](#msagent-auth-setup-git-gated) (**Gated**) | Set up git to sign in to the Power Platform git hosts with msagent. |
 
 ## `msagent auth login`
 
@@ -107,3 +108,61 @@ msagent auth logout
 ```
 
 This command has no command-specific arguments or options.
+
+## `msagent auth setup-git` (Gated)
+
+> **Gated.** Available only when `AmsMcsAgents` is enabled.
+
+Points git at msagent for the Power Platform git hosts of the signed-in ring, so git signs in to the
+GRS repository of an agent in [AMS mode](Command_Agent.md#ams-mode-gated), at the `gitUrl` that
+[`msagent agent show`](Command_Agent.md#msagent-agent-show) prints, with your msagent sign-in. It
+writes your global git config; running it again changes nothing. You need it only for clones that
+msagent did not make: `msagent agent create` and `msagent agent init` save the same helper in the git
+config of each repository they clone or link.
+
+```text
+msagent auth setup-git
+```
+
+This command has no command-specific arguments or options.
+
+```text
+Configured git to sign in with msagent.
+  hosts: https://*.*.environment.api.test.powerplatform.com
+```
+
+The hosts are the environment hosts of the signed-in ring (`hosts` in the JSON, with the status
+`git-configured`). For each, the command writes what `gh auth setup-git` writes for GitHub: first an
+empty helper, which drops the helpers set elsewhere for those hosts, such as Git Credential Manager,
+then msagent's. It turns on the `AmsMcsAgents` control for the msagent that git starts, and names
+msagent by the full path PATH finds it at, single-quoted for git's shell, so git runs it even where
+that shell cannot find `msagent` by name, as with the `msagent.cmd` that `dotnet tool install`
+creates on Windows:
+
+```text
+git config --global --replace-all credential.https://*.*.environment.api.test.powerplatform.com.helper ""
+git config --global --add credential.https://*.*.environment.api.test.powerplatform.com.helper "!AH_CLI_FEATURES=AmsMcsAgents 'C:\Users\maker\.dotnet\tools\msagent.cmd' auth git-credential"
+```
+
+When PATH holds no msagent, the helper is `!AH_CLI_FEATURES=AmsMcsAgents msagent auth git-credential`.
+
+The test-only `MSAGENT_GIT_HOST` adds the git host of a personal Dev cluster: the host alone, without
+a scheme, port or path; any other value fails with [19026](ErrorCodes/19026.md). The helper then
+passes it on, as `MSAGENT_GIT_HOST=<host>` after the control. Without git on PATH,
+the command fails with [12017](ErrorCodes/12017.md), and when git cannot write the config, with
+[12018](ErrorCodes/12018.md), which shows git's reason.
+
+git then runs `msagent auth git-credential`, a command help leaves out, whenever it needs a
+credential for one of those hosts:
+
+- for an `https` request to an environment host of the signed-in ring, or to the `MSAGENT_GIT_HOST`
+  host, it answers with the user name `msagent` and the Power Platform API token the Agent
+  Management Service calls use, acquired silently;
+- for any other protocol or host, it answers nothing and acquires no token;
+- while signed out, or when the token needs interaction, it answers nothing, prints the sign-in
+  failure and its `msagent auth login` remediation on stderr, and exits 1;
+- when git stores or erases a credential, it does nothing: msagent keeps its own token cache.
+
+It never prompts, because git may run it without a console, and writes only the credential on
+stdout. The token goes neither on a command line nor into the git config, and git does not store it.
+Then `git clone`, `git pull` and `git push` work with the agent's repository as with any other.

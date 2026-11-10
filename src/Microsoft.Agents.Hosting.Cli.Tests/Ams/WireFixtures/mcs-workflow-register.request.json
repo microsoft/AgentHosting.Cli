@@ -1,0 +1,25 @@
+{
+  "agentId": "aaaaaaaa-1111-4111-8111-000000000011",
+  "displayName": "Expense approvals",
+  "description": null,
+  "agentType": "MCSWorkflow",
+  "origin": "AgentHostCLI",
+  "mcs": {
+    "schemaName": null,
+    "authoringShape": null
+  },
+  "sourceControl": {
+    "repository": "New",
+    "repositoryId": null,
+    "branch": "main",
+    "agentFolder": "ExpenseApprovals"
+  },
+  "deployments": [
+    {
+      "deploymentId": "eeeeeeee-5555-4555-8555-000000000015",
+      "deploymentType": "Dev",
+      "deploymentName": "approvals-dev",
+      "environmentId": "22222222-2222-2222-2222-222222222222"
+    }
+  ]
+}

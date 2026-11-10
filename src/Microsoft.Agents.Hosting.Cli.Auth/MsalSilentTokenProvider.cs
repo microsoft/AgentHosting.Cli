@@ -43,27 +43,25 @@ public sealed class MsalSilentTokenProvider :
         ?? (failure.Headers?.RetryAfter?.Date is { } date ? date - DateTimeOffset.UtcNow : null);
 
     /// <inheritdoc />
-    public async Task<TokenAcquisitionResult> AcquireTokenSilentAsync(
-        string resource,
-        string? targetTenantId,
-        CancellationToken cancellationToken)
+    public Task<TokenAcquisitionResult> AcquireTokenSilentAsync(string resource, string? targetTenantId, CancellationToken cancellationToken) => AcquireForResourceAsync(resource, targetTenantId, forceRefresh: false, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<TokenAcquisitionResult> RenewTokenSilentAsync(string resource, string? targetTenantId, CancellationToken cancellationToken) => AcquireForResourceAsync(resource, targetTenantId, forceRefresh: true, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<TokenAcquisitionResult> AcquireTokenSilentAsync(IReadOnlyList<string> scopes, string? targetTenantId, CancellationToken cancellationToken) => AcquireAsync(scopes, targetTenantId, forceRefresh: false, cancellationToken);
+
+    private async Task<TokenAcquisitionResult> AcquireForResourceAsync(string resource, string? targetTenantId, bool forceRefresh, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(resource))
         {
             throw new ArgumentException("A resource is required for token acquisition.", nameof(resource));
         }
 
-        return await AcquireTokenSilentAsync(
-            [_scopeNormalizer.ToDefaultScope(resource)],
-            targetTenantId,
-            cancellationToken).ConfigureAwait(false);
+        return await AcquireAsync([_scopeNormalizer.ToDefaultScope(resource)], targetTenantId, forceRefresh, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <inheritdoc />
-    public async Task<TokenAcquisitionResult> AcquireTokenSilentAsync(
-        IReadOnlyList<string> scopes,
-        string? targetTenantId,
-        CancellationToken cancellationToken)
+    private async Task<TokenAcquisitionResult> AcquireAsync(IReadOnlyList<string> scopes, string? targetTenantId, bool forceRefresh, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(scopes);
         AuthenticationResultObservation? observation =
@@ -124,7 +122,7 @@ public sealed class MsalSilentTokenProvider :
                 builder = builder.WithTenantId(tenantRouting.RequestTenantId);
             }
 
-            var result = await builder.ExecuteAsync(cancellationToken).ConfigureAwait(false);
+            var result = await builder.WithForceRefresh(forceRefresh).ExecuteAsync(cancellationToken).ConfigureAwait(false);
             if (account is null)
             {
                 EnsureActiveAccount(result.Account, active.AccountKey);

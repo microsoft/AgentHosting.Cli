@@ -16,7 +16,13 @@ public sealed class WorkflowStateCache
     /// <summary>The value recorded for a workflow the service reports as activated.</summary>
     public const int Activated = 1;
 
-    private const string CacheFileName = ".mcs/workflow-state.json";
+    /// <summary>The workspace folder that holds the cache file.</summary>
+    public const string FolderName = ".mcs";
+
+    /// <summary>The cache file's name inside its folder.</summary>
+    public const string FileName = "workflow-state.json";
+
+    private const string CacheFileName = FolderName + "/" + FileName;
 
     private static readonly JsonSerializerOptions ReadOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 

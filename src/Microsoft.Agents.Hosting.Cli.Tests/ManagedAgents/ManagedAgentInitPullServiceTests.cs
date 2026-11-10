@@ -1,8 +1,10 @@
+using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Copilot;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
@@ -12,7 +14,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 public sealed class ManagedAgentInitServiceTests
 {
     private static ManagedAgentInitService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces) =>
-        new(store, new AgentConfigLocator(), CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem()), ManagedAgentFixtures.Resolver(), new CopilotProjectIdentityReader(new AgentConfigLocator()));
+        new(store, new AgentConfigLocator(), CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem()), ManagedAgentFixtures.Resolver(), ManagedAgentFixtures.Identities());
 
     [Fact]
     public async Task Init_RegistersAnUnconnectedProject()
@@ -171,16 +173,18 @@ public sealed class ManagedAgentInitServiceTests
         using var workspace = new TemporaryWorkspace();
         using var scope = new CurrentDirectoryScope(workspace.Root);
 
-        await Assert.ThrowsAsync<UsageException>(() => Create(ManagedAgentFixtures.Store(), new FakeCopilotWorkspacePort()).InitAsync(
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(ManagedAgentFixtures.Store(), new FakeCopilotWorkspacePort()).InitAsync(
             new ManagedAgentInitRequest(),
             CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.General.Usage, "`msagent agent init` requires --agent-name."), (failure.ErrorCode, failure.Message));
     }
 }
 
 [Collection("CurrentDirectory")]
 public sealed class ManagedAgentPullServiceTests
 {
-    private static ManagedAgentPullService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces, FakeCopilotCatalogPort? catalog = null)
+    private static ManagedAgentPullService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces, FakeCopilotCatalogPort? catalog = null, IWorkspaceDisconnectedRemediation? disconnectedRemediation = null)
     {
         var environments = ManagedAgentFixtures.Resolver();
         var fileSystem = new SystemCopilotFileSystem();
@@ -190,7 +194,9 @@ public sealed class ManagedAgentPullServiceTests
             ManagedAgentFixtures.AgentResolver(store),
             locator,
             new CopilotWorkspaceService(workspaces, locator),
-            environments);
+            new SyncComponentCollectionAdapter(),
+            environments,
+            disconnectedRemediation);
     }
 
     [Fact]
@@ -347,6 +353,36 @@ public sealed class ManagedAgentPullServiceTests
             .PullAsync(new ManagedAgentPullRequest(), CancellationToken.None));
 
         Assert.Equal("workspace-disconnected", failure.ErrorKind);
+    }
+
+    [Fact]
+    public async Task Pull_ADisconnectedFolder_OfAnAgentAmsRegistered_InAmsMode_SaysToCaptureOrToDeployToDev()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent() with { SourceControlMetadata = new AgentSourceControlMetadata("repository-1", "main", "Contoso Agent") });
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, new FakeCopilotWorkspacePort { WorkspaceExists = false }, disconnectedRemediation: new AmsWorkspaceDisconnectedRemediation())
+            .PullAsync(new ManagedAgentPullRequest(), CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.Workspace.WorkspaceDisconnected, "To bring Copilot Studio changes into the repository, run `msagent agent capture`, then `git pull`. To connect this folder, deploy it to Dev: `msagent agent deploy` deploys the folder, and `msagent agent deploy --remote` connects it when the folder holds exactly the commit it deploys."), (failure.ErrorCode, failure.Remediation));
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task Pull_ADisconnectedFolder_KeepsMainsRemediation_WithAmsModeOff_OrForAnAgentAmsDidNotRegister(bool amsMode, bool registered)
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent() with { SourceControlMetadata = registered ? new AgentSourceControlMetadata("repository-1", "main", "Contoso Agent") : null });
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, new FakeCopilotWorkspacePort { WorkspaceExists = false }, disconnectedRemediation: amsMode ? new AmsWorkspaceDisconnectedRemediation() : null)
+            .PullAsync(new ManagedAgentPullRequest(), CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.Workspace.WorkspaceDisconnected, "Run `msagent agent deploy` to create the agent and connect this directory, or pull into an empty directory instead."), (failure.ErrorCode, failure.Remediation));
     }
 
     [Fact]

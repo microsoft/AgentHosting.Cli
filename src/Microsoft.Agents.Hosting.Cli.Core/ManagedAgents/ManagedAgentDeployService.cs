@@ -17,12 +17,13 @@ public sealed class ManagedAgentDeployService
     private readonly CopilotEnvironmentResolver _environmentResolver;
     private readonly CopilotWorkspaceLocator _workspaceLocator;
     private readonly CopilotWorkspaceService _workspaces;
+    private readonly ICopilotComponentCollectionPort _collections;
     private readonly CopilotProjectIdentityReader _projectIdentities;
     private readonly ICopilotWorkspaceAttachPort _attach;
     private readonly ICopilotCatalogPort _catalog;
     private readonly CopilotCatalogService _catalogService;
     private readonly ManagedAgentPrincipalResolver _principals;
-    private readonly WorkflowActivationPass _workflowActivation;
+    private readonly WorkflowActivationReporter _workflowActivation;
     private readonly IClock _clock;
     private readonly IProgressStatus _progress;
 
@@ -33,6 +34,7 @@ public sealed class ManagedAgentDeployService
     /// <param name="environmentResolver">Resolves the target environment.</param>
     /// <param name="workspaceLocator">Reads the project's cloud baseline when it has one.</param>
     /// <param name="workspaces">Pushes workspace content, with the conflict gate.</param>
+    /// <param name="collections">Pushes the component collections the agent declares before the agent.</param>
     /// <param name="projectIdentities">Reads the project's declared identity.</param>
     /// <param name="attach">Creates or adopts the cloud agent and binds the workspace to it.</param>
     /// <param name="catalog">Verifies the agent a bound workspace points at still exists.</param>
@@ -41,7 +43,7 @@ public sealed class ManagedAgentDeployService
     /// <param name="workflowActivation">Activates the workflows the push left as drafts.</param>
     /// <param name="clock">Timestamps the deploy.</param>
     /// <param name="progress">Shows the deploy's current step while it runs.</param>
-    public ManagedAgentDeployService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, CopilotEnvironmentResolver environmentResolver, CopilotWorkspaceLocator workspaceLocator, CopilotWorkspaceService workspaces, CopilotProjectIdentityReader projectIdentities, ICopilotWorkspaceAttachPort attach, ICopilotCatalogPort catalog, CopilotCatalogService catalogService, ManagedAgentPrincipalResolver principals, WorkflowActivationPass workflowActivation, IClock clock, IProgressStatus? progress = null)
+    public ManagedAgentDeployService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, CopilotEnvironmentResolver environmentResolver, CopilotWorkspaceLocator workspaceLocator, CopilotWorkspaceService workspaces, ICopilotComponentCollectionPort collections, CopilotProjectIdentityReader projectIdentities, ICopilotWorkspaceAttachPort attach, ICopilotCatalogPort catalog, CopilotCatalogService catalogService, ManagedAgentPrincipalResolver principals, WorkflowActivationReporter workflowActivation, IClock clock, IProgressStatus? progress = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
@@ -49,6 +51,7 @@ public sealed class ManagedAgentDeployService
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
         _workspaceLocator = workspaceLocator ?? throw new ArgumentNullException(nameof(workspaceLocator));
         _workspaces = workspaces ?? throw new ArgumentNullException(nameof(workspaces));
+        _collections = collections ?? throw new ArgumentNullException(nameof(collections));
         _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
         _attach = attach ?? throw new ArgumentNullException(nameof(attach));
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
@@ -94,6 +97,7 @@ public sealed class ManagedAgentDeployService
             if (await FindTargetAgentAsync(target, workspace!.AgentId, cancellationToken).ConfigureAwait(false) is { } bound)
             {
                 RequireBoundAgentMatches(bound, schemaName, target.EnvironmentId, workspaceDirectory);
+                RequireBoundAgentOwned(bound, agent, deployment, schemaName, target.EnvironmentId, request.Overwrite);
             }
             else
             {
@@ -175,6 +179,7 @@ public sealed class ManagedAgentDeployService
             UploadedFileCount = pushed.UploadedFileCount,
             AuxiliaryChangeCount = pushed.AuxiliaryCount,
             DeployedOn = deployedOn,
+            LastPublishedTime = pushed.PublishedOn,
             Warnings = [.. blockers.Concat(notices).Distinct(StringComparer.Ordinal)],
         };
 
@@ -197,39 +202,23 @@ public sealed class ManagedAgentDeployService
     private static IEnumerable<string> ExceptSupersededWorkflows(IReadOnlyList<string> warnings, bool passReported) =>
         passReported ? warnings.Where(warning => !DeployWarningText.IsRestatedByWorkflowCounts(warning)) : warnings;
 
-    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings, IReadOnlyList<string> CollectionWarnings)> PushAsync(string projectDirectory, string workspaceDirectory, string stage, bool overwrite, string environmentId, string schemaName, string targetDescription, CancellationToken cancellationToken)
+    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings, IReadOnlyList<string> CollectionWarnings, DateTimeOffset? PublishedOn)> PushAsync(string projectDirectory, string workspaceDirectory, string stage, bool overwrite, string environmentId, string schemaName, string targetDescription, CancellationToken cancellationToken)
     {
-        var collectionWarnings = new List<string>();
-        var componentCount = 0;
-        var uploadedFileCount = 0;
-        var auxiliaryCount = 0;
-        var collections = _resolver.ResolveComponentCollectionDirectories(projectDirectory, workspaceDirectory);
+        var pushed = await _collections.PushAsync(projectDirectory, workspaceDirectory, (directory, token) => PushWorkspaceAsync(directory, stage, overwrite, environmentId, schemaName, targetDescription, token), (collection, token) => IsConnectedToAsync(collection, environmentId, token), cancellationToken).ConfigureAwait(false);
+        var collections = pushed.Collections.Where(collection => collection.Pushed).Select(collection => collection.Result).ToArray();
 
-        collectionWarnings.AddRange(collections.Missing.Select(declared => $"The component collection declared as '{declared}' was not pushed: it holds no project inside this one."));
-
-        foreach (var collection in collections.Found)
-        {
-            var collectionWorkspace = await _workspaceLocator.FindAsync(collection, cancellationToken).ConfigureAwait(false);
-
-            if (collectionWorkspace is null || !string.Equals(collectionWorkspace.EnvironmentId, environmentId, StringComparison.OrdinalIgnoreCase))
-            {
-                collectionWarnings.Add($"The component collection in {collection} was not pushed: it is not connected to {environmentId}.");
-                continue;
-            }
-
-            var pushedCollection = await PushWorkspaceAsync(collection, stage, overwrite, environmentId, schemaName, targetDescription, cancellationToken).ConfigureAwait(false);
-            componentCount += pushedCollection.ComponentCount;
-            uploadedFileCount += pushedCollection.UploadedFileCount;
-            auxiliaryCount += pushedCollection.AuxiliaryCount;
-            collectionWarnings.AddRange(pushedCollection.Warnings);
-        }
-
-        var pushed = await PushWorkspaceAsync(workspaceDirectory, stage, overwrite, environmentId, schemaName, targetDescription, cancellationToken).ConfigureAwait(false);
-
-        return (componentCount + pushed.ComponentCount, uploadedFileCount + pushed.UploadedFileCount, auxiliaryCount + pushed.AuxiliaryCount, pushed.Warnings, collectionWarnings);
+        return (
+            collections.Sum(collection => collection.ComponentCount) + pushed.Agent.ComponentCount,
+            collections.Sum(collection => collection.UploadedFileCount) + pushed.Agent.UploadedFileCount,
+            collections.Sum(collection => collection.AuxiliaryCount) + pushed.Agent.AuxiliaryCount,
+            pushed.Agent.Warnings,
+            [.. pushed.Missing.Select(declared => $"The component collection declared as '{declared}' was not pushed: it holds no project inside this one."), .. pushed.Collections.SelectMany(collection => collection.Pushed ? collection.Result.Warnings : [$"The component collection in {collection.Directory} was not pushed: it is not connected to {environmentId}."])],
+            pushed.Agent.PublishedOn);
     }
 
-    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings)> PushWorkspaceAsync(string workspaceDirectory, string stage, bool overwrite, string environmentId, string schemaName, string targetDescription, CancellationToken cancellationToken)
+    private async Task<bool> IsConnectedToAsync(string collection, string environmentId, CancellationToken cancellationToken) => await _workspaceLocator.FindAsync(collection, cancellationToken).ConfigureAwait(false) is { } collectionWorkspace && string.Equals(collectionWorkspace.EnvironmentId, environmentId, StringComparison.OrdinalIgnoreCase);
+
+    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings, DateTimeOffset? PublishedOn)> PushWorkspaceAsync(string workspaceDirectory, string stage, bool overwrite, string environmentId, string schemaName, string targetDescription, CancellationToken cancellationToken)
     {
         try
         {
@@ -237,7 +226,7 @@ public sealed class ManagedAgentDeployService
                 new CopilotPushRequest { ProjectDirectory = workspaceDirectory, Overwrite = overwrite || stage != DeploymentStages.Dev },
                 cancellationToken).ConfigureAwait(false);
 
-            return (pushed.ChangeCount, pushed.UploadedFileCount, pushed.AuxiliaryChangeCount, pushed.Warnings);
+            return (pushed.ChangeCount, pushed.UploadedFileCount, pushed.AuxiliaryChangeCount, pushed.Warnings, pushed.PublishedOn);
         }
         catch (CopilotStudioException failure) when (
             failure.ErrorKind is CopilotErrorKinds.PushConflictsRequirePull or CopilotErrorKinds.WorkspaceFilesUnreadable or CopilotErrorKinds.WorkflowToolIdEmpty or CopilotErrorKinds.MissingConnectionReference)
@@ -288,6 +277,14 @@ public sealed class ManagedAgentDeployService
         if (bound.IsManaged)
         {
             throw ManagedAgentException.TargetAgentIsReadOnly(schemaName, environmentId);
+        }
+    }
+
+    private static void RequireBoundAgentOwned(CopilotAgentSummary bound, ManagedAgentRecord agent, AgentDeploymentRecord deployment, string schemaName, string environmentId, bool acknowledged)
+    {
+        if (UnownedTargetGuard.Applies(agent, deployment, environmentId, acknowledged) && !ProjectOwns(agent, deployment, schemaName, bound.AgentId))
+        {
+            throw ManagedAgentException.UnverifiedBoundAgent(bound.DisplayName, bound.AgentId, environmentId);
         }
     }
 
@@ -352,7 +349,11 @@ public sealed class ManagedAgentDeployService
                 new CopilotPublishRequest { Bot = targetAgentId, Environment = target.EnvironmentId, Force = true },
                 cancellationToken).ConfigureAwait(false);
 
-            return result with { Published = true, PublishedOn = published.PublishedOn };
+            return result with { Published = true, PublishedOn = published.PublishedOn, LastPublishedTime = published.PublishedOn };
+        }
+        catch (CopilotStudioException failure) when (failure.ErrorKind is CopilotErrorKinds.PublishFailed or CopilotErrorKinds.PublishTimeout)
+        {
+            throw;
         }
         catch (Exception failure) when (failure is not OperationCanceledException)
         {

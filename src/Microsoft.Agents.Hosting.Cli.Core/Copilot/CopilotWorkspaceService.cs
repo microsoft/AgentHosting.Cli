@@ -70,6 +70,7 @@ public sealed class CopilotWorkspaceService
             UploadedFileCount = pushed.UploadedFileNames.Count,
             AuxiliaryChangeCount = pushed.AuxiliaryChangeCount,
             Warnings = pushed.Warnings,
+            PublishedOn = pushed.PublishedOn,
         };
     }
 

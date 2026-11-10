@@ -4,6 +4,7 @@ using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
+using Microsoft.CopilotStudio.McsCore;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -27,12 +28,13 @@ public sealed class ManagedAgentComponentCollectionTests
             environments,
             locator,
             new CopilotWorkspaceService(workspaces, locator),
+            new SyncComponentCollectionAdapter(),
             ManagedAgentFixtures.Identities(),
             new RecordingAttachPort { OnAttach = () => workspaces.WorkspaceExists = true },
             catalog,
-            new CopilotCatalogService(catalog, environments, locator, new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
+            new CopilotCatalogService(catalog, new FakeCopilotPublishPort(), environments, locator),
             ManagedAgentFixtures.Principals(),
-            ManagedAgentFixtures.ActivationPass(),
+            ManagedAgentFixtures.ActivationReporter(),
             new FixedClock(ManagedAgentFixtures.Now));
     }
 
@@ -44,15 +46,16 @@ public sealed class ManagedAgentComponentCollectionTests
             ManagedAgentFixtures.AgentResolver(store),
             locator,
             new CopilotWorkspaceService(workspaces, locator),
+            new SyncComponentCollectionAdapter(),
             ManagedAgentFixtures.Resolver());
     }
 
     private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) NestedProject()
     {
         var workspace = new TemporaryWorkspace(withProjectFile: false);
-        workspace.AddFile(Path.Combine(AgentFolderName, AgentConfigLocator.ProjectSettingsFileName), "displayName: \"Contoso Agent\"\nschemaName: \"con_agent\"\n");
-        workspace.AddFile(Path.Combine(AgentFolderName, AgentConfigLocator.ReferencesFileName), $"componentCollections:\n  - schemaName:\n    directory: ../{CollectionFolderName}/\n");
-        workspace.AddFile(Path.Combine(CollectionFolderName, AgentConfigLocator.CollectionProjectFileName), "schemaName: con_sharedtools\n");
+        workspace.AddFile(Path.Combine(AgentFolderName, WorkspaceFileNames.Settings), "displayName: \"Contoso Agent\"\nschemaName: \"con_agent\"\n");
+        workspace.AddFile(Path.Combine(AgentFolderName, WorkspaceFileNames.References), $"componentCollections:\n  - schemaName:\n    directory: ../{CollectionFolderName}/\n");
+        workspace.AddFile(Path.Combine(CollectionFolderName, WorkspaceFileNames.Collection), "schemaName: con_sharedtools\n");
 
         var store = ManagedAgentFixtures.Store();
         store.Add(workspace.Root, ManagedAgentFixtures.Agent() with { AgentLocation = AgentFolderName });

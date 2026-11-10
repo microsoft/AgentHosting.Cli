@@ -6,6 +6,8 @@ public sealed class DependencyBoundaryTests
 {
     private const string ForbiddenPackage = "Yaml" + "DotNet";
 
+    private const string PublishAction = "Pva" + "Publish";
+
     private static DirectoryInfo SourceRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -28,6 +30,17 @@ public sealed class DependencyBoundaryTests
     {
         var offenders = SourceFiles("*.cs")
             .Where(path => File.ReadAllText(path).Contains($"using {ForbiddenPackage}", StringComparison.Ordinal))
+            .Select(path => Path.GetFileName(path))
+            .ToArray();
+
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
+    public void NoSourceFileCallsThePublishActionOutsideTheSyncLibrary()
+    {
+        var offenders = SourceFiles("*.cs")
+            .Where(path => File.ReadAllText(path).Contains(PublishAction, StringComparison.OrdinalIgnoreCase))
             .Select(path => Path.GetFileName(path))
             .ToArray();
 

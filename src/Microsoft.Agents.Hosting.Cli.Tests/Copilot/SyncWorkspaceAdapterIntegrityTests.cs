@@ -3,14 +3,26 @@ using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Core.Rendering;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
-public sealed class SyncWorkspaceAdapterIntegrityTests
+public sealed class SyncWorkspaceAdapterIntegrityTests : IDisposable
 {
     private const string ToolPath = "tools/lookup_order.tool.yml";
     private const string PromptPath = "prompts/summarize/metadata.yml";
+
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "ah-integrity-" + Guid.NewGuid().ToString("N"));
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_directory))
+        {
+            Directory.Delete(_directory, recursive: true);
+        }
+    }
 
     private static CopilotWorkspaceInfo Workspace() => new()
     {
@@ -20,15 +32,7 @@ public sealed class SyncWorkspaceAdapterIntegrityTests
         DataverseOrganization = new Uri("https://contoso.crm.dynamics.com/"),
     };
 
-    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
-        new(
-            synchronizer,
-            new RecordingRetargetService(),
-            new StubSolutionVersionsClient(),
-            new StubComponentCollectionClient(),
-            new StubOperationContextProvider(),
-            new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()),
-            new CopilotChangeMapper());
+    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) => CopilotTestFixtures.WorkspaceAdapter(synchronizer);
 
     private static WorkspaceValidationException Invalid(params WorkspaceDiagnostic[] diagnostics) =>
         new([.. diagnostics]);
@@ -36,54 +40,28 @@ public sealed class SyncWorkspaceAdapterIntegrityTests
     private static WorkspaceDiagnostic Conflict(string path, int line = 12) =>
         new(path, "The file still contains merge conflict markers.", line, 1, WorkspaceDiagnosticKind.MergeConflict);
 
-    [Fact]
-    public async Task Push_ChecksTheWorkspaceBeforeTheFirstCloudWrite()
+    private async Task<RecordingWorkspaceSynchronizer> SyncedAsync(IWorkspaceSynchronizer workspaceValidator, string cloudName, string declaredName)
     {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
+        AgentScaffolder.Scaffold(_directory, "cli-copilot", "Contoso Helpdesk", "con_contosohelpdesk", "Be helpful.");
+        CopilotTestFixtures.DeclareDisplayName(_directory, cloudName);
+        File.WriteAllText(Path.Combine(Directory.CreateDirectory(Path.Combine(_directory, ".mcs")).FullName, "botdefinition.json"), CopilotTestFixtures.CloudCacheJson(await CopilotTestFixtures.ReadWorkspaceDefinitionAsync(_directory)));
+        CopilotTestFixtures.DeclareDisplayName(_directory, declaredName);
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        var checkedAt = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.ThrowIfWorkspaceInvalidAsync));
-        var firstWriteAt = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync));
-
-        Assert.True(checkedAt >= 0);
-        Assert.True(checkedAt < firstWriteAt);
+        return new RecordingWorkspaceSynchronizer { DefinitionReturns = await CopilotTestFixtures.ReadWorkspaceDefinitionAsync(_directory), WorkspaceValidator = workspaceValidator };
     }
 
     [Fact]
-    public async Task Push_ChecksTheWorkspaceAgainstTheDefinitionItRead()
+    public async Task Push_OfSettingsRenamingTheAgentToANameLongerThanAnAgentCanTake_IsASettingsFileErrorWithSyncsReason_BeforeAnyCloudWrite()
     {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
+        await using var services = CopilotTestFixtures.CopilotStudioServices();
+        var synchronizer = await SyncedAsync(services.GetRequiredService<IWorkspaceSynchronizer>(), "Contoso Helpdesk", CopilotTestFixtures.NameOfFortyThreeCharacters);
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(synchronizer).PushAsync(Workspace() with { WorkspacePath = _directory }, overwrite: false, CancellationToken.None));
 
-        Assert.Equal(1, synchronizer.ThrowIfWorkspaceInvalidCalls);
-    }
-
-    [Fact]
-    public async Task Push_WithOverwrite_StillChecksTheWorkspace()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer();
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: true, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.ThrowIfWorkspaceInvalidCalls);
-    }
-
-    [Fact]
-    public async Task Push_WhenTheWorkspaceIsInvalid_SendsNothingToTheCloud()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer
-        {
-            ThrowIfWorkspaceInvalidThrows = Invalid(Conflict(ToolPath)),
-        };
-
-        await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
-
+        Assert.Equal((ErrorCodes.Workspace.CopilotWorkspaceFilesUnreadable, ExitCodes.Usage, CopilotErrorKinds.WorkspaceFilesUnreadable), (failure.ErrorCode, failure.ExitCode, failure.ErrorKind));
+        Assert.Equal($"1 workspace file could not be read: {WorkspaceFileNames.Settings}: {CopilotTestFixtures.AgentNameTooLongReason}", failure.Message);
         Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
         Assert.Equal(0, synchronizer.PushLocalChangesCalls);
-        Assert.Equal(0, synchronizer.UploadKnowledgeFilesCalls);
     }
 
     [Fact]

@@ -4,7 +4,9 @@ using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
+using Microsoft.CopilotStudio.McsCore;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -123,6 +125,42 @@ internal sealed class FakeConnectionPort : ICopilotConnectionPort
             ? Task.FromException<CopilotWorkflowActivation>(ActivateThrows)
             : Task.FromResult(Activation());
     }
+
+    public List<IReadOnlyCollection<string>> WorkflowReads { get; } = [];
+
+    public IReadOnlyList<CopilotWorkflowView> ReadWorkflows(string projectDirectory, IReadOnlyCollection<string> boundReferences)
+    {
+        Directories.Add(projectDirectory);
+        WorkflowReads.Add(boundReferences);
+
+        return [.. Workflows.Select(workflow => workflow with { CanEnable = workflow.ConnectionReferences.All(reference => boundReferences.Contains(reference, StringComparer.OrdinalIgnoreCase)) })];
+    }
+
+    public int UnboundConnectionCount { get; set; }
+
+    public Exception? PassThrows { get; init; }
+
+    public List<string?> PassPrincipals { get; } = [];
+
+    public Task<CopilotWorkflowActivationReport> ActivateWorkflowsAsync(CopilotEnvironmentContext environment, string projectDirectory, string? principal, CancellationToken cancellationToken)
+    {
+        Directories.Add(projectDirectory);
+        PassPrincipals.Add(principal);
+
+        return PassThrows is not null
+            ? Task.FromException<CopilotWorkflowActivationReport>(PassThrows)
+            : Task.FromResult(new CopilotWorkflowActivationReport
+            {
+                Workflows = [.. Workflows.Select(workflow => workflow.DisplayName).Order(StringComparer.Ordinal)],
+                Activated = ActivatedWorkflows,
+                Refused = RefusedWorkflows,
+                ObservedById = Workflows.Where(workflow => ReportedRunning(workflow) is not null).ToDictionary(workflow => workflow.WorkflowId, workflow => ReportedRunning(workflow)!.Value, StringComparer.OrdinalIgnoreCase),
+                NotRunningCount = Workflows.Count(workflow => (ReportedRunning(workflow) ?? workflow.IsActivatedLocally) != true),
+                UnboundConnectionCount = UnboundConnectionCount,
+            });
+    }
+
+    private bool? ReportedRunning(CopilotWorkflowView workflow) => ActivatedWorkflows.Contains(workflow.DisplayName) ? true : DraftWorkflows.Contains(workflow.DisplayName) ? false : null;
 }
 
 internal sealed class FakeConnectorCatalogPort : IConnectorCatalogPort
@@ -350,7 +388,7 @@ internal sealed class TemporaryWorkspace : IDisposable
 
         if (withProjectFile)
         {
-            File.WriteAllText(Path.Combine(Root, AgentConfigLocator.ProjectSettingsFileName), $"displayName: \"{displayName}\"\nschemaName: \"{schemaName}\"\ntemplate: cliagent-1.0.0\n");
+            File.WriteAllText(Path.Combine(Root, WorkspaceFileNames.Settings), $"displayName: \"{displayName}\"\nschemaName: \"{schemaName}\"\ntemplate: cliagent-1.0.0\n");
         }
     }
 
@@ -394,7 +432,7 @@ internal static class ManagedAgentFixtures
     public static WorkflowStateCache WorkflowStates(ICopilotFileSystem? fileSystem = null) =>
         new(fileSystem ?? new FakeCopilotFileSystem());
 
-    public static WorkflowActivationPass ActivationPass(ICopilotConnectionPort? connections = null, WorkflowStateCache? workflowStates = null) =>
+    public static WorkflowActivationReporter ActivationReporter(ICopilotConnectionPort? connections = null, WorkflowStateCache? workflowStates = null) =>
         new(connections ?? new FakeConnectionPort(), workflowStates ?? WorkflowStates(), Principals());
 
     public static (CopilotEnvironmentResolver Resolver, FakeEnvironmentClient Client) TrackedResolver(params PowerPlatformEnvironment[] environments)
@@ -412,7 +450,13 @@ internal static class ManagedAgentFixtures
 
     public static ManagedAgentResolver AgentResolver(JsonAgentConfigStore store) => new(store, store, new AgentConfigLocator());
 
-    public static CopilotProjectIdentityReader Identities() => new(new AgentConfigLocator());
+    public static ManagedAgentListService ListService(EnvironmentSelectionService environments)
+    {
+        var store = Store();
+        return new ManagedAgentListService(new CopilotEnvironmentResolver(environments, PowerPlatformCloudMap.ForCloud(CloudInstance.Public)), new FakeCopilotCatalogPort(), new FakeWorkflowStorePort(), StateRules, AgentResolver(store), new AgentConfigLocator(), Identities(), store, store);
+    }
+
+    public static CopilotProjectIdentityReader Identities() => new(new AgentConfigLocator(), new SyncAgentWorkspaceIdentityReader());
 
     public static IWorkflowWorkspacePort WorkflowWorkspace() => new FakeWorkflowWorkspacePort();
 
@@ -464,7 +508,13 @@ internal static class ManagedAgentFixtures
 
     public const string Principal = "op@contoso.com";
 
-    public static ConnectionPlanItem Plan(CopilotConnectionView view) => ConnectionReadinessPlanner.Plan(view, Principal);
+    public static readonly IConnectionBindingRules Rules = new SyncConnectionBindingRules();
+
+    public static readonly IWorkflowStateRules StateRules = new SyncWorkflowStateRules();
+
+    public static ConnectionPlanItem Observe(CopilotConnectionView view) => Rules.Observe(view);
+
+    public static ConnectionPlanItem Plan(CopilotConnectionView view) => Rules.Plan(view, Principal);
 
     public static CopilotConnectionCandidate Candidate(string connectionId, string status = "Connected", string? owner = Principal) =>
         new() { ConnectionId = connectionId, DisplayName = $"{connectionId}@contoso.com", Status = status, Owner = owner };

@@ -13,19 +13,25 @@ public sealed class AgentDeploymentConnectionReader
 {
     private readonly AgentDeploymentConnectionResolver _targets;
     private readonly ICopilotConnectionPort _connections;
+    private readonly IConnectionBindingRules _rules;
     private readonly WorkflowStateCache _workflowStates;
+    private readonly IWorkflowStateRules _stateRules;
     private readonly CoreServicesClusterCategory _cluster;
 
     /// <summary>Creates the reader.</summary>
     /// <param name="targets">Resolves the deployment, environment and workspace the verb acts on.</param>
     /// <param name="connections">Reads references, candidates and workflows.</param>
+    /// <param name="rules">Decides what each reference is.</param>
     /// <param name="workflowStates">Reports the workflow states last observed in the environment.</param>
+    /// <param name="stateRules">Names each workflow state and the label the portal shows for it.</param>
     /// <param name="cluster">The cluster category the environment belongs to.</param>
-    public AgentDeploymentConnectionReader(AgentDeploymentConnectionResolver targets, ICopilotConnectionPort connections, WorkflowStateCache workflowStates, CoreServicesClusterCategory cluster)
+    public AgentDeploymentConnectionReader(AgentDeploymentConnectionResolver targets, ICopilotConnectionPort connections, IConnectionBindingRules rules, WorkflowStateCache workflowStates, IWorkflowStateRules stateRules, CoreServicesClusterCategory cluster)
     {
         _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
+        _rules = rules ?? throw new ArgumentNullException(nameof(rules));
         _workflowStates = workflowStates ?? throw new ArgumentNullException(nameof(workflowStates));
+        _stateRules = stateRules ?? throw new ArgumentNullException(nameof(stateRules));
         _cluster = cluster;
     }
 
@@ -41,10 +47,10 @@ public sealed class AgentDeploymentConnectionReader
         var environment = target.Environment;
 
         var snapshot = await _connections.ReadConnectionsAsync(environment, target.WorkspaceDirectory, cancellationToken).ConfigureAwait(false);
-        var plan = snapshot.References.Select(ConnectionReadinessPlanner.Observe).ToList();
-        var workflows = WorkflowStateProjection.FromCache(snapshot.Workflows, _workflowStates.Read(target.WorkspaceDirectory, environment.EnvironmentId));
+        var plan = snapshot.References.Select(_rules.Observe).ToList();
+        var workflows = WorkflowStateProjection.FromCache(snapshot.Workflows, _workflowStates.Read(target.WorkspaceDirectory, environment.EnvironmentId), _stateRules);
         var connectionsReady = ConnectionReadinessPlanner.IsReady(plan);
-        var workflowsReady = WorkflowStateProjection.AllActivated(workflows);
+        var workflowsReady = WorkflowStateProjection.AllActivated(workflows, _stateRules);
 
         return new AgentDeploymentConnectionResult
         {

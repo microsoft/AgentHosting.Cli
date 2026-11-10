@@ -149,55 +149,10 @@ public sealed record CopilotPushResult
 
     /// <summary>Resources the service declined without failing the push.</summary>
     public IReadOnlyList<string> Warnings { get; init; } = [];
+
+    /// <summary>When the agent was last published, as the push read it, or null for an agent never published or a component collection.</summary>
+    public DateTimeOffset? PublishedOn { get; init; }
 }
-
-/// <summary>Input for <c>msagent agent create</c>.</summary>
-public sealed record CopilotInitRequest
-{
-    /// <summary>The agent's display name.</summary>
-    public string? Name { get; init; }
-
-    /// <summary>The publisher prefix the schema name is derived from.</summary>
-    public string? PublisherPrefix { get; init; }
-
-    /// <summary>An explicit schema name, overriding the derived one.</summary>
-    public string? SchemaName { get; init; }
-
-    /// <summary>The agent's instructions.</summary>
-    public string? Instructions { get; init; }
-
-    /// <summary>The directory to scaffold into. Defaults to the current directory.</summary>
-    public string? ProjectDirectory { get; init; }
-
-    /// <summary>The authoring shape to scaffold. Defaults to <c>cli-copilot</c>.</summary>
-    public string? AuthoringMode { get; init; }
-}
-
-/// <summary>Result of <c>msagent agent create</c>.</summary>
-public sealed record CopilotInitResult
-{
-    /// <summary>Output-envelope schema version.</summary>
-    public int SchemaVersion { get; init; } = 1;
-
-    /// <summary>Machine-readable status string (<c>initialized</c>).</summary>
-    public required string Status { get; init; }
-
-    /// <summary>The directory that was scaffolded.</summary>
-    public required string ProjectDirectory { get; init; }
-
-    /// <summary>The schema name written into the workspace.</summary>
-    public required string SchemaName { get; init; }
-
-    /// <summary>The template that was instantiated.</summary>
-    public required string Template { get; init; }
-
-    /// <summary>The authoring shape that was scaffolded.</summary>
-    public required string AuthoringMode { get; init; }
-
-    /// <summary>The files that were created, relative to the project directory.</summary>
-    public required IReadOnlyList<string> CreatedFiles { get; init; }
-}
-
 
 /// <summary>Input for <c>msagent agent deploy --publish</c>.</summary>
 public sealed record CopilotPublishRequest
@@ -210,12 +165,6 @@ public sealed record CopilotPublishRequest
 
     /// <summary>Confirms the publish. Without it the command reports what it would publish.</summary>
     public bool Force { get; init; }
-
-    /// <summary>How long to wait between polls.</summary>
-    public TimeSpan? PollingInterval { get; init; }
-
-    /// <summary>How long to poll before giving up.</summary>
-    public TimeSpan? MaximumWait { get; init; }
 
     /// <summary>An explicit environment id, overriding the workspace's and the active selection.</summary>
     public string? Environment { get; init; }
@@ -242,13 +191,7 @@ public sealed record CopilotPublishResult
     /// <summary>How the agent was identified: <c>workspace</c> or <c>bot-argument</c>.</summary>
     public required string ResolvedFrom { get; init; }
 
-    /// <summary>When the agent was last published before this command ran.</summary>
-    public DateTimeOffset? PreviousPublishedOn { get; init; }
-
     /// <summary>When the agent was published by this command.</summary>
     public DateTimeOffset? PublishedOn { get; init; }
-
-    /// <summary>How long polling ran before the publish was confirmed.</summary>
-    public TimeSpan Waited { get; init; }
 }
 

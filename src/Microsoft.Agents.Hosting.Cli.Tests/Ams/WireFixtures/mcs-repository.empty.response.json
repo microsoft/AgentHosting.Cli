@@ -1,0 +1,9 @@
+{
+  "repositoryId": "cccccccc-3333-4333-8333-000000000013",
+  "name": "contoso-new",
+  "gitUrl": "https://example.invalid/contoso-new.git",
+  "branch": "main",
+  "headCommitSha": null,
+  "agentFolderExists": false,
+  "agents": []
+}

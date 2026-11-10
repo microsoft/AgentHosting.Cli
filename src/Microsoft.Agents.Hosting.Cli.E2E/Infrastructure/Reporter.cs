@@ -36,6 +36,23 @@ public sealed class Reporter
         WriteFailures(report);
         WriteBlocked(report);
         WriteLedger(ledger);
+        WriteKept(report.KeptWorkspaces);
+    }
+
+    private static void WriteKept(IReadOnlyList<string> keptWorkspaces)
+    {
+        if (keptWorkspaces.Count == 0)
+        {
+            return;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("  Workspaces kept, because a resource the run didn't remove points into them");
+
+        foreach (var directory in keptWorkspaces)
+        {
+            Console.WriteLine($"    {directory}");
+        }
     }
 
     private static void WriteTotals(RunReport report)
@@ -122,6 +139,14 @@ public sealed class Reporter
             }
         }
 
+        var retained = ledger.Where(entry => entry.State == ResourceState.Retained).ToArray();
+
+        if (retained.Length > 0)
+        {
+            Console.WriteLine("  Kept on purpose");
+            WriteWithManualCommand(retained);
+        }
+
         if (orphans.Length == 0)
         {
             Console.WriteLine("  Nothing left behind.");
@@ -130,8 +155,12 @@ public sealed class Reporter
 
         Console.WriteLine();
         WriteColoured($"  Created and NOT removed  ← {orphans.Length} orphan{(orphans.Length == 1 ? string.Empty : "s")}", ConsoleColor.Red);
+        WriteWithManualCommand(orphans);
+    }
 
-        foreach (var entry in orphans)
+    private static void WriteWithManualCommand(IReadOnlyList<LedgerEntry> entries)
+    {
+        foreach (var entry in entries)
         {
             Console.WriteLine($"    {entry.Kind,-14} {entry.DisplayName ?? entry.Id}   {entry.Failure}");
             Console.WriteLine($"    {Cleanup.ManualCommand(entry)}");
@@ -229,8 +258,24 @@ public sealed class Reporter
 
         AppendFailures(markdown, report);
         AppendLedger(markdown, ledger);
+        AppendKept(markdown, report.KeptWorkspaces);
 
         return markdown.ToString();
+    }
+
+    private static void AppendKept(StringBuilder markdown, IReadOnlyList<string> keptWorkspaces)
+    {
+        if (keptWorkspaces.Count == 0)
+        {
+            return;
+        }
+
+        markdown.AppendLine().AppendLine("## Kept workspaces").AppendLine().AppendLine("A resource the run didn't remove points into each of them.").AppendLine();
+
+        foreach (var directory in keptWorkspaces)
+        {
+            markdown.AppendLine($"- {directory}");
+        }
     }
 
     private static void AppendFailures(StringBuilder markdown, RunReport report)

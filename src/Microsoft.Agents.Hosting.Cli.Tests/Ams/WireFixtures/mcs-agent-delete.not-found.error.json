@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "AgentNotFound",
+    "message": "The agent 'aaaaaaaa-1111-4111-8111-000000000001' could not be found in the environment '22222222-2222-2222-2222-222222222222'."
+  }
+}

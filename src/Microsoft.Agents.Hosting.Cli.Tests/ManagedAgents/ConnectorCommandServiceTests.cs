@@ -376,6 +376,7 @@ public sealed class ConnectorCommandServiceTests
         new(
             Targets(store),
             Resolver(connectors),
+            ManagedAgentFixtures.Rules,
             new ConnectionCreationFlow(ManagedAgentFixtures.ConnectorReadiness(connectors), consentFlow),
             ManagedAgentFixtures.Principals());
 
@@ -384,6 +385,7 @@ public sealed class ConnectorCommandServiceTests
             Deployments(store),
             Resolver(connectors),
             connections,
+            ManagedAgentFixtures.Rules,
             new ConnectionBindingCoordinator(
                 prompt ?? new ScriptedSelectionPrompt(),
                 new ConnectionCreationFlow(
@@ -1807,8 +1809,7 @@ public sealed class ConnectorCommandServiceTests
         var connections = new FakeConnectionPort();
         connections.Views.Add(ManagedAgentFixtures.Reference("cr_teams", "shared_teams") with
         {
-            BoundConnectionId = null,
-            RecordedConnectionId = "conn-1",
+            BoundConnectionId = "conn-1",
             BoundConnectionExists = false,
             CatalogUnavailable = true,
         });
@@ -2043,9 +2044,11 @@ public sealed class ConnectorCommandServiceTests
         var updateService = new AgentDeploymentConnectionService(
             Deployments(store),
             updateConnections,
+            ManagedAgentFixtures.Rules,
             coordinator,
             prompt,
             ManagedAgentFixtures.WorkflowStates(),
+            ManagedAgentFixtures.StateRules,
             ManagedAgentFixtures.Principals(),
             CoreServicesClusterCategory.Prod);
 
@@ -2062,6 +2065,7 @@ public sealed class ConnectorCommandServiceTests
             Deployments(store),
             Resolver(referenceCatalog),
             referenceConnections,
+            ManagedAgentFixtures.Rules,
             coordinator,
             ManagedAgentFixtures.Principals());
 

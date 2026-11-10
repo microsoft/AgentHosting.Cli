@@ -17,7 +17,7 @@ public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, 
         ["--agent-id", "--package-revision", "--target-environment-id", "--deployment-name", "--deployment-type", "--entra-id", "--entra-id-type"];
 
     private static readonly string[] McsOnlyOptions =
-        ["--project", "--agent-name", "--deployment-id", "--schema-name", "--publish", "--overwrite", "--commit-id", "--async"];
+        ["--project", "--agent-name", "--deployment-id", "--schema-name", "--publish", "--overwrite", "--commit-id", "--async", "--remote"];
     /// <inheritdoc />
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
@@ -29,8 +29,9 @@ public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, 
         OptionCatalog.Value("--schema-name", "Schema name for this deploy, overriding the project's. MCS only."),
         OptionCatalog.Switch("--publish", "Publish after a push that fully landed, making the content live. MCS only."),
         OptionCatalog.Switch("--overwrite", "Overwrite cloud drift and replace an unverified agent. Only dev refuses drift without it. MCS only."),
-        OptionCatalog.Value("--commit-id", "Not supported: this build has no Git Repository Service."),
-        OptionCatalog.Switch("--async", "Not supported: this deploy is synchronous."),
+        OptionCatalog.Value("--commit-id", "Not supported: this build has no Git Repository Service.") with { EnabledDescription = new([FeatureName.AmsMcsAgents], "With --remote, the commit to deploy, full or short. Dev and Test only; Prod takes Test's last deploy.") },
+        OptionCatalog.Switch("--async", "Not supported: this deploy is synchronous.") with { EnabledDescription = new([FeatureName.AmsMcsAgents], "With --remote, return once AMS accepts the deploy.") },
+        OptionCatalog.Switch("--remote", "Deploy a commit from GRS through AMS instead of the working folder.") with { RequiredFeatures = [FeatureName.AmsMcsAgents] },
         OptionCatalog.Value("--package-revision", "Existing immutable AMS package revision id. No package bytes are uploaded.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
         OptionCatalog.Value("--environment-id", "AMS agent home environment. Defaults to the active environment.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
         OptionCatalog.Value("--target-environment-id", "Explicit AMS target environment, including for same-home deployment.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
@@ -44,12 +45,18 @@ public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, 
     [
         new RouteMetadata(typeof(ManagedAgentDeployRequest), typeof(ManagedAgentDeployResult)),
         new RouteMetadata(typeof(AgentDeployRequest), typeof(AgentDeployResult)),
+        new RouteMetadata(typeof(McsAmsAgentDeployRequest), typeof(McsAmsAgentDeployResult)),
     ];
 
     /// <inheritdoc />
     public override IReadOnlyList<UsageRoute> UsageRoutes =>
     [
         new(UsageRoute.Deployment) { Summary = "Deploy an MCS project to a deployment" },
+        new(UsageRoute.Deployment, "--remote", "[--commit-id <commit>]")
+        {
+            Summary = "Deploy a GRS commit through AMS",
+            RequiredFeatures = [FeatureName.AmsMcsAgents],
+        },
         new("--agent-id", "--package-revision", "--target-environment-id", "--deployment-name", "--deployment-type", "--entra-id", "--entra-id-type")
         {
             Summary = "Deploy an AMS package revision",
@@ -78,6 +85,11 @@ public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, 
         if (SelectsAms(input))
         {
             return ValidateAms(input);
+        }
+
+        if (FeatureGate.IsEnabled(services, FeatureName.AmsMcsAgents))
+        {
+            return ValidateMcs(input);
         }
 
         if (!string.IsNullOrWhiteSpace(input.GetString("--commit-id")))
@@ -121,7 +133,40 @@ public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, 
             return InvokeAsync<AgentDeployRequest, AgentDeployResult>(services, BindAms(input), cancellationToken);
         }
 
+        if (input.GetSwitch("--remote"))
+        {
+            return InvokeAsync<McsAmsAgentDeployRequest, McsAmsAgentDeployResult>(services, BindRemote(input), cancellationToken);
+        }
+
         return InvokeAsync<ManagedAgentDeployRequest, ManagedAgentDeployResult>(services, Bind(input), cancellationToken);
+    }
+
+    private static McsAmsAgentDeployRequest BindRemote(ICommandInput input) => new()
+    {
+        Project = input.GetString("--project"),
+        AgentId = input.GetString("--agent-id"),
+        AgentName = input.GetString("--agent-name"),
+        DeploymentId = input.GetString("--deployment-id"),
+        DeploymentName = input.GetString("--deployment-name"),
+        CommitId = input.GetString("--commit-id"),
+        Publish = input.GetSwitch("--publish"),
+        Overwrite = input.GetSwitch("--overwrite"),
+        Async = input.GetSwitch("--async"),
+    };
+
+    private static string? ValidateMcs(ICommandInput input)
+    {
+        if (input.GetSwitch("--remote"))
+        {
+            return string.IsNullOrWhiteSpace(input.GetString("--schema-name")) ? null : "--schema-name applies to a local deploy. Drop it, or drop --remote.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(input.GetString("--commit-id")))
+        {
+            return "--commit-id needs --remote: a local deploy pushes the working folder. Add --remote to deploy a commit from GRS.";
+        }
+
+        return input.GetSwitch("--async") ? "--async needs --remote: a local deploy returns when the push completes." : null;
     }
 
     private static AgentDeployRequest BindAms(ICommandInput input) => new()

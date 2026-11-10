@@ -7,13 +7,14 @@ using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using CliClusterCategory = Microsoft.Agents.Hosting.Cli.Core.Environments.CoreServicesClusterCategory;
+using SyncClusterCategoryValue = Microsoft.CopilotStudio.Sync.CoreServicesClusterCategory;
 
 namespace Microsoft.Agents.Hosting.Cli.CopilotStudio;
 
 /// <summary>Implements maker evaluations over the Copilot Studio control plane's <c>makerevaluations</c> contract.</summary>
 public sealed class MakerEvaluationAdapter : IAgentEvaluationPort, IDisposable
 {
-    private const string DelegatedScope = "api://96ff4394-9197-43aa-b393-6a41652e21f8/user_impersonation";
     private const string ApplicationSource = "Web";
     private const string MigrationQuery = "ApplyV2Migration=true&cli=true";
     private const string ClientQuery = "cli=true";
@@ -23,6 +24,7 @@ public sealed class MakerEvaluationAdapter : IAgentEvaluationPort, IDisposable
 
     private readonly ITokenProvider _tokenProvider;
     private readonly PowerPlatformCloudMap _cloudMap;
+    private readonly SyncClusterCategoryValue _cluster;
     private readonly Func<HttpMessageHandler> _handlerFactory;
     private readonly Lock _gate = new();
 
@@ -30,12 +32,14 @@ public sealed class MakerEvaluationAdapter : IAgentEvaluationPort, IDisposable
 
     /// <summary>Creates the adapter.</summary>
     /// <param name="tokenProvider">Supplies control-plane tokens.</param>
-    /// <param name="cloudMap">Decides which gateways this cloud serves.</param>
+    /// <param name="cloudMap">Names the cloud in a refused gateway's failure.</param>
+    /// <param name="cluster">The cluster of the active ring, which picks the control plane, its token audience and the gateways it serves.</param>
     /// <param name="handlerFactory">Creates the transport, replaced in tests.</param>
-    public MakerEvaluationAdapter(ITokenProvider tokenProvider, PowerPlatformCloudMap cloudMap, Func<HttpMessageHandler>? handlerFactory = null)
+    public MakerEvaluationAdapter(ITokenProvider tokenProvider, PowerPlatformCloudMap cloudMap, CliClusterCategory cluster, Func<HttpMessageHandler>? handlerFactory = null)
     {
         _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
         _cloudMap = cloudMap ?? throw new ArgumentNullException(nameof(cloudMap));
+        _cluster = SyncClusterCategory.For(cluster);
         _handlerFactory = handlerFactory ?? TransportDefaults.CreateRedirectRejectingHandler;
     }
 
@@ -593,9 +597,9 @@ public sealed class MakerEvaluationAdapter : IAgentEvaluationPort, IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(agentId);
 
         var advertised = environment.AgentManagementUrl ?? throw CopilotStudioException.AgentManagementEndpointMissing(environment.EnvironmentId);
-        var endpoint = _cloudMap.RequireTrustedAgentManagementGateway(advertised, $"environment '{environment.EnvironmentId}' Copilot Studio agent-management");
+        var endpoint = ControlPlaneAccess.RequireTrustedGateway(advertised, environment.EnvironmentId, _cloudMap, _cluster);
         var token = AcquiredTokenTenant.Require(
-            await _tokenProvider.AcquireTokenSilentAsync([DelegatedScope], environment.TenantId, cancellationToken).ConfigureAwait(false),
+            await _tokenProvider.AcquireTokenSilentAsync(ControlPlaneAccess.TokenScopes(_cluster), environment.TenantId, cancellationToken).ConfigureAwait(false),
             environment.TenantId);
 
         using var client = new HttpClient(SharedHandler(), disposeHandler: false);

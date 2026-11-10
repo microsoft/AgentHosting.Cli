@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
@@ -116,6 +117,7 @@ internal sealed class CapturingPackageHandler(Func<HttpRequestMessage, HttpRespo
                 ? idempotencyKeys.Single()
                 : null,
             HeaderNames = [.. request.Headers.Select(h => h.Key)],
+            Headers = request.Headers.ToDictionary(header => header.Key, header => string.Join(",", header.Value), StringComparer.OrdinalIgnoreCase),
             ContentType = request.Content?.Headers.ContentType?.MediaType,
             ContentLength = request.Content?.Headers.ContentLength,
             Body = request.Content is null
@@ -157,6 +159,8 @@ internal sealed record CapturedPackageRequest
     public string? ClientRequestId { get; init; }
     public string? IdempotencyKey { get; init; }
     public required IReadOnlyList<string> HeaderNames { get; init; }
+    public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>();
+    public string? IfMatch => Headers.GetValueOrDefault("If-Match");
     public string? ContentType { get; init; }
     public long? ContentLength { get; init; }
     public required byte[] Body { get; init; }
@@ -171,9 +175,16 @@ internal sealed class FakePpapiTokenProvider : ITokenProvider
 {
     public List<string> Resources { get; } = [];
     public List<string?> Tenants { get; } = [];
+    public List<string> RenewedResources { get; } = [];
 
     /// <summary>The permissions the minted token carries; defaults to the publication permission.</summary>
     public string Scopes { get; init; } = PowerPlatformApiPermissions.AppsUpdate;
+
+    public DateTimeOffset ExpiresOn { get; set; } = DateTimeOffset.UnixEpoch.AddYears(60);
+
+    public DateTimeOffset RenewedExpiresOn { get; init; } = DateTimeOffset.UnixEpoch.AddYears(60);
+
+    public Exception? AcquisitionFailure { get; init; }
 
     public Task<TokenAcquisitionResult> AcquireTokenSilentAsync(
         string resource,
@@ -183,12 +194,7 @@ internal sealed class FakePpapiTokenProvider : ITokenProvider
         Resources.Add(resource);
         Tenants.Add(targetTenantId);
 
-        return Task.FromResult(new TokenAcquisitionResult
-        {
-            AccessToken = FakeJwt.Create(audience: resource, tenantId: targetTenantId, scopes: Scopes),
-            TenantId = targetTenantId,
-            ExpiresOn = DateTimeOffset.UnixEpoch.AddYears(60),
-        });
+        return AcquisitionFailure is null ? Task.FromResult(Token(resource, targetTenantId)) : Task.FromException<TokenAcquisitionResult>(AcquisitionFailure);
     }
 
     public Task<TokenAcquisitionResult> AcquireTokenSilentAsync(
@@ -196,6 +202,16 @@ internal sealed class FakePpapiTokenProvider : ITokenProvider
         string? targetTenantId,
         CancellationToken cancellationToken) =>
         AcquireTokenSilentAsync(string.Join(' ', scopes), targetTenantId, cancellationToken);
+
+    public Task<TokenAcquisitionResult> RenewTokenSilentAsync(string resource, string? targetTenantId, CancellationToken cancellationToken)
+    {
+        RenewedResources.Add(resource);
+        ExpiresOn = RenewedExpiresOn;
+
+        return Task.FromResult(Token(resource, targetTenantId));
+    }
+
+    private TokenAcquisitionResult Token(string resource, string? targetTenantId) => new() { AccessToken = FakeJwt.Create(audience: resource, tenantId: targetTenantId, scopes: Scopes), TenantId = targetTenantId, ExpiresOn = ExpiresOn };
 }
 
 /// <summary>
@@ -274,5 +290,61 @@ internal static class FakeHttpResponse
         var response = new HttpResponseMessage(status) { Content = new StringContent(string.Empty) };
         response.Headers.Location = new Uri(location);
         return response;
+    }
+}
+
+internal static class LostAnswer
+{
+    private static readonly HashSet<string> PerAttemptHeaders = new(["x-ms-client-request-id", "Prefer", "Authorization"], StringComparer.OrdinalIgnoreCase);
+
+    public static string[] Triggers { get; } = ["timeout", "transport", "io", "gateway-timeout"];
+
+    public static HttpResponseMessage Of(string trigger) => trigger switch
+    {
+        "timeout" => throw new TaskCanceledException("lost-answer-detail"),
+        "transport" => throw new HttpRequestException("lost-answer-detail"),
+        "io" => throw new IOException("lost-answer-detail"),
+        _ => new HttpResponseMessage(HttpStatusCode.GatewayTimeout) { Content = new StringContent(string.Empty) },
+    };
+
+    public static Func<HttpRequestMessage, HttpResponseMessage> First(string? trigger, Func<HttpResponseMessage> answer)
+    {
+        var attempts = 0;
+        return _ => trigger is not null && attempts++ == 0 ? Of(trigger) : answer();
+    }
+
+    public static string ReportedIds(IReadOnlyList<CapturedPackageRequest> requests) => $"clientRequestId={requests[0].ClientRequestId}, replayClientRequestId={requests[1].ClientRequestId}";
+
+    public static void AssertReplayedOnce(IReadOnlyList<CapturedPackageRequest> requests, string? firstPreference = null)
+    {
+        Assert.Equal(2, requests.Count);
+        var (lost, replay) = (requests[0], requests[1]);
+        Assert.Equal((lost.Method, lost.Uri), (replay.Method, replay.Uri));
+        Assert.Equal(lost.Body, replay.Body);
+        Assert.Equal(Kept(lost), Kept(replay));
+        Assert.Equal((firstPreference, "respond-async"), (lost.Headers.GetValueOrDefault("Prefer"), replay.Headers.GetValueOrDefault("Prefer")));
+        Assert.NotNull(lost.IdempotencyKey);
+        Assert.True(replay.HasAuthorization);
+        Assert.True(Guid.TryParse(replay.ClientRequestId, out _));
+        Assert.NotEqual(lost.ClientRequestId, replay.ClientRequestId);
+    }
+
+    private static IEnumerable<KeyValuePair<string, string>> Kept(CapturedPackageRequest request) => request.Headers.Where(header => !PerAttemptHeaders.Contains(header.Key)).OrderBy(header => header.Key, StringComparer.OrdinalIgnoreCase);
+}
+
+internal static class MultipartBody
+{
+    public static IReadOnlyList<(IReadOnlyDictionary<string, string> Headers, byte[] Content)> Parts(byte[] body)
+    {
+        var text = $"\r\n{Encoding.Latin1.GetString(body)}";
+        var segments = text.Split(text[..text.IndexOf("\r\n", 2, StringComparison.Ordinal)]);
+        Assert.Equal(("", "--\r\n"), (segments[0], segments[^1]));
+        return [.. segments[1..^1].Select(Part)];
+    }
+
+    private static (IReadOnlyDictionary<string, string> Headers, byte[] Content) Part(string segment)
+    {
+        var headersEnd = segment.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        return (segment[2..headersEnd].Split("\r\n").Select(line => line.Split(": ", 2)).ToDictionary(header => header[0], header => header[1], StringComparer.OrdinalIgnoreCase), Encoding.Latin1.GetBytes(segment[(headersEnd + 4)..]));
     }
 }

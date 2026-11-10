@@ -18,7 +18,7 @@ public sealed class LiveTestTargetResolverTests
     {
         using var project = new TemporaryProject();
         var agents = new ThrowingRegistry();
-        var resolver = new LiveTestTargetResolver(agents, agents, new AgentConfigLocator());
+        var resolver = new LiveTestTargetResolver(agents, agents, new AgentConfigLocator(), ManagedAgentFixtures.Identities());
 
         var target = resolver.Resolve(new LiveTestTargetRequest
         {
@@ -53,9 +53,8 @@ public sealed class LiveTestTargetResolverTests
     public void OperationRequestMapsTenantAndTargetSource()
     {
         var agents = new ThrowingRegistry();
-        var resolver = new LiveTestTargetResolver(agents, agents, new AgentConfigLocator());
 
-        var target = resolver.Resolve(new LiveTestRequest
+        var target = new LiveTestTargetResolver(agents, agents, new AgentConfigLocator(), ManagedAgentFixtures.Identities()).Resolve(new LiveTestRequest
         {
             SchemaName = "Bot01",
             EnvironmentId = "A47151CF-4F34-488F-B377-EBE84E17B478",
@@ -74,7 +73,7 @@ public sealed class LiveTestTargetResolverTests
     public void InvalidTenantIsRejectedBeforeAuthenticationWithoutEchoingValue()
     {
         var agents = new ThrowingRegistry();
-        var resolver = new LiveTestTargetResolver(agents, agents, new AgentConfigLocator());
+        var resolver = new LiveTestTargetResolver(agents, agents, new AgentConfigLocator(), ManagedAgentFixtures.Identities());
 
         var explicitFailure = Assert.Throws<LiveTestTargetResolutionException>(() => resolver.Resolve(new LiveTestTargetRequest
         {
@@ -101,7 +100,7 @@ public sealed class LiveTestTargetResolverTests
             IsDefault = true,
         });
 
-        var configuredFailure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(store, store, new AgentConfigLocator()).Resolve(new LiveTestTargetRequest
+        var configuredFailure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(store, store, new AgentConfigLocator(), ManagedAgentFixtures.Identities()).Resolve(new LiveTestTargetRequest
         {
             Project = project.Root,
             DeploymentId = "slot-1",
@@ -130,7 +129,7 @@ public sealed class LiveTestTargetResolverTests
             HomeEnvironmentId = "home-environment",
         });
 
-        var target = new LiveTestTargetResolver(store, store, new AgentConfigLocator()).Resolve(new LiveTestTargetRequest
+        var target = new LiveTestTargetResolver(store, store, new AgentConfigLocator(), ManagedAgentFixtures.Identities()).Resolve(new LiveTestTargetRequest
         {
             Project = project.Root,
             AgentId = "agent-1",
@@ -154,7 +153,7 @@ public sealed class LiveTestTargetResolverTests
         store.Add(project.Root, Agent() with { McsSchemaName = "schema-one" });
         store.Add(project.Root, Deployment("slot-test", name: "test", stage: DeploymentStages.Test, environmentId: "target-test"));
 
-        var target = new LiveTestTargetResolver(store, store, new AgentConfigLocator()).Resolve(new LiveTestTargetRequest
+        var target = new LiveTestTargetResolver(store, store, new AgentConfigLocator(), ManagedAgentFixtures.Identities()).Resolve(new LiveTestTargetRequest
         {
             Project = project.Root,
             AgentName = "Contoso Helpdesk",
@@ -188,7 +187,7 @@ public sealed class LiveTestTargetResolverTests
             IsDefault = true,
         });
 
-        var target = new LiveTestTargetResolver(store, store, new AgentConfigLocator()).Resolve(new LiveTestTargetRequest
+        var target = new LiveTestTargetResolver(store, store, new AgentConfigLocator(), ManagedAgentFixtures.Identities()).Resolve(new LiveTestTargetRequest
         {
             Project = project.Root,
             SchemaName = "schema-two",
@@ -213,7 +212,7 @@ public sealed class LiveTestTargetResolverTests
         };
         var registry = new FixedRegistry([agent], deployments);
 
-        var failure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(registry, registry, new AgentConfigLocator()).Resolve(new LiveTestTargetRequest
+        var failure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(registry, registry, new AgentConfigLocator(), ManagedAgentFixtures.Identities()).Resolve(new LiveTestTargetRequest
         {
             Project = project.Root,
             AgentId = "agent-1",
@@ -233,7 +232,7 @@ public sealed class LiveTestTargetResolverTests
         {
             IsDefault = true,
         });
-        var resolver = new LiveTestTargetResolver(store, store, new AgentConfigLocator());
+        var resolver = new LiveTestTargetResolver(store, store, new AgentConfigLocator(), ManagedAgentFixtures.Identities());
 
         var environmentFailure = Assert.Throws<LiveTestTargetResolutionException>(() => resolver.Resolve(new LiveTestTargetRequest
         {
@@ -265,12 +264,12 @@ public sealed class LiveTestTargetResolverTests
         quarantinedStore.Add(quarantinedProject.Root, Agent() with { McsSchemaName = "schema-one" });
         quarantinedStore.Add(quarantinedProject.Root, Deployment() with { IsQuarantined = true });
 
-        var disabledFailure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(disabledStore, disabledStore, new AgentConfigLocator()).Resolve(new LiveTestTargetRequest
+        var disabledFailure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(disabledStore, disabledStore, new AgentConfigLocator(), ManagedAgentFixtures.Identities()).Resolve(new LiveTestTargetRequest
         {
             Project = disabledProject.Root,
             DeploymentId = "slot-1",
         }));
-        var quarantinedFailure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(quarantinedStore, quarantinedStore, new AgentConfigLocator()).Resolve(new LiveTestTargetRequest
+        var quarantinedFailure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(quarantinedStore, quarantinedStore, new AgentConfigLocator(), ManagedAgentFixtures.Identities()).Resolve(new LiveTestTargetRequest
         {
             Project = quarantinedProject.Root,
             DeploymentId = "slot-1",
@@ -290,7 +289,7 @@ public sealed class LiveTestTargetResolverTests
         store.Add(project.Root, Deployment("slot-1", environmentId: "target") with { IsDefault = true });
         store.Add(project.Root, Deployment("slot-2", agentId: "agent-2", name: "other", stage: DeploymentStages.Test, environmentId: "target-2") with { IsDefault = true });
 
-        var resolver = new LiveTestTargetResolver(store, store, new AgentConfigLocator());
+        var resolver = new LiveTestTargetResolver(store, store, new AgentConfigLocator(), ManagedAgentFixtures.Identities());
 
         var nameFailure = Assert.Throws<LiveTestTargetResolutionException>(() => resolver.Resolve(new LiveTestTargetRequest
         {
@@ -320,7 +319,7 @@ public sealed class LiveTestTargetResolverTests
         store.Add(project.Root, Deployment("slot-1", environmentId: "target") with { IsDefault = true });
         store.Add(project.Root, Deployment("slot-2", agentId: "agent-2", name: "other", stage: DeploymentStages.Test, environmentId: "target-2") with { IsDefault = true });
 
-        var resolver = new LiveTestTargetResolver(store, store, new AgentConfigLocator());
+        var resolver = new LiveTestTargetResolver(store, store, new AgentConfigLocator(), ManagedAgentFixtures.Identities());
 
         var nameFailure = Assert.Throws<LiveTestTargetResolutionException>(() => resolver.Resolve(new LiveTestTargetRequest
         {
@@ -358,7 +357,7 @@ public sealed class LiveTestTargetResolverTests
             HomeEnvironmentId = "home-environment",
         });
 
-        var resolver = new LiveTestTargetResolver(store, store, new AgentConfigLocator());
+        var resolver = new LiveTestTargetResolver(store, store, new AgentConfigLocator(), ManagedAgentFixtures.Identities());
         var failure = Assert.Throws<LiveTestTargetResolutionException>(() => resolver.Resolve(new LiveTestTargetRequest
         {
             Project = project.Root,
@@ -383,7 +382,7 @@ public sealed class LiveTestTargetResolverTests
     public void UnsupportedCloudAndUnsafeLocatorFailBeforeRegistryAccess()
     {
         var agents = new ThrowingRegistry();
-        var resolver = new LiveTestTargetResolver(agents, agents, new AgentConfigLocator());
+        var resolver = new LiveTestTargetResolver(agents, agents, new AgentConfigLocator(), ManagedAgentFixtures.Identities());
 
         var cloudFailure = Assert.Throws<LiveTestTargetResolutionException>(() => resolver.Resolve(new LiveTestTargetRequest
         {
@@ -420,7 +419,7 @@ public sealed class LiveTestTargetResolverTests
             IsDefault = true,
         });
 
-        var failure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(store, store, new AgentConfigLocator()).Resolve(new LiveTestTargetRequest
+        var failure = Assert.Throws<LiveTestTargetResolutionException>(() => new LiveTestTargetResolver(store, store, new AgentConfigLocator(), ManagedAgentFixtures.Identities()).Resolve(new LiveTestTargetRequest
         {
             Project = project.Root,
             AgentId = "agent-1",

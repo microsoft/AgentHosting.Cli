@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "McsSourceDeploymentNotReady",
+    "message": "Nothing has been deployed to the 'Test' stage of this agent, so there is no commit to deploy to the 'Prod' stage. Deploy to 'contoso-test' first."
+  }
+}

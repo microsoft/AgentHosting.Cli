@@ -6,6 +6,8 @@ using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
+using Microsoft.CopilotStudio.McsCore;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -77,7 +79,7 @@ public sealed class ConnectionReadinessPlannerTests
     {
         var view = ManagedAgentFixtures.Reference("cr_teams", "shared_teams", null, ManagedAgentFixtures.Candidate("conn-a"));
 
-        Assert.Equal(ConnectionReadinessPlanner.Unbound, ConnectionReadinessPlanner.Plan(view, null).State);
+        Assert.Equal(ConnectionReadinessPlanner.Unbound, ManagedAgentFixtures.Rules.Plan(view, null).State);
     }
 
     [Fact]
@@ -180,7 +182,7 @@ public sealed class ConnectionReadinessPlannerTests
     {
         var view = ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null, ManagedAgentFixtures.Candidate("conn-1"));
 
-        var observed = ConnectionReadinessPlanner.Observe(view);
+        var observed = ManagedAgentFixtures.Observe(view);
 
         Assert.Equal(ConnectionReadinessPlanner.Unbound, observed.State);
         Assert.Null(observed.ConnectionId);
@@ -193,7 +195,7 @@ public sealed class ConnectionReadinessPlannerTests
     {
         var view = ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null, ManagedAgentFixtures.Candidate("conn-1"));
 
-        Assert.Equal(ConnectionReadinessPlanner.Unbound, ConnectionReadinessPlanner.Observe(view).State);
+        Assert.Equal(ConnectionReadinessPlanner.Unbound, ManagedAgentFixtures.Observe(view).State);
         Assert.Equal(ConnectionReadinessPlanner.Bound, ManagedAgentFixtures.Plan(view).State);
         Assert.Equal("conn-1", ManagedAgentFixtures.Plan(view).ConnectionId);
     }
@@ -203,8 +205,8 @@ public sealed class ConnectionReadinessPlannerTests
     {
         var view = ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null, ManagedAgentFixtures.Candidate("conn-1")) with { IsDeclared = false };
 
-        Assert.Equal(ConnectionReadinessPlanner.Unbound, ConnectionReadinessPlanner.Observe(view).State);
-        Assert.False(ConnectionReadinessPlanner.IsReady([ConnectionReadinessPlanner.Observe(view)]));
+        Assert.Equal(ConnectionReadinessPlanner.Unbound, ManagedAgentFixtures.Observe(view).State);
+        Assert.False(ConnectionReadinessPlanner.IsReady([ManagedAgentFixtures.Observe(view)]));
     }
 
     [Fact]
@@ -218,10 +220,11 @@ public sealed class ConnectionReadinessPlannerTests
 
         var reported = WorkflowStateProjection.FromActivation(
             workflows,
-            new CopilotWorkflowActivation { ObservedById = new Dictionary<string, bool> { ["wf-1"] = true, ["wf-2"] = false } });
+            new CopilotWorkflowActivation { ObservedById = new Dictionary<string, bool> { ["wf-1"] = true, ["wf-2"] = false } },
+            ManagedAgentFixtures.StateRules);
 
-        Assert.Equal(WorkflowStateProjection.Activated, reported[0].State);
-        Assert.Equal(WorkflowStateProjection.Draft, reported[1].State);
+        Assert.Equal(CopilotStudioStates.Activated, reported[0].State);
+        Assert.Equal(CopilotStudioStates.Draft, reported[1].State);
     }
 
     [Fact]
@@ -252,9 +255,10 @@ public sealed class ConnectionReadinessPlannerTests
             {
                 ObservedById = new Dictionary<string, bool> { ["wf-1"] = true },
                 Observed = new Dictionary<string, bool> { ["Renamed"] = false },
-            });
+            },
+            ManagedAgentFixtures.StateRules);
 
-        Assert.Equal(WorkflowStateProjection.Activated, Assert.Single(reported).State);
+        Assert.Equal(CopilotStudioStates.Activated, Assert.Single(reported).State);
     }
 
     [Fact]
@@ -267,10 +271,10 @@ public sealed class ConnectionReadinessPlannerTests
             new() { WorkflowId = "wf-3", DisplayName = "Neither" },
         ];
 
-        var reported = WorkflowStateProjection.FromCache(workflows, new Dictionary<string, int>());
+        var reported = WorkflowStateProjection.FromCache(workflows, new Dictionary<string, int>(), ManagedAgentFixtures.StateRules);
 
         Assert.Equal(
-            [WorkflowStateProjection.Activated, WorkflowStateProjection.Draft, WorkflowStateProjection.Unknown],
+            [CopilotStudioStates.Activated, CopilotStudioStates.Draft, CopilotStudioStates.Unknown],
             reported.Select(workflow => workflow.State));
     }
 
@@ -279,9 +283,7 @@ public sealed class ConnectionReadinessPlannerTests
     {
         IReadOnlyList<CopilotWorkflowView> workflows = [new() { WorkflowId = "wf-1", DisplayName = "Drifted", IsActivatedLocally = true }];
 
-        var reported = WorkflowStateProjection.FromCache(workflows, new Dictionary<string, int> { ["wf-1"] = WorkflowStateCache.Draft });
-
-        Assert.Equal(WorkflowStateProjection.Draft, Assert.Single(reported).State);
+        Assert.Equal(CopilotStudioStates.Draft, Assert.Single(WorkflowStateProjection.FromCache(workflows, new Dictionary<string, int> { ["wf-1"] = WorkflowStateCache.Draft }, ManagedAgentFixtures.StateRules)).State);
     }
 
     [Fact]
@@ -289,9 +291,7 @@ public sealed class ConnectionReadinessPlannerTests
     {
         IReadOnlyList<CopilotWorkflowView> workflows = [new() { WorkflowId = "wf-1", DisplayName = "Running", IsActivatedLocally = true }];
 
-        var reported = WorkflowStateProjection.FromActivation(workflows, new CopilotWorkflowActivation());
-
-        Assert.Equal(WorkflowStateProjection.Activated, Assert.Single(reported).State);
+        Assert.Equal(CopilotStudioStates.Activated, Assert.Single(WorkflowStateProjection.FromActivation(workflows, new CopilotWorkflowActivation(), ManagedAgentFixtures.StateRules)).State);
         Assert.Empty(WorkflowStateProjection.ToCacheEntries(workflows, new CopilotWorkflowActivation()));
     }
 
@@ -325,7 +325,7 @@ public sealed class ConnectionReadinessPlannerTests
     [Fact]
     public void Observe_AReferenceWithNoConnector_IsNotActionable()
     {
-        var observed = ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_orphan", string.Empty) with { IsDeclared = false });
+        var observed = ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_orphan", string.Empty) with { IsDeclared = false });
 
         Assert.Equal(ConnectionReadinessPlanner.Undeclared, observed.State);
         Assert.False(ConnectionReadinessPlanner.IsActionable(observed));
@@ -488,7 +488,7 @@ public sealed class ConnectionReadinessPlannerTests
             ManagedAgentFixtures.Reference("cr_undeclared", "shared_msnweather") with { IsDeclared = false },
         ];
 
-        var plan = views.Select(ConnectionReadinessPlanner.Observe).ToList();
+        var plan = views.Select(ManagedAgentFixtures.Observe).ToList();
         var groups = ConnectionSelectionScope.Group(plan, [.. Enumerable.Range(0, plan.Count)]);
 
         Assert.All(groups, group => Assert.Contains(
@@ -499,7 +499,7 @@ public sealed class ConnectionReadinessPlannerTests
     [Fact]
     public void Status_AVerifiedBindingIsConnected()
     {
-        var plan = new[] { ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_bound", "shared_teams", "conn-1")) };
+        var plan = new[] { ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_bound", "shared_teams", "conn-1")) };
         var group = Assert.Single(ConnectionSelectionScope.Group(plan, [0]));
 
         Assert.Equal(ConnectionSelectionScope.Connected, ConnectionSelectionScope.Status(plan, group));
@@ -511,7 +511,7 @@ public sealed class ConnectionReadinessPlannerTests
         var view = ManagedAgentFixtures.Reference("cr_sql", "shared_sql", "conn-a", ManagedAgentFixtures.Candidate("conn-b"), ManagedAgentFixtures.Candidate("conn-a"));
 
         Assert.Empty(ManagedAgentFixtures.Plan(view).Candidates);
-        Assert.Equal(["conn-a", "conn-b"], ConnectionReadinessPlanner.Connected(view).Select(candidate => candidate.ConnectionId));
+        Assert.Equal(["conn-a", "conn-b"], ManagedAgentFixtures.Rules.Connected(view.Candidates).Select(candidate => candidate.ConnectionId));
     }
 
     [Fact]
@@ -519,7 +519,7 @@ public sealed class ConnectionReadinessPlannerTests
     {
         var view = ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null, ManagedAgentFixtures.Candidate("conn-a"), ManagedAgentFixtures.Candidate("conn-broken", "Error"));
 
-        Assert.Equal(["conn-a"], ConnectionReadinessPlanner.Connected(view).Select(candidate => candidate.ConnectionId));
+        Assert.Equal(["conn-a"], ManagedAgentFixtures.Rules.Connected(view.Candidates).Select(candidate => candidate.ConnectionId));
     }
 
     [Fact]
@@ -577,13 +577,15 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
         Candidates = candidates,
     };
 
+    private static AgentDeploymentWorkflowItem Workflow(string state) => new() { WorkflowId = "wf-1", DisplayName = "SubmitExpense", State = state, PortalLabel = ManagedAgentFixtures.StateRules.PortalLabel(state) };
+
     [Fact]
     public void Options_AConnectionCreatedForOneReferenceIsOfferedToTheNextOnTheSameConnector()
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_teams", null)),
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_teams", null)),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_teams", null)),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_teams", null)),
         };
         var groups = ConnectionSelectionScope.Group(plan, [0, 1], byReference: true);
 
@@ -600,8 +602,8 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams", null)),
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null)),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams", null)),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null)),
         };
         var groups = ConnectionSelectionScope.Group(plan, [0, 1], byReference: true);
         var sql = groups.Single(group => group.ConnectorId == "shared_sql");
@@ -617,7 +619,7 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams", "conn-old", ManagedAgentFixtures.Candidate("conn-old"), ManagedAgentFixtures.Candidate("conn-new"))),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams", "conn-old", ManagedAgentFixtures.Candidate("conn-old"), ManagedAgentFixtures.Candidate("conn-new"))),
         };
         var group = Assert.Single(ConnectionSelectionScope.Group(plan, [0]));
 
@@ -634,7 +636,7 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams", "conn-a", ManagedAgentFixtures.Candidate("conn-a"), ManagedAgentFixtures.Candidate("conn-b"))),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams", "conn-a", ManagedAgentFixtures.Candidate("conn-a"), ManagedAgentFixtures.Candidate("conn-b"))),
         };
         var group = Assert.Single(ConnectionSelectionScope.Group(plan, [0]));
 
@@ -648,7 +650,7 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams", "conn-old", ManagedAgentFixtures.Candidate("conn-new"))),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams", "conn-old", ManagedAgentFixtures.Candidate("conn-new"))),
         };
         var group = Assert.Single(ConnectionSelectionScope.Group(plan, [0]));
 
@@ -662,7 +664,7 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     [Fact]
     public void BoundConnections_AnUnboundConnectorHasNone()
     {
-        var plan = new List<ConnectionPlanItem> { ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams")) };
+        var plan = new List<ConnectionPlanItem> { ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams")) };
 
         Assert.Empty(ConnectionSelectionScope.BoundConnections(plan, Assert.Single(ConnectionSelectionScope.Group(plan, [0]))));
     }
@@ -672,7 +674,7 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams", "conn-old", ManagedAgentFixtures.Candidate("conn-new"))),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_teams", "shared_teams", "conn-old", ManagedAgentFixtures.Candidate("conn-new"))),
         };
         var groups = ConnectionSelectionScope.Group(plan, [0]);
 
@@ -686,9 +688,9 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_sql", "conn-1")),
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_sql")),
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_three", "shared_sql")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_sql", "conn-1")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_sql")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_three", "shared_sql")),
         };
 
         Assert.Equal("connected (1), not connected (2)", ConnectionSelectionScope.Status(plan, Assert.Single(ConnectionSelectionScope.Group(plan, [0, 1, 2]))));
@@ -699,8 +701,8 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_sql", "conn-1")),
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_sql", "conn-1")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_sql", "conn-1")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_sql", "conn-1")),
         };
 
         Assert.Equal(ConnectionSelectionScope.Connected, ConnectionSelectionScope.Status(plan, Assert.Single(ConnectionSelectionScope.Group(plan, [0, 1]))));
@@ -711,8 +713,8 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_sql")),
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_sql")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_sql")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_sql")),
         };
 
         Assert.Equal(ConnectionSelectionScope.NotConnected, ConnectionSelectionScope.Status(plan, Assert.Single(ConnectionSelectionScope.Group(plan, [0, 1]))));
@@ -723,8 +725,8 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_sql")),
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_sql")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_sql")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_sql")),
         };
 
         var group = Assert.Single(ConnectionSelectionScope.Group(plan, [0, 1]));
@@ -738,8 +740,8 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_sql")),
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_sql")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_one", "shared_sql")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_two", "shared_sql")),
         };
 
         var groups = ConnectionSelectionScope.Group(plan, [0, 1], byReference: true);
@@ -754,8 +756,8 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var plan = new List<ConnectionPlanItem>
         {
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_bound", "shared_sql", "conn-1")),
-            ConnectionReadinessPlanner.Observe(ManagedAgentFixtures.Reference("cr_open", "shared_sql")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_bound", "shared_sql", "conn-1")),
+            ManagedAgentFixtures.Observe(ManagedAgentFixtures.Reference("cr_open", "shared_sql")),
         };
 
         var groups = ConnectionSelectionScope.Group(plan, [0, 1], byReference: true);
@@ -895,11 +897,11 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var result = Result(Item(ConnectionReadinessPlanner.Bound, "conn-1")) with
         {
-            Workflows = [new AgentDeploymentWorkflowItem { WorkflowId = "wf-1", DisplayName = "SubmitExpense", State = WorkflowStateProjection.Unknown }],
+            Workflows = [Workflow(CopilotStudioStates.Unknown)],
         };
 
         Assert.Contains(result.ToTextLines(), line => Cells(line) is ["SubmitExpense", "unknown"]);
-        Assert.Equal(WorkflowStateProjection.Unknown, Assert.Single(result.Workflows).State);
+        Assert.Equal(CopilotStudioStates.Unknown, Assert.Single(result.Workflows).State);
     }
 
     [Fact]
@@ -907,7 +909,7 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var result = Result(Item(ConnectionReadinessPlanner.Bound, "conn-1")) with
         {
-            Workflows = [new AgentDeploymentWorkflowItem { WorkflowId = "wf-1", DisplayName = "SubmitExpense", State = WorkflowStateProjection.Suspended }],
+            Workflows = [Workflow(CopilotStudioStates.Suspended)],
         };
 
         Assert.Contains(result.ToTextLines(), line => Cells(line) is ["SubmitExpense", "draft"]);
@@ -918,12 +920,12 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var result = Result(Item(ConnectionReadinessPlanner.Bound, "conn-1")) with
         {
-            Workflows = [new AgentDeploymentWorkflowItem { WorkflowId = "wf-1", DisplayName = "SubmitExpense", State = WorkflowStateProjection.Activated }],
+            Workflows = [Workflow(CopilotStudioStates.Activated)],
         };
 
         Assert.Contains(result.ToTextLines(), line => Cells(line) is ["SubmitExpense", "published"]);
-        Assert.DoesNotContain(result.ToTextLines(), line => line.Contains(WorkflowStateProjection.Activated, StringComparison.Ordinal));
-        Assert.Equal(WorkflowStateProjection.Activated, Assert.Single(result.Workflows).State);
+        Assert.DoesNotContain(result.ToTextLines(), line => line.Contains(CopilotStudioStates.Activated, StringComparison.Ordinal));
+        Assert.Equal(CopilotStudioStates.Activated, Assert.Single(result.Workflows).State);
     }
 
     [Fact]
@@ -931,11 +933,11 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var result = Result(Item(ConnectionReadinessPlanner.Bound, "conn-1")) with
         {
-            Workflows = [new AgentDeploymentWorkflowItem { WorkflowId = "wf-1", DisplayName = "SubmitExpense", State = WorkflowStateProjection.Suspended }],
+            Workflows = [Workflow(CopilotStudioStates.Suspended)],
         };
 
         Assert.Contains(result.ToTextLines(), line => Cells(line) is ["SubmitExpense", "draft"]);
-        Assert.Equal(WorkflowStateProjection.Suspended, Assert.Single(result.Workflows).State);
+        Assert.Equal(CopilotStudioStates.Suspended, Assert.Single(result.Workflows).State);
     }
 
     [Fact]
@@ -990,7 +992,7 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
     {
         var result = Result(Item(ConnectionReadinessPlanner.Bound, "conn-1")) with
         {
-            Workflows = [new AgentDeploymentWorkflowItem { WorkflowId = "wf-1", DisplayName = "SubmitExpense", State = "draft" }],
+            Workflows = [Workflow("draft")],
         };
 
         var lines = result.ToTextLines();
@@ -1073,6 +1075,7 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
                 FilePath = "workflows/SubmitExpense/workflow.json",
                 ConnectionReferences = ["cr_sql"],
                 State = "draft",
+                PortalLabel = ManagedAgentFixtures.StateRules.PortalLabel("draft"),
             }],
         };
 
@@ -1094,42 +1097,44 @@ public sealed class AgentDeploymentConnectionResultRenderingTests
 
 public sealed class WorkflowSettlementTests
 {
-    private static ConnectionPlanItem Bound(string logicalName) =>
-        new(new CopilotConnectionView { LogicalName = logicalName, ConnectorId = "shared_teams" }, ConnectionReadinessPlanner.Bound, "conn-1", []);
+    private static CopilotWorkflowView Workflow() => new() { WorkflowId = "wf-1", DisplayName = "Cloned", ConnectionReferences = ["cr_teams"], CanEnable = true };
 
     [Fact]
     public void NewlyStartable_AWorkflowWhoseActivationIsUnknown_IsStarted()
     {
-        var settlement = new WorkflowSettlement([new CopilotWorkflowView { WorkflowId = "wf-1", DisplayName = "Cloned", ConnectionReferences = ["cr_teams"] }]);
-
-        Assert.Equal(["wf-1"], settlement.NewlyStartable([Bound("cr_teams")]).Select(change => change.WorkflowId));
+        Assert.Equal(["wf-1"], new WorkflowSettlement().NewlyStartable([Workflow()]).Select(change => change.WorkflowId));
     }
 
     [Fact]
     public void NewlyStartable_AWorkflowTheWorkspaceRecordsAsRunning_IsLeftAlone()
     {
-        var settlement = new WorkflowSettlement([new CopilotWorkflowView { WorkflowId = "wf-1", DisplayName = "Running", ConnectionReferences = ["cr_teams"], IsActivatedLocally = true }]);
-
-        Assert.Empty(settlement.NewlyStartable([Bound("cr_teams")]));
+        Assert.Empty(new WorkflowSettlement().NewlyStartable([Workflow() with { IsActivatedLocally = true }]));
     }
 
     [Fact]
-    public void NewlyStartable_AWorkflowWithAnUnboundReference_IsNotStarted()
+    public void NewlyStartable_AWorkflowTheLibraryJudgesUnableToStart_IsNotStarted()
     {
-        var settlement = new WorkflowSettlement([new CopilotWorkflowView { WorkflowId = "wf-1", DisplayName = "Cloned", ConnectionReferences = ["cr_teams", "cr_sql"] }]);
-
-        Assert.Empty(settlement.NewlyStartable([Bound("cr_teams")]));
+        Assert.Empty(new WorkflowSettlement().NewlyStartable([Workflow() with { CanEnable = false }]));
     }
 
     [Fact]
     public void NewlyStartable_AWorkflowThisRunAlreadyStarted_IsNotStartedAgain()
     {
-        var settlement = new WorkflowSettlement([new CopilotWorkflowView { WorkflowId = "wf-1", DisplayName = "Cloned", ConnectionReferences = ["cr_teams"] }]);
-        var requested = settlement.NewlyStartable([Bound("cr_teams")]);
+        var settlement = new WorkflowSettlement();
 
-        settlement.Record(new CopilotWorkflowActivation { Activated = ["Cloned"] }, requested);
+        settlement.Record(new CopilotWorkflowActivation { Activated = ["Cloned"] }, settlement.NewlyStartable([Workflow()]));
 
-        Assert.Empty(settlement.NewlyStartable([Bound("cr_teams")]));
+        Assert.Empty(settlement.NewlyStartable([Workflow()]));
+    }
+
+    [Fact]
+    public void NewlyStartable_AWorkflowTheServiceRefusedThisRun_IsNotAskedAgain()
+    {
+        var settlement = new WorkflowSettlement();
+
+        settlement.Record(new CopilotWorkflowActivation { Refused = ["Workflow 'Cloned' was kept as a draft."] }, settlement.NewlyStartable([Workflow()]));
+
+        Assert.Empty(settlement.NewlyStartable([Workflow() with { IsActivatedLocally = false }]));
     }
 }
 
@@ -1396,6 +1401,7 @@ public sealed class AgentDeploymentConnectionServiceTests
                 catalog ?? new FakeCopilotCatalogPort { ResolveReturns = "bot-1" },
                 ManagedAgentFixtures.WorkflowWorkspace()),
             connections,
+            ManagedAgentFixtures.Rules,
             new ConnectionBindingCoordinator(
                 selectionPrompt,
                 new ConnectionCreationFlow(
@@ -1403,6 +1409,7 @@ public sealed class AgentDeploymentConnectionServiceTests
                     consentFlow ?? new ScriptedConsentFlow { Throws = true })),
             selectionPrompt,
             workflowStates ?? ManagedAgentFixtures.WorkflowStates(),
+            ManagedAgentFixtures.StateRules,
             ManagedAgentFixtures.Principals(),
             CoreServicesClusterCategory.Prod);
     }
@@ -1416,7 +1423,9 @@ public sealed class AgentDeploymentConnectionServiceTests
                 catalog ?? new FakeCopilotCatalogPort { ResolveReturns = "bot-1" },
                 ManagedAgentFixtures.WorkflowWorkspace()),
             connections,
+            ManagedAgentFixtures.Rules,
             workflowStates ?? ManagedAgentFixtures.WorkflowStates(),
+            ManagedAgentFixtures.StateRules,
             CoreServicesClusterCategory.Prod);
 
     private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) Deployed(bool deployed = true)
@@ -1465,7 +1474,7 @@ public sealed class AgentDeploymentConnectionServiceTests
             new AgentDeploymentConnectionShowRequest { AgentId = "agent-1", DeploymentName = "dev" },
             CancellationToken.None);
 
-        var plan = connections.Views.Select(ConnectionReadinessPlanner.Observe).ToArray();
+        var plan = connections.Views.Select(ManagedAgentFixtures.Observe).ToArray();
         var group = Assert.Single(ConnectionSelectionScope.Group(plan, [0, 1]));
 
         Assert.Equal(ConnectionSelectionScope.Status(plan, group), Assert.Single(result.Connections.Select(item => item.ConnectorStatus).Distinct()));
@@ -1622,7 +1631,7 @@ public sealed class AgentDeploymentConnectionServiceTests
             new AgentDeploymentConnectionShowRequest { AgentId = "agent-1", DeploymentName = "dev" },
             CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Unknown, Assert.Single(result.Workflows).State);
+        Assert.Equal(CopilotStudioStates.Unknown, Assert.Single(result.Workflows).State);
     }
 
     [Fact]
@@ -1640,7 +1649,7 @@ public sealed class AgentDeploymentConnectionServiceTests
         states.Write(connections.Directories[0], "env-1", new Dictionary<string, int> { ["wf-1"] = WorkflowStateCache.Activated });
         var result = await Reader(store, connections, workflowStates: states).ShowAsync(request, CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Activated, Assert.Single(result.Workflows).State);
+        Assert.Equal(CopilotStudioStates.Activated, Assert.Single(result.Workflows).State);
         Assert.True(result.WorkflowsReady);
     }
 
@@ -1659,7 +1668,7 @@ public sealed class AgentDeploymentConnectionServiceTests
         states.Write(connections.Directories[0], "env-other", new Dictionary<string, int> { ["wf-1"] = WorkflowStateCache.Activated });
         var result = await Reader(store, connections, workflowStates: states).ShowAsync(request, CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Unknown, Assert.Single(result.Workflows).State);
+        Assert.Equal(CopilotStudioStates.Unknown, Assert.Single(result.Workflows).State);
     }
 
     [Fact]
@@ -1927,7 +1936,7 @@ public sealed class AgentDeploymentConnectionServiceTests
             CancellationToken.None);
 
         Assert.Empty(states.Read(connections.Directories[0], "env-1"));
-        Assert.DoesNotContain(result.Workflows, workflow => workflow.State == WorkflowStateProjection.Activated);
+        Assert.DoesNotContain(result.Workflows, workflow => workflow.State == CopilotStudioStates.Activated);
         Assert.False(result.WorkflowsReady);
     }
 
@@ -2047,7 +2056,7 @@ public sealed class AgentDeploymentConnectionServiceTests
 
         Assert.Equal([WorkflowStateCache.Activated], observed.Values);
         Assert.DoesNotContain("Unanswered", observed.Keys);
-        Assert.Equal(WorkflowStateProjection.Unknown, result.Workflows.Single(workflow => workflow.DisplayName == "Unanswered").State);
+        Assert.Equal(CopilotStudioStates.Unknown, result.Workflows.Single(workflow => workflow.DisplayName == "Unanswered").State);
         Assert.False(result.WorkflowsReady);
     }
 
@@ -2814,7 +2823,7 @@ public sealed class AgentDeploymentConnectionServiceTests
     {
         using var workspace = new TemporaryWorkspace(withProjectFile: false);
         using var scope = new CurrentDirectoryScope(workspace.Root);
-        workspace.AddFile(Path.Combine("Agent One", AgentConfigLocator.ProjectSettingsFileName), "displayName: \"Agent One\"\nschemaName: \"con_one\"\n");
+        workspace.AddFile(Path.Combine("Agent One", WorkspaceFileNames.Settings), "displayName: \"Agent One\"\nschemaName: \"con_one\"\n");
         var store = ManagedAgentFixtures.Store();
         store.Add(workspace.Root, ManagedAgentFixtures.Agent() with { AgentLocation = "Agent One" });
         store.Add(workspace.Root, ManagedAgentFixtures.Deployment(lastDeployedTime: ManagedAgentFixtures.Now));
@@ -2849,7 +2858,7 @@ public sealed class AgentDeploymentConnectionServiceTests
     {
         using var workspace = new TemporaryWorkspace(withProjectFile: false);
         using var scope = new CurrentDirectoryScope(workspace.Root);
-        workspace.AddFile(Path.Combine("Agent One", AgentConfigLocator.ProjectSettingsFileName), "displayName: \"Agent One\"\nschemaName: \"con_nested\"\n");
+        workspace.AddFile(Path.Combine("Agent One", WorkspaceFileNames.Settings), "displayName: \"Agent One\"\nschemaName: \"con_nested\"\n");
         var store = ManagedAgentFixtures.Store();
         store.Add(workspace.Root, ManagedAgentFixtures.Agent() with { AgentLocation = "Agent One" });
         store.Add(workspace.Root, ManagedAgentFixtures.Deployment(lastDeployedTime: ManagedAgentFixtures.Now));
@@ -3336,6 +3345,32 @@ public sealed class AgentDeploymentConnectionServiceTests
 
         Assert.Equal(["wf-sql"], connections.StateChanges.Select(change => change.WorkflowId));
         Assert.Contains("Enabling 1 workflow…", prompt.Reported);
+    }
+
+    [Fact]
+    public async Task Update_SettlingOneConnectorAtATime_NeverAsksAgainForAWorkflowThisRunStarted()
+    {
+        var (workspace, store) = Deployed();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var connections = new FakeConnectionPort();
+        connections.Views.Add(ManagedAgentFixtures.Reference("cr_sql", "shared_sql", null, ManagedAgentFixtures.Candidate("conn-sql")));
+        connections.Views.Add(ManagedAgentFixtures.Reference("cr_teams", "shared_teams", null, ManagedAgentFixtures.Candidate("conn-teams", owner: "somebody@contoso.com")));
+        connections.Workflows.Add(new CopilotWorkflowView { WorkflowId = "wf-sql", DisplayName = "SqlOnly", ConnectionReferences = ["cr_sql"] });
+        connections.Workflows.Add(new CopilotWorkflowView { WorkflowId = "wf-both", DisplayName = "NeedsBoth", ConnectionReferences = ["cr_sql", "cr_teams"] });
+        connections.RefusedWorkflows.Add("Workflow 'SqlOnly' was kept as a draft.");
+        var prompt = new ScriptedSelectionPrompt();
+        prompt.Connectors.Enqueue([1]);
+        prompt.Choices.Enqueue(new ConnectionSelection(ConnectionSelectionKind.Existing, "conn-teams"));
+
+        await Create(store, connections, prompt: prompt).UpdateAsync(
+            new AgentDeploymentConnectionRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None);
+
+        Assert.Equal(["cr_sql", "cr_teams"], connections.Bound.Select(binding => binding.LogicalName));
+        Assert.Equal([["cr_sql"], ["cr_sql", "cr_teams"]], connections.WorkflowReads.Select(bound => bound.ToArray()));
+        Assert.Equal(["wf-sql", "wf-both"], connections.StateChanges.Select(change => change.WorkflowId));
+        Assert.Equal(["Binding 1 connection reference…", "Enabling 1 workflow…", "Binding 1 connection reference…", "Enabling 1 workflow…"], prompt.Reported);
     }
 
     [Fact]

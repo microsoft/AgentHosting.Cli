@@ -64,6 +64,8 @@ public static class MsagentJson
     public static JsonSerializerOptions Options { get; } = new() { PropertyNameCaseInsensitive = true };
 }
 
+public delegate Task<MsagentResult> ProcessLauncher(ProcessStartInfo startInfo, IReadOnlyList<string> arguments, string? stdin, TimeSpan timeout, Transcript? transcript, CancellationToken cancellationToken);
+
 /// <summary>Starts the <c>msagent</c> process; no scenario starts one itself.</summary>
 public sealed class MsagentCli
 {
@@ -85,6 +87,12 @@ public sealed class MsagentCli
     /// <summary>The binary every scenario in this run drives.</summary>
     public string BinaryPath => _binaryPath;
 
+    public EnvironmentOverlay Overlay { get; init; } = EnvironmentOverlay.Empty;
+
+    public ProcessLauncher Launch { get; init; } = ProcessRunner.RunAsync;
+
+    public MsagentCli With(EnvironmentOverlay overlay) => new(_binaryPath, _transcript, _crashDumpDirectory) { Overlay = Overlay.Then(overlay), Launch = Launch };
+
     /// <summary>Runs <c>msagent</c> and captures both streams separately.</summary>
     public async Task<MsagentResult> RunAsync(
         IReadOnlyList<string> arguments,
@@ -93,26 +101,14 @@ public sealed class MsagentCli
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
-        var startInfo = new ProcessStartInfo(_binaryPath)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory,
-        };
+        return await Launch(StartInfo(arguments, workingDirectory), arguments, stdin, timeout ?? DefaultTimeout, _transcript, cancellationToken).ConfigureAwait(false);
+    }
 
+    public ProcessStartInfo StartInfo(IReadOnlyList<string> arguments, string? workingDirectory = null)
+    {
+        var startInfo = ProcessRunner.StartInfo(_binaryPath, arguments, workingDirectory, Overlay);
         ArmCrashDumps(startInfo, _crashDumpDirectory);
-
-        foreach (var argument in arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
-        }
-
-        return await ProcessRunner
-            .RunAsync(startInfo, arguments, stdin, timeout ?? DefaultTimeout, _transcript, cancellationToken)
-            .ConfigureAwait(false);
+        return startInfo;
     }
 
     private static void ArmCrashDumps(ProcessStartInfo startInfo, string directory)
@@ -134,6 +130,27 @@ public static class CrashDumps
 /// <summary>Runs a subprocess with separated streams, a timeout, and transcript capture.</summary>
 public static class ProcessRunner
 {
+    public static ProcessStartInfo StartInfo(string fileName, IReadOnlyList<string> arguments, string? workingDirectory, EnvironmentOverlay overlay)
+    {
+        var startInfo = new ProcessStartInfo(fileName)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory,
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        overlay.ApplyTo(startInfo.Environment);
+        return startInfo;
+    }
+
     /// <summary>Runs any executable under the same rules the <c>msagent</c> wrapper uses.</summary>
     public static async Task<MsagentResult> RunAsync(
         ProcessStartInfo startInfo,

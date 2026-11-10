@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 namespace Microsoft.Agents.Hosting.Cli.Core.Operations;
 
@@ -178,4 +179,31 @@ public sealed record AuthLogoutResult : ITextGridRenderable
 
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines() => ["Signed out."];
+}
+
+/// <summary>The git hosts <c>msagent auth setup-git</c> pointed git's credential helper at.</summary>
+public sealed record AuthSetupGitResult : ITextGridRenderable
+{
+    /// <summary>Output-envelope schema version.</summary>
+    public int SchemaVersion { get; init; } = 1;
+
+    /// <summary>Always git-configured.</summary>
+    public string Status { get; init; } = "git-configured";
+
+    /// <summary>The host patterns git signs in to with msagent.</summary>
+    public required IReadOnlyList<string> Hosts { get; init; }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> ToTextLines() => ["Configured git to sign in with msagent.", $"  hosts: {string.Join(", ", Hosts)}"];
+}
+
+/// <summary>The credential lines <c>msagent auth git-credential</c> answers git with, which never appear in a JSON envelope.</summary>
+public sealed record AuthGitCredentialResult : IRawOutputResult
+{
+    /// <summary>The key=value lines git reads, empty when msagent has no credential for the request.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> CredentialLines { get; init; } = [];
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> ToTextLines() => CredentialLines;
 }

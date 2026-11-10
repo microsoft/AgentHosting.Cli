@@ -25,30 +25,9 @@ public sealed record AgentCreationTarget
             };
         }
 
-        if (!Uri.TryCreate(Endpoint.Trim(), UriKind.Absolute, out var endpoint))
-        {
-            throw AgentCreationException.EndpointNotUsable(
-                "The supplied Agent Management Service Data Plane endpoint is not an absolute uri.",
-                "Supply an absolute https endpoint, for example https://<host>.");
-        }
-
-        if (!string.Equals(endpoint.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-        {
-            throw AgentCreationException.EndpointNotUsable(
-                $"The configured Agent Management Service Data Plane endpoint uses scheme '{endpoint.Scheme}', and a delegated token is only ever sent over https.",
-                "Supply an https endpoint.");
-        }
-
-        if (!string.IsNullOrEmpty(endpoint.UserInfo))
-        {
-            throw AgentCreationException.EndpointNotUsable(
-                "The configured Agent Management Service Data Plane endpoint carries embedded user information.",
-                "Supply an https endpoint with no embedded credentials.");
-        }
-
         return new AgentCreationTargetResolution
         {
-            Endpoint = endpoint,
+            Endpoint = AmsEndpointValidation.RequireHttps(Endpoint, "The supplied Agent Management Service Data Plane endpoint", "The configured Agent Management Service Data Plane endpoint", AgentCreationException.EndpointNotUsable),
             RouteMode = AmsAgentCreationRouteMode.DirectDataPlane,
         };
     }

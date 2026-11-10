@@ -17,6 +17,18 @@ public enum ResourceKind
     StandaloneWorkflow,
 
     StandaloneConnectionReference,
+
+    AmsAgent,
+
+    AmsFlow,
+
+    LeftoverBot,
+
+    GrsRepository,
+
+    AmsConnector,
+
+    AmsConnectionReference,
 }
 
 /// <summary>Where a resource stands: created and still present, removed, or left behind.</summary>
@@ -26,6 +38,8 @@ public enum ResourceState
     Deleted,
     Orphaned,
     Restored,
+
+    Retained,
 }
 
 /// <summary>How cleanup removes or restores one resource.</summary>
@@ -61,6 +75,10 @@ public sealed record CleanupPlan
     public string? WorkflowId { get; init; }
 
     public string? ConnectorId { get; init; }
+
+    public bool AmsOff { get; init; }
+
+    public string? GitUrl { get; init; }
 }
 
 /// <summary>One resource the run created or changed, recorded before the call that creates it.</summary>
@@ -339,6 +357,23 @@ public sealed class Ledger
     public LedgerEntry RecordConfigEdit(string target, string? priorValue, string scenarioId) =>
         Record(ResourceKind.ConfigEdit, target, target, scenarioId, new CleanupPlan { Via = "restore prior value", PriorValue = priorValue });
 
+    public LedgerEntry RecordAmsAgent(string agentId, string? displayName, string projectDirectory, bool amsOff, string scenarioId)
+    {
+        var entry = Record(ResourceKind.AmsAgent, agentId, displayName, scenarioId, new CleanupPlan { Via = "deployment delete for each test and prod deployment, then agent delete", ProjectDirectory = projectDirectory, AmsOff = amsOff });
+
+        return entry.Cleanup.AmsOff && !amsOff ? Replace(entry, entry with { Cleanup = entry.Cleanup with { AmsOff = false } }) : entry;
+    }
+
+    public LedgerEntry RecordAmsFlow(string name, string environmentId, string scenarioId) => RecordNamed(ResourceKind.AmsFlow, name, environmentId, scenarioId, "turned off and deleted through Dataverse by its exact name");
+
+    public LedgerEntry RecordLeftoverBot(string schemaName, string scenarioId) => Record(ResourceKind.LeftoverBot, schemaName, schemaName, scenarioId, new CleanupPlan { Via = "deleted through Dataverse in each organization, after checking its schema name", SchemaName = schemaName });
+
+    public LedgerEntry RecordGrsRepository(string repositoryId, string gitUrl, string environmentId, string scenarioId) => Record(ResourceKind.GrsRepository, repositoryId, repositoryId, scenarioId, new CleanupPlan { Via = "soft-deleted through GRS once AMS lists no agent in it", EnvironmentId = environmentId, GitUrl = gitUrl });
+
+    public LedgerEntry RecordAmsConnector(string name, string environmentId, string scenarioId) => RecordNamed(ResourceKind.AmsConnector, name, environmentId, scenarioId, "deleted through Dataverse by its exact name, after its connection references");
+
+    public LedgerEntry RecordAmsConnectionReference(string logicalName, string environmentId, string scenarioId) => RecordNamed(ResourceKind.AmsConnectionReference, logicalName, environmentId, scenarioId, "deleted through Dataverse by its exact logical name");
+
     /// <summary>Marks an entry removed once its resource is confirmed gone.</summary>
     public void MarkDeleted(string id) => SetState(id, ResourceState.Deleted, null);
 
@@ -347,6 +382,10 @@ public sealed class Ledger
 
     /// <summary>Marks an entry left behind, with the reason removal failed.</summary>
     public void MarkOrphaned(string id, string failure) => SetState(id, ResourceState.Orphaned, failure);
+
+    public void MarkRetained(string id, string reason) => SetState(id, ResourceState.Retained, reason);
+
+    private LedgerEntry RecordNamed(ResourceKind kind, string name, string environmentId, string scenarioId, string via) => Record(kind, $"{name}@{environmentId}", name, scenarioId, new CleanupPlan { Via = via, EnvironmentId = environmentId, Correlation = name });
 
     private LedgerEntry Record(ResourceKind kind, string id, string? displayName, string scenarioId, CleanupPlan cleanup, bool resolved = true)
     {
@@ -377,6 +416,16 @@ public sealed class Ledger
             _entries.Add(entry);
             FlushLocked();
             return entry;
+        }
+    }
+
+    private LedgerEntry Replace(LedgerEntry existing, LedgerEntry replacement)
+    {
+        lock (_gate)
+        {
+            _entries[_entries.FindIndex(candidate => ReferenceEquals(candidate, existing))] = replacement;
+            FlushLocked();
+            return replacement;
         }
     }
 

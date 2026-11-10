@@ -155,6 +155,10 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
         return new PlaygroundToolDiscoveryResult(null, rejections);
     }
 
+    /// <summary>Finds the first executable PATH holds for a command, or returns null when PATH holds none.</summary>
+    /// <param name="commandName">The command, such as git.</param>
+    public string? FindOnPath(string commandName) => EnumerateCandidates(commandName).FirstOrDefault(_environment.IsExecutable);
+
     private async Task<PlaygroundTool?> FindUsableNodeAsync(
         IReadOnlyList<string> candidates,
         List<PlaygroundToolRejection> rejections,
@@ -458,6 +462,8 @@ public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
             "agentsplayground" => ["agentsplayground.cmd", "agentsplayground.exe", "agentsplayground"],
             "node" => ["node.exe", "node"],
             "npm" => ["npm.cmd", "npm.exe", "npm"],
+            "git" => ["git.exe", "git"],
+            "msagent" => ["msagent.exe", "msagent.cmd"],
             _ => [commandName],
         };
     }

@@ -13,6 +13,8 @@ public sealed class ProductSurfaceFeatureControlTests
     private static readonly IFeatureFlags AllProductSurfacesDisabled =
         new TestFeatureFlags();
 
+    private static readonly IFeatureFlags OnlyAmsMcsAgents = new TestFeatureFlags(FeatureName.AmsMcsAgents);
+
     [Fact]
     public void DisabledProductSurfaces_AreAbsentFromGroupAndOptionHelp()
     {
@@ -132,9 +134,12 @@ public sealed class ProductSurfaceFeatureControlTests
         Assert.Contains(nameof(FeatureName.AmsFeatures), result.Stderr, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void DisabledProductSurfaces_PreserveMcsAndLocalRoutes()
+    [Theory]
+    [InlineData(new FeatureName[0])]
+    [InlineData(new[] { FeatureName.AmsMcsAgents })]
+    public void WithoutAmsFeatures_TheMcsAndLocalRoutesAreKept(FeatureName[] enabled)
     {
+        var flags = new TestFeatureFlags(enabled);
         var operations = new FakeOperations
         {
             OnResolveDeploymentAgentType = _ => new DeploymentAgentTypeResult
@@ -146,7 +151,7 @@ public sealed class ProductSurfaceFeatureControlTests
 
         var create = Run(
             operations,
-            AllProductSurfacesDisabled,
+            flags,
             "agent", "create",
             "--agent-type", "MCSAgent",
             "--agent-name", "MCS Agent",
@@ -154,36 +159,36 @@ public sealed class ProductSurfaceFeatureControlTests
             "--initial-prompt", "Help the user.");
         var deploy = Run(
             operations,
-            AllProductSurfacesDisabled,
+            flags,
             "agent", "deploy",
             "--agent-id", "agent-1",
             "--deployment-id", "deployment-1");
         var show = Run(
             operations,
-            AllProductSurfacesDisabled,
+            flags,
             "deployment", "show",
             "--deployment-id", "deployment-1");
         var deploymentCreate = Run(
             operations,
-            AllProductSurfacesDisabled,
+            flags,
             "deployment", "create",
             "--agent-id", "agent-1",
             "--deployment-name", "dev-slot",
             "--deployment-type", "dev");
         var update = Run(
             operations,
-            AllProductSurfacesDisabled,
+            flags,
             "deployment", "update",
             "--deployment-id", "deployment-1",
             "--new-name", "renamed-slot");
         var delete = Run(
             operations,
-            AllProductSurfacesDisabled,
+            flags,
             "deployment", "delete",
             "--deployment-id", "deployment-1");
         var list = Run(
             operations,
-            AllProductSurfacesDisabled,
+            flags,
             "deployment", "list",
             "--agent-id", "agent-1");
 
@@ -390,6 +395,78 @@ public sealed class ProductSurfaceFeatureControlTests
         Assert.NotNull(operations.LastAppRegistrationIdentityRequest);
     }
 
+    [Theory]
+    [InlineData("agent", "create", "--agent-name", "Code Agent")]
+    [InlineData("agent", "create", "--agent-type", "CodeAgent", "--agent-name", "Code Agent", "--language", "dotnet", "--language-version", "net10.0")]
+    [InlineData("agent", "package", "upload", "--agent-id", "agent-1", "--package", "agent.zip")]
+    [InlineData("agent", "deploy", "--agent-id", "agent-1", "--package-revision", "revision-1", "--target-environment-id", "env-1", "--deployment-name", "dev-slot", "--deployment-type", "dev", "--entra-id", "app-1", "--entra-id-type", "app-reg")]
+    [InlineData("agent", "deploy", "--agent-type", "CodeAgent", "--agent-id", "agent-1", "--package-revision", "revision-1", "--deployment-name", "dev-slot", "--deployment-type", "dev")]
+    [InlineData("deployment", "update", "--agent-id", "agent-1", "--deployment-id", "deployment-1", "--package-revision", "revision-1")]
+    [InlineData("deployment", "update", "--agent-type", "CodeAgent", "--agent-id", "agent-1", "--deployment-id", "deployment-1", "--package-revision", "revision-1")]
+    public void OnlyAmsMcsAgents_LeavesEveryCodeAgentRouteAsItIsWithoutTheFlag(params string[] args)
+    {
+        var main = new FakeOperations();
+        var flagged = new FakeOperations();
+
+        var withoutFlag = Run(main, AllProductSurfacesDisabled, args);
+        var withFlag = Run(flagged, OnlyAmsMcsAgents, args);
+
+        Assert.Equal((withoutFlag.ExitCode, withoutFlag.Stdout, withoutFlag.Stderr), (withFlag.ExitCode, withFlag.Stdout, withFlag.Stderr));
+        Assert.Equal((main.LastCreateRequest, main.LastPackageUploadRequest, main.LastDeployRequest, main.LastAgentDeploymentPackageUpdateRequest), (flagged.LastCreateRequest, flagged.LastPackageUploadRequest, flagged.LastDeployRequest, flagged.LastAgentDeploymentPackageUpdateRequest));
+    }
+
+    [Fact]
+    public void OnlyAmsMcsAgents_AddsTheAgentCaptureAndOperationCommandsAndTheAmsOptions()
+    {
+        var root = Commands(Run(new FakeOperations(), OnlyAmsMcsAgents, "--help").Stdout);
+        var mainRoot = Commands(Run(new FakeOperations(), AllProductSurfacesDisabled, "--help").Stdout);
+        var agent = Commands(Run(new FakeOperations(), OnlyAmsMcsAgents, "agent", "--help").Stdout);
+        var mainAgent = Commands(Run(new FakeOperations(), AllProductSurfacesDisabled, "agent", "--help").Stdout);
+
+        Assert.Equal(mainRoot, root);
+        Assert.Equal(["capture", "operation"], agent.Except(mainAgent).Order(StringComparer.Ordinal));
+        Assert.Empty(mainAgent.Except(agent));
+        Assert.Contains("--repository-id", Run(new FakeOperations(), OnlyAmsMcsAgents, "agent", "create", "--help").Stdout, StringComparison.Ordinal);
+        Assert.Contains("--repository-id", Run(new FakeOperations(), OnlyAmsMcsAgents, "agent", "init", "--help").Stdout, StringComparison.Ordinal);
+        Assert.Contains("--remote", Run(new FakeOperations(), OnlyAmsMcsAgents, "agent", "deploy", "--help").Stdout, StringComparison.Ordinal);
+        Assert.Contains("--view", Run(new FakeOperations(), OnlyAmsMcsAgents, "agent", "list", "--help").Stdout, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(new FeatureName[0])]
+    [InlineData(new[] { FeatureName.AmsFeatures })]
+    public void WithoutAmsMcsAgents_TheHelpHasNoAmsModeCommandOrOption(FeatureName[] enabled)
+    {
+        var flags = new TestFeatureFlags(enabled);
+        var agent = Commands(Run(new FakeOperations(), flags, "agent", "--help").Stdout);
+        var help = string.Join(Environment.NewLine, Run(new FakeOperations(), flags, "agent", "create", "--help").Stdout, Run(new FakeOperations(), flags, "agent", "init", "--help").Stdout, Run(new FakeOperations(), flags, "agent", "deploy", "--help").Stdout, Run(new FakeOperations(), flags, "agent", "list", "--help").Stdout);
+
+        Assert.DoesNotContain("capture", agent);
+        Assert.DoesNotContain("operation", agent);
+        Assert.DoesNotContain("--repository-id", help, StringComparison.Ordinal);
+        Assert.DoesNotContain("--remote", help, StringComparison.Ordinal);
+        Assert.DoesNotContain("--view", help, StringComparison.Ordinal);
+        Assert.DoesNotContain("AMS mode", help, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("agent", "create", "--agent-type", "MCSAgent", "--agent-name", "Contoso HR", "--initial-prompt", "Help.", "--repository-id", "cccccccc-3333-4333-8333-000000000003")]
+    [InlineData("agent", "init", "--agent-name", "Contoso HR", "--repository-id", "cccccccc-3333-4333-8333-000000000003")]
+    [InlineData("agent", "deploy", "--remote", "--agent-id", "agent-1", "--deployment-id", "deployment-1")]
+    [InlineData("agent", "capture", "--agent-id", "agent-1")]
+    [InlineData("agent", "operation", "show", "--agent-id", "agent-1", "--operation-id", "op-deploy")]
+    [InlineData("agent", "list", "--view", "ams")]
+    public void WithoutAmsMcsAgents_TheAmsModeFormsDoNotExist(params string[] args)
+    {
+        var operations = new FakeOperations();
+
+        var result = Run(operations, AllProductSurfacesDisabled, args);
+
+        Assert.Equal(ExitCodes.Usage, result.ExitCode);
+        Assert.DoesNotContain("AMS mode", result.Stdout + result.Stderr, StringComparison.Ordinal);
+        Assert.Equal((null, null, null, null, null), (operations.LastCreateRequest, operations.LastManagedAgentCreateRequest, operations.LastManagedAgentInitRequest, operations.LastManagedAgentDeployRequest, operations.LastManagedAgentListRequest));
+    }
+
     private static (int ExitCode, string Stdout, string Stderr) Run(
         FakeOperations operations,
         IFeatureFlags featureFlags,
@@ -407,6 +484,11 @@ public sealed class ProductSurfaceFeatureControlTests
         line.TrimStart().StartsWith($"{command} ", StringComparison.Ordinal);
 
     private static string[] Lines(string value) => value.Split('\n');
+
+    private static string[] Commands(string help) => [.. Section(help, "Subgroups:"), .. Section(help, "Commands:")];
+
+    private static IEnumerable<string> Section(string help, string heading) =>
+        Lines(help).SkipWhile(line => !line.StartsWith(heading, StringComparison.Ordinal)).Skip(1).TakeWhile(line => line.StartsWith("  ", StringComparison.Ordinal)).Select(line => line.Trim().Split(' ')[0]);
 
     private sealed class DictionaryCommandInput(IReadOnlyDictionary<string, string?> values) : ICommandInput
     {

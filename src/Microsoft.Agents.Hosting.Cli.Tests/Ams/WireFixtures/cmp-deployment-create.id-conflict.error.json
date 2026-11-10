@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "McsDeploymentIdConflict",
+    "message": "Deployment id 'ffffffff-6666-4666-8666-000000000006' is already used with other values. Read the agent's deployments, or create the deployment with a new id."
+  }
+}

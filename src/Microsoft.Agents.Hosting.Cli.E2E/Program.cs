@@ -88,6 +88,11 @@ public static class CommandLine
             }
         }
 
+        if (packs.Contains(AmsMcsServices.Pack, StringComparer.OrdinalIgnoreCase) && packs.Any(pack => !string.Equals(pack, AmsMcsServices.Pack, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new E2EException($"The {AmsMcsServices.Pack} pack runs alone: msagent keeps one Power Platform ring per account, and the other packs use the prod ring. Run --packs {AmsMcsServices.Pack} on its own, signed in with `msagent auth login --cloud test`.");
+        }
+
         return new CommandOptions
         {
             Command = arguments[0],
@@ -113,10 +118,11 @@ public static class CommandLine
             Options
               --packs core,azure,eval  include the Azure pack, the evaluation pack, or both
                                        swf adds the aggressive standalone-workflow suite, and
-                                       swf-chaos (with swf) adds its kill, concurrency and fault scenarios
+                                       swf-chaos (with swf) adds its kill, concurrency and fault scenarios;
+                                       ams runs MCS on AMS alone, on the test ring
               --feature <names>        mcs-agent, mcs-workflow, mcs-standaloneworkflow, code-agent, abs,
-                                       identity, mcs-eval
-              --only <patterns>        MA-18, MA-2*, AB-07, EV-01, SW-B0*
+                                       identity, mcs-eval, mcs-ams
+              --only <patterns>        MA-18, MA-2*, AB-07, EV-01, SW-B0*, AM-12
               --smoke                  a fast subset: one deploy per fixture shape plus the checks
                                        that pin previously shipped bugs
               --msagent-path <file>    drive an existing binary instead of packing one

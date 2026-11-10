@@ -1,0 +1,23 @@
+{
+  "id": "eeeeeeee-5555-4555-8555-000000000005",
+  "agentId": "aaaaaaaa-1111-4111-8111-000000000001",
+  "tenantId": "11111111-1111-1111-1111-111111111111",
+  "homeEnvironmentId": "22222222-2222-2222-2222-222222222222",
+  "environmentId": "22222222-2222-2222-2222-222222222222",
+  "agentType": "MCSAgent",
+  "deploymentType": "Dev",
+  "deploymentName": "contoso-dev",
+  "lastDeployedById": "99999999-0000-4000-8000-000000000099",
+  "lastDeployedTime": "2026-08-02T10:15:00Z",
+  "mcs": {
+    "botId": "b0b0b0b0-4444-4444-8444-000000000014",
+    "schemaName": "cr1a2_contosoHr",
+    "state": "Deployed",
+    "activeOperationId": null,
+    "lastAttestationId": "4d2b75e2-d7bb-bda0-dacf-54766a7fd97e",
+    "lastDeployedCommitSha": "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12",
+    "lastDeployOrigin": "Local",
+    "cloudBaseCommitSha": "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12",
+    "cloudBaseExact": true
+  }
+}

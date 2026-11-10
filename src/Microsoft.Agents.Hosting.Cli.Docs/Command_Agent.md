@@ -18,6 +18,9 @@ The command group is described in help as `Agent Hosting agent operations.`
 | [`msagent agent share`](#msagent-agent-share---mcs-specific) | **MCS-specific.** Share an MCS agent with a user, or with the organization. |
 | [`msagent agent share show`](#msagent-agent-share-show---mcs-specific) | **MCS-specific.** Show who has access to an MCS agent. |
 | [`msagent agent unshare`](#msagent-agent-unshare---mcs-specific) | **MCS-specific.** Remove a user's access to an MCS agent. |
+| [`msagent agent capture`](#msagent-agent-capture-gated) (**Gated**) | Commit the Copilot Studio changes of an agent's Dev deployment to its GRS repository. |
+| `msagent agent operation` | **(Gated)** Navigation group containing the `show` command. |
+| [`msagent agent operation show`](#msagent-agent-operation-show-gated) (**Gated**) | Show a deploy or capture operation that AMS runs for an agent. |
 | `msagent agent package` | **(Gated)** Navigation group containing the `upload` command. |
 | [`msagent agent package upload`](#msagent-agent-package-upload-gated) (**Gated**) | Upload exact package bytes and confirm a durable AMS Package Revision. |
 | [`msagent agent eval`](Command_Agent_Eval.md) | **MCSAgent only; gated by EvaluationFeatures.** Run Copilot Studio evaluations and manage test sets. See [Command_Agent_Eval.md](Command_Agent_Eval.md) for details. |
@@ -50,7 +53,42 @@ selector identifies its owner. `agent show` instead shows every record.
 > - A gated route that is reached through a visible command, such as creating a CodeAgent, fails with
 >   a message that the capability is disabled by the `AmsFeatures` rollout control.
 >
+> The `AmsMcsAgents` control adds [AMS mode](#ams-mode-gated) and its commands and options. While it
+> is off, they are not listed in help and are rejected as unrecognized.
+>
 > Feature controls are availability switches, not authorization boundaries.
+
+### AMS mode (Gated)
+
+> **Gated.** Available only when `AmsMcsAgents` is enabled.
+
+AMS mode adds the Agent Management Service (AMS) and a GRS git repository to the local project.
+AMS mode is on while the `AmsMcsAgents` feature is on, for example with
+`AH_CLI_FEATURES=AmsMcsAgents`, and off otherwise. While it is off, every command works as described
+in this reference without it. While it is on, every command still works on the local project and its
+`.config`, and also:
+
+- [`agent create`](#ams-mode-for-agent-create-gated) and [`agent init`](#ams-mode-for-agent-init-gated)
+  register the agent in AMS, with its folder in a GRS repository, then commit and push the folder;
+  `agent init` also restores the agents AMS holds for the repository, in a clone or, with
+  `--repository-id`, in an empty or missing folder that it clones the repository into;
+- [`agent deploy`](#ams-mode-for-agent-deploy-gated) tells AMS which commit a deploy from the folder
+  held, and `--remote` deploys a commit of the repository through AMS, connecting the agent's folder
+  after a deploy to Dev of exactly the commit the folder holds;
+- [`agent capture`](#msagent-agent-capture-gated) commits the edits made in Copilot Studio to the
+  repository, and [`agent operation show`](#msagent-agent-operation-show-gated) shows the operations
+  of remote deploys and captures;
+- `agent show`, `agent list --view ams`, `agent delete`, and the
+  [deployment commands](Command_Deployment.md#ams-mode-gated) read or change AMS's records too.
+
+`share`, `share show`, `unshare`, and `eval` work as without AMS, and so does
+[`agent pull`](#msagent-agent-pull---mcs-specific), except for its advice in a folder that is not
+connected, and that it merges against the cloud cache msagent saved for the commit the folder
+holds. The forms only AMS
+mode has, `agent deploy --remote`, `agent capture`, `agent operation show`, `agent list --view ams`,
+and `--repository-id` on `agent create` and `agent init`, exist only while it is on, and the commands
+that act on a registered agent fail with [19062](ErrorCodes/19062.md) for an agent AMS does not know.
+For a walkthrough, see [Managing agents with AMS](../../docs/Managing%20agents%20with%20AMS.md).
 
 ## `msagent agent create`
 
@@ -94,6 +132,7 @@ msagent agent create --agent-type CodeAgent --agent-name <name> \
 | `--language` | `-lang` | `dotnet`, `python`, or `node` | CodeAgent only (**Gated**) | Runtime language. Required for a CodeAgent; the option is hidden when the gate is off. |
 | `--language-version` | `-lv` | String | CodeAgent only (**Gated**) | Runtime language version. Required for a CodeAgent. |
 | `--idempotency-key` | `-ik` | String | CodeAgent only (**Gated**) | Opaque create-retry key: 1–128 visible ASCII characters, without spaces. A new value is generated when omitted. |
+| `--repository-id` | `-repid` | GUID | AMS mode only (**Gated**) | GRS repository the project folder joins, as [`msagent agent show`](#msagent-agent-show) shows another agent's. See [AMS mode for agent create](#ams-mode-for-agent-create-gated). |
 
 ### Validation
 
@@ -116,7 +155,14 @@ Creating an MCS agent from scratch requires `--agent-name`, `--description`, `--
 `--initial-prompt`. `--mcs-agent-type` selects the scaffold: `CLI` (the default) or `Classic`.
 `--init-template` selects a template and is valid only with `Classic`.
 
-The display name is limited to 256 characters and the description to 2000. Creation writes a
+The display name can hold at most 42 characters, the most Copilot Studio accepts when it
+creates or renames an agent, and needs a letter or digit and no control character such as
+a tab; a name that breaks these rules is a usage error before anything is written. A
+`displayName` edited in `settings.mcs.yml` later is held to the same 42 characters,
+counting any spaces around it, whenever a deploy would create or rename the agent: the
+deploy refuses a longer one before it creates or pushes to the Copilot Studio agent
+([10022](ErrorCodes/10022.md)), while an agent that already carries a longer name keeps
+it and pushes as before. The description is limited to 2000 characters. Creation writes a
 named workspace beneath the project and registers it in `.config\agent.config.json`; it does not
 create a cloud agent. Create a deployment with `msagent deployment create`, then use `agent deploy`
 to upload it.
@@ -148,7 +194,16 @@ Cloning requires a clone selector, `--mcs-clone-agent-id` or `--mcs-clone-agent-
 when supplied, otherwise the source environment.
 
 Cloning downloads content immediately and registers a `develop` deployment; it does not duplicate the
-cloud agent until deployment. A same-environment clone remains associated with the source agent.
+cloud agent until deployment. A same-environment clone remains associated with the source agent,
+which keeps its own name: `--agent-name` names only the record and the project folder. A clone from
+another environment is a copy: `--agent-name` becomes the `displayName` in the copy's
+`settings.mcs.yml` (or in its agent file when it has none), while the workspace's sync state keeps
+the source's name, so the copy's first push sends the new name. A supplied `--agent-name` is checked
+before any environment is contacted, and a name longer than 42 characters, without a letter or
+digit, or with a control character such as a tab, is a usage error. The copy stays connected to
+its source agent until its first deploy to its home environment creates its own agent; a dev
+deployment in the source environment pushes to that source agent, replacing its content and name,
+only once `--overwrite` accepts replacing it ([14003](ErrorCodes/14003.md)).
 `--schema-name` is rejected in clone mode. `--mcs-agent-type`, `--init-template`, and
 `--initial-prompt` are ignored with warnings because the source supplies the content.
 
@@ -168,13 +223,88 @@ Use explicit `--agent-type MCSWorkflow`. A new workflow requires only a display 
 environment (explicit or active); description is optional. It scaffolds files and a managed record,
 not a cloud flow. A clone requires a non-empty workflow GUID and inherits the source name unless
 overridden. Source/target environment selection follows the agent clone rules above, and a clone
-also registers a `develop` deployment.
+also registers a `develop` deployment. A clone from the home environment keeps the cloud flow's own
+name, and `--agent-name` names only the record and the project folder. A clone from another
+environment is a copy: `--agent-name` becomes the `name` in the copy's `metadata.yml` and names its
+folder and definition file, while the workspace's sync state keeps the source's name. A supplied
+name is checked before any environment is contacted: it must be at most 100 characters and hold no
+control character, and a refused name leaves no folder or record behind. The
+copy keeps the source's workflow id, so a dev deployment in an environment that already holds that
+workflow, such as the source environment, needs `--overwrite` ([14003](ErrorCodes/14003.md)).
 
 ```text
 msagent agent create --agent-type MCSWorkflow --name "Approval flow" --project <directory>
 
 msagent agent create --agent-type MCSWorkflow --mcs-clone-workflow-id <workflow-id> \
   --mcs-clone-environment-id <source-environment-id> --project <directory>
+```
+
+### AMS mode for agent create (Gated)
+
+> **Gated.** Applies only in [AMS mode](#ams-mode-gated), that is, while `AmsMcsAgents` is enabled.
+
+With AMS mode on, creating or cloning an MCS agent or standalone workflow does everything described
+above, and also registers it in AMS with its folder in a GRS repository. The project folder must be
+the root of the repository's clone, and each agent is a top-level folder of it. Git must be
+installed; msagent runs it with its own credential helper, which it saves in the clone's git config.
+
+The repository is chosen before anything is written:
+
+| Project folder | Without `--repository-id` | With `--repository-id <id>` |
+| --- | --- | --- |
+| Empty or new | AMS creates a repository, and the folder is linked to it with its `main` checked out | The repository is cloned into the folder |
+| Holds only the project, not a git repository | AMS creates a repository, and the folder is linked to it with its `main` checked out | The folder is linked to the repository, whose `main` is checked out into it |
+| A git repository without a remote | AMS creates a repository, which msagent adds as `origin`. Without commits, its `main` is checked out; with commits, the folder's history replaces the repository's initial commit | The repository is added as `origin` and its `main` is checked out |
+| A clone of a GRS repository | That repository | The same repository, or [19055](ErrorCodes/19055.md) |
+
+GRS starts every new repository with an initial commit that holds a `README.md`, so msagent links a new
+repository the way it links an existing one: the agent's commit lands on that initial commit, and the
+push fast-forwards `main`. A git repository that already has commits keeps them; its push replaces
+only the initial commit (`git push --force-with-lease`), and git refuses it if `main` has changed
+since.
+
+msagent checks the agent's name, `--schema-name`, `--mcs-agent-type` and `--init-template` before it
+reads or changes a repository, so a value it refuses asks nothing and clones or links nothing.
+msagent asks before it clones, links, or creates a repository, for example
+`Create a GRS repository in environment 'Contoso Dev' for <folder> and push agent 'Support agent' to it? [Y/n]`;
+global `--non-interactive` answers yes. Declining reports `cancelled` and leaves the folder as it
+was. A folder below its repository's root fails with [19052](ErrorCodes/19052.md), one that holds
+other files with [19053](ErrorCodes/19053.md), one whose remote is not a GRS repository with
+[19054](ErrorCodes/19054.md), a repository whose `main` already has the agent's folder with
+[19057](ErrorCodes/19057.md), and a link that would overwrite local files, or join an unrelated git
+history, with [19058](ErrorCodes/19058.md). A folder whose unpushed commits add or change a `.mcs`
+folder fails with [19059](ErrorCodes/19059.md) before msagent asks, since the push would carry that
+cache to GRS; msagent's own commit leaves out every `.mcs` folder.
+
+After the local create, msagent registers the agent in AMS under the id `.config` holds, with its
+folder and, for a clone, its `develop` deployment; a clone in its source's environment also claims
+the Copilot Studio agent or flow it was cloned from. msagent records the repository and folder in
+`.config`, adds `/.config/agent.config.json` and `.mcs/` to the project's `.gitignore`, then commits the agent's
+folder and the collection folders it declares and pushes the commit to `main`. For a clone that
+claimed its source, msagent then tells AMS that the `develop` deployment holds the pushed commit, so
+that later captures and remote deploys know what it holds. When the register fails, msagent removes
+the new record from `.config` and the files the command added to the project folder; a failed commit
+or push, or a failed deploy record, is a warning, and the agent stays registered. A link to a new
+repository that git cannot finish, for example because the folder already holds a `README.md`, is a
+warning too: msagent takes the link back, commits nothing, and names the git commands that finish it.
+AMS refuses a Copilot Studio agent or flow another AMS agent holds ([19013](ErrorCodes/19013.md)).
+
+The result adds the repository, whether this command created it, its git url, and the commit:
+
+```text
+  repository   <repository-id> (Contoso agents), created
+  git url      https://<host>/<path>
+  commit       1a2b3c4 (pushed to main)
+```
+
+```text
+# New repository for a new project
+msagent agent create --agent-type MCSAgent --agent-name "Support agent" --description "Answers questions" \
+  --initial-prompt "Answer support questions." --project <empty-folder>
+
+# Existing repository, cloned into an empty folder
+msagent agent create --agent-type MCSWorkflow --agent-name "Approval flow" --repository-id <repository-id> \
+  --project <empty-folder>
 ```
 
 ### Creating a CodeAgent (Gated)
@@ -207,12 +337,59 @@ msagent agent init --agent-name <name> --agent-type MCSWorkflow [--mcs-workflow-
 | `--agent-type` | `-at` | `MCSAgent` (alias `mcs`) or `MCSWorkflow` | No | `MCSAgent` | Type of project to register. |
 | `--mcs-agent-source` | `-mas` | Directory path | No | Enclosing project, else current directory | The directory holding the agent project. For MCSWorkflow, a fallback source used literally rather than searching parents. |
 | `--mcs-workflow-source` | `-mws` | Directory path | No | Current directory | The workflow workspace to register. MCSWorkflow only; takes precedence over `--mcs-agent-source` on that route. |
+| `--repository-id` | `-repid` | GUID | No | None | AMS mode only (**Gated**). GRS repository the project folder joins. See [AMS mode for agent init](#ams-mode-for-agent-init-gated). |
 
 For an agent, the source must hold exactly one unregistered agent workspace with a readable schema
 name. Its existing connection supplies the environment when present; otherwise the active
 environment is required. For a workflow, the source must hold exactly one readable workflow.
 Workflow registration uses the active environment and registers beneath an enclosing project when
 one exists. Neither route creates a deployment.
+
+### AMS mode for agent init (Gated)
+
+> **Gated.** Applies only in [AMS mode](#ams-mode-gated), that is, while `AmsMcsAgents` is enabled.
+
+With AMS mode on, `agent init` acts on the whole project folder, which must be the root of its
+repository's clone, with each agent and standalone workflow in a top-level folder; a project folder
+that is itself an agent's folder fails with [19060](ErrorCodes/19060.md). It chooses the repository
+as `agent create` does, asks before it clones or links one, and then:
+
+- **restores** each agent AMS holds in the repository whose folder the project has but `.config`
+  does not, with its deployments, so a clone becomes a working project. In an empty or missing
+  folder, `--repository-id` clones the repository first, and the folders that clone or a link to an
+  existing repository checks out count too. Before it asks, it refuses a folder it would restore,
+  register or record whose `.mcs` folder git tracks, and unpushed commits that add or change a `.mcs`
+  folder; after a clone or link, it refuses a repository whose git tracks the `.mcs` folder of an
+  agent it would restore ([19059](ErrorCodes/19059.md));
+- **registers** the new agent `--agent-name` names, as main's `agent init` does, and each MCS agent
+  or standalone workflow `.config` holds that AMS does not know, with its deployments; AMS learns the
+  Copilot Studio agent or flow a deployment holds from its next deploy;
+- **completes** an agent AMS already knows but `.config` does not record as registered, creating the
+  deployments AMS lacks;
+- adds `/.config/agent.config.json` and `.mcs/` to `.gitignore`, then commits the folders it restored or
+  registered and pushes the commit to `main`.
+
+`--agent-name` is not needed when the run only restores or registers agents. With nothing to restore
+or register, `agent init` works as without AMS; after a clone into an empty or missing folder, it
+then fails as without AMS and removes the clone. When AMS refuses the register, `agent init` takes
+back what it did, the clone or link included. The result adds the repository, git url, and commit
+lines of `agent create`, and one `restored` line per restored agent.
+
+A top-level agent or workflow folder that `.config` doesn't list and the run doesn't restore is a new
+agent, which needs `--agent-name`. Without it, `agent init` fails with [99002](ErrorCodes/99002.md),
+names the folder, and takes back any clone or link. If the folder's agent was deleted, remove the
+folder from the repository instead.
+
+A teammate starts with one command, which clones the repository into a new folder and restores its
+agents, or with `git clone` and then `agent init` in the clone:
+
+```text
+msagent agent init --repository-id <repository-id> --mcs-agent-source contoso-agents
+
+git clone <git-url> contoso-agents
+cd contoso-agents
+msagent agent init
+```
 
 ## `msagent agent list` - MCS-specific
 
@@ -233,12 +410,28 @@ msagent agent list [--environment-id <id> | --tenant-wide] [--limit <number>] [-
 | `--filter` | `-flt` | String | None | Show workflows whose name contains this text, taken literally: `%` and `_` match themselves. Rejected for MCSAgent. |
 | `--tenant-wide` | `-tw` | Flag | Off | List every environment the signed-in account can reach. |
 | `--limit` | `-lim` | Whole number | `20` | Maximum rows to return across the selected scope. Must be positive. |
+| `--view` | `-vw` | `cloud` or `ams` | `cloud` | **Gated** (`AmsMcsAgents`). `ams` lists the environment's AMS records instead. |
+| `--repository-id` | `-repid` | GUID | None | **Gated** (`AmsMcsAgents`). With `--view ams`, list only the agents of this repository. |
 
 `--environment-id` and `--tenant-wide` cannot be combined. Output includes cloud identity,
 environment, lifecycle/workflow state, and last-change time. When a cloud row matches this project's
 records, it also carries the managed-agent ID and deployment count. The result reports truncation.
 Tenant-wide listing continues past individual environment failures and reports those diagnostics;
-it does not promise a complete tenant inventory when the limit is reached.
+it does not promise a complete tenant inventory when the limit is reached. A listing that cannot be
+read to its end (a malformed page, a page link that repeats or leaves the organization, or more than
+1,000 pages) fails rather than showing the rows read before it; under `--tenant-wide` it becomes that
+environment's diagnostic.
+
+With AMS mode on (**Gated**), `--view ams` lists the AMS records of the environment's MCS agents and
+standalone workflows, deployed or not: AGENT ID, DISPLAY NAME, TYPE, SCHEMA NAME, REPOSITORY ID,
+FOLDER, HOME DEPLOYMENT, DEPLOYMENTS, and CLOUD STATE (`NotDeployed` until a deployment of the agent
+completes its first deploy, then `Deployed`), with ENVIRONMENT added under `--tenant-wide`. It lists
+both types unless `--agent-type` is given, and `--repository-id` keeps one repository's agents.
+`--view cloud`, the default, is the listing above.
+
+```text
+msagent agent list --view ams --repository-id <repository-id>
+```
 
 ## `msagent agent show`
 
@@ -255,6 +448,10 @@ msagent agent show [--project <directory>] [--agent-id <id> | --agent-name <name
 | `--project` | `-p` | Directory path | Enclosing project, else current directory | The project directory to read. |
 | `--agent-id` | `-aid` | String | None | The record to show. Wins over `--agent-name`. Every record is shown when no selector is supplied. |
 | `--agent-name` | `-an` | String | None | The record to show, by name. |
+
+With AMS mode on (**Gated**), the result adds, for each agent AMS knows, its `repositoryId`,
+`folder`, and `gitUrl`, and for each of its deployments the `lastCommit` it deployed, from one AMS
+read. When AMS cannot be read, the local records are shown with a warning.
 
 ## `msagent agent pull` - MCS-specific
 
@@ -288,6 +485,20 @@ and replaces the local workflow from its environment, refusing unpushed local ed
 `--overwrite` is supplied. It can recreate missing workflow files. It does not merge those edits.
 The result reports the environment, changes, and whether the workspace was already up to date.
 
+With AMS mode on (**Gated**), a folder that `agent init` restored or git cloned has no connection
+until a deploy to Dev connects it: from the folder with `msagent agent deploy`, or from GRS with
+`msagent agent deploy --remote` when the folder holds exactly the deployed commit. Until then, an
+MCSAgent pull of an agent AMS registered fails with [10011](ErrorCodes/10011.md) and says how to
+bring Copilot Studio changes into the repository instead: `msagent agent capture`, then `git pull`.
+
+With AMS mode on (**Gated**), msagent keeps a copy of each folder's `.mcs` for every commit it
+synced at, under the clone's git folder, and a pull merges against the copy for the commit the
+folder holds, or for the nearest commit it builds on. When neither ever synced but the commit
+Copilot Studio was last synced from builds on it, msagent first restores the folder's files to that
+commit and a warning says so (a standalone workflow pull replaces the workflow instead); a folder
+with uncommitted changes fails with [19071](ErrorCodes/19071.md), and a commit that lacks the synced
+one fails with [19072](ErrorCodes/19072.md).
+
 ## `msagent agent delete` - MCS-specific
 
 Deletes one cloud MCS agent or standalone workflow and removes its managed-agent record and all its
@@ -316,6 +527,15 @@ The command asks the operator to type the managed record's display name before d
 `--non-interactive` supplies consent; there is no command-specific `--force`. A mismatch reports
 `name-mismatch`, and declining reports `cancelled`; neither deletes anything or counts as an error.
 
+With AMS mode on (**Gated**), deleting an agent AMS knows also deletes its AMS records, after the
+cloud delete and before the `.config` records are removed: the agent, its deployments, and its holds
+on its repository folder and on Copilot Studio agents and flows. The repository and its content,
+and the local folder, stay; msagent drops the copies of the cloud cache it kept for the agent's
+folders. msagent deletes the AMS record only while it is the one it read, so a
+concurrent change fails with [19069](ErrorCodes/19069.md) and removes nothing from `.config`; an
+agent AMS no longer holds counts as deleted. The result adds `ams record   deleted` and
+`repository   <repository-id> (kept)`.
+
 ## `msagent agent deploy`
 
 Deploys an agent or standalone workflow to an existing named deployment. There is no
@@ -327,6 +547,10 @@ a `dev` slot). A deployment selector can identify its owning record without an a
 # MCS agent
 msagent agent deploy (--deployment-id <id> | --deployment-name <name>) \
   [--project <directory>] [--agent-id <id> | --agent-name <name>] [--publish] [--overwrite]
+
+# A GRS commit through AMS (Gated; AMS mode)
+msagent agent deploy (--deployment-id <id> | --deployment-name <name>) --remote [--commit-id <commit>] \
+  [--project <directory>] [--agent-id <id> | --agent-name <name>] [--publish] [--overwrite] [--async]
 
 # AMS package revision (Gated)
 msagent agent deploy --agent-id <id> --package-revision <revision-id> \
@@ -342,10 +566,11 @@ msagent agent deploy --agent-id <id> --package-revision <revision-id> \
 | `--deployment-id` | `-did` | String | **MCS-specific** | The deployment to target. Wins over `--deployment-name`. |
 | `--deployment-name` | `-dn` | String | MCS and AMS routes | The deployment to target, by name. Required for AMS package-revision deployment. |
 | `--schema-name` | `-sn` | String | **MCS-specific** | Overrides the project's schema name for this deploy. A workflow is addressed by its workflow id, so a workflow deploy rejects this option before anything is uploaded. |
-| `--publish` | `-pub` | Flag | **MCS-specific** | Publish an agent after a push that fully landed, or request activation of a standalone workflow. Off by default. |
-| `--overwrite` | `-ow` | Flag | **MCS-specific** | Overwrite cloud content that changed since the last sync, and accept replacing an existing agent this project cannot show is its own. Only a dev deployment refuses drift without it. A workflow deploy always replaces the cloud copy, so the flag is accepted there and changes nothing. |
-| `--commit-id` | `-cid` | String | Not supported | This build has no Git Repository Service, so deploy always uploads the current working tree. Supplying it is a usage error. |
-| `--async` | `-as` | Flag | Not supported | The deploy is synchronous and returns when the push completes. Supplying it is a usage error. |
+| `--publish` | `-pub` | Flag | **MCS-specific** | Publish an agent after a push that fully landed and wait up to 5 minutes for Copilot Studio to finish publishing, or request activation of a standalone workflow. Off by default. With `--remote`, a Dev deploy publishes only with it, and Test and Prod deploys always publish. |
+| `--overwrite` | `-ow` | Flag | **MCS-specific** | Overwrite cloud content that changed since the last sync, and accept replacing an existing agent or workflow this project cannot show is its own. Only a dev deployment refuses either without it; Test and Prod deployments replace the cloud copy. With `--remote`, a Dev deploy replaces the edits made in Copilot Studio only with it, after saving them. |
+| `--commit-id` | `-cid` | String | Not supported; with `--remote` (**Gated**) | This build has no Git Repository Service, so deploy always uploads the current working tree. Supplying it is a usage error. While `AmsMcsAgents` is enabled, it names the commit `--remote` deploys, full or short; Dev and Test only, since Prod takes Test's last deploy. Without `--remote` it stays a usage error. |
+| `--async` | `-as` | Flag | Not supported; with `--remote` (**Gated**) | The deploy is synchronous and returns when the push completes. Supplying it is a usage error. While `AmsMcsAgents` is enabled, `--remote --async` returns once AMS accepts the deploy, with its operation id. |
+| `--remote` | `-rem` | Flag | AMS mode only (**Gated**) | Deploy a commit from GRS through AMS instead of the working folder. Listed only while `AmsMcsAgents` is enabled. |
 | `--package-revision` | `-pr` | String | **Gated** | Existing immutable AMS Package Revision id. No package bytes are uploaded. |
 | `--environment-id` | `-eid` | String | **Gated** | AMS Agent home environment. Defaults to the active environment. |
 | `--target-environment-id` | `-tenv` | String | **Gated** | Explicit AMS target environment, including for same-home deployment. |
@@ -364,12 +589,117 @@ msagent agent deploy --agent-id <id> --package-revision <revision-id> \
 - For an MCSAgent, deployment records are updated even when content or workflow-activation warnings remain.
   With `--publish`, content/activation blockers withhold publication and fail the command after
   recording the deploy; informational notices alone do not prevent publication.
-- A standalone workflow deploy always uploads over the target's copy by workflow ID; `--overwrite`
-  adds no protection or different behavior. It rejects `--schema-name`. Activation is attempted
+- With `--publish`, an MCSAgent deploy asks Copilot Studio to publish, then waits up to 5 minutes
+  for Copilot Studio to report that this publish finished; the status line shows `Publishing`
+  meanwhile. The deploy succeeds only when the publish finished `Succeeded`. Any other status fails
+  with [17033](ErrorCodes/17033.md), naming the status, and so does a publish whose progress cannot
+  be read, giving the reason; that publish may have finished, so check it. No result within
+  5 minutes fails with [17018](ErrorCodes/17018.md). Neither the timeout nor Ctrl+C cancels the
+  publish: it keeps running in Copilot Studio, so run the deploy again to confirm it finished. A
+  publish request the service rejects is retried once after 5 seconds, then fails with
+  [14010](ErrorCodes/14010.md). Each of these failures is reported after the deploy was recorded.
+- A standalone workflow deploy uploads over the target's copy by workflow ID. A dev deployment
+  first refuses changes made in the environment since the last pull ([11056](ErrorCodes/11056.md)).
+  On a dev deployment outside the record's home environment that never deployed it, it also refuses
+  a workflow the environment already holds, such as the source of a workflow cloned from another
+  environment, which keeps its source's workflow ID; deploying there would replace that workflow's
+  content and name ([14003](ErrorCodes/14003.md)). `--overwrite` accepts replacing either; Test and
+  Prod deployments always replace the copy. It rejects `--schema-name`. Activation is attempted
   when requested by the local workflow or `--publish`; unbound connections can leave it in draft
   with warnings. Bind them with `msagent deployment connection update` before retrying.
 - Output identifies the record, deployment, target environment, action, pushed counts, publication
-  or workflow state, and warnings.
+  or workflow state, and warnings. An MCSAgent deploy's `published` line says whether the deploy
+  published the agent: `yes — the content is live`, or, without `--publish`,
+  `no — this deploy's content is a draft; the version published 2026-10-25 19:02:38Z stays live. Re-run with --publish to make it live.`
+  for an agent published before, naming when the version that stays live was published, and
+  `no — the content is a draft. Re-run with --publish to make it live.` for one never published.
+  The JSON carries that time as `lastPublishedTime`: when Copilot Studio finished this deploy's
+  publish, or else when the agent was last published as the push read it, or `null`.
+
+### AMS mode for agent deploy (Gated)
+
+> **Gated.** Applies only in [AMS mode](#ams-mode-gated), that is, while `AmsMcsAgents` is enabled.
+
+**A deploy from the working folder** runs as described above, then tells AMS about it: the
+deployment, the Copilot Studio agent or flow it wrote, whether it published, and the commit the
+folder held. msagent reads the commit with git: the folder's `HEAD` when it is pushed, else the
+newest pushed commit it builds on, marked exact only when the agent's folder and its collection
+folders hold no uncommitted changes and `HEAD` is pushed. Later captures and remote deploys merge
+Dev's edits from that commit. When git cannot tell the commit, AMS gets the deploy without one and a
+warning says so; when AMS refuses the record or cannot be reached, the deploy stands and a warning
+says AMS does not know about it. For an agent AMS does not know, a warning names `msagent agent init`.
+The deploy compares the folder with the copy of its `.mcs` kept for the commit it holds, or for the
+nearest commit it builds on, and saves a copy for that commit afterwards, so after switching
+branches it asks for `msagent agent pull` or `--overwrite` only when Copilot Studio changed since
+that commit last synced.
+
+**`--remote`** deploys a commit of the agent's GRS repository through AMS instead, for an agent AMS
+knows ([19062](ErrorCodes/19062.md) otherwise), to one of its deployments. The working folder's
+content is not read. msagent sends only what you gave; AMS chooses the commit for each stage and
+applies the stage rules:
+
+| Stage | With `--commit-id` | Without it |
+| --- | --- | --- |
+| Dev | Any commit of the repository that holds the agent's folder | `main`'s newest commit |
+| Test | A commit Dev deployed ([19002](ErrorCodes/19002.md) otherwise) | The commit Dev deployed last |
+| Prod | Refused ([19063](ErrorCodes/19063.md)) | The commit Test deployed last |
+
+With nothing deployed to the preceding stage, Test and Prod fail with [19004](ErrorCodes/19004.md).
+In a clone, msagent resolves `--commit-id` with git, so a short id works; a commit AMS cannot find
+fails with [19065](ErrorCodes/19065.md). A Dev deploy first saves the edits made in Copilot Studio
+since Dev's last deploy or capture as a commit on `main`, and refuses a commit that lacks them
+([19051](ErrorCodes/19051.md)) unless `--overwrite` replaces them; a Dev deployment whose commit AMS
+does not know is refused without `--overwrite` ([19064](ErrorCodes/19064.md)). Uncommitted or
+unpushed changes in the agent's folder do not block a remote deploy; a warning says they are not in
+it. A remote deploy sets no connection bindings or environment-variable values, and keeps those the
+environment holds.
+
+msagent waits for the operation, at most 45 minutes, unless `--async` returns once AMS accepted it.
+Ctrl+C stops only the wait ([19029](ErrorCodes/19029.md)). On success, `.config` records the deploy
+as a deploy from the folder does. A finished MCSAgent deploy to Dev also connects the agent's folder,
+and the collection folders it declares, to Dev's Copilot Studio agent, so that `agent pull` there
+brings in the edits made in Copilot Studio, but only when the folder holds exactly the deployed
+commit: as git read it before the deploy, its `HEAD` is that commit and is pushed, and the agent's
+folder and its collection folders hold no uncommitted changes. The connect writes only `.mcs`,
+refreshes a folder already connected to Dev's agent, and records Dev's agent as the record's
+`mcsAgentId`. A collection Dev doesn't hold yet leaves its folder unconnected, and a warning names
+the folder. When the folder holds anything else, such as another branch's commit or uncommitted
+edits, its `.mcs` is left exactly as it is, so that `agent pull` still brings in what changed in
+Copilot Studio since the folder's last sync, and the JSON's `workspaceNotice` says why: a folder
+that isn't connected is connected by a later Dev deploy of the commit it holds, and `agent pull`
+brings the deployed changes into a connected one. An agent's folder connected to another
+environment is left as it is without a message, and a Test or Prod deploy, `--async`, or a
+standalone workflow connects nothing. When the connect fails, for example because a folder is
+connected to another agent, collection or environment, the deploy still counts and `.config` still
+records it; a warning gives the reason and says to run `msagent agent capture`, then `git pull`, to
+bring Copilot Studio changes into the repository.
+
+The result names the commit deployed and the operation, as a deploy from the folder does. With
+`--json`, `capturedCommitSha` names the commit on `main` that holds Dev's edits when the deploy first
+saved them, `workspaceConnected` says whether it connected the folder, and `workspaceNotice` says why
+it left the folder as it was:
+
+```text
+Deployed Support agent to development (dev) from commit 1a2b3c4.
+  commit       1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
+  operation    <operation-id>
+  environment  <dev-environment-id>
+  published    no — the content is a draft. Re-run with --publish to make it live.
+```
+
+```text
+Deployed Support agent to test (test) from commit 1a2b3c4.
+  commit       1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
+  operation    <operation-id>
+  environment  <test-environment-id>
+  published    yes — the content is live
+```
+
+```text
+msagent agent deploy --deployment-name development --remote --commit-id 1a2b3c4
+msagent agent deploy --deployment-name test --remote
+msagent agent deploy --deployment-name production --remote --async
+```
 
 Gated behavior:
 
@@ -438,6 +768,68 @@ msagent agent unshare (--agent-id <id> | --agent-name <name>) --user <user> [--p
 
 It accepts `--project`, `--agent-id`, `--agent-name`, and `--user` (`-u`; a sign-in address, email
 address, or Entra object id), with the same meanings as for `msagent agent share`.
+
+## `msagent agent capture` (Gated)
+
+> **Gated.** Available only in [AMS mode](#ams-mode-gated), that is, while `AmsMcsAgents` is enabled.
+
+Commits the edits made in the Copilot Studio agent, or standalone cloud flow, of an agent's Dev
+deployment to the agent's GRS repository, through AMS. AMS merges Dev's edits since its last deploy
+or capture with the commits made on `main` since then, commits the result to `main`, and keeps
+Dev's side on the branch `ams/captures/<deployment-id>`. Run `git pull` afterwards to bring the
+commit into your clone.
+
+```text
+msagent agent capture [--project <directory>] [--agent-id <id> | --agent-name <name>] \
+  [--message <message>] [--resolve cloud] [--async]
+msagent agent capture --agent-id <id> --environment-id <home-environment-id>
+```
+
+| Option | Shortcut | Value | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--project` | `-p` | Directory path | Current directory | Project directory whose `.config` names the agent. |
+| `--agent-id` | `-aid` | String | None | Agent to capture. Wins over `--agent-name`. |
+| `--agent-name` | `-an` | String | None | Agent to capture, by name. |
+| `--environment-id` | `-eid` | String | None | The agent's home environment, which selects the agent by `--agent-id` outside its project and reads its Dev deployment from AMS. Takes neither `--project` nor `--agent-name`. |
+| `--message` | `-msg` | String | None | Commit message. |
+| `--resolve` | `-res` | `cloud` | None | Conflict resolution: Dev's side wins every conflict with a newer commit; the other changes of both sides merge as usual. |
+| `--async` | `-as` | Flag | Off | Return once AMS accepts the capture, without waiting for it. |
+
+The agent needs a Dev deployment ([19031](ErrorCodes/19031.md)) whose Copilot Studio agent or flow
+exists ([19038](ErrorCodes/19038.md)), and AMS must know which commit Dev holds
+([19064](ErrorCodes/19064.md)). Edits and a newer commit that change the same lines fail with
+[19050](ErrorCodes/19050.md) unless `--resolve cloud`. The result names the commit, the commit it
+merged from, and the operation; Dev without edits reports `Dev of agent <agent-id> holds nothing to capture.`
+
+```text
+Captured Dev of agent <agent-id> as commit 1a2b3c4.
+  commit       1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
+  base         9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e
+  deployment   <dev-deployment-id>
+  operation    <operation-id>
+```
+
+## `msagent agent operation show` (Gated)
+
+> **Gated.** Available only in [AMS mode](#ams-mode-gated), that is, while `AmsMcsAgents` is enabled.
+
+Shows a deploy or capture operation that AMS runs for an agent: its status, deployment, source and
+result commits, who started it and when, and, for a failed one, the error and what to do about it.
+The agent comes from the project's `.config`, or from `--agent-id` with `--environment-id` outside
+its project.
+
+```text
+msagent agent operation show --operation-id <operation-id> [--project <directory>] \
+  [--agent-id <id> | --agent-name <name>] [--environment-id <home-environment-id>]
+```
+
+| Option | Shortcut | Value | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--operation-id` | `-opid` | String | Yes | Operation to show. |
+| `--project` | `-p` | Directory path | No | Project directory whose `.config` names the agent. Defaults to the current directory. |
+| `--agent-id` | `-aid` | String | No | Agent the operation belongs to. Wins over `--agent-name`. |
+| `--agent-name` | `-an` | String | No | Agent the operation belongs to, by name. |
+| `--environment-id` | `-eid` | String | No | The agent's home environment, which selects the agent by `--agent-id` outside its project. |
 
 ## `msagent agent package upload` (Gated)
 

@@ -8,7 +8,7 @@ namespace Microsoft.Agents.Hosting.Cli.E2E.Scenarios;
 public static class ScenarioCatalogue
 {
     /// <summary>The features a run can be scoped to.</summary>
-    public static IReadOnlyList<string> Features => ["mcs-agent", "mcs-workflow", StandaloneWorkflowScenarios.Feature, "code-agent", "abs", "identity", "mcs-eval"];
+    public static IReadOnlyList<string> Features => ["mcs-agent", "mcs-workflow", StandaloneWorkflowScenarios.Feature, "code-agent", "abs", "identity", "mcs-eval", AmsMcsServices.Feature];
 
     /// <summary>The features whose scenarios create Azure resources.</summary>
     public static IReadOnlyList<string> AzurePack => ["code-agent", "abs", "identity"];
@@ -18,6 +18,8 @@ public static class ScenarioCatalogue
 
     public static IReadOnlyList<string> StandaloneWorkflowPack => [StandaloneWorkflowScenarios.Feature];
 
+    public static IReadOnlyList<string> AmsMcsPack => [AmsMcsServices.Feature];
+
     /// <summary>The packs a run opts into by name; a feature no pack names belongs to core.</summary>
     public static IReadOnlyDictionary<string, IReadOnlyList<string>> OptionalPacks { get; } =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
@@ -26,6 +28,7 @@ public static class ScenarioCatalogue
             ["eval"] = EvalPack,
             ["swf"] = StandaloneWorkflowPack,
             [StandaloneWorkflowScenarios.ChaosPack] = [],
+            [AmsMcsServices.Pack] = AmsMcsPack,
         };
 
     /// <summary>All scenarios, in the order a full run executes them.</summary>
@@ -38,12 +41,15 @@ public static class ScenarioCatalogue
         .. AbsScenarios.All(),
         .. IdentityScenarios.All(),
         .. McsEvalScenarios.All(),
+        .. AmsMcsScenarios.All(),
     ];
 
     /// <summary>Applies the pack, feature, scenario, and smoke filters in that order.</summary>
-    public static IReadOnlyList<Scenario> Select(RunFilters filters)
+    public static IReadOnlyList<Scenario> Select(RunFilters filters) => Select(All(), filters);
+
+    public static IReadOnlyList<Scenario> Select(IEnumerable<Scenario> candidates, RunFilters filters)
     {
-        var scenarios = All().AsEnumerable();
+        var scenarios = candidates;
 
         foreach (var pack in OptionalPacks.Where(candidate => !filters.Packs.Contains(candidate.Key, StringComparer.OrdinalIgnoreCase)))
         {
@@ -52,6 +58,11 @@ public static class ScenarioCatalogue
         }
 
         scenarios = scenarios.Where(scenario => scenario.Pack is null || filters.Packs.Contains(scenario.Pack, StringComparer.OrdinalIgnoreCase));
+
+        if (filters.Packs.Contains(AmsMcsServices.Pack, StringComparer.OrdinalIgnoreCase))
+        {
+            scenarios = scenarios.Where(scenario => AmsMcsPack.Contains(scenario.Feature, StringComparer.OrdinalIgnoreCase));
+        }
 
         if (filters.Features.Count > 0)
         {

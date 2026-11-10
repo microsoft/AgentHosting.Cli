@@ -95,12 +95,16 @@ public sealed class HarnessEnvironment
             capabilities = await standalone.ProbeAsync(capabilities, cancellationToken).ConfigureAwait(false);
         }
 
+        var amsMcs = options.Filters.Packs.Contains(AmsMcsServices.Pack, StringComparer.OrdinalIgnoreCase) ? new AmsMcsServices(config.AmsMcs, runId, msagent, transcript, new AzTokens(config.TenantId)) : null;
+        capabilities = amsMcs is null ? capabilities : await amsMcs.ProbeAsync(capabilities, scheduled, cancellationToken).ConfigureAwait(false);
+        var workspaceRoot = amsMcs?.WorkspaceRoot is { } amsWorkspaceRoot && capabilities.Has(Capability.AmsMcsWorkspaceRoot) ? amsWorkspaceRoot : Path.Combine(runDirectory, "ws");
+
         var run = new RunContext
         {
             RunId = runId,
             RunSuffix = runSuffix,
             RunDirectory = runDirectory,
-            WorkspaceRoot = Path.Combine(runDirectory, "ws"),
+            WorkspaceRoot = workspaceRoot,
             Config = config,
             Capabilities = capabilities,
             Binary = binary,
@@ -108,11 +112,12 @@ public sealed class HarnessEnvironment
             Azure = azure,
             Cloud = cloud,
             Ledger = Ledger.Create(runDirectory, runId),
-            Workspaces = new Workspaces(Path.Combine(ProjectDirectory, "fixtures"), Path.Combine(runDirectory, "ws"), config, runSuffix),
+            Workspaces = new Workspaces(Path.Combine(ProjectDirectory, "fixtures"), workspaceRoot, config, runSuffix),
             Session = new SessionResources(),
             Transcript = transcript,
             Reporter = new Reporter(!options.NoColour),
             Standalone = standalone,
+            AmsMcs = amsMcs,
         };
 
         return new HarnessEnvironment(run, scheduled);

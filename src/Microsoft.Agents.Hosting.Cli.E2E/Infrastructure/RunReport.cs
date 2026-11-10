@@ -23,6 +23,8 @@ public sealed record RunReport
 
     public IReadOnlyList<LedgerEntry> Ledger { get; init; } = [];
 
+    public IReadOnlyList<string> KeptWorkspaces { get; init; } = [];
+
     /// <summary>Builds the report from the finished results.</summary>
     public static RunReport From(string runId, DateTimeOffset startedUtc, TimeSpan duration, MsagentBinary binary, IReadOnlyList<ScenarioResult> results, IReadOnlyList<LedgerEntry> ledger) =>
         new()

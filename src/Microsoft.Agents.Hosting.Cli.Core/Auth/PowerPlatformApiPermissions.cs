@@ -1,15 +1,6 @@
 namespace Microsoft.Agents.Hosting.Cli.Core.Auth;
 
-/// <summary>
-/// The delegated Power Platform API permissions the CLI uses, and the operation each one
-/// authorizes. These are existing, first-party-approvable Power Apps permissions — the CLI invents no
-/// Agent Hosting scope, and it requests no
-/// <c>PowerApps.Environments.GenerateResourceStorage</c>, <c>GitRepositories.*</c>, broad managed-app,
-/// or delete permission.
-///
-/// Both Power Platform API resource applications must preauthorize these delegated permissions.
-/// Token claims are validated before any protected operation is attempted.
-/// </summary>
+/// <summary>The existing, first-party-approvable delegated Power Platform API permissions the CLI requests, each named with the operations it authorizes.</summary>
 public static class PowerPlatformApiPermissions
 {
     /// <summary>Authorizes <c>msagent env list</c> and <c>msagent env select</c>.</summary>
@@ -21,7 +12,7 @@ public static class PowerPlatformApiPermissions
     /// <summary>Authorizes <c>msagent agent create</c>.</summary>
     public const string AppsCreate = "PowerApps.Apps.Create";
 
-    /// <summary>Authorizes <c>msagent agent deploy</c> package publication.</summary>
+    /// <summary>Authorizes AMS writes such as <c>msagent agent deploy</c> and <c>msagent agent delete</c>.</summary>
     public const string AppsUpdate = "PowerApps.Apps.Update";
 
     /// <summary>The AgentHostCLI first-party application id that must appear as the token's <c>appid</c>.</summary>

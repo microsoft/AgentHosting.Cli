@@ -10,6 +10,9 @@ public static partial class DataverseHostPatterns
     /// <summary>Commercial organizations, whose regional hosts are <c>crm</c> followed by an optional number.</summary>
     public static readonly Regex CommercialDynamics = CommercialDynamicsPattern();
 
+    /// <summary>Test-ring organizations, which add the <c>crmtest</c> test geography to the commercial hosts.</summary>
+    public static readonly Regex TestDynamics = TestDynamicsPattern();
+
     /// <summary>United States government organizations.</summary>
     public static readonly Regex UnitedStatesGovernment = UnitedStatesGovernmentPattern();
 
@@ -18,6 +21,9 @@ public static partial class DataverseHostPatterns
 
     [GeneratedRegex(@"^[a-z0-9-]+\.crm[0-9]*\.dynamics\.com$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CommercialDynamicsPattern();
+
+    [GeneratedRegex(@"^[a-z0-9-]+\.crm(?:[0-9]*|test)\.dynamics\.com$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TestDynamicsPattern();
 
     [GeneratedRegex(@"^[a-z0-9-]+\.crm[0-9]*\.(microsoftdynamics|appsplatform|dynamics\.microsoft)\.us$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UnitedStatesGovernmentPattern();
@@ -46,31 +52,30 @@ public static partial class DataverseHostPatterns
 public sealed class PowerPlatformCloudMap
 {
     private static readonly PowerPlatformCloudMap PublicCloud =
-        new(CloudInstance.Public, ["api.powerplatform.com"], ["island.powerapps.com"], DataverseHostPatterns.CommercialDynamics);
+        new(CloudInstance.Public, ["api.powerplatform.com"], DataverseHostPatterns.CommercialDynamics);
 
     private static readonly PowerPlatformCloudMap TestCloud =
-        new(CloudInstance.Public, ["api.test.powerplatform.com"], ["island.powerapps.com"], DataverseHostPatterns.CommercialDynamics);
+        new(CloudInstance.Public, ["api.test.powerplatform.com"], DataverseHostPatterns.TestDynamics);
 
     private static readonly PowerPlatformCloudMap PreprodCloud =
-        new(CloudInstance.Public, ["api.preprod.powerplatform.com"], ["island.powerapps.com"], DataverseHostPatterns.CommercialDynamics);
+        new(CloudInstance.Public, ["api.preprod.powerplatform.com"], DataverseHostPatterns.CommercialDynamics);
 
     private static readonly PowerPlatformCloudMap UsGovCloud =
-        new(CloudInstance.UsGov, ["api.gov.powerplatform.microsoft.us"], ["island.powerapps.us"], DataverseHostPatterns.UnitedStatesGovernment);
+        new(CloudInstance.UsGov, ["api.gov.powerplatform.microsoft.us"], DataverseHostPatterns.UnitedStatesGovernment);
 
     private static readonly PowerPlatformCloudMap UsGovHighCloud =
-        new(CloudInstance.UsGovHigh, ["api.high.powerplatform.microsoft.us"], ["island.powerapps.us"], DataverseHostPatterns.UnitedStatesGovernment);
+        new(CloudInstance.UsGovHigh, ["api.high.powerplatform.microsoft.us"], DataverseHostPatterns.UnitedStatesGovernment);
 
     private static readonly PowerPlatformCloudMap UsGovDodCloud =
-        new(CloudInstance.UsGovDod, ["api.appsplatform.us"], ["island.appsplatform.us"], DataverseHostPatterns.UnitedStatesGovernment);
+        new(CloudInstance.UsGovDod, ["api.appsplatform.us"], DataverseHostPatterns.UnitedStatesGovernment);
 
     private static readonly PowerPlatformCloudMap ChinaCloud =
-        new(CloudInstance.China, ["api.powerplatform.partner.microsoftonline.cn"], ["island.powerapps.cn"], DataverseHostPatterns.China);
+        new(CloudInstance.China, ["api.powerplatform.partner.microsoftonline.cn"], DataverseHostPatterns.China);
 
-    private PowerPlatformCloudMap(CloudInstance cloud, IReadOnlyList<string> trustedHostSuffixes, IReadOnlyList<string> trustedAgentManagementHostSuffixes, Regex trustedDataverseHostPattern)
+    private PowerPlatformCloudMap(CloudInstance cloud, IReadOnlyList<string> trustedHostSuffixes, Regex trustedDataverseHostPattern)
     {
         Cloud = cloud;
         TrustedHostSuffixes = trustedHostSuffixes;
-        TrustedAgentManagementHostSuffixes = trustedAgentManagementHostSuffixes;
         TrustedDataverseHostPattern = trustedDataverseHostPattern;
     }
 
@@ -85,11 +90,6 @@ public sealed class PowerPlatformCloudMap
     /// subdomain of one.
     /// </summary>
     public IReadOnlyList<string> TrustedHostSuffixes { get; }
-
-    /// <summary>
-    /// The hosts this cloud serves the Copilot Studio agent-management gateway from. 
-    /// </summary>
-    public IReadOnlyList<string> TrustedAgentManagementHostSuffixes { get; }
 
     /// <summary>Resolves the map for <paramref name="cloud"/>.</summary>
     public static PowerPlatformCloudMap ForCloud(CloudInstance cloud) => cloud switch
@@ -127,11 +127,6 @@ public sealed class PowerPlatformCloudMap
     /// default HTTPS port, and has a host inside the allowlist.
     /// </summary>
     public bool IsTrusted(Uri? endpoint) => IsTrustedAgainst(endpoint, TrustedHostSuffixes);
-
-    /// <summary>Whether the url is a Copilot Studio agent-management gateway this cloud serves.</summary>
-    /// <param name="endpoint">The candidate gateway url.</param>
-    /// <returns><see langword="true"/> when the url is safe to mint a token for.</returns>
-    public bool IsTrustedAgentManagementGateway(Uri? endpoint) => IsTrustedAgainst(endpoint, TrustedAgentManagementHostSuffixes);
 
     private static bool IsTrustedAgainst(Uri? endpoint, IReadOnlyList<string> suffixes) =>
         IsAddressableHttpsEndpoint(endpoint) && IsTrustedHost(endpoint!.Host, suffixes);
@@ -181,34 +176,14 @@ public sealed class PowerPlatformCloudMap
     /// <see cref="EndpointTrustException"/> naming <paramref name="context"/>. The message carries the
     /// rejected host and the allowlist, both non-secret.
     /// </summary>
-    public Uri RequireTrusted(Uri? endpoint, string context) => RequireTrustedAgainst(endpoint, context, TrustedHostSuffixes, IsTrusted);
+    public Uri RequireTrusted(Uri? endpoint, string context) => IsTrusted(endpoint) ? endpoint! : throw UntrustedEndpoint(endpoint, context, TrustedHostSuffixes);
 
-    /// <summary>
-    /// Returns <paramref name="endpoint"/> when it is a Copilot Studio agent-management gateway this
-    /// cloud serves; otherwise throws <see cref="EndpointTrustException"/>.
-    /// </summary>
-    /// <param name="endpoint">The candidate gateway url.</param>
-    /// <param name="context">What the endpoint is being used for, named in the failure.</param>
-    /// <returns>The trusted endpoint.</returns>
-    public Uri RequireTrustedAgentManagementGateway(Uri? endpoint, string context) =>
-        RequireTrustedAgainst(endpoint, context, TrustedAgentManagementHostSuffixes, IsTrustedAgentManagementGateway);
+    /// <summary>The failure raised when an endpoint is not a host trusted for a use, naming the use and the trusted host suffixes but never the endpoint's path.</summary>
+    /// <param name="endpoint">The rejected endpoint.</param>
+    /// <param name="context">What the endpoint was to be used for.</param>
+    /// <param name="trustedHostSuffixes">The host suffixes trusted for that use.</param>
+    /// <returns>The exception to throw.</returns>
+    public EndpointTrustException UntrustedEndpoint(Uri? endpoint, string context, IEnumerable<string> trustedHostSuffixes) => new($"The {context} endpoint '{Describe(endpoint)}' is not a trusted {Cloud} Power Platform host. Trusted hosts end with: {string.Join(", ", trustedHostSuffixes)}.", remediation: "Re-run `msagent env list` to refresh the environment inventory; if the endpoint is still untrusted the inventory response cannot be used and the selection must not proceed.");
 
-    private Uri RequireTrustedAgainst(Uri? endpoint, string context, IReadOnlyList<string> suffixes, Func<Uri?, bool> isTrusted)
-    {
-        if (isTrusted(endpoint))
-        {
-            return endpoint!;
-        }
-
-        var described = endpoint is null
-            ? "<none>"
-            : endpoint.IsAbsoluteUri
-                ? $"{endpoint.Scheme}://{endpoint.Authority}"
-                : endpoint.OriginalString;
-
-        throw new EndpointTrustException(
-            $"The {context} endpoint '{described}' is not a trusted {Cloud} Power Platform host. " +
-            $"Trusted hosts end with: {string.Join(", ", suffixes)}.",
-            remediation: "Re-run `msagent env list` to refresh the environment inventory; if the endpoint is still untrusted the inventory response cannot be used and the selection must not proceed.");
-    }
+    private static string Describe(Uri? endpoint) => endpoint is null ? "<none>" : endpoint.IsAbsoluteUri ? $"{endpoint.Scheme}://{endpoint.Authority}" : endpoint.OriginalString;
 }

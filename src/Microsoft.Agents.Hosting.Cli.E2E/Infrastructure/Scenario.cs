@@ -51,6 +51,8 @@ public sealed class ScenarioContext
 
     public StandaloneServices? Standalone { get; init; }
 
+    public AmsMcsServices? AmsMcs { get; init; }
+
     /// <summary>The dev environment, which every cloud scenario targets unless it says otherwise.</summary>
     public string DevEnvironmentId => Config.Mcs.DevEnvironmentId
         ?? throw new E2EException($"{ScenarioId} requires mcs.devEnvironmentId, which the capability check should have caught.");

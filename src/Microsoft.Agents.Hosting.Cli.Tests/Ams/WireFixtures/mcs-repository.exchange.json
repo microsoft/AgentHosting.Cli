@@ -1,0 +1,23 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "agents/mcs/repositories/cccccccc-3333-4333-8333-000000000003",
+    "query": {
+      "agentFolder": "ContosoHR"
+    },
+    "headers": {},
+    "bodyFixture": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {},
+    "bodyFixture": "mcs-repository.response.json"
+  },
+  "startsOperation": false,
+  "errors": [
+    { "status": 400, "code": "InvalidAgentFieldValue", "bodyFixture": null, "when": "repositoryId or agentFolder is malformed" },
+    { "status": 400, "code": "McsRepositoryNotSupported", "bodyFixture": "mcs-repository.not-supported.error.json", "when": "the repository isn't an active native git source repository of this environment, or holds '.mcs'" },
+    { "status": 403, "code": "McsRepositoryNotWritable", "bodyFixture": null, "when": "the caller can't write to the repository" },
+    { "status": 404, "code": "McsRepositoryNotFound", "bodyFixture": "mcs-repository.not-found.error.json", "when": "the repository is missing, deleted or unreadable" }
+  ]
+}

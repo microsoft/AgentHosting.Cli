@@ -50,7 +50,7 @@ public sealed class ConnectionConsentTimeoutTests
         var connectors = new FakeConnectorCatalogPort();
         connectors.InternalIds.Add("shared_office365");
 
-        var flow = new BrowserConnectionConsentFlow(new RecordingBrowserLauncher(), presenter, connectors, ManagedAgentFixtures.Principals(), CoreServicesClusterCategory.Prod);
+        var flow = new BrowserConnectionConsentFlow(new RecordingBrowserLauncher(), presenter, connectors, ManagedAgentFixtures.Rules, ManagedAgentFixtures.Principals(), CoreServicesClusterCategory.Prod);
 
         using var cancellation = new CancellationTokenSource();
         cancellation.CancelAfter(TimeSpan.FromMilliseconds(100));

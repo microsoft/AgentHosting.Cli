@@ -9,31 +9,24 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Copilot;
 /// </summary>
 public sealed class CopilotCatalogService
 {
-    private static readonly TimeSpan DefaultPublishPollingInterval = TimeSpan.FromSeconds(5);
-
-    private static readonly TimeSpan DefaultPublishMaximumWait = TimeSpan.FromMinutes(5);
-
-    private static readonly TimeSpan PublishRetryDelay = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan PublishMaximumWait = TimeSpan.FromMinutes(5);
 
     private readonly ICopilotCatalogPort _catalog;
+    private readonly ICopilotPublishPort _publisher;
     private readonly CopilotEnvironmentResolver _environmentResolver;
     private readonly CopilotWorkspaceLocator _workspaceLocator;
-    private readonly IClock _clock;
-    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
     /// <summary>Creates the service.</summary>
     /// <param name="catalog">The agent catalog transport.</param>
+    /// <param name="publisher">Publishes agents and waits for Copilot Studio to finish.</param>
     /// <param name="environmentResolver">Resolves the target environment.</param>
     /// <param name="workspaceLocator">Finds the workspace <c>publish</c> defaults to.</param>
-    /// <param name="clock">Supplies the current time for polling.</param>
-    /// <param name="delay">Waits between polls. Replaced in tests so polling is instant.</param>
-    public CopilotCatalogService(ICopilotCatalogPort catalog, CopilotEnvironmentResolver environmentResolver, CopilotWorkspaceLocator workspaceLocator, IClock clock, Func<TimeSpan, CancellationToken, Task>? delay = null)
+    public CopilotCatalogService(ICopilotCatalogPort catalog, ICopilotPublishPort publisher, CopilotEnvironmentResolver environmentResolver, CopilotWorkspaceLocator workspaceLocator)
     {
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
+        _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
         _workspaceLocator = workspaceLocator ?? throw new ArgumentNullException(nameof(workspaceLocator));
-        _clock = clock ?? throw new ArgumentNullException(nameof(clock));
-        _delay = delay ?? ((interval, cancellationToken) => Task.Delay(interval, cancellationToken));
     }
 
     /// <summary>Resolves an identifier or schema name, failing when nothing matches.</summary>
@@ -45,7 +38,7 @@ public sealed class CopilotCatalogService
         await _catalog.ResolveAgentIdAsync(environment, botIdOrSchemaName, cancellationToken).ConfigureAwait(false)
             ?? throw CopilotStudioException.AgentNotFound(botIdOrSchemaName);
 
-    /// <summary>Publishes an agent's draft content, but only when the caller confirms.</summary>
+    /// <summary>Publishes an agent's draft content and waits until Copilot Studio reports the publish succeeded, but only when the caller confirms.</summary>
     /// <param name="request">The command input.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>The published agent, or what would be published when unconfirmed.</returns>
@@ -64,81 +57,19 @@ public sealed class CopilotCatalogService
 
         if (!request.Force)
         {
-            return PublishResult("confirmation-required", agent, environment, resolvedFrom, null, null, TimeSpan.Zero);
+            return PublishResult("confirmation-required", agent, environment, resolvedFrom, null);
         }
 
-        var previousPublishedOn = await _catalog.GetPublishedOnAsync(environment, agentId, cancellationToken).ConfigureAwait(false);
-        await PublishOnceRetryingAConflictAsync(environment, agentId, cancellationToken).ConfigureAwait(false);
-
-        var maximumWait = request.MaximumWait ?? DefaultPublishMaximumWait;
-
-        var (publishedOn, waited, timedOut) = await PollAsync(
-            () => _catalog.GetPublishedOnAsync(environment, agentId, cancellationToken),
-            observed => observed != previousPublishedOn,
-            request.PollingInterval ?? DefaultPublishPollingInterval,
-            maximumWait,
-            cancellationToken).ConfigureAwait(false);
-
-        return timedOut
-            ? throw CopilotStudioException.PublishTimeout(agentId, maximumWait)
-            : PublishResult("published", agent, environment, resolvedFrom, previousPublishedOn, publishedOn, waited);
+        return PublishResult("published", agent, environment, resolvedFrom, await _publisher.PublishAsync(environment, agentId, PublishMaximumWait, cancellationToken).ConfigureAwait(false) ?? await _catalog.GetPublishedOnAsync(environment, agentId, cancellationToken).ConfigureAwait(false));
     }
 
-    /// <summary>
-    /// Publishes, retrying once when the service reports it is still busy with the content just pushed.
-    ///
-    /// A first publish straight after a push is the common case for a new agent, and the service answers
-    /// it with a conflict while it settles. Publishing is idempotent, so one delayed retry costs nothing
-    /// when it was already live and saves the operator re-running the whole deploy when it was not.
-    /// </summary>
-    private async Task PublishOnceRetryingAConflictAsync(CopilotEnvironmentContext environment, string agentId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await _catalog.PublishAgentAsync(environment, agentId, cancellationToken).ConfigureAwait(false);
-
-            return;
-        }
-        catch (CopilotStudioException failure) when (failure.ErrorKind == CopilotErrorKinds.ServiceError)
-        {
-            await _delay(PublishRetryDelay, cancellationToken).ConfigureAwait(false);
-        }
-
-        await _catalog.PublishAgentAsync(environment, agentId, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<(T Observed, TimeSpan Waited, bool TimedOut)> PollAsync<T>(Func<Task<T>> read, Func<T, bool> isComplete, TimeSpan pollingInterval, TimeSpan maximumWait, CancellationToken cancellationToken)
-    {
-        var startedAt = _clock.UtcNow;
-
-        while (true)
-        {
-            var observed = await read().ConfigureAwait(false);
-            var waited = _clock.UtcNow - startedAt;
-
-            if (isComplete(observed))
-            {
-                return (observed, waited, false);
-            }
-
-            if (waited >= maximumWait)
-            {
-                return (observed, waited, true);
-            }
-
-            await _delay(pollingInterval, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private static CopilotPublishResult PublishResult(string status, CopilotAgentSummary agent, CopilotEnvironmentContext environment, string resolvedFrom, DateTimeOffset? previousPublishedOn, DateTimeOffset? publishedOn, TimeSpan waited) => new()
+    private static CopilotPublishResult PublishResult(string status, CopilotAgentSummary agent, CopilotEnvironmentContext environment, string resolvedFrom, DateTimeOffset? publishedOn) => new()
     {
         Status = status,
         AgentId = agent.AgentId,
         SchemaName = agent.SchemaName,
         EnvironmentId = environment.EnvironmentId,
         ResolvedFrom = resolvedFrom,
-        PreviousPublishedOn = previousPublishedOn,
         PublishedOn = publishedOn,
-        Waited = waited,
     };
 }

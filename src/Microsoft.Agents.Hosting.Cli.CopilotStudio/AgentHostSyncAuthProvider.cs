@@ -10,22 +10,19 @@ namespace Microsoft.Agents.Hosting.Cli.CopilotStudio;
 /// </summary>
 public sealed class AgentHostSyncAuthProvider : ISyncAuthProvider
 {
+    private const string ApplicationAudienceScheme = "api";
+
+    private const string DelegatedPermission = "user_impersonation";
+
+    private static readonly PpapiScopeBuilder Scopes = new();
+
     private readonly ITokenProvider _tokenProvider;
 
     /// <summary>Creates a provider backed by <paramref name="tokenProvider"/>.</summary>
     /// <param name="tokenProvider">The CLI's silent, multi-audience token provider.</param>
     public AgentHostSyncAuthProvider(ITokenProvider tokenProvider) => _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
 
-    /// <summary>
-    /// Acquires a bearer token for <paramref name="audience"/>, in the tenant the current operation
-    /// targets.
-    ///
-    /// The audience alone does not say which tenant a token should come from. An operator signed in to
-    /// several tenants would otherwise be served whichever the cache offered first, so a command aimed
-    /// at one tenant's environment could carry another tenant's token. The tenant is read from the
-    /// operation's own scope rather than from state on this provider, which is a singleton shared by
-    /// every concurrent operation.
-    /// </summary>
+    /// <summary>Acquires a bearer token for <paramref name="audience"/> in the tenant the current operation targets rather than whichever the cache offers first, asking for an application audience's user_impersonation permission and for a resource's default scope.</summary>
     /// <param name="audience">The audience the sync library needs a token for.</param>
     /// <param name="cancellationToken">Cancels the acquisition.</param>
     /// <returns>The bearer token value.</returns>
@@ -34,9 +31,12 @@ public sealed class AgentHostSyncAuthProvider : ISyncAuthProvider
         ArgumentNullException.ThrowIfNull(audience);
 
         var tenantId = DataverseOperationScope.TenantId;
+        var token = string.Equals(audience.Scheme, ApplicationAudienceScheme, StringComparison.OrdinalIgnoreCase)
+            ? await _tokenProvider.AcquireTokenSilentAsync(ApplicationScopes(audience), tenantId, cancellationToken).ConfigureAwait(false)
+            : await _tokenProvider.AcquireTokenSilentAsync(audience.ToString(), tenantId, cancellationToken).ConfigureAwait(false);
 
-        return AcquiredTokenTenant.Require(
-            await _tokenProvider.AcquireTokenSilentAsync(audience.ToString(), tenantId, cancellationToken).ConfigureAwait(false),
-            tenantId);
+        return AcquiredTokenTenant.Require(token, tenantId);
     }
+
+    internal static IReadOnlyList<string> ApplicationScopes(Uri audience) => Scopes.ExplicitScopes(audience.ToString(), DelegatedPermission);
 }

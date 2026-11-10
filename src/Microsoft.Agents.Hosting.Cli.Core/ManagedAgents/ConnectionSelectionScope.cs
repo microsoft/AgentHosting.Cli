@@ -202,7 +202,7 @@ public static class ConnectionSelectionScope
 
         var actionable = group.References.FirstOrDefault(index => ConnectionReadinessPlanner.IsActionable(plan[index]), -1);
 
-        return actionable < 0 ? [] : ConnectionReadinessPlanner.Connected(plan[actionable].View);
+        return actionable < 0 ? [] : plan[actionable].ConnectedCandidates;
     }
 
     /// <summary>

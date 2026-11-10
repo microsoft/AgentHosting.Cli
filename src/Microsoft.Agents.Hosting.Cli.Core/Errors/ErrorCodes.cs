@@ -111,6 +111,12 @@ public static class ErrorCodes
         public const int TokenClaimWrongApplication = 12014;
         public const int TokenClaimWrongTenant = 12015;
         public const int TokenClaimMissingPermission = 12016;
+
+        /// <summary>git is not on PATH, so msagent cannot point it at its credential helper.</summary>
+        public const int GitNotFound = 12017;
+
+        /// <summary>git could not write the credential helper into the user's global git config.</summary>
+        public const int GitConfigurationFailed = 12018;
     }
 
     /// <summary>Error identifiers for the Environment area (prefix 13).</summary>
@@ -256,6 +262,12 @@ public static class ErrorCodes
         public const int WorkflowToolIdEmpty = 17030;
         public const int DuplicateConnectionReference = 17031;
         public const int MissingConnectionReference = 17032;
+
+        /// <summary>Copilot Studio finished the publish with a status other than Succeeded, or its progress could not be read.</summary>
+        public const int PublishFailed = 17033;
+
+        /// <summary>Copilot Studio was still provisioning the classic agent when the wait ran out, so nothing was pushed into it or published.</summary>
+        public const int AgentNotProvisioned = 17034;
     }
 
     /// <summary>Error identifiers for the Evaluation area (prefix 18).</summary>
@@ -276,6 +288,142 @@ public static class ErrorCodes
         public const int ReplacementConflicted = 18013;
         public const int RunNotIdentified = 18014;
         public const int ReplacementInterrupted = 18015;
+    }
+
+    /// <summary>Error identifiers for the AMS agent area (prefix 19).</summary>
+    public static class AmsAgent
+    {
+        /// <summary>Test takes only a commit Dev deployed.</summary>
+        public const int CommitNotAllowedForStage = 19002;
+
+        /// <summary>The deployment's stage does not fit its environment.</summary>
+        public const int DeploymentStageEnvironmentInvalid = 19003;
+
+        /// <summary>The preceding stage has nothing deployed to promote.</summary>
+        public const int SourceDeploymentNotReady = 19004;
+
+        /// <summary>Another operation is running on this deployment.</summary>
+        public const int DeploymentOperationInProgress = 19006;
+
+        /// <summary>The service has no free worker right now.</summary>
+        public const int OperationCapacityExceeded = 19007;
+
+        /// <summary>The agent's source kept changing in the repository while the operation ran.</summary>
+        public const int SourceConflict = 19008;
+
+        /// <summary>You cannot write to the repository.</summary>
+        public const int RepositoryNotWritable = 19009;
+
+        /// <summary>The repository was not found.</summary>
+        public const int RepositoryNotFound = 19010;
+
+        /// <summary>The repository cannot hold MCS agents of this environment.</summary>
+        public const int RepositoryNotSupported = 19011;
+
+        /// <summary>Another AMS agent holds the repository folder.</summary>
+        public const int AgentFolderBound = 19012;
+
+        /// <summary>Another AMS agent claims the Copilot Studio agent or flow.</summary>
+        public const int BotClaimed = 19013;
+
+        /// <summary>The agent source is not valid.</summary>
+        public const int SourceValidationFailed = 19014;
+
+        /// <summary>The agent source is too large.</summary>
+        public const int SourceTooLarge = 19015;
+
+        /// <summary>The repository checks rejected the source.</summary>
+        public const int SourceCheckFailed = 19016;
+
+        /// <summary>The service could not act on your behalf.</summary>
+        public const int OnBehalfOfUnavailable = 19017;
+
+        /// <summary>The operation failed in Copilot Studio.</summary>
+        public const int OperationFailed = 19018;
+
+        /// <summary>A test-only endpoint override is not usable.</summary>
+        public const int EndpointOverrideNotUsable = 19026;
+
+        /// <summary>This command needs the on-behalf-of endpoint.</summary>
+        public const int OnBehalfOfEndpointRequired = 19027;
+
+        /// <summary>Stopped waiting for the operation.</summary>
+        public const int OperationWaitInterrupted = 19029;
+
+        /// <summary>The operation took too long.</summary>
+        public const int OperationWaitTimedOut = 19030;
+
+        /// <summary>The agent cannot be used for this command.</summary>
+        public const int AgentNotEligible = 19031;
+
+        /// <summary>The Dev deployment has no Copilot Studio agent or workflow yet.</summary>
+        public const int CaptureAgentNotInCloud = 19038;
+
+        /// <summary>Dev's edits and a later commit changed the same lines, so nothing was captured.</summary>
+        public const int CaptureConflict = 19050;
+
+        /// <summary>Dev had edits the commit being deployed does not hold, so nothing was deployed.</summary>
+        public const int DevEditsNotInCommit = 19051;
+
+        /// <summary>The project folder is below its git repository's root.</summary>
+        public const int ProjectNotRepositoryRoot = 19052;
+
+        /// <summary>The project folder holds files that are not part of the project.</summary>
+        public const int ProjectFolderNotDedicated = 19053;
+
+        /// <summary>The project folder's remote is not a GRS repository.</summary>
+        public const int NotAGrsRepository = 19054;
+
+        /// <summary>--repository-id differs from the repository the project folder's remote names.</summary>
+        public const int RepositoryMismatch = 19055;
+
+        /// <summary>The Copilot Studio agent or workflow a register or deploy record names doesn't exist in its environment.</summary>
+        public const int BotNotFound = 19056;
+
+        /// <summary>The agent's folder already exists on the repository's main branch.</summary>
+        public const int FolderExistsInRepository = 19057;
+
+        /// <summary>Linking the repository would overwrite local files.</summary>
+        public const int RepositoryWouldOverwrite = 19058;
+
+        /// <summary>Git tracks a .mcs cache inside a folder msagent commits or restores, or a commit msagent would push holds one.</summary>
+        public const int McsFolderInRepository = 19059;
+
+        /// <summary>The project folder is itself the agent's folder.</summary>
+        public const int WorkspaceAtProjectRoot = 19060;
+
+        /// <summary>AMS does not know the agent.</summary>
+        public const int AgentNotRegistered = 19062;
+
+        /// <summary>A Prod deploy takes no commit.</summary>
+        public const int CommitNotAccepted = 19063;
+
+        /// <summary>AMS does not know which commit Dev holds.</summary>
+        public const int CaptureBaseUnknown = 19064;
+
+        /// <summary>The commit is not in the repository, or does not hold the agent's folder.</summary>
+        public const int CommitNotFound = 19065;
+
+        /// <summary>AMS already holds the agent id with other details.</summary>
+        public const int AgentIdConflict = 19066;
+
+        /// <summary>A git command failed.</summary>
+        public const int GitCommandFailed = 19067;
+
+        /// <summary>AMS already holds the deployment id with other details.</summary>
+        public const int DeploymentIdConflict = 19068;
+
+        /// <summary>AMS's record of the agent changed between msagent's read and its delete.</summary>
+        public const int AgentRecordChanged = 19069;
+
+        /// <summary>AMS refused a value of the request, such as the agent folder.</summary>
+        public const int RequestRejected = 19070;
+
+        /// <summary>A pull met uncommitted changes in a folder whose commit never synced with Copilot Studio.</summary>
+        public const int UnsyncedCommitHasChanges = 19071;
+
+        /// <summary>A pull met a folder whose commit never synced with Copilot Studio and lacks the commit Copilot Studio last synced from.</summary>
+        public const int SyncedCommitNotMerged = 19072;
     }
 
     /// <summary>Error identifiers for the General area (prefix 99).</summary>

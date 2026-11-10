@@ -28,6 +28,12 @@ public sealed class CommandAttribute : Attribute
 
     /// <summary>Keeps the progress spinner hidden while the command runs.</summary>
     public bool SuppressProgress { get; init; }
+
+    /// <summary>Leaves the command out of help and of the commands a group lists, for a command another program runs.</summary>
+    public bool Hidden { get; init; }
+
+    /// <summary>Suppresses command telemetry for this command and every command nested under it.</summary>
+    public bool SuppressTelemetry { get; init; }
 }
 
 /// <summary>Marks a class as a command group — a node that owns children rather than an action.</summary>

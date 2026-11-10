@@ -1,36 +1,26 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
-using Microsoft.Agents.ObjectModel;
-using Microsoft.Agents.Platform.Content;
 using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.CopilotStudio;
 
-/// <summary>
-/// Binds a workspace to a cloud agent, creating one only when the schema name is free.
-/// </summary>
-public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort
+/// <summary>Binds a workspace to a cloud agent through the sync library's attach and connect, restating their outcomes and failures as the CLI's own.</summary>
+public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort, ICopilotWorkspaceConnectPort
 {
-    private readonly IWorkspaceSynchronizer _synchronizer;
-    private readonly IWorkspaceRetargetService _retargetService;
+    private readonly WorkspaceAttachService _attachService;
     private readonly ISyncDataverseClient _dataverseClient;
-    private readonly IOperationContextProvider _operationContexts;
     private readonly AgentHostDataverseHttpClientAccessor _httpClientAccessor;
 
     /// <summary>Creates the adapter.</summary>
-    /// <param name="synchronizer">Reads the workspace and writes its sync info.</param>
-    /// <param name="retargetService">Writes the cloud baseline and owns the retarget snapshot.</param>
+    /// <param name="attachService">Attaches the workspace, creating the agent only when its schema name is free, or connects it to an agent that exists.</param>
     /// <param name="dataverseClient">Resolves and creates agents.</param>
-    /// <param name="operationContexts">Builds the authoring operation context.</param>
     /// <param name="httpClientAccessor">Targets the Dataverse organization.</param>
-    public WorkspaceReattachAdapter(IWorkspaceSynchronizer synchronizer, IWorkspaceRetargetService retargetService, ISyncDataverseClient dataverseClient, IOperationContextProvider operationContexts, AgentHostDataverseHttpClientAccessor httpClientAccessor)
+    public WorkspaceReattachAdapter(WorkspaceAttachService attachService, ISyncDataverseClient dataverseClient, AgentHostDataverseHttpClientAccessor httpClientAccessor)
     {
-        _synchronizer = synchronizer ?? throw new ArgumentNullException(nameof(synchronizer));
-        _retargetService = retargetService ?? throw new ArgumentNullException(nameof(retargetService));
+        _attachService = attachService ?? throw new ArgumentNullException(nameof(attachService));
         _dataverseClient = dataverseClient ?? throw new ArgumentNullException(nameof(dataverseClient));
-        _operationContexts = operationContexts ?? throw new ArgumentNullException(nameof(operationContexts));
         _httpClientAccessor = httpClientAccessor ?? throw new ArgumentNullException(nameof(httpClientAccessor));
     }
 
@@ -41,190 +31,108 @@ public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort
 
         DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, command.Environment);
 
-        var workspaceFolder = new DirectoryPath(command.ProjectDirectory.Replace('\\', '/'));
-        var isRetarget = _synchronizer.IsSyncInfoAvailable(workspaceFolder);
-
-        if (isRetarget && !command.AllowRetarget)
+        try
         {
-            throw CopilotStudioException.WorkspaceAlreadyConnected(command.ProjectDirectory);
-        }
+            var attached = await _attachService.AttachAsync(Request(command), _dataverseClient, cancellationToken).ConfigureAwait(false);
 
-        var definition = await TryReadDefinitionAsync(workspaceFolder, cancellationToken).ConfigureAwait(false);
-
-        if (definition is not null)
-        {
-            if (WorkspaceClassifier.Classify(definition, command.ProjectDirectory) is { } classification && !classification.Allows(SyncOperation.Reattach))
+            return new CopilotAttachOutcome
             {
-                throw CopilotStudioException.ReattachNotSupported(command.ProjectDirectory, AuthoringSupportGate.DescribeBlocked(classification, SyncOperation.Reattach));
-            }
-
-            await WorkspaceDefinitionReader.RequireSynchronizableAsync(_synchronizer, workspaceFolder, definition, cancellationToken).ConfigureAwait(false);
+                AgentId = attached.AgentId.ToString(),
+                SchemaName = attached.SchemaName,
+                AgentCreated = attached.AgentCreated,
+                Retargeted = attached.Retargeted,
+                Warnings = [.. attached.ConnectorFailureReasons, .. SyncResponseGuards.DescribeRefusedWorkflows(attached.WorkflowResponses), .. SyncResponseGuards.DescribeRefusedPrompts(attached.PromptResponses)],
+                Notices = attached.AdoptedExistingAgent ? [$"An agent already carried the schema name {command.SchemaName} in {command.Environment.EnvironmentId}; it was adopted rather than duplicated."] : [],
+            };
         }
+        catch (WorkspaceValidationException failure)
+        {
+            throw WorkspaceDefinitionReader.Translate(failure);
+        }
+        catch (AgentScaffoldException failure)
+        {
+            throw CopilotStudioException.WorkspaceFilesUnreadable($"{WorkspaceFileNames.Settings}: {failure.Message}", failure);
+        }
+        catch (WorkspaceAttachException failure)
+        {
+            throw Translate(failure, command);
+        }
+    }
 
-        var existing = await _dataverseClient.GetAgentIdBySchemaNameAsync(command.SchemaName, cancellationToken).ConfigureAwait(false);
+    /// <inheritdoc />
+    public async Task<CopilotConnectOutcome> ConnectAsync(CopilotConnectCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
 
-        RemoteBindingSnapshot? bindingSnapshot = null;
-        AttachTarget? target = null;
-        var refusals = new List<string>();
+        var collections = CollectionFolders(command.CollectionDirectories);
+        DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, command.Environment);
 
         try
         {
-            target = await ResolveTargetAsync(command, existing, cancellationToken).ConfigureAwait(false);
-            var updateWorkspaceDirectory = target.Created && target.SchemaName != command.SchemaName;
-
-            var syncInfo = await AgentSyncInfoFactory.CreateAsync(_dataverseClient, command.Environment, target.AgentId, cancellationToken).ConfigureAwait(false);
-            var operationContext = await _operationContexts.GetAsync(syncInfo).ConfigureAwait(false);
-
-            if (isRetarget)
-            {
-                bindingSnapshot = _retargetService.ResetRemoteBindingState(workspaceFolder);
-                _retargetService.PersistRetargetBackup(workspaceFolder, bindingSnapshot);
-            }
-            else
-            {
-                _synchronizer.ClearComponentSyncBaselines(workspaceFolder);
-            }
-
-            var pushedConnectors = await _synchronizer.PushCustomConnectorsAsync(workspaceFolder, _dataverseClient, cancellationToken, overwriteRemoteChanges: true).ConfigureAwait(false);
-            refusals.AddRange(pushedConnectors.FailureReasons);
-
-            var provisionedReferences = await DeclaredConnectionReferences.ProvisionAsync(
-                command.ProjectDirectory, _synchronizer, _dataverseClient,
-                pushedConnectors.PushedRowIds, cancellationToken).ConfigureAwait(false);
-
-            var (workflowResponses, cloudFlowMetadata) = await _synchronizer.UpsertWorkflowForAgentAsync(workspaceFolder, _dataverseClient, syncInfo.AgentId, cancellationToken, WorkflowActivationMode.DraftWhenConnectionReferencesExist).ConfigureAwait(false);
-            refusals.AddRange(SyncResponseGuards.DescribeRefusedWorkflows(workflowResponses));
-
-            var (promptResponses, aiPromptMetadata) = await _synchronizer.UpsertAIPromptsForAgentAsync(workspaceFolder, _dataverseClient, syncInfo.AgentId, cancellationToken, overwriteRemoteChanges: true).ConfigureAwait(false);
-            refusals.AddRange(SyncResponseGuards.DescribeRefusedPrompts(promptResponses));
-
-            var seededFlowMetadata = DeclaredConnectionReferences.WithProvisioned(cloudFlowMetadata, provisionedReferences);
-
-            await _retargetService.SyncWorkspaceAsync(workspaceFolder, operationContext, null, updateWorkspaceDirectory, _dataverseClient, syncInfo, seededFlowMetadata, cancellationToken, aiPromptMetadata, syncCustomConnectors: false, syncWorkflowsAndPrompts: false).ConfigureAwait(false);
-            await _synchronizer.SaveSyncInfoAsync(workspaceFolder, syncInfo).ConfigureAwait(false);
-
-            if (isRetarget)
-            {
-                _retargetService.FinalizeRetarget(workspaceFolder, pushSucceeded: true);
-            }
+            var connected = await _attachService.ConnectAsync(Request(command, collections), _dataverseClient, cancellationToken).ConfigureAwait(false);
+            return new CopilotConnectOutcome { AgentId = connected.AgentId.ToString(), SkippedCollectionDirectories = [.. connected.SkippedCollections.Select(schemaName => collections[schemaName])] };
         }
-        catch (Exception failure)
+        catch (WorkspaceAttachException failure) when (failure.Failure == WorkspaceAttachFailure.AgentNotFound)
         {
-            if (bindingSnapshot is not null)
-            {
-                _retargetService.RestoreRemoteBindingState(workspaceFolder, bindingSnapshot);
-                _retargetService.ClearRetargetBackup(workspaceFolder);
-            }
-            else
-            {
-                RemovePartialCloudCache(command.ProjectDirectory);
-            }
-
-            if (failure is OperationCanceledException)
-            {
-                throw;
-            }
-
-            throw target is null
-                ? await DescribeAmbiguousFailureAsync(command, failure, cancellationToken).ConfigureAwait(false)
-                : CopilotStudioException.BootstrapReattachFailed(target.AgentId.ToString(), command.SchemaName, failure);
+            throw CopilotStudioException.AgentNotFound(command.SchemaName, command.Environment.EnvironmentId);
         }
-
-        return new CopilotAttachOutcome
+        catch (WorkspaceAttachException failure) when (failure.Failure == WorkspaceAttachFailure.ConnectBoundToAnotherAgent)
         {
-            AgentId = target.AgentId.ToString(),
-            SchemaName = target.SchemaName,
-            AgentCreated = target.Created,
-            Retargeted = isRetarget,
-            Warnings = refusals,
-            Notices = target.Notices,
-        };
+            throw CopilotStudioException.WorkspaceConnectedElsewhere(failure.Message, failure);
+        }
     }
 
-    private sealed record AttachTarget(Guid AgentId, string SchemaName, bool Created, IReadOnlyList<string> Notices);
-
-    /// <summary>
-    /// Describes a failure that happened before any agent identifier was known.
-    /// </summary>
-    private async Task<CopilotStudioException> DescribeAmbiguousFailureAsync(CopilotAttachCommand command, Exception failure, CancellationToken cancellationToken)
+    private static IReadOnlyDictionary<string, string> CollectionFolders(IReadOnlyList<string> directories) => ComponentCollectionFolders.ReadSchemaNames(directories) switch
     {
-        try
-        {
-            var existing = await _dataverseClient.GetAgentIdBySchemaNameAsync(command.SchemaName, cancellationToken).ConfigureAwait(false);
+        { Problems: [var problem, ..] } => throw CopilotStudioException.WorkspaceFilesUnreadable(Describe(problem)),
+        var read => read.Folders,
+    };
 
-            if (existing != Guid.Empty)
-            {
-                return CopilotStudioException.BootstrapReattachFailed(existing.ToString(), command.SchemaName, failure);
-            }
-        }
-        catch (Exception probe) when (probe is not OperationCanceledException)
-        {
-            return CopilotStudioException.BootstrapAttachUncertain(command.SchemaName, command.Environment.EnvironmentId, failure);
-        }
-
-        return CopilotStudioException.BootstrapAttachFailed(command.SchemaName, command.Environment.EnvironmentId, failure);
-    }
-
-    /// <summary>
-    /// Reads the workspace definition, or returns <see langword="null"/> when there is nothing to read
-    /// it from.
-    /// </summary>
-    private async Task<DefinitionBase?> TryReadDefinitionAsync(DirectoryPath workspaceFolder, CancellationToken cancellationToken)
+    private static string Describe(ComponentCollectionFolderProblem problem) => problem.Kind switch
     {
-        try
-        {
-            return await WorkspaceDefinitionReader.ReadAsync(_synchronizer, workspaceFolder, checkKnowledgeFiles: false, cancellationToken).ConfigureAwait(false);
-        }
-        catch (FileNotFoundException)
-        {
-            return null;
-        }
-    }
+        ComponentCollectionFolderProblemKind.SchemaNameRepeated => $"The collection folders '{problem.FirstFolder}' and '{problem.Folder}' both declare the schema name '{problem.SchemaName}'.",
+        _ => $"The collection folder '{problem.Folder}' holds no {WorkspaceFileNames.Collection} that names a schemaName.",
+    };
 
-    /// <summary>
-    /// Creates the agent when the schema name is free, and adopts the one already carrying it.
-    /// </summary>
-    private async Task<AttachTarget> ResolveTargetAsync(CopilotAttachCommand command, Guid existing, CancellationToken cancellationToken)
+    private static DirectoryPath Folder(string directory) => new(directory.Replace('\\', '/'));
+
+    private static WorkspaceAttachRequest Request(CopilotAttachCommand command) => new()
     {
-        if (existing == Guid.Empty)
-        {
-            var created = await _dataverseClient.CreateNewAgentAsync(command.DisplayName, command.SchemaName, AgentClassifier.DetectAuthoringShapeFromFolder(command.ProjectDirectory), cancellationToken).ConfigureAwait(false);
+        WorkspaceFolder = Folder(command.ProjectDirectory),
+        DataverseEndpoint = command.Environment.DataverseOrganization,
+        EnvironmentId = command.Environment.EnvironmentId,
+        TenantId = DataverseTargeting.TenantOf(command.Environment),
+        DisplayName = command.DisplayName,
+        SchemaName = command.SchemaName,
+        AllowRetarget = command.AllowRetarget,
+        ExpectedAgentId = ExpectedAgent(command.ExpectedAgentId),
+        PersistRetargetBackup = true,
+    };
 
-            return new AttachTarget(created.AgentId, created.SchemaName ?? command.SchemaName, Created: true, []);
-        }
+    private static Guid? ExpectedAgent(string? agentId) => string.IsNullOrWhiteSpace(agentId) ? null : Guid.TryParse(agentId, out var parsed) ? parsed : Guid.Empty;
 
-        if (!string.IsNullOrWhiteSpace(command.ExpectedAgentId) && !string.Equals(command.ExpectedAgentId, existing.ToString(), StringComparison.OrdinalIgnoreCase))
-        {
-            throw CopilotStudioException.AgentAlreadyExists(command.SchemaName);
-        }
-
-        return new AttachTarget(
-            existing,
-            command.SchemaName,
-            Created: false,
-            string.IsNullOrWhiteSpace(command.ExpectedAgentId)
-                ? [$"An agent already carried the schema name {command.SchemaName} in {command.Environment.EnvironmentId}; it was adopted rather than duplicated."]
-                : []);
-    }
-
-    private static void RemovePartialCloudCache(string projectDirectory)
+    private static WorkspaceConnectRequest Request(CopilotConnectCommand command, IReadOnlyDictionary<string, string> collectionFolders) => new()
     {
-        var cloudCache = Path.Combine(projectDirectory, ".mcs");
+        WorkspaceFolder = Folder(command.WorkspaceDirectory),
+        DataverseEndpoint = command.Environment.DataverseOrganization,
+        EnvironmentId = command.Environment.EnvironmentId,
+        TenantId = DataverseTargeting.TenantOf(command.Environment),
+        SchemaName = command.SchemaName,
+        CollectionFolders = collectionFolders.ToDictionary(collection => collection.Key, collection => Folder(collection.Value), StringComparer.OrdinalIgnoreCase),
+    };
 
-        if (!Directory.Exists(cloudCache))
-        {
-            return;
-        }
+    private static CopilotStudioException Translate(WorkspaceAttachException failure, CopilotAttachCommand command) => failure.Failure switch
+    {
+        WorkspaceAttachFailure.AlreadyConnected => CopilotStudioException.WorkspaceAlreadyConnected(command.ProjectDirectory),
+        WorkspaceAttachFailure.ReattachNotSupported => CopilotStudioException.ReattachNotSupported(command.ProjectDirectory, failure.Reason ?? failure.Message),
+        WorkspaceAttachFailure.AgentAlreadyExists => CopilotStudioException.BootstrapReattachFailed(AgentOf(failure), command.SchemaName, CopilotStudioException.AgentAlreadyExists(command.SchemaName)),
+        WorkspaceAttachFailure.ReattachFailed when failure.InnerException is WorkspacePushException { Code: WorkspacePushErrorCodes.AgentNotProvisioned } notProvisioned => CopilotStudioException.AgentNotProvisioned(notProvisioned.Message, failure),
+        WorkspaceAttachFailure.ReattachFailed => CopilotStudioException.BootstrapReattachFailed(AgentOf(failure), command.SchemaName, Cause(failure, command)),
+        WorkspaceAttachFailure.AttachUncertain => CopilotStudioException.BootstrapAttachUncertain(command.SchemaName, command.Environment.EnvironmentId, Cause(failure, command)),
+        _ => CopilotStudioException.BootstrapAttachFailed(command.SchemaName, command.Environment.EnvironmentId, Cause(failure, command)),
+    };
 
-        try
-        {
-            Directory.Delete(cloudCache, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-    }
+    private static string AgentOf(WorkspaceAttachException failure) => failure.AgentId?.ToString() ?? string.Empty;
+
+    private static Exception Cause(WorkspaceAttachException failure, CopilotAttachCommand command) => failure.InnerException is { } cause ? ConnectionReferenceFailureTranslation.TranslateAny(cause, command.ProjectDirectory) : failure;
 }

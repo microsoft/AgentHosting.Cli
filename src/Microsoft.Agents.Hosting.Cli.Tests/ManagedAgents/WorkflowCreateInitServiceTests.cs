@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.Copilot;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
@@ -5,6 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 using Microsoft.CopilotStudio.Sync;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -16,8 +18,8 @@ public sealed class WorkflowCreateServiceTests : IDisposable
 
     public void Dispose() => _workspace.Dispose();
 
-    private WorkflowCreateService Service(JsonAgentConfigStore store) =>
-        new(ManagedAgentFixtures.Resolver(), store, new HomeDeploymentRegistrar(store, store), _store, _scaffold, new AgentConfigLocator(), ManagedAgentFixtures.Principals(), new FakeWorkflowWorkspacePort());
+    private WorkflowCreateService Service(JsonAgentConfigStore store, CopilotEnvironmentResolver? resolver = null, IAgentCreationHook? creation = null) =>
+        new(resolver ?? ManagedAgentFixtures.Resolver(), store, new HomeDeploymentRegistrar(store, store), _store, ManagedAgentFixtures.StateRules, _scaffold, new AgentConfigLocator(), ManagedAgentFixtures.Principals(), new FakeWorkflowWorkspacePort(), creation);
 
     [Fact]
     public async Task ScaffoldRegistersTheRecordAndWritesTheFiles()
@@ -239,7 +241,7 @@ public sealed class WorkflowCreateServiceTests : IDisposable
     public async Task CloneDownloadsTheWorkflowAndRecordsAHomeDeployment()
     {
         var workflowId = Guid.NewGuid();
-        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = WorkflowStateProjection.Activated };
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = CopilotStudioStates.Activated };
 
         var store = ManagedAgentFixtures.Store();
         var result = await Service(store).CreateAsync(
@@ -262,10 +264,24 @@ public sealed class WorkflowCreateServiceTests : IDisposable
     private IReadOnlyList<AgentDeploymentRecord> ListDeployments(JsonAgentConfigStore store) => ((IAgentDeploymentRegistry)store).List(_workspace.Root);
 
     [Fact]
+    public async Task CreateHandsTheCreationHookTheRootACloneWroteAndAScaffoldNone()
+    {
+        var workflowId = SourceWorkflow();
+        var store = ManagedAgentFixtures.Store();
+        var creation = new RecordingAgentCreationHook();
+
+        await Service(store, creation: creation).CreateAsync(new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), Project = _workspace.Root }, CancellationToken.None);
+        await Service(store, creation: creation).CreateAsync(new ManagedAgentCreateRequest { Name = "WF Hook 2", AgentType = AgentTypes.McsWorkflow, Project = _workspace.Root }, CancellationToken.None);
+
+        Assert.Collection(creation.ClonedFolders, folders => Assert.Equal([Path.Combine(_workspace.Root, WorkspaceFolderNames.ForProject("Remote Flow"))], folders), folders => Assert.Empty(folders));
+        Assert.Contains($"clone:{workflowId}", _store.Calls);
+    }
+
+    [Fact]
     public async Task CloneReportsTheWarningsTheDownloadGave()
     {
         var workflowId = Guid.NewGuid();
-        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = WorkflowStateProjection.Activated };
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = CopilotStudioStates.Activated };
         _store.WarningsOnDownload = ["'Remote Flow' also has a draft in env-1 that was saved in the designer but not published, so only the published version was written. Publish the draft in the designer to get it."];
 
         var result = await Service(ManagedAgentFixtures.Store()).CreateAsync(
@@ -286,7 +302,7 @@ public sealed class WorkflowCreateServiceTests : IDisposable
     public async Task CloneRefusesARecordNameNoFolderCanHoldBeforeDownloading()
     {
         var workflowId = Guid.NewGuid();
-        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = WorkflowStateProjection.Activated };
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = CopilotStudioStates.Activated };
         var project = Path.Combine(_workspace.Root, "project");
 
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service(ManagedAgentFixtures.Store()).CreateAsync(
@@ -295,14 +311,14 @@ public sealed class WorkflowCreateServiceTests : IDisposable
 
         Assert.Equal("workflow-name-invalid", failure.ErrorKind);
         Assert.False(Directory.Exists(project));
-        Assert.DoesNotContain($"download:{workflowId}", _store.Calls);
+        Assert.DoesNotContain($"clone:{workflowId}", _store.Calls);
     }
 
     [Fact]
     public async Task CloneRefusesAWorkspaceFolderHoldingAnUnrelatedFileBeforeDownloading()
     {
         var workflowId = Guid.NewGuid();
-        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = WorkflowStateProjection.Activated };
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = CopilotStudioStates.Activated };
         var store = ManagedAgentFixtures.Store();
         var workspaceRoot = Path.Combine(_workspace.Root, WorkspaceFolderNames.ForProject("Remote Flow"));
         var unrelated = Path.Combine(workspaceRoot, "notes.txt");
@@ -318,7 +334,7 @@ public sealed class WorkflowCreateServiceTests : IDisposable
         Assert.Equal("workspace-not-empty", failure.ErrorKind);
         Assert.Equal(ErrorCodes.Workspace.WorkspaceNotEmpty, failure.ErrorCode);
         Assert.Contains(workspaceRoot, failure.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain($"download:{workflowId}", _store.Calls);
+        Assert.DoesNotContain($"clone:{workflowId}", _store.Calls);
         Assert.Equal([unrelated], Directory.EnumerateFileSystemEntries(workspaceRoot));
         Assert.Equal("mine", File.ReadAllText(unrelated));
         Assert.Empty(store.List(_workspace.Root));
@@ -329,7 +345,7 @@ public sealed class WorkflowCreateServiceTests : IDisposable
     public async Task CloneRefusesAWorkflowThatIsAlreadyRegistered()
     {
         var workflowId = Guid.NewGuid();
-        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = WorkflowStateProjection.Activated };
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = CopilotStudioStates.Activated };
 
         var store = ManagedAgentFixtures.Store();
         var request = new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), Project = _workspace.Root };
@@ -346,6 +362,112 @@ public sealed class WorkflowCreateServiceTests : IDisposable
         await Assert.ThrowsAsync<UsageException>(() => Service(ManagedAgentFixtures.Store()).CreateAsync(
             new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = "not-a-guid", Project = _workspace.Root },
             CancellationToken.None));
+
+    [Fact]
+    public async Task CloneFromAnotherEnvironmentDeclaresTheRequestedNameInTheCopy()
+    {
+        var workflowId = SourceWorkflow();
+
+        var result = await Service(ManagedAgentFixtures.Store(), SourceAndHome().Resolver).CreateAsync(
+            new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-2", Project = _workspace.Root, Name = " Contoso Copy " },
+            CancellationToken.None);
+
+        Assert.Equal(["Contoso Copy"], _store.CloneNames);
+        Assert.Equal(("Contoso Copy", "Contoso Copy", "env-2"), (result.DisplayName, result.WorkflowName, result.EnvironmentId));
+        Assert.Equal(WorkflowWorkspace.FolderNameFor("Contoso Copy", workflowId), Path.GetFileName(result.WorkflowFolder));
+    }
+
+    [Fact]
+    public async Task CloneFromAnotherEnvironmentWithoutANameKeepsTheSourceName()
+    {
+        var workflowId = SourceWorkflow();
+
+        var result = await Service(ManagedAgentFixtures.Store(), SourceAndHome().Resolver).CreateAsync(
+            new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-2", Project = _workspace.Root },
+            CancellationToken.None);
+
+        Assert.Equal([null], _store.CloneNames);
+        Assert.Equal(("Remote Flow", "Remote Flow"), (result.DisplayName, result.WorkflowName));
+    }
+
+    [Fact]
+    public async Task CloneWithinTheHomeEnvironmentLeavesTheWorkflowItsOwnName()
+    {
+        var workflowId = SourceWorkflow();
+
+        var result = await Service(ManagedAgentFixtures.Store()).CreateAsync(
+            new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-1", Project = _workspace.Root, Name = "Contoso Copy" },
+            CancellationToken.None);
+
+        Assert.Equal([null], _store.CloneNames);
+        Assert.Equal(("Contoso Copy", "Remote Flow"), (result.DisplayName, result.WorkflowName));
+    }
+
+    [Fact]
+    public async Task CloneRefusesANameNoWorkflowCanTakeBeforeAnyCall()
+    {
+        var workflowId = SourceWorkflow();
+        var store = ManagedAgentFixtures.Store();
+        var project = Path.Combine(_workspace.Root, "project");
+        var (resolver, client) = SourceAndHome();
+        var inventoryReads = client.ListCalls;
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service(store, resolver).CreateAsync(
+            new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-2", Project = project, Name = "Contoso\tCopy" },
+            CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.ManagedAgent.WorkflowNameInvalid, ExitCodes.Usage, "workflow-name-invalid"), (failure.ErrorCode, failure.ExitCode, failure.ErrorKind));
+        Assert.Equal(inventoryReads, client.ListCalls);
+        Assert.Empty(_store.Calls);
+        Assert.False(Directory.Exists(project));
+        Assert.Empty(store.List(project));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CloneWhoseNameTheDownloadRefusesLeavesTheFoldersAsItFoundThemAndRecordsNothing(bool projectExisted, bool workspaceFolderExisted)
+    {
+        var workflowId = SourceWorkflow();
+        var store = ManagedAgentFixtures.Store();
+        var project = Path.Combine(_workspace.Root, "project");
+        var workspaceFolder = Path.Combine(project, WorkspaceFolderNames.ForProject("Contoso Copy"));
+        _store.DownloadThrows = ManagedAgentException.WorkflowNameInvalid("A workflow name cannot hold control characters such as tabs or line breaks.");
+
+        if (projectExisted)
+        {
+            Directory.CreateDirectory(project);
+        }
+
+        if (workspaceFolderExisted)
+        {
+            Directory.CreateDirectory(workspaceFolder);
+        }
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service(store, SourceAndHome().Resolver).CreateAsync(
+            new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-2", Project = project, Name = "Contoso Copy" },
+            CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.ManagedAgent.WorkflowNameInvalid, ExitCodes.Usage), (failure.ErrorCode, failure.ExitCode));
+        Assert.Equal(["Contoso Copy"], _store.CloneNames);
+        Assert.Equal((projectExisted, workspaceFolderExisted), (Directory.Exists(project), Directory.Exists(workspaceFolder)));
+        Assert.Empty(Directory.Exists(workspaceFolder) ? Directory.EnumerateFileSystemEntries(workspaceFolder) : Enumerable.Empty<string>());
+        Assert.Empty(store.List(project));
+        Assert.Empty(((IAgentDeploymentRegistry)store).List(project));
+    }
+
+    private Guid SourceWorkflow()
+    {
+        var workflowId = Guid.NewGuid();
+        _store.Cloud[workflowId] = new WorkflowDocument { WorkflowId = workflowId, Name = "Remote Flow", State = CopilotStudioStates.Activated };
+
+        return workflowId;
+    }
+
+    private static (CopilotEnvironmentResolver Resolver, FakeEnvironmentClient Client) SourceAndHome() => ManagedAgentFixtures.TrackedResolver(
+        EnvironmentFixtures.Environment("env-1", instanceUrl: CopilotTestFixtures.DataverseOrganization),
+        EnvironmentFixtures.Environment("env-2", instanceUrl: CopilotTestFixtures.DataverseOrganization));
 }
 
 public sealed class WorkflowInitServiceTests : IDisposable
@@ -406,9 +528,11 @@ public sealed class WorkflowInitServiceTests : IDisposable
     {
         WorkflowFixtures.Write(_workspace.Root, "WF");
 
-        await Assert.ThrowsAsync<UsageException>(() => Service(ManagedAgentFixtures.Store()).InitAsync(
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Service(ManagedAgentFixtures.Store()).InitAsync(
             new ManagedAgentInitRequest { AgentType = AgentTypes.McsWorkflow, McsWorkflowSource = _workspace.Root },
             CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.General.Usage, "`msagent agent init --agent-type MCSWorkflow` requires --agent-name."), (failure.ErrorCode, failure.Message));
     }
 
     [Fact]

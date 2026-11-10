@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "McsCaptureBaseUnknown",
+    "message": "The service doesn't know which commit Dev holds, so it cannot capture Dev's edits. Record the commit Dev holds with POST deploy-records on this deployment, then capture."
+  }
+}

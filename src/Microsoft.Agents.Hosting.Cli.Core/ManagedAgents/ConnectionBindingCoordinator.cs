@@ -78,6 +78,50 @@ public sealed class ConnectionBindingCoordinator
         }
     }
 
+    /// <summary>Walks the operator through a run's connectors, one at a time, until they stop, settling after each decision.</summary>
+    /// <param name="plan">Every reference the run knows.</param>
+    /// <param name="groups">The run's connectors, already ordered.</param>
+    /// <param name="environment">The environment a connection would be created in.</param>
+    /// <param name="openBrowser">Whether creating one may launch a browser.</param>
+    /// <param name="diagnostics">Receives an explanation for a connection that was not created.</param>
+    /// <param name="settle">Applies what the operator has decided so far.</param>
+    /// <param name="cancellationToken">Cancels the walk.</param>
+    /// <returns>A task that completes when the operator stops.</returns>
+    public async Task ResolveConnectorsAsync(List<ConnectionPlanItem> plan, IReadOnlyList<ConnectorGroup> groups, CopilotEnvironmentContext environment, bool openBrowser, List<string> diagnostics, Func<Task> settle, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(groups);
+        ArgumentNullException.ThrowIfNull(settle);
+
+        if (!groups.Any(group => ConnectionSelectionScope.IsSelectable(plan, group)))
+        {
+            return;
+        }
+
+        if (groups.Count == 1)
+        {
+            await ResolveConnectorAsync(plan, groups[0], environment, null, openBrowser, diagnostics, cancellationToken).ConfigureAwait(false);
+            await settle().ConfigureAwait(false);
+
+            return;
+        }
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var chosen = await _selectionPrompt.ChooseConnectorsAsync(ConnectionSelectionScope.Menu(plan, groups), cancellationToken).ConfigureAwait(false);
+
+            if (chosen.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var position in chosen.Where(position => position >= 0 && position < groups.Count))
+            {
+                await ResolveConnectorAsync(plan, groups[position], environment, null, openBrowser, diagnostics, cancellationToken).ConfigureAwait(false);
+                await settle().ConfigureAwait(false);
+            }
+        }
+    }
+
     /// <summary>Creates one connection and binds every reference on that connector to it.</summary>
     /// <param name="plan">Every reference the workspace has.</param>
     /// <param name="targets">The references the created connection would serve.</param>

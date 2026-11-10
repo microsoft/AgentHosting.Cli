@@ -1,5 +1,6 @@
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.CopilotStudio.McsCore;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -30,7 +31,7 @@ public sealed class AgentWorkspaceLayoutTests : IDisposable
     public void AgentWorkspace_AtTheRootLocation_IsTheProjectItself()
     {
         Directory.CreateDirectory(_root);
-        File.WriteAllText(Path.Combine(_root, AgentConfigLocator.ProjectSettingsFileName), "schemaName: con_agent\n");
+        File.WriteAllText(Path.Combine(_root, WorkspaceFileNames.Settings), "schemaName: con_agent\n");
 
         Assert.Equal(_root, _locator.AgentWorkspaceDirectory(_root, AgentConfigLocator.CurrentDirectoryLocation));
     }
@@ -38,23 +39,19 @@ public sealed class AgentWorkspaceLayoutTests : IDisposable
     [Fact]
     public void AgentWorkspace_AtANestedLocation_IsThatFolder()
     {
-        var agent = Nested("Contoso Helpdesk", AgentConfigLocator.ProjectSettingsFileName);
-
-        Assert.Equal(agent, _locator.AgentWorkspaceDirectory(_root, "Contoso Helpdesk"));
+        Assert.Equal(Nested("Contoso Helpdesk", WorkspaceFileNames.Settings), _locator.AgentWorkspaceDirectory(_root, "Contoso Helpdesk"));
     }
 
     [Fact]
     public void AgentWorkspace_ForAClassicProject_IsFound()
     {
-        var agent = Nested("Contoso Helpdesk", AgentConfigLocator.ClassicProjectFileName);
-
-        Assert.Equal(agent, _locator.AgentWorkspaceDirectory(_root, "Contoso Helpdesk"));
+        Assert.Equal(Nested("Contoso Helpdesk", WorkspaceFileNames.Agent), _locator.AgentWorkspaceDirectory(_root, "Contoso Helpdesk"));
     }
 
     [Fact]
     public void AgentWorkspace_AtALocationHoldingNoProject_IsNone()
     {
-        Nested("Shared Tools", AgentConfigLocator.CollectionProjectFileName);
+        Nested("Shared Tools", WorkspaceFileNames.Collection);
 
         Assert.Null(_locator.AgentWorkspaceDirectory(_root, "Shared Tools"));
     }
@@ -71,7 +68,7 @@ public sealed class AgentWorkspaceLayoutTests : IDisposable
     public void WorkspaceLocations_ForAFlatProject_AreTheRoot()
     {
         Directory.CreateDirectory(_root);
-        File.WriteAllText(Path.Combine(_root, AgentConfigLocator.ProjectSettingsFileName), "schemaName: con_agent\n");
+        File.WriteAllText(Path.Combine(_root, WorkspaceFileNames.Settings), "schemaName: con_agent\n");
 
         Assert.Equal([AgentConfigLocator.CurrentDirectoryLocation], _locator.WorkspaceLocations(_root));
     }
@@ -79,9 +76,9 @@ public sealed class AgentWorkspaceLayoutTests : IDisposable
     [Fact]
     public void WorkspaceLocations_AreEveryNestedWorkspace()
     {
-        Nested("Second", AgentConfigLocator.ProjectSettingsFileName);
-        Nested("First", AgentConfigLocator.ProjectSettingsFileName);
-        Nested("Shared Tools", AgentConfigLocator.CollectionProjectFileName);
+        Nested("Second", WorkspaceFileNames.Settings);
+        Nested("First", WorkspaceFileNames.Settings);
+        Nested("Shared Tools", WorkspaceFileNames.Collection);
 
         Assert.Equal(["First", "Second"], _locator.WorkspaceLocations(_root));
     }
@@ -91,8 +88,8 @@ public sealed class AgentWorkspaceLayoutTests : IDisposable
     {
         var config = Path.Combine(_root, AgentConfigLocator.ConfigDirectoryName);
         Directory.CreateDirectory(config);
-        File.WriteAllText(Path.Combine(config, AgentConfigLocator.ProjectSettingsFileName), "schemaName: con_agent\n");
-        Nested("Contoso Helpdesk", AgentConfigLocator.ProjectSettingsFileName);
+        File.WriteAllText(Path.Combine(config, WorkspaceFileNames.Settings), "schemaName: con_agent\n");
+        Nested("Contoso Helpdesk", WorkspaceFileNames.Settings);
 
         Assert.Equal(["Contoso Helpdesk"], _locator.WorkspaceLocations(_root));
     }
@@ -101,115 +98,6 @@ public sealed class AgentWorkspaceLayoutTests : IDisposable
     public void WorkspaceLocations_InAMissingDirectory_AreNone()
     {
         Assert.Empty(_locator.WorkspaceLocations(Path.Combine(_root, "absent")));
-    }
-
-    [Fact]
-    public void ComponentCollections_AreTheOnesTheWorkspaceDeclares()
-    {
-        var agent = Nested("Contoso Helpdesk", AgentConfigLocator.ProjectSettingsFileName);
-        var first = Nested("Alpha Tools", AgentConfigLocator.CollectionProjectFileName);
-        var second = Nested("Zeta Tools", AgentConfigLocator.CollectionProjectFileName);
-        File.WriteAllText(
-            Path.Combine(agent, AgentConfigLocator.ReferencesFileName),
-            "componentCollections:\n  - schemaName:\n    directory: ../Alpha Tools/\n  - schemaName:\n    directory: ../Zeta Tools/\n");
-
-        Assert.Equal([first, second], _locator.ComponentCollectionDirectories(agent, _root).Found);
-    }
-
-    [Fact]
-    public void ComponentCollections_AreNotTakenFromUndeclaredSiblings()
-    {
-        var agent = Nested("Contoso Helpdesk", AgentConfigLocator.ProjectSettingsFileName);
-        Nested("Alpha Tools", AgentConfigLocator.CollectionProjectFileName);
-
-        Assert.Empty(_locator.ComponentCollectionDirectories(agent, _root).Found);
-    }
-
-    [Fact]
-    public void ComponentCollections_ThatDoNotExist_AreReportedAsMissing()
-    {
-        var agent = Nested("Contoso Helpdesk", AgentConfigLocator.ProjectSettingsFileName);
-        File.WriteAllText(
-            Path.Combine(agent, AgentConfigLocator.ReferencesFileName),
-            "componentCollections:\n  - schemaName:\n    directory: ../Absent Tools/\n");
-
-        var collections = _locator.ComponentCollectionDirectories(agent, _root);
-
-        Assert.Empty(collections.Found);
-        Assert.Equal(["../Absent Tools/"], collections.Missing);
-    }
-
-    [Fact]
-    public void ComponentCollections_OutsideTheProject_AreReportedAsMissing()
-    {
-        var agent = Nested("Contoso Helpdesk", AgentConfigLocator.ProjectSettingsFileName);
-        File.WriteAllText(
-            Path.Combine(agent, AgentConfigLocator.ReferencesFileName),
-            "componentCollections:\n  - schemaName:\n    directory: ../../Escaped Tools/\n");
-
-        var collections = _locator.ComponentCollectionDirectories(agent, _root);
-
-        Assert.Empty(collections.Found);
-        Assert.Equal(["../../Escaped Tools/"], collections.Missing);
-    }
-
-    [Fact]
-    public void ComponentCollections_ReachedThroughAJunctionInTheMiddleOfThePath_AreReportedAsMissing()
-    {
-        var outside = Path.Combine(Path.GetTempPath(), $"ah-outside-{Guid.NewGuid():N}");
-        var inner = Path.Combine(outside, "inner");
-        Directory.CreateDirectory(inner);
-        File.WriteAllText(Path.Combine(inner, AgentConfigLocator.CollectionProjectFileName), string.Empty);
-
-        try
-        {
-            var agent = Nested("Contoso Helpdesk", AgentConfigLocator.ProjectSettingsFileName);
-            Directory.CreateSymbolicLink(Path.Combine(_root, "Linked Tools"), outside);
-            File.WriteAllText(
-                Path.Combine(agent, AgentConfigLocator.ReferencesFileName),
-                "componentCollections:\n  - schemaName:\n    directory: ../Linked Tools/inner/\n");
-
-            var collections = _locator.ComponentCollectionDirectories(agent, _root);
-
-            Assert.Empty(collections.Found);
-            Assert.Equal(["../Linked Tools/inner/"], collections.Missing);
-        }
-        finally
-        {
-            Directory.Delete(outside, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void ComponentCollections_ReachedThroughAJunctionOutOfTheProject_AreReportedAsMissing()
-    {
-        var outside = Path.Combine(Path.GetTempPath(), $"ah-outside-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(outside);
-        File.WriteAllText(Path.Combine(outside, AgentConfigLocator.CollectionProjectFileName), string.Empty);
-
-        try
-        {
-            var agent = Nested("Contoso Helpdesk", AgentConfigLocator.ProjectSettingsFileName);
-            Directory.CreateSymbolicLink(Path.Combine(_root, "Linked Tools"), outside);
-            File.WriteAllText(
-                Path.Combine(agent, AgentConfigLocator.ReferencesFileName),
-                "componentCollections:\n  - schemaName:\n    directory: ../Linked Tools/\n");
-
-            var collections = _locator.ComponentCollectionDirectories(agent, _root);
-
-            Assert.Empty(collections.Found);
-            Assert.Equal(["../Linked Tools/"], collections.Missing);
-        }
-        finally
-        {
-            Directory.Delete(outside, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void ComponentCollections_InAMissingDirectory_AreNone()
-    {
-        Assert.Empty(_locator.ComponentCollectionDirectories(Path.Combine(_root, "absent"), _root).Found);
     }
 
     [Theory]
@@ -231,9 +119,9 @@ public sealed class AgentWorkspaceLayoutTests : IDisposable
     {
         var agent = Path.Combine(_root, "Contoso Helpdesk");
         Directory.CreateDirectory(agent);
-        File.WriteAllText(Path.Combine(agent, AgentConfigLocator.ProjectSettingsFileName), "displayName: Contoso Helpdesk\nschemaName: con_helpdesk\n");
+        File.WriteAllText(Path.Combine(agent, WorkspaceFileNames.Settings), "displayName: Contoso Helpdesk\nschemaName: con_helpdesk\n");
 
-        var identity = new CopilotProjectIdentityReader(_locator).Find(agent);
+        var identity = new CopilotProjectIdentityReader(_locator, new SyncAgentWorkspaceIdentityReader()).Find(agent);
 
         Assert.Equal("con_helpdesk", identity?.SchemaName);
         Assert.Equal("Contoso Helpdesk", identity?.DisplayName);

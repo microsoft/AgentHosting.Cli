@@ -1,5 +1,4 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
-using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
@@ -116,11 +115,13 @@ internal sealed class RecordingWorkflowClient : RecordingConnectionReferenceClie
         return Task.FromResult(Drafts.Contains(workflowId));
     }
 
+    public Exception? ListThrows { get; init; }
+
     public override Task<SyncDataverseClient.WorkflowSummary[]> ListWorkflowsAsync(string? nameFilter, int? maximumCount, CancellationToken cancellationToken)
     {
         Calls.Add($"list:{nameFilter ?? "*"}:{maximumCount?.ToString() ?? "*"}");
 
-        return Task.FromResult(Listed.ToArray());
+        return ListThrows is not null ? Task.FromException<SyncDataverseClient.WorkflowSummary[]>(ListThrows) : Task.FromResult(Listed.ToArray());
     }
 
     public override Task SetWorkflowStateAsync(Guid workflowId, bool activate, CancellationToken cancellationToken)
@@ -466,7 +467,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
         var result = await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
 
         Assert.Contains($"update:none:{workflowId}", client.Calls);
-        Assert.Equal(WorkflowStateProjection.Activated, result.Workflow.State);
+        Assert.Equal(CopilotStudioStates.Activated, result.Workflow.State);
     }
 
     [Fact]
@@ -609,7 +610,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
         var result = await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
 
         Assert.Contains($"state:{workflowId}:draft", client.Calls);
-        Assert.Equal(WorkflowStateProjection.Draft, result.Workflow.State);
+        Assert.Equal(CopilotStudioStates.Draft, result.Workflow.State);
     }
 
     [Fact]
@@ -621,7 +622,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
 
         var result = await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Activated, result.Workflow.State);
+        Assert.Equal(CopilotStudioStates.Activated, result.Workflow.State);
     }
 
     [Fact]
@@ -645,7 +646,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
 
         var result = await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Activated, result.Workflow.State);
+        Assert.Equal(CopilotStudioStates.Activated, result.Workflow.State);
         Assert.False(result.Created);
     }
 
@@ -745,7 +746,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
         var result = await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
 
         Assert.False(result.Created);
-        Assert.Equal(WorkflowStateProjection.Activated, result.Workflow.State);
+        Assert.Equal(CopilotStudioStates.Activated, result.Workflow.State);
     }
 
     [Fact]
@@ -829,7 +830,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
 
         var result = await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Draft, result.Workflow.State);
+        Assert.Equal(CopilotStudioStates.Draft, result.Workflow.State);
         Assert.True(result.ActivationRequested);
     }
 
@@ -874,7 +875,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
 
         var result = await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Draft, result.Workflow.State);
+        Assert.Equal(CopilotStudioStates.Draft, result.Workflow.State);
         Assert.Equal(["new_weather"], result.UnboundConnectionReferences);
     }
 
@@ -891,7 +892,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
 
         var result = await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Activated, result.Workflow.State);
+        Assert.Equal(CopilotStudioStates.Activated, result.Workflow.State);
         Assert.Empty(result.UnboundConnectionReferences);
     }
 
@@ -902,7 +903,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
 
         var result = await Create(new RecordingWorkflowClient()).UpsertAsync(Environment(), _root, CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Activated, result.Workflow.State);
+        Assert.Equal(CopilotStudioStates.Activated, result.Workflow.State);
     }
 
     [Fact]
@@ -921,7 +922,7 @@ public sealed class WorkflowDataverseClientTests : IDisposable
 
         var result = await Create(client).UpsertAsync(Environment(), _root, CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Draft, result.Workflow.State);
+        Assert.Equal(CopilotStudioStates.Draft, result.Workflow.State);
     }
 
     [Fact]
@@ -957,8 +958,19 @@ public sealed class WorkflowDataverseClientTests : IDisposable
 
         Assert.Contains("list:flow:10", client.Calls);
         Assert.Equal(["Alpha", "Beta"], listed.Select(workflow => workflow.Name));
-        Assert.Equal(WorkflowStateProjection.Activated, listed.Single(workflow => workflow.WorkflowId == workflowId).State);
+        Assert.Equal(CopilotStudioStates.Activated, listed.Single(workflow => workflow.WorkflowId == workflowId).State);
         Assert.Equal(DateTimeOffset.UnixEpoch, listed.Single(workflow => workflow.WorkflowId == workflowId).ModifiedOn);
+    }
+
+    [Fact]
+    public async Task List_AFailedRequest_IsAServiceErrorThatNeverEchoesTheRawBody()
+    {
+        var client = new RecordingWorkflowClient { ListThrows = new DataverseRequestException(System.Net.HttpStatusCode.Forbidden, """{"error":{"code":"0x80040220","message":"Principal user is missing prvReadWorkflow privilege."},"trace":"sample.person@contoso.com"}""") };
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(client).ListAsync(Environment(), "flow", 10, CancellationToken.None));
+
+        Assert.Equal("The Copilot Studio service reported a failure during 'list workflows'. HTTP 403 Forbidden. Principal user is missing prvReadWorkflow privilege. (0x80040220)", failure.Message);
+        Assert.Null(failure.InnerException);
     }
 
     [Fact]
@@ -1070,6 +1082,34 @@ public sealed class WorkflowDataverseClientTests : IDisposable
         Assert.Equal("workflow-local-changes-would-be-lost", failure.ErrorKind);
         Assert.Equal($"'{WorkflowWorkspace.FindAll(_root).Single().FolderName}' has conflict local changes, and a pull would replace them.", failure.Message);
         Assert.Equal("{}", File.ReadAllText(WorkflowWorkspace.FindAll(_root).Single().DefinitionPath));
+    }
+
+    [Fact]
+    public async Task Clone_WithAName_DeclaresItInTheLocalCopy_WhileTheCacheKeepsTheServiceName()
+    {
+        var workflowId = Guid.NewGuid();
+        var client = new RecordingWorkflowClient();
+        client.Cloud[workflowId] = new SyncDataverseClient.WorkflowMetadata { WorkflowId = workflowId, Name = "Cloud Flow", StateCode = 1, ClientData = "{}" };
+
+        var downloaded = await Create(client).CloneAsync(Environment(), workflowId, _root, "Contoso Copy", CancellationToken.None);
+
+        Assert.Equal("Contoso Copy", downloaded.Workflow.Name);
+        Assert.Equal(WorkflowWorkspace.FolderNameFor("Contoso Copy", workflowId), Path.GetFileName(downloaded.FolderPath));
+        Assert.Equal("Contoso Copy", (await Create(client).ReadLocalAsync(_root, CancellationToken.None)).Name);
+        Assert.Equal("Cloud Flow", StandaloneWorkflowCache.Read(WorkflowWorkspace.OpenWorkspace(_root), workflowId)!.Name);
+        Assert.Equal("Cloud Flow", client.Cloud[workflowId].Name);
+    }
+
+    [Fact]
+    public async Task Clone_WithANameNoWorkflowCanTake_IsAUsageErrorBeforeAnyCall()
+    {
+        var client = new RecordingWorkflowClient();
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(client).CloneAsync(Environment(), Guid.NewGuid(), _root, "Contoso\tCopy", CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.ManagedAgent.WorkflowNameInvalid, ExitCodes.Usage, "workflow-name-invalid"), (failure.ErrorCode, failure.ExitCode, failure.ErrorKind));
+        Assert.Empty(client.Calls);
+        Assert.False(Directory.Exists(_root));
     }
 
     [Fact]
@@ -1226,11 +1266,13 @@ public sealed class WorkflowDataverseClientTests : IDisposable
     [Fact]
     public async Task AgentUseWarning_WhenTheServiceRefusesTheRead_Fails()
     {
-        var client = new RecordingWorkflowClient { AgentNamesThrows = new DataverseRequestException(System.Net.HttpStatusCode.Forbidden, "{\"error\":{\"message\":\"denied\"}}") };
+        var client = new RecordingWorkflowClient { AgentNamesThrows = new DataverseRequestException(System.Net.HttpStatusCode.Forbidden, "{\"error\":{\"message\":\"denied\"},\"trace\":\"sample.person@contoso.com\"}") };
 
         var failure = await Assert.ThrowsAsync<DataverseRequestException>(() => Create(client).GetAgentUseWarningAsync(Environment(), Guid.NewGuid(), CancellationToken.None));
+        var reported = Assert.IsType<CopilotStudioException>(DataverseFailureRedaction.ForReport(failure, "msagent agent delete"));
 
-        Assert.Equal(System.Net.HttpStatusCode.Forbidden, failure.StatusCode);
+        Assert.Equal(ErrorCodes.CopilotStudio.ServiceError, reported.ErrorCode);
+        Assert.Equal("The Copilot Studio service reported a failure during 'msagent agent delete'. HTTP 403 Forbidden. denied", reported.Message);
     }
 
     [Fact]

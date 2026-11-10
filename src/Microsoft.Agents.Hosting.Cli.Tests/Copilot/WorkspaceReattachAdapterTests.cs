@@ -2,27 +2,28 @@ using System.Collections.Immutable;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.Platform.Content;
 using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 using Microsoft.CopilotStudio.Sync.Dataverse;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
 public sealed class WorkspaceReattachAdapterTests : IDisposable
 {
+    private const string TenantId = "12345678-90ab-cdef-1234-567890abcdef";
+
     private static readonly Guid CreatedAgentId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+
+    private static readonly Guid ExistingAgentId = Guid.Parse("cccccccc-dddd-eeee-ffff-000000000000");
+
+    private static readonly Guid SharedCollectionId = Guid.Parse("dddddddd-eeee-ffff-0000-111111111111");
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "ah-reattach-" + Guid.NewGuid().ToString("N"));
 
-    public WorkspaceReattachAdapterTests() => new EmbeddedTemplateScaffolder().Scaffold(new CopilotScaffoldCommand
-    {
-        ProjectDirectory = _directory,
-        TemplateFolder = "cli-copilot",
-        DisplayName = "Contoso Helpdesk",
-        SchemaName = "con_contosohelpdesk",
-        Instructions = "Be helpful.",
-    });
+    public WorkspaceReattachAdapterTests() => AgentScaffolder.Scaffold(_directory, "cli-copilot", "Contoso Helpdesk", "con_contosohelpdesk", "Be helpful.");
 
     public void Dispose()
     {
@@ -32,49 +33,184 @@ public sealed class WorkspaceReattachAdapterTests : IDisposable
         }
     }
 
-    private static WorkspaceReattachAdapter Create(RecordingWorkspaceSynchronizer synchronizer, RecordingRetargetService retargetService, RecordingAgentCreationClient? dataverseClient = null) =>
+    private static WorkspaceReattachAdapter Create(IWorkspaceSynchronizer synchronizer, RecordingRetargetService retargetService, RecordingAgentCreationClient? dataverseClient = null, TimeProvider? timeProvider = null) =>
         new(
-            synchronizer,
-            retargetService,
+            new WorkspaceAttachService(synchronizer, retargetService, retargetService, new StubOperationContextProvider(), new WorkspaceFileAccessorFactory(), timeProvider ?? TimeProvider.System),
             dataverseClient ?? new RecordingAgentCreationClient(),
-            new StubOperationContextProvider(),
             new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()));
 
     private static RecordingWorkspaceSynchronizer Unconnected() => new() { SyncInfoAvailable = false };
 
-    private void DeclareClassic() =>
-        File.WriteAllText(Path.Combine(_directory, "connectionreferences.mcs.yml"), """
-connectionReferences:
-  - connectionReferenceLogicalName: new_sharedmsnweather_08889
-    connectorId: /providers/Microsoft.PowerApps/apis/shared_msnweather
-""");
-
-    private CopilotAttachCommand Command(string schemaName = "con_contosohelpdesk") => new()
+    private CopilotAttachCommand Command(string tenantId = "00000000-0000-0000-0000-000000000000") => new()
     {
         Environment = new CopilotEnvironmentContext
         {
             EnvironmentId = "env-1",
-            TenantId = Guid.Empty.ToString(),
+            TenantId = tenantId,
             DataverseOrganization = new Uri("https://contoso.crm.dynamics.com/"),
         },
         ProjectDirectory = _directory,
         DisplayName = "Contoso Helpdesk",
-        SchemaName = schemaName,
+        SchemaName = "con_contosohelpdesk",
     };
 
-    [Fact]
-    public async Task Attach_ChecksTheWorkspaceBeforeTheFirstCloudWrite()
+    private void PlantCloudCache()
     {
-        var synchronizer = Unconnected();
+        Directory.CreateDirectory(Path.Combine(_directory, ".mcs"));
+        File.WriteAllText(Path.Combine(_directory, ".mcs", "botdefinition.json"), "{}");
+    }
+
+    [Fact]
+    public async Task Attach_CreatesTheAgentWhenNoneCarriesTheSchemaName()
+    {
         var dataverseClient = new RecordingAgentCreationClient();
 
-        await Create(synchronizer, new RecordingRetargetService(), dataverseClient).AttachAsync(Command(), CancellationToken.None);
+        var outcome = await Create(Unconnected(), new RecordingRetargetService(), dataverseClient).AttachAsync(Command(), CancellationToken.None);
 
-        var checkedAt = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.ThrowIfWorkspaceInvalidAsync));
-        var firstWriteAt = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync));
+        Assert.Equal(1, dataverseClient.CreateCalls);
+        Assert.Equal(CreatedAgentId.ToString(), outcome.AgentId);
+        Assert.Equal("con_contosohelpdesk", outcome.SchemaName);
+        Assert.True(outcome.AgentCreated);
+        Assert.False(outcome.Retargeted);
+        Assert.Empty(outcome.Warnings);
+        Assert.Empty(outcome.Notices);
+    }
 
-        Assert.True(checkedAt >= 0);
-        Assert.True(checkedAt < firstWriteAt);
+    [Fact]
+    public async Task Attach_OfSettingsEditedToANameLongerThanAnAgentCanTake_IsASettingsFileErrorWithSyncsReason_BeforeTheAgentIsCreated()
+    {
+        CopilotTestFixtures.DeclareDisplayName(_directory, CopilotTestFixtures.NameOfFortyThreeCharacters);
+        var dataverseClient = new RecordingAgentCreationClient();
+        await using var services = CopilotTestFixtures.CopilotStudioServices();
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(services.GetRequiredService<IWorkspaceSynchronizer>(), new RecordingRetargetService(), dataverseClient).AttachAsync(Command() with { DisplayName = new SyncAgentWorkspaceIdentityReader().Read(_directory)!.DisplayName }, CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.Workspace.CopilotWorkspaceFilesUnreadable, ExitCodes.Usage, CopilotErrorKinds.WorkspaceFilesUnreadable), (failure.ErrorCode, failure.ExitCode, failure.ErrorKind));
+        Assert.Equal($"{WorkspaceFileNames.Settings}: {CopilotTestFixtures.AgentNameTooLongReason}", failure.Message);
+        Assert.Equal(AgentScaffoldFailure.DisplayNameTooLong, Assert.IsType<AgentScaffoldException>(failure.InnerException).Failure);
+        Assert.Equal(["SetDataverseUrl", nameof(RecordingAgentCreationClient.GetAgentIdBySchemaNameAsync)], dataverseClient.Calls);
+    }
+
+    [Fact]
+    public async Task Attach_WhenTheServiceRenamesTheSchema_ReportsTheNameItAssignedAndReRootsTheFolderWithoutRewritingItFromTheAgent()
+    {
+        var retargetService = new RecordingRetargetService();
+
+        var outcome = await Create(Unconnected(), retargetService, new RecordingAgentCreationClient { SchemaNameReturns = "con_contosohelpdesk1" }).AttachAsync(Command(), CancellationToken.None);
+
+        Assert.False(retargetService.LastUpdateWorkspaceDirectory);
+        Assert.Equal("con_contosohelpdesk1", outcome.SchemaName);
+        Assert.Equal(("con_contosohelpdesk1", "Contoso Helpdesk"), AgentWorkspaceIdentity.TryRead(WorkflowWorkspace.OpenWorkspace(_directory)) is { } identity ? (identity.SchemaName, identity.DisplayName) : default);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("  ")]
+    public async Task Attach_WithoutAnExpectedAgent_AdoptsTheOneCarryingTheSchemaNameAndSaysSo(string? expectedAgentId)
+    {
+        var dataverseClient = new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId };
+
+        var outcome = await Create(Unconnected(), new RecordingRetargetService(), dataverseClient).AttachAsync(Command() with { ExpectedAgentId = expectedAgentId }, CancellationToken.None);
+
+        Assert.Equal(0, dataverseClient.CreateCalls);
+        Assert.Equal(ExistingAgentId.ToString(), outcome.AgentId);
+        Assert.False(outcome.AgentCreated);
+        Assert.Equal(["An agent already carried the schema name con_contosohelpdesk in env-1; it was adopted rather than duplicated."], outcome.Notices);
+    }
+
+    [Fact]
+    public async Task Attach_AdoptsTheExpectedAgentWithoutANotice()
+    {
+        var outcome = await Create(Unconnected(), new RecordingRetargetService(), new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId }).AttachAsync(Command() with { ExpectedAgentId = ExistingAgentId.ToString() }, CancellationToken.None);
+
+        Assert.Equal(ExistingAgentId.ToString(), outcome.AgentId);
+        Assert.False(outcome.AgentCreated);
+        Assert.Empty(outcome.Notices);
+    }
+
+    [Fact]
+    public async Task Attach_WhileCopilotStudioIsStillProvisioningTheAgent_SaysToRunItAgainInsteadOfThatTheLinkFailed()
+    {
+        var retargetService = new RecordingRetargetService();
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
+            () => Create(Unconnected(), retargetService, new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId, ProvisioningStatus = "Provisioning" }, new ImmediateTimeProvider()).AttachAsync(Command() with { ExpectedAgentId = ExistingAgentId.ToString() }, CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.CopilotStudio.AgentNotProvisioned, ExitCodes.Failure, CopilotErrorKinds.AgentNotProvisioned), (failure.ErrorCode, failure.ExitCode, failure.ErrorKind));
+        Assert.Equal($"Copilot Studio was still provisioning the classic bot '{ExistingAgentId}' after 00:05:00, so nothing was pushed into it. The bot is kept, and a later deploy pushes into the same bot once Copilot Studio finishes provisioning it.", failure.Message);
+        Assert.Equal(WorkspaceAttachFailure.ReattachFailed, Assert.IsType<WorkspaceAttachException>(failure.InnerException).Failure);
+        Assert.Empty(retargetService.Calls);
+    }
+
+    [Theory]
+    [InlineData("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")]
+    [InlineData("not-an-agent-id")]
+    public async Task Attach_WhenAnotherAgentCarriesTheSchemaName_RefusesItAndLeavesTheWorkspaceAlone(string expectedAgentId)
+    {
+        var dataverseClient = new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId };
+        PlantCloudCache();
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
+            () => Create(Unconnected(), new RecordingRetargetService(), dataverseClient).AttachAsync(Command() with { ExpectedAgentId = expectedAgentId }, CancellationToken.None));
+
+        Assert.Equal(CopilotErrorKinds.BootstrapReattachFailed, failure.ErrorKind);
+        Assert.Contains(ExistingAgentId.ToString(), failure.Message, StringComparison.Ordinal);
+        Assert.Equal(CopilotErrorKinds.AgentAlreadyExists, Assert.IsType<CopilotStudioException>(failure.InnerException).ErrorKind);
+        Assert.Equal(0, dataverseClient.CreateCalls);
+        Assert.Single(dataverseClient.Calls, call => call == "GetAgentIdBySchemaNameAsync");
+        Assert.True(File.Exists(Path.Combine(_directory, ".mcs", "botdefinition.json")));
+    }
+
+    [Fact]
+    public async Task Attach_WhenTheWorkspaceIsAlreadyConnected_RefusesUnlessRetargetIsAllowed()
+    {
+        var dataverseClient = new RecordingAgentCreationClient();
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
+            () => Create(new RecordingWorkspaceSynchronizer(), new RecordingRetargetService(), dataverseClient).AttachAsync(Command(), CancellationToken.None));
+
+        Assert.Equal(CopilotErrorKinds.WorkspaceAlreadyConnected, failure.ErrorKind);
+        Assert.Equal($"The workspace at '{_directory}' is already connected to a cloud agent.", failure.Message);
+        Assert.Equal(["SetDataverseUrl"], dataverseClient.Calls);
+    }
+
+    [Fact]
+    public async Task Attach_RetargetingAConnectedWorkspace_KeepsABackupOfItsBindingUntilItIsRebound()
+    {
+        var retargetService = new RecordingRetargetService();
+
+        Assert.True((await Create(new RecordingWorkspaceSynchronizer(), retargetService).AttachAsync(Command() with { AllowRetarget = true }, CancellationToken.None)).Retargeted);
+        Assert.Equal(1, retargetService.PersistedBackups);
+        Assert.Equal(1, retargetService.FinalizedRetargets);
+    }
+
+    [Fact]
+    public async Task Attach_WhenARetargetFailsBeforeTheBindingIsReset_KeepsTheExistingCloudCache()
+    {
+        var retargetService = new RecordingRetargetService();
+        var dataverseClient = new RecordingAgentCreationClient { SolutionVersionsThrows = new InvalidOperationException("service unavailable") };
+        PlantCloudCache();
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
+            () => Create(new RecordingWorkspaceSynchronizer(), retargetService, dataverseClient).AttachAsync(Command() with { AllowRetarget = true }, CancellationToken.None));
+
+        Assert.Equal(CopilotErrorKinds.BootstrapReattachFailed, failure.ErrorKind);
+        Assert.True(File.Exists(Path.Combine(_directory, ".mcs", "botdefinition.json")));
+        Assert.Equal(0, retargetService.PersistedBackups);
+    }
+
+    [Fact]
+    public async Task Attach_WhenTheProjectCannotBeReattached_RefusesBeforeLookingForTheAgent()
+    {
+        var project = Directory.CreateDirectory(Path.Combine(_directory, "unrecognized")).FullName;
+        var dataverseClient = new RecordingAgentCreationClient();
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
+            () => Create(Unconnected(), new RecordingRetargetService(), dataverseClient).AttachAsync(Command() with { ProjectDirectory = project }, CancellationToken.None));
+
+        Assert.Equal(CopilotErrorKinds.ReattachNotSupported, failure.ErrorKind);
+        Assert.StartsWith($"The project at '{project}' cannot be connected to a cloud agent: ", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(["SetDataverseUrl"], dataverseClient.Calls);
     }
 
     [Fact]
@@ -98,266 +234,6 @@ connectionReferences:
     }
 
     [Fact]
-    public async Task Attach_WithNoDefinitionToRead_HasNothingToCheck()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer
-        {
-            SyncInfoAvailable = false,
-            ReadWorkspaceDefinitionThrows = new FileNotFoundException(".mcs/botdefinition.json was not found. Please resync."),
-        };
-
-        await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Equal(0, synchronizer.ThrowIfWorkspaceInvalidCalls);
-    }
-
-    [Fact]
-    public async Task Attach_WithNoCloudBaselineAndNoCachelessDefinition_StillReattaches()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer
-        {
-            SyncInfoAvailable = false,
-            ReadWorkspaceDefinitionThrows = new FileNotFoundException(".mcs/botdefinition.json was not found. Please resync."),
-        };
-        var dataverseClient = new RecordingAgentCreationClient();
-
-        var outcome = await Create(synchronizer, new RecordingRetargetService(), dataverseClient).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Equal(CreatedAgentId.ToString(), outcome.AgentId);
-        Assert.Equal(1, dataverseClient.CreateCalls);
-    }
-
-    [Fact]
-    public async Task Attach_WithNoDefinitionAndNoDeclarations_SavesTheBindingWithoutProvisioning()
-    {
-        var synchronizer = new RecordingWorkspaceSynchronizer
-        {
-            SyncInfoAvailable = false,
-            ReadWorkspaceDefinitionThrows = new FileNotFoundException(".mcs/botdefinition.json was not found. Please resync."),
-        };
-
-        await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Equal(0, synchronizer.DefinitionOnlyProvisionCount);
-        Assert.Contains(nameof(IWorkspaceSynchronizer.SaveSyncInfoAsync), synchronizer.Calls);
-    }
-
-    [Fact]
-    public async Task Attach_WithADefinition_ProvisionsConnectionReferencesThroughTheSdk()
-    {
-        DeclareClassic();
-        var synchronizer = Unconnected();
-
-        await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Contains(nameof(IWorkspaceSynchronizer.ProvisionConnectionReferencesAsync), synchronizer.Calls);
-        Assert.Contains(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
-    }
-
-    [Fact]
-    public async Task Attach_UploadsTheLocalConnectorsAndWarnsAboutAnyNotSaved()
-    {
-        const string reason = "Failed to push custom connector 'Weather': denied";
-        var synchronizer = Unconnected();
-        synchronizer.ConnectorFailureReasons.Add(reason);
-
-        var outcome = await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.True(synchronizer.LastConnectorPushOverwroteRemoteChanges);
-        Assert.Contains(reason, outcome.Warnings);
-    }
-
-    [Fact]
-    public async Task Attach_ProvisionsConnectionReferencesBeforeUpsertingTheWorkflowsThatNeedThem()
-    {
-        DeclareClassic();
-        var synchronizer = Unconnected();
-
-        await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
-
-        var provision = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.ProvisionConnectionReferencesAsync));
-        var workflows = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.UpsertWorkflowForAgentAsync));
-
-        Assert.InRange(provision, 0, int.MaxValue);
-        Assert.InRange(workflows, 0, int.MaxValue);
-        Assert.True(provision < workflows, "a workflow cannot be created against a connection reference the target environment does not hold yet.");
-    }
-
-    [Fact]
-    public async Task Attach_SeedsTheBaselineWithEveryDeclaredConnectionReference()
-    {
-        var connections = Path.Combine(_directory, "infrastructure", "connections");
-        Directory.CreateDirectory(connections);
-        File.WriteAllText(Path.Combine(connections, "new_sharedteams_777c895a.sync.yaml"), """
-connectionReferences:
-  - connectionReferenceLogicalName: new_sharedteams_777c895a
-    connectorId: /providers/Microsoft.PowerApps/apis/shared_teams
-""");
-        File.WriteAllText(Path.Combine(connections, "crf9a_nb1.cr.shared_sharepointonline.a972.sync.yaml"), """
-connectionReferences:
-  - connectionReferenceLogicalName: crf9a_nb1.cr.shared_sharepointonline.a972
-    connectorId: /providers/Microsoft.PowerApps/apis/shared_sharepointonline
-""");
-        var retargetService = new RecordingRetargetService();
-
-        await Create(Unconnected(), retargetService).AttachAsync(Command(), CancellationToken.None);
-
-        var seeded = retargetService.LastCloudFlowMetadata!.ConnectionReferences
-            .Select(reference => reference.ConnectionReferenceLogicalName.Value)
-            .OrderBy(name => name, StringComparer.Ordinal);
-
-        Assert.Equal(["crf9a_nb1.cr.shared_sharepointonline.a972", "new_sharedteams_777c895a"], seeded);
-    }
-
-    [Fact]
-    public async Task Attach_SeedsTheBaselineWithAClassicWorkspacesDeclarations()
-    {
-        File.WriteAllText(Path.Combine(_directory, "connectionreferences.mcs.yml"), """
-connectionReferences:
-  - connectionReferenceLogicalName: new_sharedmsnweather_08889
-    connectorId: /providers/Microsoft.PowerApps/apis/shared_msnweather
-""");
-        var retargetService = new RecordingRetargetService();
-
-        await Create(Unconnected(), retargetService).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Contains(
-            retargetService.LastCloudFlowMetadata!.ConnectionReferences,
-            reference => reference.ConnectionReferenceLogicalName.Value == "new_sharedmsnweather_08889");
-    }
-
-    [Fact]
-    public async Task Attach_SeedsNothingWhenTheWorkspaceDeclaresNoConnectionReferences()
-    {
-        var retargetService = new RecordingRetargetService();
-
-        await Create(Unconnected(), retargetService).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Empty(retargetService.LastCloudFlowMetadata!.ConnectionReferences);
-    }
-
-    [Fact]
-    public async Task Attach_WithNoDefinition_ProvisionsClassicDeclarationsBeforeSeeding()
-    {
-        File.WriteAllText(Path.Combine(_directory, "connectionreferences.mcs.yml"), """
-connectionReferences:
-  - connectionReferenceLogicalName: new_sharedmsnweather_08889
-    connectorId: /providers/Microsoft.PowerApps/apis/shared_msnweather
-""");
-        var dataverseClient = new RecordingAgentCreationClient();
-
-        var synchronizer = new RecordingWorkspaceSynchronizer
-        {
-            SyncInfoAvailable = false,
-            ReadWorkspaceDefinitionThrows = new FileNotFoundException(".mcs/botdefinition.json was not found. Please resync."),
-        };
-        var retarget = new RecordingRetargetService();
-
-        await Create(synchronizer, retarget, dataverseClient).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Equal(["new_sharedmsnweather_08889"], dataverseClient.EnsuredConnectionReferences);
-        var cached = Assert.Single(retarget.LastCloudFlowMetadata!.ConnectionReferences);
-        Assert.Equal(dataverseClient.References[cached.ConnectionReferenceLogicalName.Value].ConnectionReferenceId, cached.Id.Value);
-        Assert.Equal(0, synchronizer.FolderAwareProvisionCount);
-    }
-
-    [Fact]
-    public async Task Attach_EnsuresNoConnectionReferencesWhenTheWorkspaceDeclaresNone()
-    {
-        var dataverseClient = new RecordingAgentCreationClient();
-
-        await Create(Unconnected(), new RecordingRetargetService(), dataverseClient).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Empty(dataverseClient.EnsuredConnectionReferences);
-    }
-
-    [Fact]
-    public async Task Attach_DoesNotSeedOrSaveWhenADeclarationWasNotConfirmed()
-    {
-        File.WriteAllText(Path.Combine(_directory, "connectionreferences.mcs.yml"), """
-connectionReferences:
-  - connectionReferenceLogicalName: classic.shared_teams
-    connectorId: /providers/Microsoft.PowerApps/apis/shared_teams
-""");
-        var client = new RecordingAgentCreationClient { OmitProvisionedReferences = true };
-        var synchronizer = Unconnected();
-        var retarget = new RecordingRetargetService();
-
-        await Assert.ThrowsAsync<CopilotStudioException>(() =>
-            Create(synchronizer, retarget, client).AttachAsync(Command(), CancellationToken.None));
-
-        Assert.Null(retarget.LastCloudFlowMetadata);
-        Assert.Empty(synchronizer.SavedSyncInfo);
-        Assert.Equal(0, synchronizer.UpsertWorkflowCalls);
-    }
-
-    [Fact]
-    public async Task Attach_DraftsWorkflowsBecauseItsConnectionReferencesAreNotYetBound()
-    {
-        var synchronizer = Unconnected();
-
-        await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Equal(WorkflowActivationMode.DraftWhenConnectionReferencesExist, synchronizer.LastWorkflowActivationMode);
-    }
-
-    [Fact]
-    public async Task Attach_CreatesTheAgent()
-    {
-        var dataverseClient = new RecordingAgentCreationClient();
-
-        var outcome = await Create(Unconnected(), new RecordingRetargetService(), dataverseClient).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Equal(1, dataverseClient.CreateCalls);
-        Assert.Equal(CreatedAgentId.ToString(), outcome.AgentId);
-    }
-
-    [Fact]
-    public async Task Attach_PassesTheShapeReadFromTheWorkspace()
-    {
-        var dataverseClient = new RecordingAgentCreationClient();
-
-        await Create(Unconnected(), new RecordingRetargetService(), dataverseClient).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Equal(AuthoringShape.CliCopilot, dataverseClient.LastAuthoringShape);
-    }
-
-    [Fact]
-    public async Task Attach_LeavesTheScaffoldedFilesUntouched()
-    {
-        var retargetService = new RecordingRetargetService();
-
-        await Create(Unconnected(), retargetService).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.False(retargetService.LastUpdateWorkspaceDirectory);
-    }
-
-    [Fact]
-    public async Task Attach_WhenTheServiceRenamesTheSchema_AllowsTheWorkspaceToBeUpdated()
-    {
-        var retargetService = new RecordingRetargetService();
-        var dataverseClient = new RecordingAgentCreationClient { SchemaNameReturns = "con_contosohelpdesk1" };
-
-        var outcome = await Create(Unconnected(), retargetService, dataverseClient).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.True(retargetService.LastUpdateWorkspaceDirectory);
-        Assert.Equal("con_contosohelpdesk1", outcome.SchemaName);
-    }
-
-    [Fact]
-    public async Task Attach_SavesTheSyncInfoAfterTheBaselineIsWritten()
-    {
-        var synchronizer = Unconnected();
-        var retargetService = new RecordingRetargetService { Calls = synchronizer.Calls };
-
-        await Create(synchronizer, retargetService).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Equal(
-            [nameof(IWorkspaceRetargetService.SyncWorkspaceAsync), nameof(IWorkspaceSynchronizer.SaveSyncInfoAsync)],
-            synchronizer.Calls.Where(call => call is nameof(IWorkspaceRetargetService.SyncWorkspaceAsync) or nameof(IWorkspaceSynchronizer.SaveSyncInfoAsync)));
-    }
-
-    [Fact]
     public async Task Attach_TargetsTheDataverseOrganizationBeforeTheFirstAwait()
     {
         var dataverseClient = new RecordingAgentCreationClient();
@@ -368,34 +244,27 @@ connectionReferences:
     }
 
     [Fact]
-    public async Task Attach_NeverWritesTheCloudCacheItself()
+    public async Task Attach_BindsTheWorkspaceToTheEnvironmentAndTenantItTargets()
     {
-        await Create(Unconnected(), new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
+        var synchronizer = Unconnected();
 
-        Assert.False(File.Exists(Path.Combine(_directory, ".mcs", "botdefinition.json")));
-        Assert.False(File.Exists(Path.Combine(_directory, ".mcs", "changetoken.txt")));
-        Assert.False(File.Exists(Path.Combine(_directory, ".mcs", "conn.json")));
+        await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command("12345678-90ab-cdef-1234-567890abcdef"), CancellationToken.None);
+
+        var syncInfo = Assert.Single(synchronizer.SavedSyncInfo).SyncInfo;
+        Assert.Equal(CreatedAgentId, syncInfo.AgentId);
+        Assert.Equal("env-1", syncInfo.EnvironmentId);
+        Assert.Equal(new Uri("https://contoso.crm.dynamics.com/"), syncInfo.DataverseEndpoint);
+        Assert.Equal(Guid.Parse("12345678-90ab-cdef-1234-567890abcdef"), syncInfo.AccountInfo!.TenantId);
     }
 
     [Fact]
-    public async Task Attach_PassesNoChangeTokenSoTheBaselineComesFromTheService()
+    public async Task Attach_WithATenantThatIsNotAnIdentifier_RecordsNoTenant()
     {
-        var retargetService = new RecordingRetargetService();
+        var synchronizer = Unconnected();
 
-        await Create(Unconnected(), retargetService).AttachAsync(Command(), CancellationToken.None);
+        await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command("contoso.onmicrosoft.com"), CancellationToken.None);
 
-        Assert.Null(retargetService.LastChangeToken);
-    }
-
-    [Fact]
-    public async Task Attach_DefersWorkflowsAndPromptsToThePush()
-    {
-        var retargetService = new RecordingRetargetService();
-
-        await Create(Unconnected(), retargetService).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.False(retargetService.LastSyncWorkflowsAndPrompts);
-        Assert.False(retargetService.LastSyncCustomConnectors);
+        Assert.Equal(Guid.Empty, Assert.Single(synchronizer.SavedSyncInfo).SyncInfo.AccountInfo!.TenantId);
     }
 
     [Fact]
@@ -408,42 +277,37 @@ connectionReferences:
 
         Assert.Equal(CopilotErrorKinds.BootstrapReattachFailed, error.ErrorKind);
         Assert.Contains(CreatedAgentId.ToString(), error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("service unavailable", Assert.IsType<InvalidOperationException>(error.InnerException).Message);
     }
 
     [Fact]
-    public async Task Attach_WhenTheBaselineFails_LeavesNoPartialCloudCache()
+    public async Task Attach_WhenTheDeclaredConnectionReferencesConflict_NamesBothFilesInTheProject()
     {
-        var retargetService = new RecordingRetargetService { Throws = new InvalidOperationException("service unavailable") };
-        Directory.CreateDirectory(Path.Combine(_directory, ".mcs"));
-        File.WriteAllText(Path.Combine(_directory, ".mcs", "botdefinition.json"), "{}");
+        var classic = Path.Combine(_directory, "connectionreferences.mcs.yml");
+        File.WriteAllText(classic, "connectionReferences:\n  - connectionReferenceLogicalName: cr_teams\n    connectorId: /providers/Microsoft.PowerApps/apis/shared_teams\n");
+        var connections = Directory.CreateDirectory(Path.Combine(_directory, "infrastructure", "connections")).FullName;
+        File.WriteAllText(Path.Combine(connections, "cr_teams.sync.yaml"), "connectionReferences:\n  - connectionReferenceLogicalName: cr_teams\n    connectorId: /providers/Microsoft.PowerApps/apis/shared_office365\n");
 
-        await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(Unconnected(), retargetService).AttachAsync(Command(), CancellationToken.None));
+        var error = await Assert.ThrowsAsync<CopilotStudioException>(
+            () => Create(Unconnected(), new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None));
 
-        Assert.False(Directory.Exists(Path.Combine(_directory, ".mcs")));
+        Assert.Equal(CopilotErrorKinds.BootstrapReattachFailed, error.ErrorKind);
+        var cause = Assert.IsType<CopilotStudioException>(error.InnerException);
+        Assert.Equal(CopilotErrorKinds.ConnectionReferencesConflict, cause.ErrorKind);
+        Assert.Equal($"Connection reference 'cr_teams' is declared for two connectors: 'shared_teams' at '{classic}' and 'shared_office365' at '{Path.Combine(connections, "cr_teams.sync.yaml")}'.", cause.Message);
     }
 
-    [Fact]
-    public async Task Attach_WhenTheBaselineFails_LeavesTheScaffoldedFilesInPlace()
-    {
-        var retargetService = new RecordingRetargetService { Throws = new InvalidOperationException("service unavailable") };
-
-        await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(Unconnected(), retargetService).AttachAsync(Command(), CancellationToken.None));
-
-        Assert.True(File.Exists(Path.Combine(_directory, "settings.mcs.yml")));
-        Assert.True(File.Exists(Path.Combine(_directory, "agent.sync.yaml")));
-    }
-
-    [Fact]
-    public async Task Attach_WhenAWorkflowIsRejected_StillAttachesAndWarns()
+    [Theory]
+    [InlineData("this is not a valid connection", "Workflow 'Escalate' was not activated: this is not a valid connection")]
+    [InlineData("Failed to update workflow: Dataverse request failed (400): {\"error\":{\"code\":\"0x80060888\",\"message\":\"The flow definition is invalid.\"},\"trace\":\"sample.person@contoso.com\"}", "Workflow 'Escalate' was not activated: Failed to update workflow: HTTP 400 Bad Request. The flow definition is invalid. (0x80060888)")]
+    public async Task Attach_WhenAWorkflowIsRejected_StillAttachesAndWarns(string errorMessage, string warning)
     {
         var synchronizer = Unconnected();
-        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Escalate", ErrorMessage = "this is not a valid connection" });
+        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Escalate", ErrorMessage = errorMessage });
 
         var outcome = await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
 
-        Assert.Contains(outcome.Warnings, warning => warning.Contains("Escalate", StringComparison.Ordinal));
+        Assert.Equal([warning], outcome.Warnings);
     }
 
     [Fact]
@@ -457,41 +321,42 @@ connectionReferences:
         Assert.Contains(outcome.Warnings, warning => warning.Contains("Escalate", StringComparison.Ordinal) && warning.Contains("disabled", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public async Task Attach_WhenAWorkflowIsRejected_StillWritesTheBaseline()
+    [Theory]
+    [InlineData("invalid model", "AI prompt 'Summarize' was not saved: invalid model")]
+    [InlineData("Dataverse request failed (400): {\"error\":{\"code\":\"0x80048d19\",\"message\":\"The prompt model is unavailable.\"},\"trace\":\"sample.person@contoso.com\"}", "AI prompt 'Summarize' was not saved: HTTP 400 Bad Request. The prompt model is unavailable. (0x80048d19)")]
+    public async Task Attach_WhenAPromptIsRejected_StillAttachesAndWarns(string errorMessage, string warning)
     {
         var synchronizer = Unconnected();
-        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Escalate", ErrorMessage = "this is not a valid connection" });
-        var retargetService = new RecordingRetargetService();
+        synchronizer.PromptResponses.Add(new SyncDataverseClient.AIPromptResponse { PromptName = "Summarize", ErrorMessage = errorMessage });
 
-        await Create(synchronizer, retargetService).AttachAsync(Command(), CancellationToken.None);
-
-        Assert.Contains(nameof(RecordingRetargetService.SyncWorkspaceAsync), retargetService.Calls);
+        Assert.Equal([warning], (await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None)).Warnings);
     }
 
     [Fact]
-    public async Task Attach_WhenAPromptIsRejected_StillAttachesAndWarns()
+    public async Task Attach_WhenAConnectorIsNotSaved_WarnsWithItsReasonBeforeTheOtherRefusals()
     {
+        const string reason = "Failed to push custom connector 'Weather': denied";
         var synchronizer = Unconnected();
+        synchronizer.ConnectorFailureReasons.Add(reason);
         synchronizer.PromptResponses.Add(new SyncDataverseClient.AIPromptResponse { PromptName = "Summarize", ErrorMessage = "invalid model" });
 
         var outcome = await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
 
-        Assert.True(synchronizer.LastPromptUpsertOverwroteRemoteChanges);
-        Assert.Contains(outcome.Warnings, warning => warning.Contains("Summarize", StringComparison.Ordinal));
+        Assert.Equal([reason, "AI prompt 'Summarize' was not saved: invalid model"], outcome.Warnings);
     }
 
-    [Fact]
-    public async Task Attach_WhenCancelled_StillRemovesThePartialCloudCache()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task Attach_WhenAWorkflowAndAPromptReportNoError_WarnsOfNeither(string? errorMessage)
     {
-        var retargetService = new RecordingRetargetService { Throws = new OperationCanceledException() };
-        Directory.CreateDirectory(Path.Combine(_directory, ".mcs"));
-        File.WriteAllText(Path.Combine(_directory, ".mcs", "botdefinition.json"), "{}");
+        var synchronizer = Unconnected();
+        synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Escalate", ErrorMessage = errorMessage! });
+        synchronizer.PromptResponses.Add(new SyncDataverseClient.AIPromptResponse { PromptName = "Summarize", ErrorMessage = errorMessage });
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => Create(Unconnected(), retargetService).AttachAsync(Command(), CancellationToken.None));
+        var outcome = await Create(synchronizer, new RecordingRetargetService()).AttachAsync(Command(), CancellationToken.None);
 
-        Assert.False(Directory.Exists(Path.Combine(_directory, ".mcs")));
+        Assert.Empty(outcome.Warnings);
     }
 
     [Fact]
@@ -511,25 +376,29 @@ connectionReferences:
         var client = new RecordingAgentCreationClient
         {
             CreateThrows = new InvalidOperationException("the response was lost"),
-            SchemaProbeReturns = Guid.Parse("cccccccc-dddd-eeee-ffff-000000000000"),
+            SchemaProbeReturns = ExistingAgentId,
         };
 
         var error = await Assert.ThrowsAsync<CopilotStudioException>(
             () => Create(Unconnected(), new RecordingRetargetService(), client).AttachAsync(Command(), CancellationToken.None));
 
-        Assert.Contains("cccccccc-dddd-eeee-ffff-000000000000", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(CopilotErrorKinds.BootstrapReattachFailed, error.ErrorKind);
+        Assert.Contains(ExistingAgentId.ToString(), error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Nothing was left behind", error.Remediation ?? string.Empty, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Attach_WhenCreationFailsAndNothingExists_SaysSo()
+    public async Task Attach_WhenCreationFailsAndNothingExists_SaysNothingWasLeftBehind()
     {
         var client = new RecordingAgentCreationClient { CreateThrows = new InvalidOperationException("quota exceeded") };
 
         var error = await Assert.ThrowsAsync<CopilotStudioException>(
             () => Create(Unconnected(), new RecordingRetargetService(), client).AttachAsync(Command(), CancellationToken.None));
 
+        Assert.Equal(CopilotErrorKinds.BootstrapReattachFailed, error.ErrorKind);
+        Assert.Equal("Agent 'con_contosohelpdesk' could not be created or adopted in env-1.", error.Message);
         Assert.Contains("Nothing was left behind", error.Remediation ?? string.Empty, StringComparison.Ordinal);
+        Assert.Equal("quota exceeded", Assert.IsType<InvalidOperationException>(error.InnerException).Message);
     }
 
     [Fact]
@@ -551,40 +420,174 @@ connectionReferences:
     [Fact]
     public async Task Attach_WhenSyncInfoFails_ReportsTheAgentItLeftBehind()
     {
-        var synchronizer = Unconnected();
         var client = new RecordingAgentCreationClient { SolutionVersionsThrows = new InvalidOperationException("service unavailable") };
 
         var error = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer, new RecordingRetargetService(), client).AttachAsync(Command(), CancellationToken.None));
+            () => Create(Unconnected(), new RecordingRetargetService(), client).AttachAsync(Command(), CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.BootstrapReattachFailed, error.ErrorKind);
         Assert.Contains(CreatedAgentId.ToString(), error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task Attach_WhenTheAgentCannotBeCreated_ReportsThatNothingWasLeftBehind()
+    public async Task Connect_FindsTheAgentBySchemaNameAndConnectsTheWorkspaceAndEachCollectionKeyedByItsSchemaName()
     {
-        var client = new RecordingAgentCreationClient { CreateThrows = new InvalidOperationException("quota exceeded") };
+        var collection = CollectionFolder("HR Shared", "schemaName: con_hrshared\n");
+        var synchronizer = new RecordingWorkspaceSynchronizer { SyncInfoAvailable = false };
+        var retargetService = new RecordingRetargetService();
+        var dataverseClient = new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId, Collections = { ["con_hrshared"] = new ComponentCollectionInfo { Id = SharedCollectionId, DisplayName = "HR Shared" } } };
 
-        var error = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(Unconnected(), new RecordingRetargetService(), client).AttachAsync(Command(), CancellationToken.None));
+        var outcome = await Create(synchronizer, retargetService, dataverseClient).ConnectAsync(ConnectCommand(collection), CancellationToken.None);
 
-        Assert.Equal(CopilotErrorKinds.BootstrapReattachFailed, error.ErrorKind);
-        Assert.DoesNotContain(CreatedAgentId.ToString(), error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ExistingAgentId.ToString(), outcome.AgentId);
+        Assert.Equal(["con_contosohelpdesk"], dataverseClient.SchemaNameLookups);
+        Assert.Empty(outcome.SkippedCollectionDirectories);
+        Assert.Equal([["con_hrshared"]], dataverseClient.CollectionLookups);
+        Assert.Equal([Folder(_directory), Folder(collection)], retargetService.CloudCacheWrites.Select(folder => folder.ToString()));
+        Assert.Equal([(Folder(_directory), (Guid?)null), (Folder(collection), SharedCollectionId)], synchronizer.SavedSyncInfo.Select(saved => (saved.Folder, saved.SyncInfo.ComponentCollectionId)));
+        Assert.All(synchronizer.SavedSyncInfo, saved => Assert.Equal((Guid.Parse(TenantId), "env-1", new Uri("https://contoso.crm.dynamics.com/")), (saved.SyncInfo.AccountInfo!.TenantId, saved.SyncInfo.EnvironmentId, saved.SyncInfo.DataverseEndpoint)));
+        Assert.Equal(0, dataverseClient.CreateCalls);
     }
 
     [Fact]
-    public async Task Attach_WhenSyncInfoFails_LeavesNoPartialCloudCache()
+    public async Task Connect_ReturnsTheFolderOfEachCollectionTheEnvironmentDoesNotHold()
     {
-        var client = new RecordingAgentCreationClient { SolutionVersionsThrows = new InvalidOperationException("service unavailable") };
-        Directory.CreateDirectory(Path.Combine(_directory, ".mcs"));
-        File.WriteAllText(Path.Combine(_directory, ".mcs", "botdefinition.json"), "{}");
+        var held = CollectionFolder("HR Shared", "schemaName: con_hrshared\n");
+        var missing = CollectionFolder("Finance Shared", "schemaName: con_financeshared\n");
+        var synchronizer = new RecordingWorkspaceSynchronizer { SyncInfoAvailable = false };
+        var retargetService = new RecordingRetargetService();
+        var dataverseClient = new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId, Collections = { ["con_hrshared"] = new ComponentCollectionInfo { Id = SharedCollectionId, DisplayName = "HR Shared" } } };
 
-        await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(Unconnected(), new RecordingRetargetService(), client).AttachAsync(Command(), CancellationToken.None));
+        var outcome = await Create(synchronizer, retargetService, dataverseClient).ConnectAsync(ConnectCommand(missing, held), CancellationToken.None);
 
-        Assert.False(Directory.Exists(Path.Combine(_directory, ".mcs")));
+        Assert.Equal([missing], outcome.SkippedCollectionDirectories);
+        Assert.Equal([Folder(_directory), Folder(held)], retargetService.CloudCacheWrites.Select(folder => folder.ToString()));
     }
+
+    [Fact]
+    public async Task Connect_WhenNoAgentCarriesTheSchemaName_ReportsItAsNotFound()
+    {
+        var retargetService = new RecordingRetargetService();
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(Unconnected(), retargetService).ConnectAsync(ConnectCommand(), CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.CopilotStudio.AgentNotFound, "No agent matching 'con_contosohelpdesk' was found in environment env-1."), (failure.ErrorCode, failure.Message));
+        Assert.Empty(retargetService.CloudCacheWrites);
+    }
+
+    [Fact]
+    public async Task Connect_WhenTheEnvironmentCannotBeRead_PassesTheFailureOnUnchanged()
+    {
+        var dataverseClient = new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId, SolutionVersionsThrows = new InvalidOperationException("service unavailable") };
+
+        Assert.Same(dataverseClient.SolutionVersionsThrows, await Assert.ThrowsAsync<InvalidOperationException>(() => Create(Unconnected(), new RecordingRetargetService(), dataverseClient).ConnectAsync(ConnectCommand(), CancellationToken.None)));
+    }
+
+    [Fact]
+    public async Task Connect_WhenTheFolderIsConnectedToAnotherAgent_RefusesNamingItAndKeepsItsCache()
+    {
+        PlantCloudCache();
+        var retargetService = new RecordingRetargetService();
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(new RecordingWorkspaceSynchronizer(), retargetService, new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId }).ConnectAsync(ConnectCommand(), CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.Workspace.CopilotWorkspaceAlreadyConnected, CopilotErrorKinds.WorkspaceAlreadyConnected), (failure.ErrorCode, failure.ErrorKind));
+        Assert.Equal(Assert.IsType<WorkspaceAttachException>(failure.InnerException).Message, failure.Message);
+        Assert.Contains($"'{Folder(_directory)}'", failure.Message, StringComparison.Ordinal);
+        Assert.Empty(retargetService.CloudCacheWrites);
+        Assert.Equal("{}", File.ReadAllText(Path.Combine(_directory, ".mcs", "botdefinition.json")));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("displayName: HR Shared\n")]
+    [InlineData("kind: AdaptiveDialog\nbeginDialog:\n  kind: OnRecognizedIntent\n  id: main\n")]
+    public async Task Connect_WhenACollectionFolderNamesNoSchemaName_RefusesBeforeTargetingDataverse(string? collectionFile)
+    {
+        var collection = CollectionFolder("HR Shared", collectionFile);
+        var dataverseClient = new RecordingAgentCreationClient();
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(new RecordingWorkspaceSynchronizer(), new RecordingRetargetService(), dataverseClient).ConnectAsync(ConnectCommand(collection), CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.Workspace.CopilotWorkspaceFilesUnreadable, $"The collection folder '{collection}' holds no collection.mcs.yml that names a schemaName."), (failure.ErrorCode, failure.Message));
+        Assert.Empty(dataverseClient.Calls);
+    }
+
+    [Fact]
+    public async Task Connect_WhenTwoCollectionFoldersDeclareOneSchemaNameIgnoringCase_RefusesBeforeTargetingDataverse()
+    {
+        var first = CollectionFolder("HR Shared", "schemaName: con_hrshared\n");
+        var second = CollectionFolder("HR Shared Copy", "schemaName: CON_HRSHARED\n");
+        var dataverseClient = new RecordingAgentCreationClient();
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(new RecordingWorkspaceSynchronizer(), new RecordingRetargetService(), dataverseClient).ConnectAsync(ConnectCommand(first, second), CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.Workspace.CopilotWorkspaceFilesUnreadable, $"The collection folders '{first}' and '{second}' both declare the schema name 'CON_HRSHARED'."), (failure.ErrorCode, failure.Message));
+        Assert.Empty(dataverseClient.Calls);
+    }
+
+    [Fact]
+    public async Task Connect_WhenSeveralCollectionFoldersAreRefused_NamesTheFirstRefusalInTheOrderTheFoldersAreRead()
+    {
+        var first = CollectionFolder("HR Shared", "schemaName: con_hrshared\n");
+        var second = CollectionFolder("HR Shared Copy", "schemaName: con_hrshared\n");
+        var third = CollectionFolder("Finance Shared");
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(new RecordingWorkspaceSynchronizer(), new RecordingRetargetService()).ConnectAsync(ConnectCommand(first, second, third), CancellationToken.None));
+
+        Assert.Equal($"The collection folders '{first}' and '{second}' both declare the schema name 'con_hrshared'.", failure.Message);
+    }
+
+    public static TheoryData<string, string> FilesBesideTheCollectionFile => new()
+    {
+        { Path.Combine(".mcs", "botdefinition.json"), CopilotTestFixtures.CloudCacheJson(CollectionDefinition("con_cached")) },
+        { Path.Combine(".mcs", "botdefinition.json"), "{not json" },
+        { Path.Combine("topics", "conflict.mcs.yml"), "kind: AdaptiveDialog\n<<<<<<< HEAD\nbeginDialog: ours\n=======\nbeginDialog: theirs\n>>>>>>> theirs\n" },
+    };
+
+    [Theory]
+    [MemberData(nameof(FilesBesideTheCollectionFile))]
+    public async Task Connect_KeysEachCollectionByItsCollectionFileAlone_WhateverElseItsFolderHolds(string file, string content)
+    {
+        var collection = CollectionFolder("HR Shared", "schemaName: con_hrshared\n");
+        var path = Path.Combine(collection, file);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, content);
+        var dataverseClient = new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId, Collections = { ["con_hrshared"] = new ComponentCollectionInfo { Id = SharedCollectionId, DisplayName = "HR Shared" } } };
+        var synchronizer = new RecordingWorkspaceSynchronizer { SyncInfoAvailable = false };
+        var retargetService = new RecordingRetargetService();
+
+        var outcome = await Create(synchronizer, retargetService, dataverseClient).ConnectAsync(ConnectCommand(collection), CancellationToken.None);
+
+        Assert.Equal(ExistingAgentId.ToString(), outcome.AgentId);
+        Assert.Empty(outcome.SkippedCollectionDirectories);
+        Assert.Equal([["con_hrshared"]], dataverseClient.CollectionLookups);
+        Assert.Equal([Folder(_directory), Folder(collection)], retargetService.CloudCacheWrites.Select(folder => folder.ToString()));
+        Assert.Equal([(Folder(_directory), (Guid?)null), (Folder(collection), SharedCollectionId)], synchronizer.SavedSyncInfo.Select(saved => (saved.Folder, saved.SyncInfo.ComponentCollectionId)));
+    }
+
+    private CopilotConnectCommand ConnectCommand(params string[] collectionDirectories) => new()
+    {
+        Environment = Command(TenantId).Environment,
+        WorkspaceDirectory = _directory,
+        CollectionDirectories = collectionDirectories,
+        SchemaName = "con_contosohelpdesk",
+    };
+
+    private string CollectionFolder(string name, string? collectionFile = null)
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(_directory, name)).FullName;
+        if (collectionFile is not null)
+        {
+            File.WriteAllText(Path.Combine(folder, WorkspaceFileNames.Collection), collectionFile);
+        }
+
+        return folder;
+    }
+
+    private static string Folder(string directory) => new DirectoryPath(directory.Replace('\\', '/')).ToString();
+
+    private static BotComponentCollectionDefinition CollectionDefinition(string schemaName) => new BotComponentCollectionDefinition().WithComponentCollection(CodeSerializer.Deserialize<BotComponentCollection>($"schemaName: {schemaName}\ndisplayName: HR Shared")!);
 }
 
 internal sealed class RecordingAgentCreationClient : RecordingConnectionReferenceClient, ISyncDataverseClient
@@ -592,8 +595,6 @@ internal sealed class RecordingAgentCreationClient : RecordingConnectionReferenc
     public List<string> Calls { get; } = [];
 
     public int CreateCalls { get; private set; }
-
-    public AuthoringShape LastAuthoringShape { get; private set; } = AuthoringShape.Unknown;
 
     public Guid ExistingAgentId { get; init; }
 
@@ -607,7 +608,17 @@ internal sealed class RecordingAgentCreationClient : RecordingConnectionReferenc
 
     public Exception? SchemaProbeThrows { get; init; }
 
-    public List<string> EnsuredConnectionReferences => EnsuredLogicalNames;
+    public Dictionary<string, ComponentCollectionInfo> Collections { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public List<string[]> CollectionLookups { get; } = [];
+
+    public List<string> SchemaNameLookups { get; } = [];
+
+    public override Task<IReadOnlyDictionary<string, ComponentCollectionInfo>> GetComponentCollectionsBySchemaNamesAsync(IEnumerable<string> schemaNames, CancellationToken cancellationToken)
+    {
+        CollectionLookups.Add([.. schemaNames]);
+        return Task.FromResult<IReadOnlyDictionary<string, ComponentCollectionInfo>>(Collections);
+    }
 
     public override Task<SolutionInfo> GetSolutionVersionsAsync(CancellationToken cancellationToken)
     {
@@ -618,6 +629,7 @@ internal sealed class RecordingAgentCreationClient : RecordingConnectionReferenc
     public override Task<Guid> GetAgentIdBySchemaNameAsync(string schemaName, CancellationToken cancellationToken)
     {
         Calls.Add(nameof(GetAgentIdBySchemaNameAsync));
+        SchemaNameLookups.Add(schemaName);
 
         if (Calls.Count(call => call == nameof(GetAgentIdBySchemaNameAsync)) > 1)
         {
@@ -639,7 +651,6 @@ internal sealed class RecordingAgentCreationClient : RecordingConnectionReferenc
     {
         Calls.Add("CreateNewAgentAsync");
         CreateCalls++;
-        LastAuthoringShape = authoringShape;
 
         if (CreateThrows is not null)
         {
@@ -655,21 +666,19 @@ internal sealed class RecordingAgentCreationClient : RecordingConnectionReferenc
     }
 }
 
-internal sealed class RecordingRetargetService : IWorkspaceRetargetService
+internal sealed class RecordingRetargetService : IWorkspaceRetargetService, IWorkspaceCloudCacheWriter
 {
     public List<string> Calls { get; set; } = [];
 
+    public List<DirectoryPath> CloudCacheWrites { get; } = [];
+
     public bool LastUpdateWorkspaceDirectory { get; private set; } = true;
 
-    public string? LastChangeToken { get; private set; } = "unset";
-
-    public bool LastSyncCustomConnectors { get; private set; } = true;
-
-    public bool LastSyncWorkflowsAndPrompts { get; private set; } = true;
-
-    public CloudFlowMetadata? LastCloudFlowMetadata { get; private set; }
-
     public ImmutableArray<SyncDataverseClient.AIPromptMetadata> LastAIPromptMetadata { get; private set; }
+
+    public int PersistedBackups { get; private set; }
+
+    public int FinalizedRetargets { get; private set; }
 
     public Exception? Throws { get; init; }
 
@@ -679,14 +688,22 @@ internal sealed class RecordingRetargetService : IWorkspaceRetargetService
     {
     }
 
-    public void PersistRetargetBackup(DirectoryPath workspaceFolder, RemoteBindingSnapshot snapshot)
-    {
-    }
+    public void PersistRetargetBackup(DirectoryPath workspaceFolder, RemoteBindingSnapshot snapshot) => PersistedBackups++;
 
-    public bool FinalizeRetarget(DirectoryPath workspaceFolder, bool pushSucceeded) => true;
+    public bool FinalizeRetarget(DirectoryPath workspaceFolder, bool pushSucceeded)
+    {
+        FinalizedRetargets++;
+        return true;
+    }
 
     public void ClearRetargetBackup(DirectoryPath workspaceFolder)
     {
+    }
+
+    public Task WriteCloudCacheAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, CancellationToken cancellationToken)
+    {
+        CloudCacheWrites.Add(workspaceFolder);
+        return Task.CompletedTask;
     }
 
     public Task<WorkspaceSyncInfo> SyncWorkspaceAsync(
@@ -705,10 +722,6 @@ internal sealed class RecordingRetargetService : IWorkspaceRetargetService
     {
         Calls.Add(nameof(SyncWorkspaceAsync));
         LastUpdateWorkspaceDirectory = updateWorkspaceDirectory;
-        LastChangeToken = changeToken;
-        LastSyncCustomConnectors = syncCustomConnectors;
-        LastSyncWorkflowsAndPrompts = syncWorkflowsAndPrompts;
-        LastCloudFlowMetadata = cloudFlowMetadata;
         LastAIPromptMetadata = aiPromptMetadata;
 
         if (Throws is not null)

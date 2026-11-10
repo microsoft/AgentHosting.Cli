@@ -81,6 +81,9 @@ public sealed record CopilotCloneCommand
     /// <summary>The folder name the agent's workspace takes, defaulting to the agent's display name.</summary>
     public string? AgentFolderName { get; init; }
 
+    /// <summary>The display name the cloned workspace declares in place of the source agent's, or <see langword="null"/> to keep the source's.</summary>
+    public string? DisplayName { get; init; }
+
     /// <summary>
     /// Whether to clone every component collection the agent is linked to.
     /// </summary>
@@ -147,6 +150,9 @@ public sealed record CopilotPushOutcome
 
     /// <summary>Resources the service declined, described for the operator.</summary>
     public IReadOnlyList<string> Warnings { get; init; } = [];
+
+    /// <summary>When the agent was last published, as the push read it, or null for an agent never published or a component collection.</summary>
+    public DateTimeOffset? PublishedOn { get; init; }
 }
 
 /// <summary>Input for scaffolding a local workspace.</summary>
@@ -260,18 +266,28 @@ public interface ICopilotCatalogPort
     /// <param name="cancellationToken">Cancels the read.</param>
     /// <returns>The last publish time, or <see langword="null"/> when the agent has never been published.</returns>
     Task<DateTimeOffset?> GetPublishedOnAsync(CopilotEnvironmentContext environment, string agentId, CancellationToken cancellationToken);
-
-    /// <summary>Starts publishing an agent's draft content.</summary>
-    /// <param name="environment">The environment the agent belongs to.</param>
-    /// <param name="agentId">The agent to publish.</param>
-    /// <param name="cancellationToken">Cancels the request.</param>
-    /// <returns>A task that completes when the service has accepted the publish request.</returns>
-    Task PublishAgentAsync(CopilotEnvironmentContext environment, string agentId, CancellationToken cancellationToken);
 }
 
-/// <summary>Writes a new local workspace from a template.</summary>
+/// <summary>Publishes agents and waits for Copilot Studio to finish each publish.</summary>
+public interface ICopilotPublishPort
+{
+    /// <summary>Asks Copilot Studio to publish an agent's draft content and waits until it reports the publish succeeded, throwing when it reports anything else or nothing within the wait, and never cancelling a publish it asked for.</summary>
+    /// <param name="environment">The environment the agent belongs to.</param>
+    /// <param name="agentId">The agent to publish.</param>
+    /// <param name="maximumWait">How long to wait for Copilot Studio to finish once the publish was asked for.</param>
+    /// <param name="cancellationToken">Stops the request or the wait, leaving a publish already asked for to finish.</param>
+    /// <returns>When Copilot Studio finished the publish, or <see langword="null"/> when it did not say.</returns>
+    Task<DateTimeOffset?> PublishAsync(CopilotEnvironmentContext environment, string agentId, TimeSpan maximumWait, CancellationToken cancellationToken);
+}
+
+/// <summary>Checks an agent's display name, and writes a new local workspace from a template.</summary>
 public interface ICopilotScaffoldPort
 {
+    /// <summary>Returns the name unchanged when an agent can take it as its display name, and otherwise throws a usage error that gives Copilot Studio's reason, before anything is written.</summary>
+    /// <param name="displayName">The name to check.</param>
+    /// <returns>The name unchanged.</returns>
+    string ValidateDisplayName(string displayName);
+
     /// <summary>Scaffolds a workspace.</summary>
     /// <param name="command">What to scaffold, and where to.</param>
     /// <returns>The created files, relative to the project directory.</returns>
@@ -335,4 +351,40 @@ public sealed record CopilotAttachOutcome
 
     /// <summary>Advisories worth reporting that do not block a publish.</summary>
     public IReadOnlyList<string> Notices { get; init; } = [];
+}
+
+/// <summary>Connects an agent's folder, and the folders of the component collections it declares, to the agent an environment already holds, writing nothing to the environment.</summary>
+public interface ICopilotWorkspaceConnectPort
+{
+    /// <summary>Connects or refreshes each folder's .mcs from fresh reads of the agent and its collections, leaving every .mcs as it was when it fails.</summary>
+    /// <param name="command">The folders to connect, and the agent to connect them to.</param>
+    /// <param name="cancellationToken">Cancels the connect.</param>
+    /// <returns>The agent the folder is connected to, and the collection folders left unconnected.</returns>
+    Task<CopilotConnectOutcome> ConnectAsync(CopilotConnectCommand command, CancellationToken cancellationToken);
+}
+
+/// <summary>The folders to connect, and the schema name of the agent to connect them to.</summary>
+public sealed record CopilotConnectCommand
+{
+    /// <summary>The environment holding the agent.</summary>
+    public required CopilotEnvironmentContext Environment { get; init; }
+
+    /// <summary>The agent's folder.</summary>
+    public required string WorkspaceDirectory { get; init; }
+
+    /// <summary>The folders of the component collections the agent declares.</summary>
+    public IReadOnlyList<string> CollectionDirectories { get; init; } = [];
+
+    /// <summary>The schema name the environment holds the agent under.</summary>
+    public required string SchemaName { get; init; }
+}
+
+/// <summary>The Copilot Studio agent a connect bound the agent's folder to, and the collection folders it left unconnected.</summary>
+public sealed record CopilotConnectOutcome
+{
+    /// <summary>The Copilot Studio agent the agent's folder is connected to.</summary>
+    public required string AgentId { get; init; }
+
+    /// <summary>The collection folders left unconnected, because the environment doesn't hold their collections.</summary>
+    public IReadOnlyList<string> SkippedCollectionDirectories { get; init; } = [];
 }

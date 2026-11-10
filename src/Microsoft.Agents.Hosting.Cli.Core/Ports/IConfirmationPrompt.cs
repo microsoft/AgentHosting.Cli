@@ -25,6 +25,15 @@ public interface IConfirmationPrompt
     Task<ConfirmationOutcome> ConfirmAsync(string detail, string expectedResponse, CancellationToken cancellationToken);
 }
 
+/// <summary>Asks the operator a question answered yes or no, where an empty answer means yes.</summary>
+public interface IYesNoPrompt
+{
+    /// <summary>Asks the question and reads the answer.</summary>
+    /// <param name="question">The question, ending in [Y/n].</param>
+    /// <param name="cancellationToken">Cancels the prompt.</param>
+    /// <returns>Whether the operator answered yes.</returns>
+    Task<bool> AskAsync(string question, CancellationToken cancellationToken);
+}
 /// <summary>
 /// Decides whether a destructive action still has to be confirmed.
 ///

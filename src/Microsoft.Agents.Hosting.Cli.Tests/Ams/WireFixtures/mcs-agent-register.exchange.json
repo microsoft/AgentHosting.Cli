@@ -1,0 +1,31 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "agents/mcs",
+    "query": {},
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "bodyFixture": "mcs-agent-register.request.json"
+  },
+  "response": {
+    "status": 201,
+    "headers": {},
+    "bodyFixture": "mcs-agent-register.response.json"
+  },
+  "startsOperation": false,
+  "errors": [
+    { "status": 400, "code": "InvalidAgentFieldValue", "bodyFixture": null, "when": "a field has an unsupported value, such as the agent folder" },
+    { "status": 400, "code": "MissingAgentField", "bodyFixture": null, "when": "agentId, the agent folder, an agent's schema name or a deployment's deploymentId is missing" },
+    { "status": 400, "code": "McsRepositoryNotSupported", "bodyFixture": "mcs-repository.not-supported.error.json", "when": "the existing repository isn't an active native git source repository of this environment, or holds '.mcs'" },
+    { "status": 403, "code": "McsRepositoryNotWritable", "bodyFixture": null, "when": "the caller can't write to the existing repository" },
+    { "status": 404, "code": "McsRepositoryNotFound", "bodyFixture": "mcs-repository.not-found.error.json", "when": "the existing repository is missing, deleted or unreadable" },
+    { "status": 404, "code": "McsBotNotFound", "bodyFixture": "mcs-agent-register.bot-not-found.error.json", "when": "the claimed bot doesn't exist in the Dev environment with the agent's schema name" },
+    { "status": 409, "code": "McsAgentFolderBound", "bodyFixture": "mcs-agent-register.folder-bound.error.json", "when": "another agent leases the folder" },
+    { "status": 409, "code": "McsBotClaimed", "bodyFixture": "mcs-agent-register.bot-claimed.error.json", "when": "another agent homed in this environment claims the bot; the message names its folder and repository" },
+    { "status": 409, "code": "McsBotClaimed", "bodyFixture": "mcs-agent-register.bot-claimed-other-environment.error.json", "when": "another agent homed in another environment claims the bot; the message names only that agent" },
+    { "status": 409, "code": "McsBotClaimed", "bodyFixture": "mcs-agent-register.repository-created.error.json", "when": "the claim failed after the new repository was created; the RepositoryId detail names that repository" },
+    { "status": 409, "code": "McsAgentIdConflict", "bodyFixture": "mcs-agent-register.id-conflict.error.json", "when": "the agentId is already registered with another body, or was deleted" },
+    { "status": 409, "code": "McsDeploymentIdConflict", "bodyFixture": "cmp-deployment-create.id-conflict.error.json", "when": "a deploymentId is already used with other values" }
+  ]
+}

@@ -207,23 +207,19 @@ public sealed class ConnectorCatalogQueryTests
     [Fact]
     public void RequireConnected_ReturnsTheConnectionTheConnectorServes()
     {
-        var chosen = ConnectionReadinessPlanner.RequireConnected([Connection("conn-a"), Connection("conn-b")], "conn-b", "connector 'shared_teams'");
-
-        Assert.Equal("conn-b", chosen.ConnectionId);
+        Assert.Equal("conn-b", RequireConnected([Connection("conn-a"), Connection("conn-b")], "conn-b").ConnectionId);
     }
 
     [Fact]
     public void RequireConnected_ReturnsTheIdTheServiceReportsRatherThanTheOneAskedFor()
     {
-        var chosen = ConnectionReadinessPlanner.RequireConnected([Connection("conn-A")], "CONN-a", "connector 'shared_teams'");
-
-        Assert.Equal("conn-A", chosen.ConnectionId);
+        Assert.Equal("conn-A", RequireConnected([Connection("conn-A")], "CONN-a").ConnectionId);
     }
 
     [Fact]
     public void RequireConnected_RejectsAConnectionTheConnectorDoesNotServe()
     {
-        var failure = Assert.Throws<ManagedAgentException>(() => ConnectionReadinessPlanner.RequireConnected([Connection("conn-a")], "conn-z", "connector 'shared_teams'"));
+        var failure = Assert.Throws<ManagedAgentException>(() => RequireConnected([Connection("conn-a")], "conn-z"));
 
         Assert.Equal(11050, failure.ErrorCode);
         Assert.Equal(ExitCodes.Usage, failure.ExitCode);
@@ -236,7 +232,7 @@ public sealed class ConnectorCatalogQueryTests
     [Fact]
     public void RequireConnected_SaysSoWhenTheConnectorHasNoConnections()
     {
-        var failure = Assert.Throws<ManagedAgentException>(() => ConnectionReadinessPlanner.RequireConnected([], "conn-z", "connector 'shared_teams'"));
+        var failure = Assert.Throws<ManagedAgentException>(() => RequireConnected([], "conn-z"));
 
         Assert.Equal(11050, failure.ErrorCode);
         Assert.Contains("no connections", failure.Message, StringComparison.Ordinal);
@@ -246,11 +242,13 @@ public sealed class ConnectorCatalogQueryTests
     [Fact]
     public void RequireConnected_RejectsAConnectionThatIsNotConnected()
     {
-        var failure = Assert.Throws<UsageException>(() => ConnectionReadinessPlanner.RequireConnected([Connection("conn-broken", "Error")], "conn-broken", "connector 'shared_teams'"));
+        var failure = Assert.Throws<UsageException>(() => RequireConnected([Connection("conn-broken", "Error")], "conn-broken"));
 
         Assert.Contains("Error", failure.Message, StringComparison.Ordinal);
         Assert.Contains("Choose a Connected connection", failure.Message, StringComparison.Ordinal);
     }
+
+    private static CopilotConnectionCandidate RequireConnected(IReadOnlyList<CopilotConnectionCandidate> candidates, string connectionId) => ConnectionReadinessPlanner.RequireConnected(candidates, ManagedAgentFixtures.Rules.Connected(candidates), connectionId, "connector 'shared_teams'");
 
     private static CopilotConnectionCandidate Connection(string connectionId, string status = "Connected") =>
         new() { ConnectionId = connectionId, DisplayName = connectionId, Status = status };

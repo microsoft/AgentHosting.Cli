@@ -1,0 +1,26 @@
+{
+  "agentId": "aaaaaaaa-1111-4111-8111-000000000001",
+  "displayName": "Contoso HR",
+  "description": null,
+  "agentType": "MCSAgent",
+  "origin": "AgentHostCLI",
+  "mcs": {
+    "schemaName": "cr1a2_contosoHr",
+    "authoringShape": "empty"
+  },
+  "sourceControl": {
+    "repository": "New",
+    "repositoryId": null,
+    "branch": "main",
+    "agentFolder": "ContosoHR"
+  },
+  "deployments": [
+    {
+      "deploymentId": "eeeeeeee-5555-4555-8555-000000000005",
+      "deploymentType": "Dev",
+      "deploymentName": "contoso-dev",
+      "environmentId": "22222222-2222-2222-2222-222222222222",
+      "botId": "b0b0b0b0-4444-4444-8444-000000000014"
+    }
+  ]
+}

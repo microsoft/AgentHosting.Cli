@@ -15,6 +15,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Hosting;
 using Microsoft.Agents.Hosting.Cli.Rendering;
 using Microsoft.Agents.Hosting.Cli.Telemetry;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Identity.Client;
 using Microsoft.PowerPlatform.Tooling.OneDS;
@@ -711,25 +712,34 @@ public sealed class TelemetryFullTests
     }
 
     [Theory]
-    [InlineData(false, "failure", "99001")]
-    [InlineData(true, "usage", "11049")]
+    [InlineData("untyped", "failure", "99001")]
+    [InlineData("typed", "usage", "11049")]
+    [InlineData("dataverse", "failure", "17017")]
     public async Task StreamingExceptionRecordsFailureOutcome(
-        bool typed, string expectedCategory, string expectedErrorCode)
+        string failureKind, string expectedCategory, string expectedErrorCode)
     {
         await using var server = new LoopbackServer();
         var services = new StreamingHandlerProvider(resultFactory: _ => new StreamingCommandResult(
-            1, true, typed ? ManagedAgentException.ConnectorNotServed(
-                "private-connector", "private-environment", [], "private-list-command") : null));
+            1, true, failureKind switch
+            {
+                "typed" => ManagedAgentException.ConnectorNotServed(
+                    "private-connector", "private-environment", [], "private-list-command"),
+                "dataverse" => new DataverseRequestException(
+                    HttpStatusCode.Forbidden,
+                    "{\"error\":{\"message\":\"private-refusal\"},\"trace\":\"private-person@contoso.com\"}"),
+                _ => null,
+            }));
         var host = new AgentHostCli(
             new FakeOperations(),
             telemetryFactory: Factory(server.Address),
             services: services,
             featureFlags: new TestFeatureFlags(FeatureName.LiveTestFeatures));
+        var stderr = new StringWriter();
 
         int exitCode = await host.InvokeAsync(
             ["test", "ask", "--query", "hello"],
             new StringWriter(),
-            new StringWriter(),
+            stderr,
             color: false);
 
         JsonElement[] events = Parse(await server.RequestBody);
@@ -740,6 +750,7 @@ public sealed class TelemetryFullTests
         Assert.Equal(expectedCategory, Dimensions(events[1]).GetProperty("outcomeCategory").GetString());
         Assert.Equal(expectedErrorCode, Dimensions(events[1]).GetProperty("errorCode").GetString());
         Assert.DoesNotContain("private-", events[1].GetRawText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("private-", stderr.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]

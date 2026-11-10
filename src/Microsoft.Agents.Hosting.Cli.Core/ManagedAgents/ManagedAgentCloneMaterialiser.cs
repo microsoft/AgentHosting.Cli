@@ -25,9 +25,10 @@ public sealed class ManagedAgentCloneMaterialiser
     /// <param name="workspaceDirectory">The directory the agent workspace will occupy.</param>
     /// <param name="source">The environment holding the source agent.</param>
     /// <param name="mcsAgentId">The source agent to check out.</param>
+    /// <param name="displayName">The display name the clone declares in place of the source's, or <see langword="null"/> to keep the source's.</param>
     /// <param name="cancellationToken">Cancels the download.</param>
     /// <returns>What was written, or <see langword="null"/> when the content was already there.</returns>
-    public async Task<CopilotCloneOutcome?> MaterialiseAsync(string projectDirectory, string workspaceDirectory, CopilotEnvironmentContext source, string mcsAgentId, CancellationToken cancellationToken)
+    public async Task<CopilotCloneOutcome?> MaterialiseAsync(string projectDirectory, string workspaceDirectory, CopilotEnvironmentContext source, string mcsAgentId, string? displayName, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentException.ThrowIfNullOrWhiteSpace(mcsAgentId);
@@ -44,6 +45,7 @@ public sealed class ManagedAgentCloneMaterialiser
                 AgentId = mcsAgentId,
                 WorkspacePath = projectDirectory,
                 AgentFolderName = Path.GetFileName(Path.TrimEndingDirectorySeparator(workspaceDirectory)),
+                DisplayName = displayName,
                 IncludeLinkedComponentCollections = true,
             },
             cancellationToken).ConfigureAwait(false);

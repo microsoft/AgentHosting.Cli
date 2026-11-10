@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "McsBotNotFound",
+    "message": "Copilot Studio workflow '0a1b2c3d-1111-4111-8111-00000000000a' was not found in environment '22222222-2222-2222-2222-222222222222', or you cannot read it."
+  }
+}

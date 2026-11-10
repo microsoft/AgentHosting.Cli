@@ -6,13 +6,9 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 /// Records the connection references a run provisions, so the order and the arguments can be
 /// asserted without a Dataverse.
 /// </summary>
-internal class RecordingConnectionReferenceClient : SyncDataverseClient, ISyncDataverseClient
+internal class RecordingConnectionReferenceClient : OfflineSyncDataverseClient, ISyncDataverseClient
 {
     private readonly Lock _gate = new();
-
-    public RecordingConnectionReferenceClient() : base(new StubDataverseHttpClientAccessor(), "AgentHost.Cli.Tests")
-    {
-    }
 
     public List<string> EnsuredLogicalNames { get; } = [];
 

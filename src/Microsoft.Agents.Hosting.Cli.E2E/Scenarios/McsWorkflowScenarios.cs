@@ -1,9 +1,9 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
-using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 using Microsoft.CopilotStudio.Sync;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.E2E.Scenarios;
 
@@ -81,7 +81,7 @@ public static class McsWorkflowScenarios
             var deployed = await WorkflowSteps.DeployAsync(context, workspace, created.AgentId).ConfigureAwait(false);
 
             context.Assert.Equal(created.McsWorkflowId, deployed.McsWorkflowId, "the deploy targets the scaffolded workflow");
-            context.Assert.Equal(WorkflowStateProjection.Published, deployed.WorkflowState, "a workflow with no unbound connection is published");
+            context.Assert.Equal(CopilotStudioStates.Published, deployed.WorkflowState, "a workflow with no unbound connection is published");
             context.Assert.True(deployed.UnboundConnectionCount == 0, "the template declares no connection references");
 
             await context.Assert.EventuallyAsync(
@@ -109,7 +109,7 @@ public static class McsWorkflowScenarios
             var deployed = await WorkflowSteps.DeployAsync(context, workspace, agentId).ConfigureAwait(false);
 
             context.Assert.Equal(workflowId, deployed.McsWorkflowId, "the deploy targets the initialised workflow");
-            context.Assert.Equal(WorkflowStateProjection.Published, deployed.WorkflowState, "the fixture publishes");
+            context.Assert.Equal(CopilotStudioStates.Published, deployed.WorkflowState, "the fixture publishes");
 
             await context.Assert.EventuallyAsync(
                 async () => await context.Cloud.WorkflowExistsAsync(context.DevEnvironmentId, workflowId, context.CancellationToken).ConfigureAwait(false) == true,
@@ -189,7 +189,7 @@ public static class McsWorkflowScenarios
             context.Assert.True(row is not null, "the deployed flow is listed");
             context.Assert.Equal(AgentTypes.McsWorkflow, row!.AgentType, "the row is a workflow");
             context.Assert.Equal(agentId, row.AgentId, "the row carries the local record that owns it");
-            context.Assert.Equal(WorkflowStateProjection.Published, row.WorkflowState, "a deployed flow lists as published");
+            context.Assert.Equal(CopilotStudioStates.Published, row.WorkflowState, "a deployed flow lists as published");
             context.Assert.True(row.DeploymentSlotCount >= 1, "the row counts its deployment slots");
             context.Assert.Equal(workspace.AgentName, row.DisplayName, "the row carries the workflow name");
         });

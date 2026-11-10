@@ -7,20 +7,12 @@ namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 /// </summary>
 public sealed class WorkflowSettlement
 {
-    private readonly IReadOnlyList<CopilotWorkflowView> _workflows;
     private readonly Dictionary<string, string> _bound = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _started = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _observed = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _observedById = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _activated = [];
     private readonly List<string> _refused = [];
-
-    /// <summary>Creates the settlement.</summary>
-    /// <param name="workflows">Every workflow the workspace defines.</param>
-    public WorkflowSettlement(IReadOnlyList<CopilotWorkflowView> workflows)
-    {
-        _workflows = workflows ?? throw new ArgumentNullException(nameof(workflows));
-    }
 
     /// <summary>Everything the service reported across the run, merged.</summary>
     public CopilotWorkflowActivation Activation => new()
@@ -50,28 +42,14 @@ public sealed class WorkflowSettlement
         }
     }
 
-    /// <summary>
-    /// The workflows whose every reference is now bound and which this run has not yet started.
-    /// </summary>
-    /// <param name="plan">The decision for each reference.</param>
+    /// <summary>The workflows the sync library judges able to start that the workspace does not record as running and this run has not started yet.</summary>
+    /// <param name="workflows">Every workflow the workspace defines, judged against the references bound so far.</param>
     /// <returns>One request per workflow that can start now.</returns>
-    public CopilotWorkflowStateChange[] NewlyStartable(IReadOnlyList<ConnectionPlanItem> plan)
+    public CopilotWorkflowStateChange[] NewlyStartable(IReadOnlyList<CopilotWorkflowView> workflows)
     {
-        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(workflows);
 
-        var bound = plan
-            .Where(ConnectionReadinessPlanner.IsResolved)
-            .Select(item => item.View.LogicalName)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        return
-        [
-            .. _workflows
-                .Where(workflow => workflow.IsActivatedLocally != true
-                    && !_started.Contains(workflow.WorkflowId)
-                    && workflow.ConnectionReferences.All(bound.Contains))
-                .Select(workflow => new CopilotWorkflowStateChange { WorkflowId = workflow.WorkflowId, Activate = true }),
-        ];
+        return [.. workflows.Where(workflow => workflow.CanEnable && workflow.IsActivatedLocally != true && !_started.Contains(workflow.WorkflowId)).Select(workflow => new CopilotWorkflowStateChange { WorkflowId = workflow.WorkflowId, Activate = true })];
     }
 
     /// <summary>Merges one activation response into what the run has observed.</summary>

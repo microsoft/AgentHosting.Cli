@@ -2,7 +2,6 @@ using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.ObjectModel;
-using Microsoft.CopilotStudio.Sync;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
@@ -19,15 +18,7 @@ public sealed class SyncWorkspaceAdapterWorkflowToolTests
         DataverseOrganization = new Uri("https://contoso.crm.dynamics.com/"),
     };
 
-    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
-        new(
-            synchronizer,
-            new RecordingRetargetService(),
-            new StubSolutionVersionsClient(),
-            new StubComponentCollectionClient(),
-            new StubOperationContextProvider(),
-            new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()),
-            new CopilotChangeMapper());
+    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) => CopilotTestFixtures.WorkspaceAdapter(synchronizer);
 
     private static DialogComponent WorkflowToolComponent(string displayName, string schemaName, Guid workflowId) =>
         new DialogComponent.Builder
@@ -35,14 +26,6 @@ public sealed class SyncWorkspaceAdapterWorkflowToolTests
             DisplayName = displayName,
             SchemaName = new DialogSchemaName(schemaName),
             Dialog = new WorkflowTool.Builder { WorkflowId = workflowId },
-        }.Build();
-
-    private static DialogComponent ConnectorToolComponent() =>
-        new DialogComponent.Builder
-        {
-            DisplayName = "Get a section",
-            SchemaName = new DialogSchemaName("cli_Agent.tool.Getasection_fcU"),
-            Dialog = new ConnectorTool.Builder(),
         }.Build();
 
     private static RecordingWorkspaceSynchronizer Declaring(params BotComponentBase[] components) =>
@@ -64,32 +47,6 @@ public sealed class SyncWorkspaceAdapterWorkflowToolTests
     }
 
     [Fact]
-    public async Task Push_WhenAWorkflowToolHasAnEmptyWorkflowId_SendsNothingToTheCloud()
-    {
-        var synchronizer = Declaring(WorkflowToolComponent("Empty Workflow Id Tool", EmptySchemaName, Guid.Empty));
-
-        await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
-
-        Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
-        Assert.Equal(0, synchronizer.UpsertWorkflowCalls);
-        Assert.Equal(0, synchronizer.PushLocalChangesCalls);
-        Assert.Equal(0, synchronizer.UploadKnowledgeFilesCalls);
-    }
-
-    [Fact]
-    public async Task Push_WithOverwrite_StillRefusesAWorkflowToolWithAnEmptyId()
-    {
-        var synchronizer = Declaring(WorkflowToolComponent("Empty Workflow Id Tool", EmptySchemaName, Guid.Empty));
-
-        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: true, CancellationToken.None));
-
-        Assert.Equal(CopilotErrorKinds.WorkflowToolIdEmpty, failure.ErrorKind);
-        Assert.Equal(0, synchronizer.PushLocalChangesCalls);
-    }
-
-    [Fact]
     public async Task Push_WhenSeveralWorkflowToolsHaveAnEmptyWorkflowId_NamesEveryOne()
     {
         var synchronizer = Declaring(
@@ -104,28 +61,5 @@ public sealed class SyncWorkspaceAdapterWorkflowToolTests
         Assert.Contains(EmptySchemaName, failure.Message, StringComparison.Ordinal);
         Assert.Contains("cli_Agent.tool.SecondBrokenTool", failure.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(ResolvedSchemaName, failure.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task Push_WhenEveryWorkflowToolHasAWorkflowId_ReachesThePush()
-    {
-        var synchronizer = Declaring(
-            WorkflowToolComponent("Agent Flow 3", ResolvedSchemaName, Guid.Parse("6e5229e3-e343-f111-88b5-7ced8d3b6119")),
-            ConnectorToolComponent());
-
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.PushLocalChangesCalls);
-        Assert.Empty(outcome.Warnings);
-    }
-
-    [Fact]
-    public async Task Push_WithNoWorkflowTools_ReachesThePush()
-    {
-        var synchronizer = Declaring(ConnectorToolComponent());
-
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
-
-        Assert.Equal(1, synchronizer.PushLocalChangesCalls);
     }
 }

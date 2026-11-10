@@ -174,16 +174,7 @@ public sealed class DataverseCatalogAdapter : ICopilotCatalogPort
             : ReadPublishedOn(document.RootElement);
     }
 
-    /// <inheritdoc />
-    public async Task PublishAgentAsync(CopilotEnvironmentContext environment, string agentId, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(environment);
-
-        using var _ = await SendAsync(environment, HttpMethod.Post, $"{BotsRoute}({agentId})/Microsoft.Dynamics.CRM.PvaPublish", cancellationToken, "{}").ConfigureAwait(false);
-    }
-
-    private async Task<JsonDocument?> SendAsync(CopilotEnvironmentContext environment, HttpMethod method, string relativeUrl, CancellationToken cancellationToken, string? jsonBody = null) =>
-        await _client.SendAsync(environment, method, relativeUrl, cancellationToken, jsonBody).ConfigureAwait(false);
+    private async Task<JsonDocument?> SendAsync(CopilotEnvironmentContext environment, HttpMethod method, string relativeUrl, CancellationToken cancellationToken) => await _client.SendAsync(environment, method, relativeUrl, cancellationToken).ConfigureAwait(false);
 
     private static CopilotAgentSummary ToSummary(JsonElement element) => new()
     {

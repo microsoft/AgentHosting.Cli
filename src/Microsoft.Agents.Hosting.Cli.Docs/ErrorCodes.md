@@ -31,6 +31,7 @@ mean a change partially completed or its result is uncertain.
 | 16 | [Provisioning](#provisioning) |
 | 17 | [Copilot Studio](#copilot-studio) |
 | 18 | [Evaluation](#evaluation) |
+| 19 | [AMS agent](#ams-agent) |
 | 99 | [General](#general) |
 
 ## Workspace
@@ -142,6 +143,8 @@ mean a change partially completed or its result is uncertain.
 | [12014](ErrorCodes/12014.md) | The token's client application does not match the application the CLI expects. |
 | [12015](ErrorCodes/12015.md) | The acquired token does not match the operation's required tenant. |
 | [12016](ErrorCodes/12016.md) | The token does not carry the delegated permission needed for the operation. |
+| [12017](ErrorCodes/12017.md) | git was not found on PATH. |
+| [12018](ErrorCodes/12018.md) | git could not write msagent's credential helper into the global git config. |
 
 ## Environment
 
@@ -272,7 +275,7 @@ mean a change partially completed or its result is uncertain.
 | [17015](ErrorCodes/17015.md) | Attachment failed and the CLI could not confirm whether an agent now exists. |
 | [17016](ErrorCodes/17016.md) | Readiness polling ended before the agent became ready. |
 | [17017](ErrorCodes/17017.md) | A service operation failed or the requested result could not be confirmed. |
-| [17018](ErrorCodes/17018.md) | The CLI could not confirm publish completion within its wait window. |
+| [17018](ErrorCodes/17018.md) | Copilot Studio did not report a finished publish within 5 minutes; the publish keeps running. |
 | [17019](ErrorCodes/17019.md) | A requested component collection could not be resolved in the target environment. |
 | [17020](ErrorCodes/17020.md) | The quarantine API rejected the request for insufficient administrative access. |
 | [17021](ErrorCodes/17021.md) | A connection-reference declaration exists but could not be read or parsed. |
@@ -287,6 +290,8 @@ mean a change partially completed or its result is uncertain.
 | [17030](ErrorCodes/17030.md) | A workflow tool has a missing or all-zero workflowId. |
 | [17031](ErrorCodes/17031.md) | A persistent duplicate-reference refusal stopped the component push. |
 | [17032](ErrorCodes/17032.md) | A persistent missing-reference refusal stopped the component push. |
+| [17033](ErrorCodes/17033.md) | Copilot Studio finished the publish with a status other than Succeeded, or its progress could not be read. |
+| [17034](ErrorCodes/17034.md) | Copilot Studio was still provisioning the classic agent when the wait ran out, so nothing was pushed or published. |
 
 ## Evaluation
 
@@ -307,6 +312,55 @@ mean a change partially completed or its result is uncertain.
 | [18013](ErrorCodes/18013.md) | Concurrent changes prevented safe completion of a test-set replacement. |
 | [18014](ErrorCodes/18014.md) | An accepted run may be charged and active but the service did not identify it. |
 | [18015](ErrorCodes/18015.md) | A failed replacement left the test set short because recovery was incomplete. |
+
+## AMS agent
+
+| Code | Description |
+| --- | --- |
+| [19002](ErrorCodes/19002.md) | A Test deploy named a commit Dev never deployed. |
+| [19003](ErrorCodes/19003.md) | The deployment's stage does not fit its environment. |
+| [19004](ErrorCodes/19004.md) | The preceding stage has nothing to promote. |
+| [19006](ErrorCodes/19006.md) | Another operation is running on this deployment. |
+| [19007](ErrorCodes/19007.md) | The service has no free worker right now. |
+| [19008](ErrorCodes/19008.md) | The source kept changing in the repository. |
+| [19009](ErrorCodes/19009.md) | You cannot write to the agent's repository. |
+| [19010](ErrorCodes/19010.md) | The repository was not found. |
+| [19011](ErrorCodes/19011.md) | The repository cannot hold MCS agents. |
+| [19012](ErrorCodes/19012.md) | The repository folder already belongs to another agent. |
+| [19013](ErrorCodes/19013.md) | The Copilot Studio agent is already held by another AMS agent. |
+| [19014](ErrorCodes/19014.md) | The agent source is not valid. |
+| [19015](ErrorCodes/19015.md) | The agent source is too large. |
+| [19016](ErrorCodes/19016.md) | The repository checks rejected the source. |
+| [19017](ErrorCodes/19017.md) | The service could not act on your behalf. |
+| [19018](ErrorCodes/19018.md) | The operation failed in Copilot Studio. |
+| [19026](ErrorCodes/19026.md) | A test-only endpoint override is not usable. |
+| [19027](ErrorCodes/19027.md) | This command needs the on-behalf-of endpoint. |
+| [19029](ErrorCodes/19029.md) | Stopped waiting for the operation. |
+| [19030](ErrorCodes/19030.md) | The operation took too long. |
+| [19031](ErrorCodes/19031.md) | The agent has no Dev deployment yet. |
+| [19038](ErrorCodes/19038.md) | The Dev deployment has no Copilot Studio agent or workflow yet. |
+| [19050](ErrorCodes/19050.md) | Dev's edits and a later commit changed the same lines. |
+| [19051](ErrorCodes/19051.md) | Dev had edits the deployed commit does not hold; they were saved on `main`. |
+| [19052](ErrorCodes/19052.md) | The project folder is not its repository's root. |
+| [19053](ErrorCodes/19053.md) | The project folder holds files that are not part of the project. |
+| [19054](ErrorCodes/19054.md) | The project folder's remote is not a GRS repository. |
+| [19055](ErrorCodes/19055.md) | --repository-id differs from the project's repository. |
+| [19056](ErrorCodes/19056.md) | The Copilot Studio agent or flow was not found. |
+| [19057](ErrorCodes/19057.md) | The agent's folder already exists in the repository. |
+| [19058](ErrorCodes/19058.md) | Linking the repository would overwrite local files. |
+| [19059](ErrorCodes/19059.md) | git tracks a .mcs folder, or commits msagent would push hold one. |
+| [19060](ErrorCodes/19060.md) | The project folder is itself an agent's folder. |
+| [19062](ErrorCodes/19062.md) | AMS doesn't know the agent. |
+| [19063](ErrorCodes/19063.md) | A Prod deploy takes no --commit-id. |
+| [19064](ErrorCodes/19064.md) | AMS doesn't know which commit Dev holds. |
+| [19065](ErrorCodes/19065.md) | The commit is not in the repository. |
+| [19066](ErrorCodes/19066.md) | AMS already holds the agent id with other details. |
+| [19067](ErrorCodes/19067.md) | A git command failed. |
+| [19068](ErrorCodes/19068.md) | AMS already holds the deployment id with other details. |
+| [19069](ErrorCodes/19069.md) | The agent's AMS record changed during the delete. |
+| [19070](ErrorCodes/19070.md) | The service refused a value msagent sent. |
+| [19071](ErrorCodes/19071.md) | A commit that never synced holds uncommitted changes. |
+| [19072](ErrorCodes/19072.md) | A commit that never synced lacks the commit Copilot Studio synced from. |
 
 ## General
 

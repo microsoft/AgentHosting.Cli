@@ -134,6 +134,53 @@ internal static class Program
             MessageOutput = progressSpinner.Error,
         };
 
+        await using var provider = ComposeServices(args, invocation, featureFlags, options, progressSpinner).BuildServiceProvider();
+        var operations = provider.GetRequiredService<IAgentHostingOperations>();
+
+        var cli = new AgentHostCli(
+            operations,
+            provider.GetRequiredService<CommandTelemetrySessionFactory>(),
+            Handlers(featureFlags.IsFeatureEnabled(FeatureName.AmsMcsAgents), provider, operations),
+            featureFlags,
+            provider.GetRequiredService<CommandTelemetrySessionAccessor>(),
+            progressSpinner: progressSpinner);
+
+        using var lifetime = new CancellationTokenSource();
+
+        void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs eventArgs)
+        {
+            if (lifetime.IsCancellationRequested)
+            {
+                return;
+            }
+
+            eventArgs.Cancel = true;
+            lifetime.Cancel();
+        }
+
+        Console.CancelKeyPress += OnCancelKeyPress;
+
+        try
+        {
+            return await cli.InvokeAsync(args, Console.Out, Console.Error, color, lifetime.Token);
+        }
+        catch (CommandConfigurationException failure)
+        {
+            return ReportStartupFailure(failure.Message);
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+        {
+            return 130;
+        }
+        finally
+        {
+            Console.CancelKeyPress -= OnCancelKeyPress;
+        }
+    }
+
+    internal static ServiceCollection ComposeServices(string[] args, InvocationTarget invocation, IFeatureFlags featureFlags, AgentHostAuthOptions options, ProgressSpinner progressSpinner)
+    {
+        var powerPlatformApiTarget = invocation.Target;
         var services = new ServiceCollection();
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IProgressStatus>(progressSpinner);
@@ -159,6 +206,7 @@ internal static class Program
             claimsValidator: sp.GetRequiredService<PpapiTokenClaimsValidator>()));
 
         services.AddSingleton<AgentCreationTarget>();
+        services.AddSingleton(AmsEndpointProfile.FromEnvironment(Environment.GetEnvironmentVariable));
 
         // Automatic redirect following is disabled at client construction — before any authorization
         // header exists — so a host-changing redirect can never cause the delegated bearer token to be
@@ -199,7 +247,6 @@ internal static class Program
         services.AddSingleton<CopilotWorkspaceLocator>();
         services.AddSingleton<CopilotCatalogService>();
         services.AddSingleton<CopilotWorkspaceService>();
-        services.AddSingleton<CopilotScaffoldService>();
 
         services.AddSingleton<AgentConfigLocator>();
         services.AddSingleton<CopilotProjectIdentityReader>();
@@ -281,6 +328,7 @@ internal static class Program
                     sp.GetRequiredService<IBrowserLauncher>(),
                     sp.GetRequiredService<IInteractiveMessagePresenter>(),
                     sp.GetRequiredService<IConnectorCatalogPort>(),
+                    sp.GetRequiredService<IConnectionBindingRules>(),
                     sp.GetRequiredService<ManagedAgentPrincipalResolver>(),
                     CoreServicesCluster.For(powerPlatformApiTarget),
                     sp.GetRequiredService<IOperatorInterrupt>(),
@@ -291,33 +339,39 @@ internal static class Program
         services.AddSingleton<ConnectionTargetResolver>();
         services.AddSingleton<ConnectorResolver>();
         services.AddSingleton<WorkflowStateCache>();
-        services.AddSingleton<WorkflowActivationPass>();
+        services.AddSingleton<WorkflowActivationReporter>();
         services.AddSingleton<IConnectionSelectionPrompt>(_ => new ConsoleConnectionSelectionPrompt(PromptInput(progressSpinner), progressSpinner.Error));
         services.AddSingleton<ConnectionCreationFlow>();
         services.AddSingleton<ConnectionBindingCoordinator>();
         services.AddSingleton(sp => new AgentDeploymentConnectionService(
             sp.GetRequiredService<AgentDeploymentConnectionResolver>(),
             sp.GetRequiredService<ICopilotConnectionPort>(),
+            sp.GetRequiredService<IConnectionBindingRules>(),
             sp.GetRequiredService<ConnectionBindingCoordinator>(),
             sp.GetRequiredService<IConnectionSelectionPrompt>(),
             sp.GetRequiredService<WorkflowStateCache>(),
+            sp.GetRequiredService<IWorkflowStateRules>(),
             sp.GetRequiredService<ManagedAgentPrincipalResolver>(),
             CoreServicesCluster.For(powerPlatformApiTarget)));
         services.AddSingleton(sp => new AgentDeploymentConnectionReader(
             sp.GetRequiredService<AgentDeploymentConnectionResolver>(),
             sp.GetRequiredService<ICopilotConnectionPort>(),
+            sp.GetRequiredService<IConnectionBindingRules>(),
             sp.GetRequiredService<WorkflowStateCache>(),
+            sp.GetRequiredService<IWorkflowStateRules>(),
             CoreServicesCluster.For(powerPlatformApiTarget)));
         services.AddSingleton<AgentDeploymentConnectorListService>();
         services.AddSingleton(sp => new AgentDeploymentConnectionCreateService(
             sp.GetRequiredService<ConnectionTargetResolver>(),
             sp.GetRequiredService<ConnectorResolver>(),
+            sp.GetRequiredService<IConnectionBindingRules>(),
             sp.GetRequiredService<ConnectionCreationFlow>(),
             sp.GetRequiredService<ManagedAgentPrincipalResolver>()));
         services.AddSingleton(sp => new AgentDeploymentConnectionReferenceCreateService(
             sp.GetRequiredService<AgentDeploymentConnectionResolver>(),
             sp.GetRequiredService<ConnectorResolver>(),
             sp.GetRequiredService<ICopilotConnectionPort>(),
+            sp.GetRequiredService<IConnectionBindingRules>(),
             sp.GetRequiredService<ConnectionBindingCoordinator>(),
             sp.GetRequiredService<ManagedAgentPrincipalResolver>()));
         services.AddSingleton<AgentDeploymentConnectionRemoveService>();
@@ -345,6 +399,10 @@ internal static class Program
             sp.GetRequiredService<IClock>(),
             progress: sp.GetRequiredService<IProgressStatus>()));
         services.AddSingleton<EvaluationServices>();
+        AddAmsMode(services, featureFlags.IsFeatureEnabled(FeatureName.AmsMcsAgents), powerPlatformApiTarget);
+        services.AddSingleton(sp => new GitSignInService(powerPlatformApiTarget, sp.GetRequiredService<AmsEndpointProfile>(), sp.GetRequiredService<ITokenProvider>(), sp.GetRequiredService<IPlaygroundProcessRunner>(), sp.GetRequiredService<IPlaygroundToolEnvironment>(), Console.In));
+        services.AddSingleton<ICommandHandler<AuthSetupGitRequest, AuthSetupGitResult>>(sp => sp.GetRequiredService<GitSignInService>());
+        services.AddSingleton<ICommandHandler<AuthGitCredentialRequest, AuthGitCredentialResult>>(sp => sp.GetRequiredService<GitSignInService>());
 
         var telemetryPreferences =
             FileTelemetryPreferenceStore.CreateForAhConfigDirectory(options.ConfigDirectory);
@@ -384,48 +442,7 @@ internal static class Program
             sp.GetRequiredService<CommandTelemetryEnvironmentObserver>(),
             sp.GetRequiredService<ICommandTelemetryProfileContextSource>()));
 
-        await using var provider = services.BuildServiceProvider();
-        var operations = provider.GetRequiredService<IAgentHostingOperations>();
-
-        var cli = new AgentHostCli(
-            operations,
-            provider.GetRequiredService<CommandTelemetrySessionFactory>(),
-            new CompositeHandlerProvider(new FacadeHandlerProvider(operations), provider),
-            featureFlags,
-            provider.GetRequiredService<CommandTelemetrySessionAccessor>(),
-            progressSpinner: progressSpinner);
-
-        using var lifetime = new CancellationTokenSource();
-
-        void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs eventArgs)
-        {
-            if (lifetime.IsCancellationRequested)
-            {
-                return;
-            }
-
-            eventArgs.Cancel = true;
-            lifetime.Cancel();
-        }
-
-        Console.CancelKeyPress += OnCancelKeyPress;
-
-        try
-        {
-            return await cli.InvokeAsync(args, Console.Out, Console.Error, color, lifetime.Token);
-        }
-        catch (CommandConfigurationException failure)
-        {
-            return ReportStartupFailure(failure.Message);
-        }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
-        {
-            return 130;
-        }
-        finally
-        {
-            Console.CancelKeyPress -= OnCancelKeyPress;
-        }
+        return services;
     }
 
     /// <summary>
@@ -557,6 +574,83 @@ internal static class Program
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "agenthost-cli-csharp")
             : configured;
+    }
+
+    internal static void AddAmsMode(IServiceCollection services, bool amsMcsAgents, PowerPlatformApiTargetConfig powerPlatformApiTarget)
+    {
+        if (!amsMcsAgents)
+        {
+            return;
+        }
+
+        services.AddSingleton(sp => new AmsMcsOperationAdapter(new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()), sp.GetRequiredService<ITokenProvider>(), sp.GetRequiredService<PpapiTokenClaimsValidator>()));
+        services.AddSingleton<IAmsMcsAgentReadTransport>(sp => sp.GetRequiredService<AmsMcsOperationAdapter>());
+        services.AddSingleton<IAmsMcsOperationTransport>(sp => sp.GetRequiredService<AmsMcsOperationAdapter>());
+        services.AddSingleton<IAmsMcsAgentDeleteTransport>(sp => sp.GetRequiredService<AmsMcsOperationAdapter>());
+        services.AddSingleton<IAmsMcsDeploymentTransport>(sp => sp.GetRequiredService<AmsMcsOperationAdapter>());
+        services.AddSingleton<IAmsMcsRegistrationTransport>(sp => sp.GetRequiredService<AmsMcsOperationAdapter>());
+        services.AddSingleton(sp => new GitHostTrust(powerPlatformApiTarget, sp.GetRequiredService<AmsEndpointProfile>()));
+        services.AddSingleton(sp => new GitCredentialHelper(new PlaygroundToolLocator(sp.GetRequiredService<IPlaygroundProcessRunner>(), sp.GetRequiredService<IPlaygroundToolEnvironment>()), sp.GetRequiredService<GitHostTrust>()));
+        services.AddSingleton<IGitPort>(sp => new GitProcessAdapter(sp.GetRequiredService<IPlaygroundProcessRunner>(), new PlaygroundToolLocator(sp.GetRequiredService<IPlaygroundProcessRunner>(), sp.GetRequiredService<IPlaygroundToolEnvironment>()), sp.GetRequiredService<GitCredentialHelper>()));
+        services.AddSingleton(sp => new McsOperationWaiter(sp.GetRequiredService<IAmsMcsOperationTransport>(), sp.GetRequiredService<IClock>(), progress: sp.GetRequiredService<IProgressStatus>()));
+        services.AddSingleton(sp => new AmsTargets(sp.GetRequiredService<AmsEndpointProfile>(), sp.GetRequiredService<EnvironmentSelectionService>(), powerPlatformApiTarget));
+        services.AddSingleton<AmsAgentSelection>();
+        services.AddSingleton<IYesNoPrompt>(sp => (IYesNoPrompt)sp.GetRequiredService<IConfirmationPrompt>());
+        services.AddSingleton<AmsRepositoryResolver>();
+        services.AddSingleton<AmsProjectLink>();
+        services.AddSingleton<AmsAgentDeletion>();
+        services.AddSingleton<AmsAgentRegistrar>();
+        services.AddSingleton<AmsCommitter>();
+        services.AddSingleton<AmsGitDeployStates>();
+        services.AddSingleton<AmsDeployRecords>();
+        services.AddSingleton<AmsRecordMirror>();
+        services.AddSingleton<IAgentRecordMirror>(sp => sp.GetRequiredService<AmsRecordMirror>());
+        services.AddSingleton<IAgentCreationHook, AmsAgentCreation>();
+        services.AddSingleton<AmsAgentInitStep>();
+        services.AddSingleton<AmsLocalDeployStep>();
+        services.AddSingleton<AmsReadSteps>();
+        services.AddSingleton<AmsWorkspaceConnector>();
+        services.AddSingleton<AmsRemoteDeployService>();
+        services.AddSingleton<IWorkspaceDisconnectedRemediation, AmsWorkspaceDisconnectedRemediation>();
+        services.AddSingleton<AmsCloudCacheShelf>();
+        var workspaces = Decorate<ICopilotWorkspacePort, AmsCloudCacheWorkspacePort>(services);
+        services.AddSingleton(sp => new AmsCloudCacheWorkspacePort(workspaces(sp), sp.GetRequiredService<AmsCloudCacheShelf>()));
+        var attach = Decorate<ICopilotWorkspaceAttachPort, AmsCloudCacheAttachPort>(services);
+        var connect = Decorate<ICopilotWorkspaceConnectPort, AmsCloudCacheAttachPort>(services);
+        services.AddSingleton(sp => new AmsCloudCacheAttachPort(attach(sp), connect(sp), sp.GetRequiredService<AmsCloudCacheShelf>(), sp.GetRequiredService<ICopilotWorkspacePort>()));
+        var workflows = Decorate<IWorkflowStorePort, AmsCloudCacheWorkflowStore>(services);
+        services.AddSingleton(sp => new AmsCloudCacheWorkflowStore(workflows(sp), sp.GetRequiredService<AmsCloudCacheShelf>()));
+        var connections = Decorate<ICopilotConnectionPort, AmsCloudCacheConnectionPort>(services);
+        services.AddSingleton(sp => new AmsCloudCacheConnectionPort(connections(sp), sp.GetRequiredService<AmsCloudCacheShelf>(), sp.GetRequiredService<ICopilotWorkspacePort>(), sp.GetRequiredService<IWorkflowWorkspacePort>()));
+        services.AddSingleton<ICommandHandler<ManagedAgentInitRequest, ManagedAgentInitResult>>(sp => sp.GetRequiredService<AmsAgentInitStep>());
+        services.AddSingleton<ICommandHandler<ManagedAgentDeployRequest, ManagedAgentDeployResult>>(sp => sp.GetRequiredService<AmsLocalDeployStep>());
+        services.AddSingleton<ICommandHandler<ManagedAgentShowRequest, ManagedAgentShowResult>>(sp => sp.GetRequiredService<AmsReadSteps>());
+        services.AddSingleton<ICommandHandler<AgentDeploymentListRequest, AgentDeploymentListResult>>(sp => sp.GetRequiredService<AmsReadSteps>());
+        services.AddSingleton<ICommandHandler<AgentDeploymentShowRequest, AgentDeploymentShowResult>>(sp => sp.GetRequiredService<AmsReadSteps>());
+        services.AddSingleton<ICommandHandler<McsAmsAgentDeployRequest, McsAmsAgentDeployResult>>(sp => sp.GetRequiredService<AmsRemoteDeployService>());
+        services.AddSingleton<McsAmsAgentListService>();
+        services.AddSingleton<McsAmsAgentCaptureService>();
+        services.AddSingleton<McsAmsOperationShowService>();
+        services.AddSingleton<ICommandHandler<McsAmsAgentListRequest, ManagedAgentListResult>>(sp => sp.GetRequiredService<McsAmsAgentListService>());
+        services.AddSingleton<ICommandHandler<McsAmsAgentCaptureRequest, McsAmsAgentCaptureResult>>(sp => sp.GetRequiredService<McsAmsAgentCaptureService>());
+        services.AddSingleton<ICommandHandler<McsAmsOperationShowRequest, McsAmsOperationShowResult>>(sp => sp.GetRequiredService<McsAmsOperationShowService>());
+    }
+
+    internal static CompositeHandlerProvider Handlers(bool amsMcsAgents, IServiceProvider provider, IAgentHostingOperations operations) => new(amsMcsAgents ? [new AmsStepHandlers(provider), new FacadeHandlerProvider(operations), provider] : [new FacadeHandlerProvider(operations), provider]);
+
+    internal static Func<IServiceProvider, TService> Decorate<TService, TDecorator>(IServiceCollection services)
+        where TService : class
+        where TDecorator : class, TService
+    {
+        var index = services.Count - 1;
+        while (services[index].ServiceType != typeof(TService))
+        {
+            index--;
+        }
+
+        var inner = services[index];
+        services[index] = ServiceDescriptor.Singleton<TService>(sp => sp.GetRequiredService<TDecorator>());
+        return sp => (TService)(inner.ImplementationInstance ?? inner.ImplementationFactory?.Invoke(sp) ?? ActivatorUtilities.CreateInstance(sp, inner.ImplementationType!));
     }
 
     private static bool ParseBoolean(string? value) =>

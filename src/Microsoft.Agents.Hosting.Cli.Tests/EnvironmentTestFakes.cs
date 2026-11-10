@@ -18,10 +18,12 @@ internal sealed class FakeEnvironmentClient : IEnvironmentClient
     /// <summary>Counts inventory reads, so "select resolves against the live inventory" is assertable.</summary>
     public int ListCalls { get; private set; }
 
+    public Exception? Failure { get; set; }
+
     public Task<IReadOnlyList<PowerPlatformEnvironment>> ListEnvironmentsAsync(CancellationToken cancellationToken)
     {
         ListCalls++;
-        return Task.FromResult(_environments);
+        return Failure is null ? Task.FromResult(_environments) : Task.FromException<IReadOnlyList<PowerPlatformEnvironment>>(Failure);
     }
 }
 

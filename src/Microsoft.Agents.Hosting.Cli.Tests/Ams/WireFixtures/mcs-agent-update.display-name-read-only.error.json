@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "McsDisplayNameReadOnly",
+    "message": "An agent takes its display name from its source. To rename it, edit displayName in 'ContosoHR/settings.mcs.yml', push the commit and deploy it to Dev, or rename it in Dev and capture it."
+  }
+}

@@ -2,6 +2,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
@@ -20,15 +21,7 @@ public sealed class SyncWorkspaceAdapterCloneTests : IDisposable
         }
     }
 
-    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
-        new(
-            synchronizer,
-            new RecordingRetargetService(),
-            new CloneSourceClient(),
-            new StubComponentCollectionClient(),
-            new StubOperationContextProvider(),
-            new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()),
-            new CopilotChangeMapper());
+    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) => CopilotTestFixtures.WorkspaceAdapter(synchronizer, dataverseClient: new CloneSourceClient());
 
     private CopilotCloneCommand Command() => new()
     {
@@ -190,26 +183,60 @@ public sealed class SyncWorkspaceAdapterCloneTests : IDisposable
         Assert.True(File.Exists(registry));
     }
 
+    [Theory]
+    [InlineData("cli")]
+    [InlineData("classic")]
+    public async Task Clone_WithADisplayName_DeclaresItInTheClonedSettingsOnly_AndTheCacheKeepsTheSourceName(string shape)
+    {
+        Directory.CreateDirectory(_directory);
+        var files = ClonedFiles(shape);
+
+        var outcome = await Create(new RecordingWorkspaceSynchronizer { ClonedFiles = files }).CloneAsync(Command() with { DisplayName = "Contoso Copy" }, CancellationToken.None);
+
+        Assert.Equal(files[WorkspaceFileNames.Settings].Replace("displayName: Contoso Helpdesk", "displayName: \"Contoso Copy\"", StringComparison.Ordinal), File.ReadAllText(Path.Combine(outcome.AgentWorkspacePath, WorkspaceFileNames.Settings)));
+        Assert.All(files.Where(file => file.Key != WorkspaceFileNames.Settings), file => Assert.Equal(file.Value, File.ReadAllText(Path.Combine(outcome.AgentWorkspacePath, file.Key))));
+        Assert.Equal(("Contoso Copy", "Contoso Copy"), (outcome.DisplayName, Assert.Single(outcome.Workspaces).DisplayName));
+    }
+
     [Fact]
-    public async Task Clone_AppliesTouchupsAfterTheContentArrives()
+    public async Task Clone_WithoutADisplayName_LeavesTheClonedFilesAsWritten()
+    {
+        Directory.CreateDirectory(_directory);
+        var files = ClonedFiles("cli");
+
+        var outcome = await Create(new RecordingWorkspaceSynchronizer { ClonedFiles = files }).CloneAsync(Command(), CancellationToken.None);
+
+        Assert.All(files, file => Assert.Equal(file.Value, File.ReadAllText(Path.Combine(outcome.AgentWorkspacePath, file.Key))));
+        Assert.Equal("Contoso Helpdesk", outcome.DisplayName);
+    }
+
+    [Fact]
+    public async Task Clone_WhenTheDisplayNameCannotBeDeclared_DiscardsWhatItStaged()
     {
         WriteRegistry();
-        var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).CloneAsync(Command(), CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Create(new RecordingWorkspaceSynchronizer()).CloneAsync(Command() with { DisplayName = "Contoso Copy" }, CancellationToken.None));
 
-        Assert.Equal(
-            [nameof(IWorkspaceSynchronizer.CloneChangesAsync), nameof(IWorkspaceSynchronizer.ApplyTouchupsAsync)],
-            synchronizer.Calls.Where(call => call is nameof(IWorkspaceSynchronizer.CloneChangesAsync) or nameof(IWorkspaceSynchronizer.ApplyTouchupsAsync)));
+        Assert.Equal([Path.Combine(_directory, AgentConfigLocator.ConfigDirectoryName)], Directory.EnumerateFileSystemEntries(_directory));
     }
+
+    private static Dictionary<string, string> ClonedFiles(string shape) => shape == "classic"
+        ? new()
+        {
+            [WorkspaceFileNames.Settings] = "displayName: Contoso Helpdesk\r\nschemaName: con_contosohelpdesk\r\ntemplate: default-2.1.0\r\nlanguage: 1033\r\n",
+            [WorkspaceFileNames.Agent] = "mcs.metadata:\r\n  componentName: Contoso Helpdesk\r\nkind: GptComponentMetadata\r\ninstructions: Answer helpdesk questions.\r\n",
+            [".mcs/botdefinition.json"] = "{\"entity\":{\"displayName\":\"Contoso Helpdesk\",\"schemaName\":\"con_contosohelpdesk\"}}",
+        }
+        : new()
+        {
+            [WorkspaceFileNames.Settings] = "displayName: Contoso Helpdesk\r\nschemaName: con_contosohelpdesk\r\nconfiguration:\r\n  authoringModel: CliCopilot\r\ntemplate: cliagent-1.0.0\r\nlanguage: 1033\r\n",
+            ["agent.sync.yaml"] = "layoutVersion: 1\r\n",
+            [".mcs/botdefinition.json"] = "{\"entity\":{\"displayName\":\"Contoso Helpdesk\",\"schemaName\":\"con_contosohelpdesk\"}}",
+        };
 }
 
-internal sealed class CloneSourceClient : Microsoft.CopilotStudio.Sync.Dataverse.SyncDataverseClient
+internal sealed class CloneSourceClient : OfflineSyncDataverseClient
 {
-    public CloneSourceClient() : base(new StubDataverseHttpClientAccessor(), "AgentHost.Cli.Tests")
-    {
-    }
-
     public IReadOnlyList<ComponentCollectionInfo> LinkedCollections { get; init; } = [];
 
     public override Task<AgentInfo> GetAgentInfoAsync(Guid agentId, CancellationToken cancellationToken) =>

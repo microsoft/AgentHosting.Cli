@@ -1,5 +1,5 @@
-using CoreCluster = Microsoft.Agents.Hosting.Cli.Core.Environments.CoreServicesClusterCategory;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
+using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
@@ -18,8 +18,8 @@ public sealed class SyncConnectionAdapterTokenTests
 
     private static string Workspace() => Path.Combine(Path.GetTempPath(), "ah-connection-token");
 
-    private static SyncConnectionAdapter Create(ITokenProvider tokenProvider, CoreCluster cluster = CoreCluster.Prod) =>
-        CopilotTestFixtures.ConnectionAdapter(tokenProvider: tokenProvider, cluster: cluster);
+    private static SyncConnectionAdapter Create(ITokenProvider tokenProvider) =>
+        CopilotTestFixtures.ConnectionAdapter(tokenProvider: tokenProvider);
 
     private sealed class ForeignTenantTokenProvider : ITokenProvider
     {
@@ -40,7 +40,7 @@ public sealed class SyncConnectionAdapterTokenTests
     }
 
     [Fact]
-    public async Task RemoveConnectionReference_AcquiresNoPowerAppsToken()
+    public async Task RemoveConnectionReference_AcquiresNoCatalogToken()
     {
         var tokenProvider = new StubTokenProvider();
 
@@ -59,7 +59,7 @@ public sealed class SyncConnectionAdapterTokenTests
     }
 
     [Fact]
-    public async Task CreateConnectionReference_AcquiresNoPowerAppsToken()
+    public async Task CreateConnectionReference_AcquiresNoCatalogToken()
     {
         var tokenProvider = new StubTokenProvider();
 
@@ -78,7 +78,7 @@ public sealed class SyncConnectionAdapterTokenTests
     }
 
     [Fact]
-    public async Task ReadDeclaredConnectors_AcquiresNoPowerAppsToken()
+    public async Task ReadDeclaredConnectors_AcquiresNoCatalogToken()
     {
         var tokenProvider = new StubTokenProvider();
 
@@ -88,13 +88,13 @@ public sealed class SyncConnectionAdapterTokenTests
     }
 
     [Fact]
-    public async Task ReadConnections_StillAcquiresThePowerAppsTokenItsCatalogLookupNeeds()
+    public async Task ReadConnections_AcquiresThePowerPlatformApiTokenItsCatalogLookupNeeds()
     {
         var tokenProvider = new StubTokenProvider();
 
         await Create(tokenProvider).ReadConnectionsAsync(Environment(), Workspace(), CancellationToken.None);
 
-        Assert.Single(tokenProvider.RequestedResources);
+        Assert.Equal(PowerPlatformApiTargetConfig.Public.Audience, Assert.Single(tokenProvider.RequestedResources));
     }
 
     [Fact]

@@ -118,5 +118,48 @@
   // Format: "https://...", or null.
   "ams": {
     "endpoint": null
+  },
+
+  // OPTIONAL. MCS on AMS, for the `ams` pack (`--packs ams`), which runs alone
+  // on the test ring: sign in with `msagent auth login --cloud test`, using a
+  // test-ring account. Separate from the code agents' `ams` block above.
+  // Every key also reads MSAGENT_E2E_AMS_MCS_<KEY>, e.g.
+  // MSAGENT_E2E_AMS_MCS_DATA_PLANE_ENDPOINT. See the README's "MCS on AMS".
+  "amsMcs": {
+    // The AH_CLI_FEATURES value for AMS-on calls. Must hold AmsMcsAgents.
+    // Format: "AmsMcsAgents", or null for that default.
+    "features": null,
+
+    // AMS's data plane, on-behalf-of gateway and control plane, each with the
+    // token audience msagent asks for.
+    // Format: "https://...", or null.
+    "dataPlane": { "endpoint": null, "audience": null },
+    "onBehalfOf": { "endpoint": null, "audience": null },
+    "controlPlane": { "endpoint": null, "audience": null },
+
+    // GRS's git host, without a scheme.
+    // Format: a host name, or null.
+    "gitHost": null,
+
+    // THE PACK CREATES AND DELETES AGENTS, DEPLOYMENTS, BOTS, FLOWS AND GRS
+    // REPOSITORIES HERE. Three different test-ring environments.
+    // Format: GUID, or null.  Find them with:  msagent env list
+    "devEnvironmentId": null,
+    "testEnvironmentId": null,
+    "prodEnvironmentId": null,
+
+    // Each environment's Dataverse URL. The prod-ring lookup the other packs
+    // use can't see test-ring environments.
+    // Format: "https://<org>.crm<region>.dynamics.com", or null.
+    "organizations": { "dev": null, "test": null, "prod": null },
+
+    // Where the pack's projects go, outside every git working tree; each run
+    // uses <workspaceRoot>\<run id>. Environment variables are expanded.
+    // Format: a path such as "%TEMP%\\msagent-e2e-ams", or null.
+    "workspaceRoot": null,
+
+    // Environments the run must never touch, such as one holding real agents.
+    // Format: ["GUID", ...], or null.
+    "forbiddenEnvironmentIds": null
   }
 }

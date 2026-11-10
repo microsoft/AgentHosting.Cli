@@ -1,0 +1,18 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "agents/aaaaaaaa-1111-4111-8111-000000000011/mcs/deployments/eeeeeeee-5555-4555-8555-000000000015/deploy-records",
+    "query": {},
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "bodyFixture": "mcs-deploy-record.workflow.request.json"
+  },
+  "response": {
+    "status": 200,
+    "headers": {},
+    "bodyFixture": "mcs-deploy-record.workflow.response.json"
+  },
+  "startsOperation": false,
+  "errors": []
+}

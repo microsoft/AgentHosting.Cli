@@ -27,6 +27,7 @@ public sealed class AgentConfigSchemaTests
         "McsAgentId",
         "McsSchemaName",
         "McsWorkflowId",
+        "SourceControlMetadata",
         "Origin",
         "Owner",
         "CreatedBy",
@@ -78,7 +79,6 @@ public sealed class AgentConfigSchemaTests
     [
         "PartitionKey",
         "RowKey",
-        "SourceControlMetadata",
         "Language",
         "LanguageVersion",
         "PackageName",

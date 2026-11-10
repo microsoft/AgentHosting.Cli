@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "PreconditionFailed",
+    "message": "The record changed after the ETag in the If-Match header was read, so the change was not applied. Read the record again, then retry."
+  }
+}

@@ -5,6 +5,7 @@ using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
+using Microsoft.CopilotStudio.McsCore;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -26,17 +27,18 @@ public sealed class MultiAgentProjectTests
             environments,
             locator,
             new CopilotWorkspaceService(workspaces, locator),
+            new SyncComponentCollectionAdapter(),
             ManagedAgentFixtures.Identities(),
             new RecordingAttachPort { OnAttach = () => workspaces.WorkspaceExists = true },
             catalog,
-            new CopilotCatalogService(catalog, environments, locator, new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
+            new CopilotCatalogService(catalog, new FakeCopilotPublishPort(), environments, locator),
             ManagedAgentFixtures.Principals(),
-            ManagedAgentFixtures.ActivationPass(),
+            ManagedAgentFixtures.ActivationReporter(),
             new FixedClock(ManagedAgentFixtures.Now));
     }
 
     private static void WriteWorkspace(TemporaryWorkspace workspace, string folder, string schemaName) =>
-        workspace.AddFile(Path.Combine(folder, AgentConfigLocator.ProjectSettingsFileName), $"displayName: \"{folder}\"\nschemaName: \"{schemaName}\"\n");
+        workspace.AddFile(Path.Combine(folder, WorkspaceFileNames.Settings), $"displayName: \"{folder}\"\nschemaName: \"{schemaName}\"\n");
 
     private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) TwoAgents()
     {
@@ -293,6 +295,6 @@ public sealed class MultiAgentProjectTests
             new AgentConfigLocator(),
             CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem()),
             ManagedAgentFixtures.Resolver(),
-            new CopilotProjectIdentityReader(new AgentConfigLocator()));
+            ManagedAgentFixtures.Identities());
     }
 }

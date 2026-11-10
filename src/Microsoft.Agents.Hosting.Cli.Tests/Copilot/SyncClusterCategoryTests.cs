@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.CopilotStudio.Sync;
@@ -31,7 +32,7 @@ public sealed class SyncClusterCategoryTests
     {
         Assert.Equal(
             Enum.GetNames<CoreCluster>().OrderBy(name => name, StringComparer.Ordinal),
-            Enum.GetNames<CoreServicesClusterCategory>().OrderBy(name => name, StringComparer.Ordinal));
+            Enum.GetNames<Microsoft.CopilotStudio.Sync.CoreServicesClusterCategory>().OrderBy(name => name, StringComparer.Ordinal));
     }
 
     [Fact]
@@ -43,12 +44,7 @@ public sealed class SyncClusterCategoryTests
     }
 }
 
-/// <summary>
-/// Covers the cluster the connection catalog is read against, and which bindings survive to the
-/// status table. A binding counts only where the catalog answered for it: one rule for every ring, so
-/// a connection deleted in the service cannot keep reading as connected because the read failed.
-/// </summary>
-public sealed class SyncConnectionAdapterClusterTests
+public sealed class SyncConnectionAdapterCatalogTargetTests
 {
     private static CopilotEnvironmentContext Environment() => new()
     {
@@ -59,32 +55,34 @@ public sealed class SyncConnectionAdapterClusterTests
 
     private static string Workspace() => Path.Combine(Path.GetTempPath(), $"ah-cluster-{Guid.NewGuid():N}");
 
-    private static SyncConnectionAdapter Create(RecordingConnectionManagementService connections, CoreCluster cluster) =>
-        CopilotTestFixtures.ConnectionAdapter(connections, cluster: cluster);
+    private static SyncConnectionAdapter Create(RecordingConnectionManagementService connections, PowerPlatformApiRing ring, StubTokenProvider? tokenProvider = null) =>
+        CopilotTestFixtures.ConnectionAdapter(connections, tokenProvider: tokenProvider, apiTarget: PowerPlatformApiRingSelection.TargetFor(ring));
 
     [Theory]
-    [InlineData(CoreCluster.Prod)]
-    [InlineData(CoreCluster.Preprod)]
-    [InlineData(CoreCluster.Test)]
-    [InlineData(CoreCluster.Gov)]
-    [InlineData(CoreCluster.Mooncake)]
-    public async Task TheCatalogIsAskedAgainstTheHostsCluster(CoreCluster cluster)
+    [InlineData(PowerPlatformApiRing.Production, "https://en.v1.environment.api.powerplatform.com/")]
+    [InlineData(PowerPlatformApiRing.Preprod, "https://env.1.environment.api.preprod.powerplatform.com/")]
+    [InlineData(PowerPlatformApiRing.Test, "https://env.1.environment.api.test.powerplatform.com/")]
+    public async Task TheCatalogIsAskedThroughTheEnvironmentsPowerPlatformApiEndpointWithATokenForItsAudience(PowerPlatformApiRing ring, string expectedEndpoint)
     {
         var connections = new RecordingConnectionManagementService();
+        var tokenProvider = new StubTokenProvider();
 
-        await Create(connections, cluster).ReadConnectionsAsync(Environment(), Workspace(), CancellationToken.None);
+        await Create(connections, ring, tokenProvider).ReadConnectionsAsync(Environment(), Workspace(), CancellationToken.None);
 
-        Assert.Equal(cluster.ToString(), Assert.Single(connections.CatalogClusters).ToString());
+        Assert.Equal(expectedEndpoint, Assert.Single(connections.CatalogEndpoints)?.AbsoluteUri);
+        Assert.Equal(PowerPlatformApiRingSelection.TargetFor(ring).Audience, Assert.Single(tokenProvider.RequestedResources));
     }
 
     [Fact]
-    public async Task TheCatalogIsNeverLeftOnTheEnumsDefault()
+    public async Task TheConnectorAndConnectionListsAreAskedThroughTheEnvironmentsPowerPlatformApiEndpointWithItsToken()
     {
-        var connections = new RecordingConnectionManagementService();
+        var catalog = new StubConnectionCatalogClient();
+        var adapter = CopilotTestFixtures.ConnectionAdapter(catalogClient: catalog);
 
-        await Create(connections, CoreCluster.Preprod).ReadConnectionsAsync(Environment(), Workspace(), CancellationToken.None);
+        await adapter.ListConnectorsAsync(Environment(), CancellationToken.None);
+        await adapter.ListConnectionsAsync(Environment(), "shared_teams", CancellationToken.None);
 
-        Assert.NotEqual(default, Assert.Single(connections.CatalogClusters));
+        Assert.Equal([("https://en.v1.environment.api.powerplatform.com/", "env-1", "token"), ("https://en.v1.environment.api.powerplatform.com/", "env-1", "token")], catalog.Contexts.Select(context => (context.PowerPlatformApiEndpoint?.AbsoluteUri, context.EnvironmentId, context.AccessToken)));
     }
 
     private static async Task<CopilotConnectionView> ReadOneAsync(AgentConnectionView stored)
@@ -92,14 +90,14 @@ public sealed class SyncConnectionAdapterClusterTests
         var connections = new RecordingConnectionManagementService();
         connections.Views.Add(stored);
 
-        var snapshot = await Create(connections, CoreCluster.Preprod)
+        var snapshot = await Create(connections, PowerPlatformApiRing.Preprod)
             .ReadConnectionsAsync(Environment(), Workspace(), CancellationToken.None);
 
         return Assert.Single(snapshot.References);
     }
 
     [Fact]
-    public async Task AnUnverifiableBindingIsNotReportedAsAnExistingConnection()
+    public async Task AnUnverifiableBindingIsNotDecidedAsAnExistingConnection_ButKeepsTheRecordedConnection()
     {
         var view = await ReadOneAsync(new AgentConnectionView
         {
@@ -111,8 +109,11 @@ public sealed class SyncConnectionAdapterClusterTests
             IsDeclared = true,
         });
 
-        Assert.Null(view.BoundConnectionId);
-        Assert.False(view.BoundConnectionExists);
+        var item = new SyncConnectionBindingRules().Observe(view);
+
+        Assert.Equal("63a493629ccb4cd1ba3df8b066789a3d", view.BoundConnectionId);
+        Assert.NotEqual(Core.ManagedAgents.ConnectionReadinessPlanner.AlreadyBound, item.State);
+        Assert.Null(item.ConnectionId);
     }
 
     [Fact]
@@ -128,7 +129,7 @@ public sealed class SyncConnectionAdapterClusterTests
             IsDeclared = true,
         });
 
-        var item = Core.ManagedAgents.ConnectionReadinessPlanner.Observe(view);
+        var item = new SyncConnectionBindingRules().Observe(view);
 
         Assert.Equal("not connected", Core.ManagedAgents.ConnectionSelectionScope.DescribeState(item.State));
         Assert.True(Core.ManagedAgents.ConnectionReadinessPlanner.IsActionable(item));
@@ -151,9 +152,10 @@ public sealed class SyncConnectionAdapterClusterTests
         Assert.Equal("63a493629ccb4cd1ba3df8b066789a3d", view.BoundConnectionId);
         Assert.True(view.BoundConnectionExists);
 
-        var item = Core.ManagedAgents.ConnectionReadinessPlanner.Observe(view);
+        var item = new SyncConnectionBindingRules().Observe(view);
 
         Assert.Equal(Core.ManagedAgents.ConnectionReadinessPlanner.AlreadyBound, item.State);
+        Assert.Equal("63a493629ccb4cd1ba3df8b066789a3d", item.ConnectionId);
         Assert.Equal("connected", Core.ManagedAgents.ConnectionSelectionScope.DescribeState(item.State));
     }
 
@@ -170,8 +172,7 @@ public sealed class SyncConnectionAdapterClusterTests
             IsDeclared = true,
         });
 
-        Assert.Null(view.BoundConnectionId);
-        Assert.Equal("not connected", Core.ManagedAgents.ConnectionSelectionScope.DescribeState(
-            Core.ManagedAgents.ConnectionReadinessPlanner.Observe(view).State));
+        Assert.Equal("63a493629ccb4cd1ba3df8b066789a3d", view.BoundConnectionId);
+        Assert.Equal("not connected", Core.ManagedAgents.ConnectionSelectionScope.DescribeState(new SyncConnectionBindingRules().Observe(view).State));
     }
 }

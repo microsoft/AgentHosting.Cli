@@ -1,0 +1,64 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "MCS-on-AMS E2E connector",
+    "description": "A custom connector the MCS-on-AMS E2E checks create and delete.",
+    "version": "1.0"
+  },
+  "host": "example.invalid",
+  "basePath": "/",
+  "schemes": [
+    "https"
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/api/messages": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "The activities the agent sent back.",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "activities": {
+                  "type": "array",
+                  "description": "The activities the agent sent back.",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Send an activity",
+        "description": "Sends an activity to the agent.",
+        "operationId": "SendActivity",
+        "parameters": [
+          {
+            "name": "activity",
+            "in": "body",
+            "required": false,
+            "schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "tags": [
+          "M365AgentSDK"
+        ]
+      }
+    }
+  },
+  "definitions": {},
+  "parameters": {},
+  "responses": {},
+  "securityDefinitions": {},
+  "security": [],
+  "tags": []
+}

@@ -7,6 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 using Microsoft.CopilotStudio.Sync;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
@@ -27,8 +28,9 @@ public sealed class WorkflowSafetyFixTests : IDisposable
         _config,
         _config,
         _store,
-        ManagedAgentFixtures.ActivationPass(_connections, States()),
+        ManagedAgentFixtures.ActivationReporter(_connections, States()),
         States(),
+        ManagedAgentFixtures.StateRules,
         ManagedAgentFixtures.Principals(),
         new FixedClock(ManagedAgentFixtures.Now));
 
@@ -51,7 +53,7 @@ public sealed class WorkflowSafetyFixTests : IDisposable
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Draft, result.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Draft, result.WorkflowState);
         Assert.Contains(result.Warnings, warning => warning.Contains("saved as a draft", StringComparison.Ordinal));
     }
 
@@ -67,7 +69,7 @@ public sealed class WorkflowSafetyFixTests : IDisposable
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.ToPortalLabel(WorkflowStateProjection.Activated), result.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Published, result.WorkflowState);
         Assert.DoesNotContain(result.Warnings, warning => warning.Contains("saved as a draft", StringComparison.Ordinal));
     }
 
@@ -81,7 +83,7 @@ public sealed class WorkflowSafetyFixTests : IDisposable
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.ToPortalLabel(WorkflowStateProjection.Activated), result.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Published, result.WorkflowState);
         Assert.Contains(result.Warnings, warning => warning.Contains("refused to stop it", StringComparison.Ordinal));
     }
 
@@ -95,7 +97,7 @@ public sealed class WorkflowSafetyFixTests : IDisposable
 
         var result = await Service().DeployAsync(Request(), CancellationToken.None);
 
-        Assert.Equal(WorkflowStateProjection.Draft, result.WorkflowState);
+        Assert.Equal(CopilotStudioStates.Draft, result.WorkflowState);
         Assert.Contains(result.Warnings, warning => warning.Contains("saved as a draft", StringComparison.Ordinal));
     }
 
@@ -147,7 +149,8 @@ public sealed class WorkflowSafetyFixTests : IDisposable
     private WorkflowPullService PullService() => new(
         new WorkflowProjectResolver(ManagedAgentFixtures.AgentResolver(_config), new AgentConfigLocator(), ManagedAgentFixtures.Resolver(EnvironmentFixtures.Environment("env-1", instanceUrl: CopilotTestFixtures.DataverseOrganization)), new FakeWorkflowWorkspacePort()),
         _store,
-        States());
+        States(),
+        ManagedAgentFixtures.StateRules);
 
     private WorkflowDeleteService DeleteService(IConfirmationPrompt confirmations) => new(
         ManagedAgentFixtures.AgentResolver(_config),
@@ -164,7 +167,7 @@ public sealed class WorkflowSafetyFixTests : IDisposable
 
         var folder = WorkflowWorkspaceFixtures.Single(_workspace.Root);
 
-        _store.Cloud[folder.WorkflowId] = new WorkflowDocument { WorkflowId = folder.WorkflowId, Name = "WF Hook 2", State = WorkflowStateProjection.Activated };
+        _store.Cloud[folder.WorkflowId] = new WorkflowDocument { WorkflowId = folder.WorkflowId, Name = "WF Hook 2", State = CopilotStudioStates.Activated };
         _store.CloudDefinition[folder.WorkflowId] = "{\"properties\":{\"from\":\"cloud\"}}";
         _store.LastSynced[folder.WorkflowId] = File.ReadAllText(folder.DefinitionPath);
         File.WriteAllText(folder.DefinitionPath, "{\"properties\":{\"from\":\"local\"}}");
@@ -185,6 +188,7 @@ public sealed class WorkflowSafetyFixTests : IDisposable
             ManagedAgentFixtures.AgentResolver(_config),
             locator,
             new CopilotWorkspaceService(workspaces, locator),
+            new SyncComponentCollectionAdapter(),
             ManagedAgentFixtures.Resolver());
 
         var failure = await Assert.ThrowsAsync<UsageException>(

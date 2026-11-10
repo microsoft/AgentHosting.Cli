@@ -83,6 +83,15 @@ MCS routes and shared authentication/environment commands remain enabled by defa
 | `msagent deployment connection update` | Rebind the agent's connection references. Lists the connectors and resolves one at a time: pick a connector, choose an existing connection or create a new one, and every reference on that connector is bound together. `--connection-reference`/`--connector` narrow the run; `--connection-id` binds an explicit connection; `--by-reference` resolves one reference at a time instead of a connector at a time. MCS only. |
 | `msagent deployment connection remove` | Remove a connection reference from the workspace with `--connection-reference`, delete a connection from the environment with `--connection-id`, or both in one run. Asks before removing a reference components still name, and refuses to delete a connection other references still hold; `--force` is the consent for either. Removing a reference also deletes the environment's `connectionreference` record; the environment refuses that delete while another component still depends on it, which leaves the declaration removed and the record in place, and the command reports which. MCS only. |
 | `msagent deployment connection connectors` | List the connectors the environment serves, so a reference can be declared against one. Reads the environment, not the agent: `--environment-id` names one directly, or a deployment selector resolves one. `--filter` matches display name, internal id and publisher; `--connector` matches an internal id exactly; `--limit` bounds the listing (default 50). Marks the connectors a declared reference already targets. The catalog omits connectors the environment does not publish, so `add` and `remove` accept any connector the connections API still answers for, and reject only one it reports as unknown. MCS only. |
+| AMS mode | On while the `AmsMcsAgents` feature is on, for example with `AH_CLI_FEATURES=AmsMcsAgents`, and off otherwise; off is the CLI without AMS. With AMS mode on, the agent and deployment commands below also keep the Agent Management Service and the agent's GRS git repository in step with the project. |
+| `msagent agent create` / `agent init`, AMS mode | Also register the MCS agent or standalone workflow in AMS with its folder in a GRS repository, then commit and push the folder: a new repository for the project, the repository the project's git remote names, or the one `--repository-id` names, which is cloned into an empty folder or linked to the project's folder. Asks before it links a folder, unless `--non-interactive`. `agent init` in a clone restores every agent AMS holds in the repository, with its deployments, into `.config`, and registers the agents `.config` holds that AMS doesn't. |
+| `msagent agent deploy`, AMS mode | A deploy from the working folder also tells AMS which commit the folder holds. `--remote [--commit-id <commit>] [--async]` deploys a commit of the repository through AMS instead, the latest on `main` by default, and waits for the operation unless `--async`; a finished MCSAgent deploy to Dev then connects the agent's folder when it holds exactly the deployed commit, so `agent pull` works there. |
+| `msagent agent capture` | Commit the Copilot Studio edits of an agent's Dev deployment to its repository. AMS mode only. |
+| `msagent agent operation show --operation-id <id>` | Show a deploy or capture operation AMS runs for an agent. AMS mode only. |
+| `msagent agent list --view ams [--repository-id <id>]` | List the AMS records of an environment's MCS agents and standalone workflows, deployed or not, or of one repository's. AMS mode only. |
+| `msagent agent show` / `deployment list` / `deployment show`, AMS mode | Also show each registered agent's repository, folder and git url, and each deployment's last deployed commit and state, from one AMS read. |
+| `msagent deployment create` / `update --new-name` / `delete`, `agent delete`, AMS mode | Change AMS's copy of the records first, then `.config`; when `.config` can't be written, the AMS change is undone. |
+| `msagent auth setup-git` | Set up git, in the global git config, to sign in with msagent to the Power Platform git hosts of the signed-in ring. AMS mode sets the same credential helper in each repository it clones or links. Requires `AmsMcsAgents`. |
 | `msagent telemetry enable` / `disable` / `status` | Manage and inspect the remembered command-telemetry preference. These commands never measure themselves. |
 
 Global flags: `--json` (machine-readable output), `--debug` (redacted API responses on stderr),
@@ -558,8 +567,8 @@ msagent agent deploy `
 
 `--environment` defaults to the active environment. `--target-environment` is required, including
 for intentional same-home Dev placement; it never defaults to the home environment.
-`AH_CLI_AMSDP_ENDPOINT` and `AH_CLI_AMS_ENDPOINT` configure AMS-DataPlane and AMS-CMP; neither
-endpoint can be supplied on the command line.
+AMS-DataPlane and AMS-CMP are reached through the Power Platform API. Neither endpoint can be supplied
+on the command line; end-to-end test hosts redirect them with the `MSAGENT_AMS_*` variables below.
 
 Deploy reads the bound CodeAgent through AMS-DataPlane and sends only identifiers and explicit
 desired state through AMS-CMP. The current PPRP Deployment-create handler persists the authoritative
@@ -1116,12 +1125,23 @@ environment itself:
 | `AH_CLI_ARM_REDIRECT_URI` | Redirect URI for the ARM consent client. |
 | `AH_CLI_CONFIG_DIR` | Override the profile/config directory (defaults under `LocalApplicationData`). Shared by every ring; only the ring-bound files inside it are suffixed. |
 | `AH_CLI_ALLOW_UNPROTECTED_CACHE` | Allow an unprotected token cache when a protected store is unavailable. |
-| `AH_CLI_FEATURES` | Semicolon-separated, case-insensitive feature names to enable over shipped defaults. Supported: `AmsFeatures`, `AzureBotServiceFeatures`, `IdentityFeatures`. |
+| `AH_CLI_FEATURES` | Semicolon-separated, case-insensitive feature names to enable over shipped defaults. Supported: `AmsFeatures`, `AmsMcsAgents`, `AzureBotServiceFeatures`, `IdentityFeatures`. |
 | `AH_CLI_TELEMETRY_OPTOUT` | Overrides the remembered telemetry preference. `1`/`true` opts out, `0`/`false` opts in; unset defers to `msagent telemetry`. |
-| `AH_CLI_AMS_ENDPOINT` | Agent Management Service **control plane** endpoint, used by deploy. Absolute HTTPS; deployment-configured, not settable per command. |
-| `AH_CLI_AMSDP_ENDPOINT` | Agent Management Service **data plane** endpoint, used by package upload and by `agent create` as a direct Dev-island override. Absolute HTTPS. |
+| `MSAGENT_AMS_DATAPLANE_ENDPOINT`, `MSAGENT_AMS_DATAPLANE_AUDIENCE` | **End-to-end tests only.** Direct Agent Management Service data-plane host (and token audience) for calls that need no on-behalf-of exchange, addressed with the full `agenthosting/tenants/{tenantId}/environments/{environmentId}/…` route. On-behalf-of calls such as `agent deploy --remote` are refused rather than sent here. |
+| `MSAGENT_AMS_ONBEHALFOF_ENDPOINT`, `MSAGENT_AMS_ONBEHALFOF_AUDIENCE` | **End-to-end tests only.** Gateway host (and audience) that carries the service-to-service ticket on-behalf-of calls need. |
+| `MSAGENT_AMS_CONTROLPLANE_ENDPOINT`, `MSAGENT_AMS_CONTROLPLANE_AUDIENCE` | **End-to-end tests only.** Direct Agent Management Service control-plane host (and audience) for deployment records. |
+| `MSAGENT_GIT_HOST` | **End-to-end tests only.** The git host of a personal Dev cluster, without a scheme, port or path; git signs in to it with msagent's credential helper, as it does to the ring's environment hosts. |
 | `NO_COLOR` | Disable colored output (same effect as `--no-color`). |
 | `CI` | Hide the progress spinner when set to anything other than `false` or `0`, as CI systems do. |
+
+The `MSAGENT_AMS_*` overrides exist for end-to-end tests against
+aliased service deployments and never appear in help. Each endpoint must be an absolute `https` URL
+without user information, query, or fragment; an audience variable defaults to the environment's
+Power Platform API audience, and setting it without its endpoint is an error
+([19026](../Microsoft.Agents.Hosting.Cli.Docs/ErrorCodes/19026.md)). When only the data-plane
+override is set, on-behalf-of commands fail with
+[19027](../Microsoft.Agents.Hosting.Cli.Docs/ErrorCodes/19027.md) instead of sending a delegated
+call to a host that cannot exchange it.
 
 The CLI supports TLS 1.3 and TLS 1.2.
 
@@ -1201,6 +1221,7 @@ Shipped defaults are:
 | Feature | Default | Controlled surface |
 |---|---:|---|
 | `AmsFeatures` | `off` | CodeAgent creation, AMS package upload, and AMS package-revision deployment. |
+| `AmsMcsAgents` | `off` | AMS mode for MCS agents and standalone workflows: `agent capture`, `agent operation show`, `auth setup-git`, the AMS-mode options of `agent create`, `agent init`, `agent deploy` and `agent list`, and the AMS steps of the agent and deployment commands. While it is off, every command and its help are as they are without it. It changes no CodeAgent route. |
 | `AzureBotServiceFeatures` | `off` | The `abs` group and CodeAgent deployment routes backed by Azure Bot Service. |
 | `IdentityFeatures` | `off` | The user-facing `identity` command group. |
 | `EvaluationFeatures` | `on` | The `agent eval` group and its `testset` subgroup. |
@@ -1210,6 +1231,7 @@ for a process:
 
 ```pwsh
 $env:AH_CLI_FEATURES = "AmsFeatures"
+$env:AH_CLI_FEATURES = "AmsMcsAgents"
 $env:AH_CLI_FEATURES = "AzureBotServiceFeatures"
 $env:AH_CLI_FEATURES = "IdentityFeatures"
 $env:AH_CLI_FEATURES = "AmsFeatures;AzureBotServiceFeatures;IdentityFeatures"
@@ -1225,6 +1247,7 @@ The source-backed boundary is:
 | Control | Commands/routes | Source and dispatched contracts |
 |---|---|---|
 | Always-on MCS/local project surface | `agent init/list/show/pull/delete/share/share show/unshare`; `agent create --agent-type MCSAgent`; the MCS route of `agent deploy`; `deployment list`; MCS routes of `deployment create/show/update/delete`; `deployment connection list/add/update/remove/connectors`; `deployment channel create/update/delete/show/list` | `Commands/Agent/*` and `Commands/Deployment/*`; `ManagedAgent*Request`, `AgentDeployment*Request`, deployment channel requests, and matching result contracts |
+| `AmsMcsAgents` | `agent capture`; `agent operation show`; `auth setup-git/git-credential`; the AMS-mode options of `agent create/init/deploy/list`; the AMS steps of the agent and deployment commands | `Commands/Agent/AgentAmsCommands.cs`, `Commands/Auth/AuthCommands.cs` and the option records of the agent commands; `Program.AddAmsMode` registers AMS mode's services and steps only while the control is on, and `Program.Handlers` puts the steps ahead of the operations facade |
 | `AmsFeatures` | `agent package upload`; default/CodeAgent route of `agent create`; AMS package-revision route of `agent deploy` | `AgentPackageUploadCommand.cs` → `AgentPackageUploadRequest`; `AgentCreateCommand.cs` → `AgentCreateRequest`; `AgentDeployCommand.cs` → `AgentDeployRequest` |
 | `AzureBotServiceFeatures` | `abs preview/apply`; resolved CodeAgent routes of `deployment create/show/update/delete` | `Groups/AbsGroup.cs` and `Commands/Abs/AbsCommands.cs` → `AbsPreviewRequest`/`AbsApplyRequest`; mixed deployment command files → `DeploymentCreateRequest`, `DeploymentRequest`, or `DeploymentUpdateRequest` |
 | `IdentityFeatures` | `identity create blueprint/app` | `Groups/IdentityGroup.cs` and `Commands/Identity/*` → `BlueprintIdentityRequest` or `AppRegistrationIdentityRequest` |
@@ -1266,7 +1289,9 @@ public sealed class AgentPackageUploadCommand
 tree. A leaf can be controlled independently of its enabled siblings. Requirements on an ancestor
 and leaf compose: an enabled leaf never bypasses a disabled group. Multiple annotations on the same
 type are ANDed. Filtering happens before System.CommandLine materialises help, parser symbols, and
-option aliases, so direct invocation and short aliases cannot recover a disabled command.
+option aliases, so direct invocation and short aliases cannot recover a disabled command. An
+`EnabledDescription` on a symbol or command replaces its help text while all its features are on,
+and `OptionalWithFeatures` makes a required option optional while all its features are on.
 
 Shared commands whose individual routes need different controls cannot be removed as one metadata
 node. For those commands, put `RequiredFeatures` on route-only `CommandSymbol` records and call

@@ -14,13 +14,7 @@ internal static class WorkspaceDefinitionReader
     internal static Task<DefinitionBase> ReadAsync(IWorkspaceSynchronizer synchronizer, DirectoryPath workspaceFolder, bool checkKnowledgeFiles, CancellationToken cancellationToken) =>
         TranslateAsync(() => synchronizer.ReadWorkspaceDefinitionAsync(workspaceFolder, cancellationToken, checkKnowledgeFiles));
 
-    /// <summary>Checks the on-disk files the compiled definition cannot describe, so nothing reaches the cloud from a workspace that is still mid-merge.</summary>
-    internal static Task RequireSynchronizableAsync(IWorkspaceSynchronizer synchronizer, DirectoryPath workspaceFolder, DefinitionBase definition, CancellationToken cancellationToken) =>
-        TranslateAsync(async () =>
-        {
-            await synchronizer.ThrowIfWorkspaceInvalidAsync(workspaceFolder, definition, cancellationToken).ConfigureAwait(false);
-            return definition;
-        });
+    internal static CopilotStudioException Translate(WorkspaceValidationException failure) => CopilotStudioException.WorkspaceFilesUnreadable(SingleLine(failure.Message), failure);
 
     private static async Task<DefinitionBase> TranslateAsync(Func<Task<DefinitionBase>> operation)
     {
@@ -30,7 +24,7 @@ internal static class WorkspaceDefinitionReader
         }
         catch (WorkspaceValidationException failure)
         {
-            throw CopilotStudioException.WorkspaceFilesUnreadable(SingleLine(failure.Message), failure);
+            throw Translate(failure);
         }
     }
 

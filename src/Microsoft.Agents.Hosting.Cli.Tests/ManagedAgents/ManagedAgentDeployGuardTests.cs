@@ -12,7 +12,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 [Collection("CurrentDirectory")]
 public sealed class ManagedAgentDeployGuardTests
 {
-    private static ManagedAgentDeployService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces, FakeCopilotCatalogPort catalog, CopilotEnvironmentResolver? resolver = null, RecordingAttachPort? attach = null)
+    private static ManagedAgentDeployService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces, FakeCopilotCatalogPort catalog, CopilotEnvironmentResolver? resolver = null, RecordingAttachPort? attach = null, FakeCopilotPublishPort? publisher = null)
     {
         var environments = resolver ?? ManagedAgentFixtures.Resolver();
         var locator = CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem());
@@ -24,12 +24,13 @@ public sealed class ManagedAgentDeployGuardTests
             environments,
             locator,
             new CopilotWorkspaceService(workspaces, locator),
+            new SyncComponentCollectionAdapter(),
             ManagedAgentFixtures.Identities(),
             attach ?? new RecordingAttachPort(),
             catalog,
-            new CopilotCatalogService(catalog, environments, locator, new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
+            new CopilotCatalogService(catalog, publisher ?? new FakeCopilotPublishPort(), environments, locator),
             ManagedAgentFixtures.Principals(),
-            ManagedAgentFixtures.ActivationPass(),
+            ManagedAgentFixtures.ActivationReporter(),
             new FixedClock(ManagedAgentFixtures.Now));
     }
 
@@ -262,8 +263,6 @@ public sealed class ManagedAgentDeployGuardTests
         attach.AttachNotices.Add("An agent already carried the schema name con_agent in env-1; it was adopted rather than duplicated.");
         store.Update(workspace.Root, store.List(workspace.Root).Single() with { McsAgentId = "11111111-1111-1111-1111-111111111111" });
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = "11111111-1111-1111-1111-111111111111" };
-        catalog.PublishedOnSequence.Enqueue(null);
-        catalog.PublishedOnSequence.Enqueue(ManagedAgentFixtures.Now);
 
         var result = await Create(store, workspaces, catalog, attach: attach).DeployAsync(
             Request() with { Publish = true },
@@ -284,13 +283,14 @@ public sealed class ManagedAgentDeployGuardTests
         attach.AttachWarnings.Add("Workflow 'Escalate' is not running: the service left it disabled.");
         store.Update(workspace.Root, store.List(workspace.Root).Single() with { McsAgentId = "11111111-1111-1111-1111-111111111111" });
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = "11111111-1111-1111-1111-111111111111" };
+        var publisher = new FakeCopilotPublishPort();
 
-        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, catalog, attach: attach).DeployAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, catalog, attach: attach, publisher: publisher).DeployAsync(
             Request() with { Publish = true },
             CancellationToken.None));
 
         Assert.Equal("publish-withheld-incomplete-push", failure.ErrorKind);
-        Assert.Equal(0, catalog.PublishCalls);
+        Assert.Empty(publisher.Requests);
     }
 
     [Fact]
@@ -302,15 +302,15 @@ public sealed class ManagedAgentDeployGuardTests
         var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true, DataverseOrganizationReturns = CopilotTestFixtures.DataverseOrganization };
         workspaces.LocalChanges.Add(CopilotTestFixtures.Change("con_topic"));
         workspaces.PushWarnings.Add("Workflow 'Escalate' was not activated: this is not a valid connection");
-        var catalog = new FakeCopilotCatalogPort();
+        var publisher = new FakeCopilotPublishPort();
 
-        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, catalog).DeployAsync(
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, new FakeCopilotCatalogPort(), publisher: publisher).DeployAsync(
             Request() with { Publish = true },
             CancellationToken.None));
 
         Assert.Equal("publish-withheld-incomplete-push", failure.ErrorKind);
         Assert.Contains("Escalate", failure.Message, StringComparison.Ordinal);
-        Assert.Equal(0, catalog.PublishCalls);
+        Assert.Empty(publisher.Requests);
     }
 
     [Fact]
@@ -377,12 +377,13 @@ public sealed class ManagedAgentDeployGuardTests
             ManagedAgentFixtures.Resolver(),
             CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem()),
             new CopilotWorkspaceService(workspaces, CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem())),
+            new SyncComponentCollectionAdapter(),
             ManagedAgentFixtures.Identities(),
             new RecordingAttachPort(),
             new FakeCopilotCatalogPort(),
-            new CopilotCatalogService(new FakeCopilotCatalogPort(), ManagedAgentFixtures.Resolver(), CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem()), new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
+            new CopilotCatalogService(new FakeCopilotCatalogPort(), new FakeCopilotPublishPort(), ManagedAgentFixtures.Resolver(), CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem())),
             ManagedAgentFixtures.Principals(),
-            ManagedAgentFixtures.ActivationPass(),
+            ManagedAgentFixtures.ActivationReporter(),
             new FixedClock(ManagedAgentFixtures.Now));
 
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(
@@ -595,6 +596,103 @@ public sealed class ManagedAgentDeployGuardTests
 
         Assert.True(result.TargetAgentCreated);
         Assert.Null(attach.LastCommand!.ExpectedAgentId);
+    }
+
+    private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) ClonedFromAnotherEnvironment(string sourceStage = DeploymentStages.Dev)
+    {
+        var workspace = new TemporaryWorkspace();
+        var store = ManagedAgentFixtures.Store();
+
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent(environmentId: "env-test"));
+        store.Add(workspace.Root, ManagedAgentFixtures.Deployment("slot-home", name: "home", environmentId: "env-test") with { HomeEnvironmentId = "env-test" });
+        store.Add(workspace.Root, ManagedAgentFixtures.Deployment("slot-source", name: "source", stage: sourceStage) with { HomeEnvironmentId = "env-test" });
+
+        return (workspace, store);
+    }
+
+    private static ManagedAgentDeployRequest DeploymentRequest(string deploymentName, bool overwrite = false) => new() { AgentId = "agent-1", DeploymentName = deploymentName, Overwrite = overwrite };
+
+    [Fact]
+    public async Task Deploy_ACloneToADevDeploymentInItsSourceEnvironment_RefusesToPushToTheSourceAgent()
+    {
+        var (workspace, store) = ClonedFromAnotherEnvironment();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true };
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, new FakeCopilotCatalogPort(), TwoEnvironments()).DeployAsync(DeploymentRequest("source"), CancellationToken.None));
+
+        Assert.Equal((ErrorCodes.Deployment.UnverifiedAgentInTarget, ExitCodes.Usage, "unverified-agent-in-target"), (failure.ErrorCode, failure.ExitCode, failure.ErrorKind));
+        Assert.Contains("agent 'Contoso Agent' (agent-1) in env-1, outside this agent's home environment", failure.Message, StringComparison.Ordinal);
+        Assert.StartsWith("Nothing was pushed. Re-run with --overwrite only to replace that agent's content and name;", failure.Remediation, StringComparison.Ordinal);
+        Assert.Equal(0, workspaces.PushCalls);
+        Assert.Null(store.List(workspace.Root).Single().McsAgentId);
+    }
+
+    [Fact]
+    public async Task Deploy_ACloneToADevDeploymentInItsSourceEnvironment_WithOverwrite_PushesToTheSourceAgent_ThenNeedsNoFlag()
+    {
+        var (workspace, store) = ClonedFromAnotherEnvironment();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true };
+        var service = Create(store, workspaces, new FakeCopilotCatalogPort(), TwoEnvironments());
+
+        var acknowledged = await service.DeployAsync(DeploymentRequest("source", overwrite: true), CancellationToken.None);
+        var repeated = await service.DeployAsync(DeploymentRequest("source"), CancellationToken.None);
+
+        Assert.Equal(("push", "agent-1", "env-1"), (acknowledged.Action, acknowledged.TargetMcsAgentId, acknowledged.TargetEnvironmentId));
+        Assert.Equal("push", repeated.Action);
+        Assert.Equal(2, workspaces.PushCalls);
+        Assert.False(workspaces.LastPushOverwrite);
+    }
+
+    [Theory]
+    [InlineData(DeploymentStages.Test)]
+    [InlineData(DeploymentStages.Prod)]
+    public async Task Deploy_ACloneToATestOrProdDeploymentInItsSourceEnvironment_OverwritesAsThoseStagesAlwaysDo(string stage)
+    {
+        var (workspace, store) = ClonedFromAnotherEnvironment(stage);
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true };
+
+        var result = await Create(store, workspaces, new FakeCopilotCatalogPort(), TwoEnvironments()).DeployAsync(DeploymentRequest("source"), CancellationToken.None);
+
+        Assert.Equal(("push", "agent-1"), (result.Action, result.TargetMcsAgentId));
+        Assert.True(workspaces.LastPushOverwrite);
+    }
+
+    [Fact]
+    public async Task Deploy_ACloneToItsHomeDevDeployment_RebindsAndCreatesItsOwnAgentAsBefore()
+    {
+        var (workspace, store) = ClonedFromAnotherEnvironment();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true };
+        var attach = new RecordingAttachPort();
+
+        var result = await Create(store, workspaces, new FakeCopilotCatalogPort(), TwoEnvironments(), attach).DeployAsync(DeploymentRequest("home"), CancellationToken.None);
+
+        Assert.Equal(("retarget", "env-test", true), (result.Action, result.TargetEnvironmentId, result.TargetAgentCreated));
+        Assert.Equal(("env-test", true), (attach.LastCommand!.Environment.EnvironmentId, attach.LastCommand.AllowRetarget));
+        Assert.Equal(attach.AgentId, store.List(workspace.Root).Single().McsAgentId);
+        Assert.Equal(1, workspaces.PushCalls);
+    }
+
+    [Fact]
+    public async Task Deploy_ASameEnvironmentClone_PushesToTheSourceAgentItOwnsAsBefore()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        store.Update(workspace.Root, store.List(workspace.Root).Single() with { McsAgentId = "agent-1" });
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true };
+
+        var result = await Create(store, workspaces, new FakeCopilotCatalogPort()).DeployAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(("push", "agent-1"), (result.Action, result.TargetMcsAgentId));
+        Assert.False(workspaces.LastPushOverwrite);
     }
 }
 

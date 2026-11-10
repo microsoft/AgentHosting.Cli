@@ -51,6 +51,16 @@ public sealed class CommandReflectorTests
     }
 
     [Fact]
+    public void OnlyTheGitCredentialHelperIsHidden_AndStaysHiddenWhenFeaturesFilterTheTree()
+    {
+        string[] hidden = ["git-credential"];
+
+        Assert.Equal(hidden, Discovered.SelectMany(CommandTree.AllCommands).Where(command => command.Hidden).Select(command => command.Name));
+        Assert.Equal(hidden, CommandReflector.Discover(typeof(EnvGroup).Assembly, TestFeatureFlags.Everything).SelectMany(CommandTree.AllCommands).Where(command => command.Hidden).Select(command => command.Name));
+        Assert.DoesNotContain(CommandReflector.Discover(typeof(EnvGroup).Assembly, TestFeatureFlags.AllProductSurfaces).SelectMany(CommandTree.AllCommands), command => command.Name is "git-credential" or "setup-git");
+    }
+
+    [Fact]
     public void EveryCatalogAliasIsUnique()
     {
         Assert.Null(OptionCatalog.DeclaredAliases.GroupBy(entry => entry.Value, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1));

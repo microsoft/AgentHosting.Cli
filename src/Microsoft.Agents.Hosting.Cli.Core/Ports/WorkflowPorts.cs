@@ -1,5 +1,3 @@
-using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
-
 namespace Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 /// <summary>A workflow as it exists in Dataverse or on disk.</summary>
@@ -14,17 +12,33 @@ public sealed record WorkflowDocument
     /// <summary>The workflow's description, when it carries one.</summary>
     public string? Description { get; init; }
 
-    /// <summary>The workflow's state, one of the <see cref="WorkflowStateProjection"/> names.</summary>
+    /// <summary>The workflow's state, as the sync library names it.</summary>
     public required string State { get; init; }
 
     /// <summary>When the service last changed the workflow, when it reports one.</summary>
     public DateTimeOffset? ModifiedOn { get; init; }
 
-    /// <summary>Whether the workflow is running rather than sitting as a draft.</summary>
-    public bool IsActivated => State == WorkflowStateProjection.Activated;
-
     /// <summary>The connection reference logical names the workflow uses.</summary>
     public IReadOnlyList<string> ConnectionReferences { get; init; } = [];
+}
+
+/// <summary>Names workflow states and the labels the Copilot Studio portal shows for them, by the sync library's rules.</summary>
+public interface IWorkflowStateRules
+{
+    /// <summary>Names the state of a workflow that is running, not running, or not observed.</summary>
+    /// <param name="running">Whether the workflow runs, or <see langword="null"/> when nothing observed it.</param>
+    /// <returns>The state name.</returns>
+    string StateOf(bool? running);
+
+    /// <summary>Reads whether a state means the workflow runs.</summary>
+    /// <param name="state">The state name.</param>
+    /// <returns>Whether the workflow runs, or <see langword="null"/> when the state is neither running nor stopped.</returns>
+    bool? RunningOf(string state);
+
+    /// <summary>Maps a state onto the label the Copilot Studio portal shows.</summary>
+    /// <param name="state">The state name.</param>
+    /// <returns>The portal label.</returns>
+    string PortalLabel(string state);
 }
 
 /// <summary>A workflow folder found beneath a workflow workspace root.</summary>
@@ -139,6 +153,15 @@ public interface IWorkflowStorePort
     /// <param name="overwriteLocalChanges">Whether a local edit the environment has not seen may be replaced.</param>
     /// <returns>What was written.</returns>
     Task<WorkflowDownloadOutcome> DownloadAsync(CopilotEnvironmentContext environment, Guid workflowId, string workspaceRoot, CancellationToken cancellationToken, bool overwriteLocalChanges = false);
+
+    /// <summary>Clones a workflow into a new workspace root.</summary>
+    /// <param name="environment">The environment holding the workflow.</param>
+    /// <param name="workflowId">The workflow to clone.</param>
+    /// <param name="workspaceRoot">The workspace root to write beneath.</param>
+    /// <param name="name">The name the local copy declares in place of the workflow's own, or <see langword="null"/> to keep the workflow's.</param>
+    /// <param name="cancellationToken">Cancels the clone.</param>
+    /// <returns>What was written.</returns>
+    Task<WorkflowDownloadOutcome> CloneAsync(CopilotEnvironmentContext environment, Guid workflowId, string workspaceRoot, string? name, CancellationToken cancellationToken);
 
     /// <summary>Uploads the workflow a workspace root holds, creating the row when the environment has none.</summary>
     /// <param name="environment">The environment to write to.</param>
