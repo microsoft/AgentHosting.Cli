@@ -90,8 +90,9 @@ internal sealed class LinuxOwnedProtectedStorage : OwnedProtectedStorageBackend
             using var reply = Call(transport, item, ItemInterface, "GetSecret",
                 DbusValue.Tuple(DbusValue.Path(session)), "((oayays))", ct);
             var secret = Children(Children(reply, 1)[0], 4);
+            // GNOME Keyring labels binary secrets as text/plain without changing their bytes.
             if (ObjectPath(secret[0]) != session || ByteArray(secret[1]).Length != 0 ||
-                Text(secret[3]) != ContentType)
+                Text(secret[3]) is not (ContentType or "text/plain"))
                 throw new NativeStorageException(NativeStorageFailure.Malformed);
             return Task.FromResult<byte[]?>(ByteArray(secret[2]).ToArray());
         }

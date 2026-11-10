@@ -415,6 +415,30 @@ public sealed class OwnedProtectedStorageTests
     }
 
     [Theory]
+    [InlineData(OwnedProtectedStorageKind.Credential, "text/plain")]
+    [InlineData(OwnedProtectedStorageKind.TokenCache, "text/plain")]
+    [InlineData(OwnedProtectedStorageKind.Credential, "application/octet-stream")]
+    [InlineData(OwnedProtectedStorageKind.TokenCache, "application/octet-stream")]
+    public async Task LinuxReadsBinarySecretBytesUnchangedWhenGnomeKeyringReportsTextPlain(
+        OwnedProtectedStorageKind kind, string contentType)
+    {
+        byte[] expected = [0, 0xff, 0x80, 0xc3, 0x28, 65, 61, 0];
+        byte[] providerBytes = expected.ToArray();
+        var bus = new FakeBus
+        {
+            Override = request => request.Method == "GetSecret"
+                ? DbusValue.Tuple(DbusValue.Tuple(DbusValue.Path(FakeBus.Session), DbusValue.Bytes([]),
+                    DbusValue.Bytes(providerBytes), DbusValue.Text(contentType)))
+                : null,
+        };
+        var result = await new LinuxOwnedProtectedStorage(bus).ReadAsync(Reference(kind), default);
+        Assert.Equal(expected, result);
+        Assert.All(providerBytes, value => Assert.Equal(0, value));
+        Assert.DoesNotContain(bus.Calls, call => call.Method is "Unlock" or "Prompt" or "CreateItem" or "SetSecret" or "Delete");
+        Assert.True(bus.Disposed);
+    }
+
+    [Theory]
     [InlineData("ReadAlias")]
     [InlineData("Get")]
     [InlineData("SearchItems")]
