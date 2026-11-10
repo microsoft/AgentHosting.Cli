@@ -195,6 +195,16 @@ public sealed class AgentHostCli
             Error = stderr,
         };
 
+        if (_updateCheck is not null && !json && !invokesVersion
+            && (invokesHelp
+                ? parseResult.UnmatchedTokens.Count == 0
+                : parseResult.Errors.Count == 0
+                    && !ReferenceEquals(parseResult.CommandResult.Command, root)
+                    && !isSubgroup.Contains(parseResult.CommandResult.Command)))
+        {
+            await _updateCheck.NotifyAsync(_progressSpinner?.Error ?? stderr, cancellationToken);
+        }
+
         // The selected parser action, rather than raw token spelling, distinguishes actual help
         // from a value such as `auth switch --account --help`. Unmatched tokens still make an invalid
         // command path a usage error even when --help is present.
@@ -245,13 +255,6 @@ public sealed class AgentHostCli
             int exitCode = renderer.RenderUsageError(message, json);
             telemetry.RecordHost(CommandTelemetryHostCategory.ParserRejection);
             return exitCode;
-        }
-
-        if (_updateCheck is not null && !json && !invokesHelp && !invokesVersion
-            && !ReferenceEquals(parseResult.CommandResult.Command, root)
-            && !isSubgroup.Contains(parseResult.CommandResult.Command))
-        {
-            await _updateCheck.NotifyAsync(_progressSpinner?.Error ?? stderr, cancellationToken);
         }
 
         int result = await parseResult.InvokeAsync(invocationConfiguration, cancellationToken);

@@ -46,9 +46,10 @@ help.
 
 ## Output and exit codes
 
-In a terminal, eligible commands can first show a newer-version notice on stderr, including
-labeled prereleases and a manual update command. Notices are suppressed for `--json`, help/version,
-invalid/navigation-only commands, CI, or redirected stdout/stderr. No command-specific options
+In a terminal, eligible commands and help (including bare `msagent`) can first show a newer-version
+notice on stderr, including labeled prereleases and a manual update command.
+Notices are suppressed for `--json`, version output, invalid/navigation-only commands,
+CI, or redirected stdout/stderr. No command-specific options
 are added; `--non-interactive` alone does not suppress notices. See the
 [update-check configuration](../Microsoft.Agents.Hosting.Cli/agent.md#automatic-version-notices)
 for opt-out, cache, and deadline behavior.
