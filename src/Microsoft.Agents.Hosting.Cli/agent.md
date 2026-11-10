@@ -57,8 +57,9 @@ described in the [telemetry reference](../../docs/developer/Telemetry.md#deliver
 ### Automatic version notices
 
 The executable checks listed `Microsoft.Agents.Hosting.Cli` versions on nuget.org
-before an eligible leaf command's first output or prompt, writing notices to
-spinner-aware stderr. It compares NuGet versions with
+before an eligible leaf command's first output or prompt, or before displaying
+help (including bare `msagent`), writing notices to spinner-aware stderr.
+It compares NuGet versions with
 `ThisAssembly.AssemblyInformationalVersion` after removing `+` metadata.
 It shows the highest newer stable version and a newer prerelease only when it
 also exceeds the highest stable version. Suggested commands use `--global`,
@@ -79,8 +80,9 @@ Invalid, future, oversized, or expired data is refreshed rather than used for
 stale notices. Writes use unique temporary files and atomic replacement without
 a process lock; cache I/O is best effort.
 
-Checks are skipped for help/version, JSON, parser failures, navigation groups,
-CI, redirected stdout/stderr, and explicit opt-out. Playground child processes
+Checks are skipped for version output, JSON, parser-rejected invocations,
+navigation groups without help, CI, redirected stdout/stderr, and explicit
+opt-out. Playground child processes
 return before composition. `--non-interactive` alone does not suppress checks.
 Direct command-host construction remains offline unless the internal update
 seam is explicitly supplied. Offline tests inject HTTP handlers, temporary
