@@ -13,7 +13,7 @@ The reference is derived from the command host in `Microsoft.Agents.Hosting.Cli`
 definitions in `Microsoft.Agents.Hosting.Cli.Commands`, and validation performed by
 `Microsoft.Agents.Hosting.Cli.Core`. It documents command-line arguments and options
 only; host configuration environment variables are documented in
-[README.md](../Microsoft.Agents.Hosting.Cli/README.md#configuration-host-environment).
+[agent.md](../Microsoft.Agents.Hosting.Cli/agent.md#configuration-host-environment).
 
 Commands or options labeled **MCS-specific** apply to Microsoft Copilot Studio. Agent
 `create`, `init`, `list`, `pull`, `delete`, and `deploy` also support standalone workflows
@@ -50,7 +50,7 @@ In a terminal, eligible commands can first show a newer-version notice on stderr
 labeled prereleases and a manual update command. Notices are suppressed for `--json`, help/version,
 invalid/navigation-only commands, CI, or redirected stdout/stderr. No command-specific options
 are added; `--non-interactive` alone does not suppress notices. See the
-[update-check configuration](../Microsoft.Agents.Hosting.Cli/README.md#automatic-version-notices)
+[update-check configuration](../Microsoft.Agents.Hosting.Cli/agent.md#automatic-version-notices)
 for opt-out, cache, and deadline behavior.
 
 Most commands write human-readable results to stdout and failures with recovery guidance to

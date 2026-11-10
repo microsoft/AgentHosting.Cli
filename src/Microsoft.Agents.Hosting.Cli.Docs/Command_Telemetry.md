@@ -65,8 +65,6 @@ collection state. With `--json`, the ordinary success envelope includes:
 
 Normal leaf dispatch can record an attempt and an outcome. Telemetry includes command identity
 and bounded outcome metadata, not raw command arguments, queries, error messages, or stack traces.
-It can include tenant/principal context obtained during normal authentication; do not assume it
-contains no identifiers. See the [complete schema and privacy contract](../Microsoft.Agents.Hosting.Cli/README.md#command-telemetry).
 
 Failure events can include `customDimensions.errorCode` as a string representation of the
 numeric error code. `customDimensions.IsFailure` is a JSON boolean: true for error outcomes,
@@ -74,10 +72,3 @@ usage, sign-in-required, timeout, parser rejection, and group usage; false for s
 cancellation, help, version, and attempts. An attempt with `IsFailure: false` is not evidence of
 a completed successful command. Both fields are inside the JSON-encoded `customDimensions`
 object, not new top-level OneDS fields.
-
-`telemetryLocation` identifies the selected collector, not the user's machine location.
-Production uses the EU collector (`eu`) unless all resolved target environments have recognized
-non-European geographies, in which case it uses the US collector (`global`). Missing or unknown
-geography, lookup failure, or the default 400 ms metadata deadline uses EU. Non-production rings
-use `global`. See the [routing contract](../Microsoft.Agents.Hosting.Cli/README.md#command-telemetry)
-for details.

@@ -151,10 +151,10 @@ All projects are directly under `src/`; there is no `src/libraries/` or
 
 - `README.md` and `docs/` explain user workflows;
   `src/Microsoft.Agents.Hosting.Cli.Docs/ReadMe.md` is the command reference.
-- `src/Microsoft.Agents.Hosting.Cli/Tool_Readme.md` is the packaged public guide.
+- `src/Microsoft.Agents.Hosting.Cli/Readme.md` is the packaged public guide.
   Document only default-on features there, and do not add a feature-controls
   section or link. Internal feature-control guidance belongs in the adjacent
-  developer `README.md`.
+  developer `agent.md`.
 - Update relevant help, command reference, and user/developer documentation when
   changing command behavior. Some docs retain demonstrator or older preview
   wording; verify examples against current command definitions and feature flags.
