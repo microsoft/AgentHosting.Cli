@@ -1,6 +1,7 @@
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Commands.Commands.Auth;
 
 namespace Microsoft.Agents.Hosting.Cli.Hosting;
 
@@ -15,6 +16,12 @@ public sealed class FacadeHandlerProvider : IServiceProvider
     /// <summary>Creates the provider.</summary>
     /// <param name="operations">The facade the handlers delegate to.</param>
     public FacadeHandlerProvider(IAgentHostingOperations operations)
+        : this(operations, operations as IAuthProfileOperations)
+    {
+    }
+
+    /// <summary>Creates the provider with the optional profile lifecycle surface.</summary>
+    public FacadeHandlerProvider(IAgentHostingOperations operations, IAuthProfileOperations? authProfiles)
     {
         ArgumentNullException.ThrowIfNull(operations);
 
@@ -67,11 +74,28 @@ public sealed class FacadeHandlerProvider : IServiceProvider
             [typeof(ICommandHandler<AbsApplyRequest, AbsProvisioningReport>)] = new FacadeHandler<AbsApplyRequest, AbsProvisioningReport>(operations.ApplyAzureBotAsync),
             [typeof(ICommandHandler<AuthLoginRequest, AuthLoginResult>)] = new FacadeHandler<AuthLoginRequest, AuthLoginResult>(operations.LoginAsync),
             [typeof(ICommandHandler<AuthStatusRequest, AuthStatusReport>)] = new FacadeHandler<AuthStatusRequest, AuthStatusReport>((_, token) => operations.GetAuthStatusAsync(token)),
-            [typeof(ICommandHandler<AuthSwitchRequest, AuthProfileSummary>)] = new FacadeHandler<AuthSwitchRequest, AuthProfileSummary>((request, token) => operations.SwitchAuthProfileAsync(request.Account, request.Ring, token)),
             [typeof(ICommandHandler<AuthLogoutRequest, AuthLogoutResult>)] = new FacadeHandler<AuthLogoutRequest, AuthLogoutResult>((_, token) => operations.LogoutAsync(token)),
             [typeof(ICommandHandler<BlueprintIdentityRequest, BlueprintIdentityReport>)] = new FacadeHandler<BlueprintIdentityRequest, BlueprintIdentityReport>(operations.CreateBlueprintIdentityAsync),
             [typeof(ICommandHandler<AppRegistrationIdentityRequest, AppRegistrationIdentityReport>)] = new FacadeHandler<AppRegistrationIdentityRequest, AppRegistrationIdentityReport>(operations.CreateAppRegistrationIdentityAsync),
         };
+
+        if (authProfiles is not null)
+        {
+            handlers[typeof(ICommandHandler<AuthCreateRequest, AuthProfileOperationResult>)] =
+                new FacadeHandler<AuthCreateRequest, AuthProfileOperationResult>(authProfiles.CreateAsync);
+            handlers[typeof(ICommandHandler<AuthListRequest, AuthProfileListResult>)] =
+                new FacadeHandler<AuthListRequest, AuthProfileListResult>((_, token) => authProfiles.ListAsync(token));
+            handlers[typeof(ICommandHandler<AuthProfileSelectRequest, AuthProfileOperationResult>)] =
+                new FacadeHandler<AuthProfileSelectRequest, AuthProfileOperationResult>(authProfiles.SelectAsync);
+            handlers[typeof(ICommandHandler<AuthDeleteRequest, AuthProfileOperationResult>)] =
+                new FacadeHandler<AuthDeleteRequest, AuthProfileOperationResult>((request, token) => authProfiles.DeleteAsync(request.Selector, token));
+            handlers[typeof(ICommandHandler<AuthNameRequest, AuthProfileOperationResult>)] =
+                new FacadeHandler<AuthNameRequest, AuthProfileOperationResult>((request, token) => authProfiles.NameAsync(new(Index: request.Index), request.Name, token));
+            handlers[typeof(ICommandHandler<AuthClearRequest, AuthLogoutResult>)] =
+                new FacadeHandler<AuthClearRequest, AuthLogoutResult>((_, token) => authProfiles.ClearAsync(token));
+            handlers[typeof(ICommandHandler<AuthWhoRequest, AuthWhoResult>)] =
+                new FacadeHandler<AuthWhoRequest, AuthWhoResult>((_, token) => authProfiles.WhoAsync(token));
+        }
 
         if (operations is IAgentEvaluationOperations evaluations)
         {

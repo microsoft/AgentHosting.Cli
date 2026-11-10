@@ -10,6 +10,7 @@ using Microsoft.Agents.ObjectModel.Telemetry;
 using Microsoft.Agents.Platform.Content.Abstractions;
 using Microsoft.Agents.Platform.Content.Internal.Modules;
 using Microsoft.CopilotStudio.Sync;
+using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync.Dataverse;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -39,7 +40,7 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(apiTarget);
 
         services.TryAddSingleton(PowerPlatformCloudMap.ForTarget(apiTarget));
-        services.TryAdd(ServiceDescriptor.Singleton(typeof(CliClusterCategory), (object)CoreServicesCluster.For(apiTarget)));
+        services.TryAdd(ServiceDescriptor.Singleton(typeof(CliClusterCategory), _ => (object)PowerAppsServiceTarget.ClusterFor(apiTarget)));
 
         services.AddLogging();
         ServiceRegistrations.AddServices(services);
@@ -57,12 +58,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IExpressionSyntaxAnalyzerProvider, PowerFxExpressionSyntaxAnalyzerProvider>();
         services.AddSingleton<IDataverseUserIdProvider, UnsupportedDataverseUserIdProvider>();
 
-        services.AddSingleton<ISyncAuthProvider, AgentHostSyncAuthProvider>();
+        services.AddSingleton<ISyncAuthProvider>(provider => new AgentHostSyncAuthProvider(
+            provider.GetRequiredService<ITokenProvider>(), provider.GetService<IProfileCredentialProvider>(), apiTarget));
         services.AddSingleton<ISyncProgress>(_ => new StandardErrorSyncProgress(standardError, verboseProgress));
         services.AddSingleton<AgentHostDataverseHttpClientAccessor>();
         services.AddSingleton<IDataverseHttpClientAccessor>(provider => provider.GetRequiredService<AgentHostDataverseHttpClientAccessor>());
 
         services.AddSyncServices(userAgent: DataverseUserAgent(), isIslandPreauthorized: false);
+        BindSyncHttpClientFactory(services);
 
         services.AddSingleton<CopilotChangeMapper>();
         services.AddSingleton<ICopilotFileSystem, SystemCopilotFileSystem>();
@@ -76,19 +79,58 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ICopilotWorkspacePort, SyncWorkspaceAdapter>();
         services.AddSingleton<ICopilotCatalogPort, DataverseCatalogAdapter>();
         services.AddSingleton<DataverseWebApiClient>();
-        services.AddSingleton<IAgentSharingPort>(provider => new IslandSharingAdapter(provider.GetRequiredService<ITokenProvider>(), provider.GetRequiredService<PowerPlatformCloudMap>()));
-        services.AddSingleton<IAgentEvaluationPort>(provider => new MakerEvaluationAdapter(provider.GetRequiredService<ITokenProvider>(), provider.GetRequiredService<PowerPlatformCloudMap>()));
+        services.AddSingleton<IAgentSharingPort>(provider => new IslandSharingAdapter(provider.GetRequiredService<ITokenProvider>(), provider.GetRequiredService<PowerPlatformCloudMap>(), profileCredentials: provider.GetService<IProfileCredentialProvider>()));
+        services.AddSingleton<IAgentEvaluationPort>(provider => new MakerEvaluationAdapter(provider.GetRequiredService<ITokenProvider>(), provider.GetRequiredService<PowerPlatformCloudMap>(), profileCredentials: provider.GetService<IProfileCredentialProvider>()));
         services.AddSingleton<IEvaluationComponentStore, DataverseEvaluationComponentStore>();
         services.AddSingleton<IDirectoryPrincipalPort, DataversePrincipalAdapter>();
         services.AddSingleton<IConnectionManagementService>(provider => (IConnectionManagementService)provider.GetRequiredService<IWorkspaceSynchronizer>());
         services.AddSingleton<IWorkflowActivationService>(provider => (IWorkflowActivationService)provider.GetRequiredService<IWorkspaceSynchronizer>());
         services.AddSingleton<IConnectionCatalogClient>(_ => new PowerAppsClient(new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()), DataverseUserAgent()));
-        services.AddSingleton<SyncConnectionAdapter>();
+        services.AddSingleton(provider => new SyncConnectionAdapter(
+            provider.GetRequiredService<IConnectionManagementService>(),
+            provider.GetRequiredService<IWorkflowActivationService>(),
+            provider.GetRequiredService<IWorkspaceSynchronizer>(),
+            provider.GetRequiredService<ISyncDataverseClient>(),
+            provider.GetRequiredService<IConnectionCatalogClient>(),
+            provider.GetRequiredService<ITokenProvider>(),
+            provider.GetRequiredService<AgentHostDataverseHttpClientAccessor>(),
+            provider.GetRequiredService<IFileAccessorFactory>(),
+            provider.GetRequiredService<DataverseWebApiClient>(),
+            () => provider.GetRequiredService<CliClusterCategory>(),
+            provider.GetService<IProfileCredentialProvider>()));
         services.AddSingleton<ICopilotConnectionPort>(provider => provider.GetRequiredService<SyncConnectionAdapter>());
         services.AddSingleton<IConnectorCatalogPort>(provider => provider.GetRequiredService<SyncConnectionAdapter>());
-        services.AddSingleton<IConnectionLifecyclePort>(provider => new PowerAppsConnectionAdapter(provider.GetRequiredService<ITokenProvider>(), provider.GetRequiredService<CliClusterCategory>()));
+        services.AddSingleton<IConnectionLifecyclePort>(provider => new PowerAppsConnectionAdapter(provider.GetRequiredService<ITokenProvider>(), () => provider.GetRequiredService<CliClusterCategory>(), profileCredentials: provider.GetService<IProfileCredentialProvider>()));
 
         return services;
+    }
+
+    private static void BindSyncHttpClientFactory(IServiceCollection services)
+    {
+        var registration = services.Last(descriptor => descriptor.ServiceType == typeof(IIslandControlPlaneService));
+        var create = registration.ImplementationFactory
+            ?? throw new InvalidOperationException("The Sync Island service does not expose its supported factory registration.");
+        services.Replace(ServiceDescriptor.Singleton<IIslandControlPlaneService>(provider =>
+            (IIslandControlPlaneService)create(new SyncServiceProvider(provider, new SyncHttpClientFactory(
+                provider.GetRequiredService<AgentHostDataverseHttpClientAccessor>(),
+                provider.GetRequiredService<PowerPlatformCloudMap>(),
+                () => provider.GetRequiredService<CliClusterCategory>())))));
+    }
+
+    // Only the SDK constructor receives this factory. The host's named-client registrations and
+    // pooled handlers remain untouched; each SDK client captures its operation at creation.
+    private sealed class SyncServiceProvider(IServiceProvider services, IHttpClientFactory factory) : IServiceProvider
+    {
+        public object? GetService(Type serviceType) =>
+            serviceType == typeof(IHttpClientFactory) ? factory : services.GetService(serviceType);
+    }
+
+    private sealed class SyncHttpClientFactory(AgentHostDataverseHttpClientAccessor accessor,
+        PowerPlatformCloudMap legacyCloud, Func<CliClusterCategory> legacyCluster) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) =>
+            name == "BotManagement" ? accessor.CreateGatewayClient(legacyCloud, legacyCluster)
+                : throw new InvalidOperationException("The Sync SDK requested an unsupported authenticated HTTP client.");
     }
 
     private static string DataverseUserAgent()

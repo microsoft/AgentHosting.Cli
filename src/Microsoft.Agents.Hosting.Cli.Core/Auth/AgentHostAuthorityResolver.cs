@@ -7,7 +7,7 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Auth;
 /// adaptation of PAC's <c>AuthorityInfo</c> constructors:
 ///
 /// <list type="bullet">
-///   <item>the same cloud-to-login-host map (public / GCC / GCC-High / DoD / China);</item>
+///   <item>the cloud-to-login-host map (public / GCC / GCC-High / DoD / China / national / secure);</item>
 ///   <item>the <c>organizations</c> pseudo-tenant as the default authority tenant;</item>
 ///   <item>an explicit tenant override that pins the authority to <c>{host}/{tenantId}</c> without
 ///   rewriting the stored home-account profile.</item>
@@ -21,8 +21,7 @@ public static class AgentHostAuthorityResolver
     /// <summary>The <c>organizations</c> pseudo-tenant PAC uses as the default authority tenant.</summary>
     public const string OrganizationsTenant = "organizations";
 
-    // Mirrors PAC AuthorityInfo.AuthorityMapping. Preprod/Test collapse onto the public host in PAC and
-    // are not modelled here (the demonstrator has no Dataverse test rings).
+    // Public Preprod/Test share the commercial login host; their ring is a PPAPI coordinate.
     // https://learn.microsoft.com/entra/identity-platform/authentication-national-cloud
     private static readonly FrozenDictionary<CloudInstance, string> AuthorityHosts =
         new Dictionary<CloudInstance, string>
@@ -32,6 +31,8 @@ public static class AgentHostAuthorityResolver
             [CloudInstance.UsGovHigh] = "https://login.microsoftonline.us",
             [CloudInstance.UsGovDod] = "https://login.microsoftonline.us",
             [CloudInstance.China] = "https://login.partner.microsoftonline.cn",
+            [CloudInstance.UsNat] = "https://login.microsoftonline.eaglex.ic.gov",
+            [CloudInstance.UsSec] = "https://login.microsoftonline.microsoft.scloud",
         }.ToFrozenDictionary();
 
     /// <summary>The login host for a cloud (for example <c>https://login.microsoftonline.com</c>).</summary>
@@ -67,16 +68,19 @@ public static class AgentHostAuthorityResolver
     }
 
     /// <summary>
-    /// Wraps an explicitly supplied authority URL. The URL must be absolute HTTPS (PAC
-    /// <c>AuthorityInfo(Uri)</c> guard). The tenant is not parsed out of the URL in the foundation.
+    /// Wraps an explicitly supplied authority URL on the selected cloud's login host, using HTTPS
+    /// and its default port without embedded credentials. The tenant is not parsed out of the URL.
     /// </summary>
     public static AuthorityInfo ResolveFromUrl(CloudInstance cloud, Uri authorityUrl)
     {
         ArgumentNullException.ThrowIfNull(authorityUrl);
 
-        if (!authorityUrl.IsAbsoluteUri || authorityUrl.Scheme != Uri.UriSchemeHttps)
+        var host = new Uri(GetAuthorityHost(cloud)).Host;
+        if (!authorityUrl.IsAbsoluteUri || authorityUrl.Scheme != Uri.UriSchemeHttps
+            || !string.IsNullOrEmpty(authorityUrl.UserInfo) || !authorityUrl.IsDefaultPort
+            || !string.Equals(authorityUrl.Host.TrimEnd('.'), host, StringComparison.OrdinalIgnoreCase))
         {
-            throw new ArgumentException("Authority must be an absolute https url.", nameof(authorityUrl));
+            throw new ArgumentException("Authority must be an absolute HTTPS URL on the selected cloud's login host, without user information or a non-default port.", nameof(authorityUrl));
         }
 
         return new AuthorityInfo

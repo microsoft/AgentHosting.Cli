@@ -45,7 +45,15 @@ jobs:
       run: dotnet build --no-restore -c release Microsoft.Agents.Hosting.Cli.proj
 
     - name: Package
-      run: dotnet pack --no-restore -c release src/Microsoft.Agents.Hosting.Cli.slnx
+      shell: pwsh
+      run: ./.github/scripts/build-authentication-packages.ps1 -Configuration Release
 
-    - name: Test in net10
-      run: dotnet test --no-build --no-restore -c debug ./src/ -f net10.0
+    - name: Main offline suite
+      run: dotnet test src/Microsoft.Agents.Hosting.Cli.Tests/Microsoft.Agents.Hosting.Cli.Tests.csproj --no-build --no-restore -c Debug
+
+    - name: Core-only embedding suite
+      run: dotnet test src/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests.csproj --no-build --no-restore -c Debug
+
+    - name: Actual isolated installed tool
+      shell: pwsh
+      run: ./.github/scripts/verify-authentication-package.ps1 -ExpectedRid linux-x64 -Configuration Release

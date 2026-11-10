@@ -204,7 +204,7 @@ public sealed class TelemetryFullTests
                     TenantId = tenantId.ToString("D"),
                 };
             },
-            OnSwitch = account =>
+            OnLogin = request =>
             {
                 int call = Interlocked.Increment(ref switchCalls);
                 Guid tenantId = call == 1
@@ -216,28 +216,29 @@ public sealed class TelemetryFullTests
                     releaseOverlappingStatus.TrySetResult();
                 }
 
-                return new AuthProfileSummary
+                return new AuthLoginResult
                 {
-                    Status = $"switch-{call}",
-                    Account = account,
+                    Status = $"login-{call}",
+                    Account = request.Account,
                 };
             },
         };
-        var host = new AgentHostCli(operations, telemetryFactory: factory);
+        var host = new AgentHostCli(operations, featureFlags: new TestFeatureFlags(
+            Microsoft.Agents.Hosting.Cli.Commands.Features.FeatureName.LegacyAuth), telemetryFactory: factory);
 
         var sequentialStatus = await InvokeHostAsync(
             host,
             ["auth", "status", "--json"]);
         var sequentialSwitch = await InvokeHostAsync(
             host,
-            ["auth", "switch", "--account", "sequential", "--json"]);
+            ["auth", "login", "--account", "sequential", "--json"]);
         Task<(int ExitCode, string Stdout, string Stderr)> overlappingStatus =
             InvokeHostAsync(host, ["auth", "status", "--json"]);
         await overlappingStatusStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Task<(int ExitCode, string Stdout, string Stderr)> overlappingSwitch =
             InvokeHostAsync(
                 host,
-                ["auth", "switch", "--account", "overlapping", "--json"]);
+                ["auth", "login", "--account", "overlapping", "--json"]);
         await Task.WhenAll(overlappingStatus, overlappingSwitch)
             .WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -245,14 +246,14 @@ public sealed class TelemetryFullTests
             sequentialStatus,
             "status-1",
             "status-1@example.invalid");
-        AssertJsonResult(sequentialSwitch, "switch-1", "sequential");
+        AssertJsonResult(sequentialSwitch, "login-1", "sequential");
         AssertJsonResult(
             await overlappingStatus,
             "status-2",
             "status-2@example.invalid");
         AssertJsonResult(
             await overlappingSwitch,
-            "switch-2",
+            "login-2",
             "overlapping");
 
         string[] payloads = transport.Payloads;
@@ -307,13 +308,13 @@ public sealed class TelemetryFullTests
             "AgentHostingCLI.auth.status",
             operationByTenant[sequentialStatusTenant.ToString("D")]);
         Assert.Equal(
-            "AgentHostingCLI.auth.switch",
+            "AgentHostingCLI.auth.login",
             operationByTenant[sequentialSwitchTenant.ToString("D")]);
         Assert.Equal(
             "AgentHostingCLI.auth.status",
             operationByTenant[overlappingStatusTenant.ToString("D")]);
         Assert.Equal(
-            "AgentHostingCLI.auth.switch",
+            "AgentHostingCLI.auth.login",
             operationByTenant[overlappingSwitchTenant.ToString("D")]);
     }
 

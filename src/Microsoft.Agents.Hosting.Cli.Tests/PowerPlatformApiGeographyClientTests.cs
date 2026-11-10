@@ -9,6 +9,80 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 public sealed class PowerPlatformApiDiscoveryTests
 {
     [Theory]
+    [InlineData(CloudInstance.UsGov, "api.gov.powerplatform.microsoft.us")]
+    [InlineData(CloudInstance.UsGovHigh, "api.high.powerplatform.microsoft.us")]
+    [InlineData(CloudInstance.UsGovDod, "api.appsplatform.us")]
+    [InlineData(CloudInstance.UsNat, "api.powerplatform.eaglex.ic.gov")]
+    [InlineData(CloudInstance.UsSec, "api.powerplatform.microsoft.scloud")]
+    public void SovereignProductionRoutesUseOneCharacterShard(CloudInstance cloud, string host)
+    {
+        var target = PowerPlatformApiTargetConfig.Public with
+        {
+            Cloud = cloud, GlobalEndpoint = new Uri("https://" + host),
+        };
+        Assert.Equal($"abcdef0123456789abcdef01234567a.b.environment.{host}",
+            PowerPlatformApiDiscovery.GetEnvironmentEndpoint(target, "ABCDEF01-2345-6789-ABCD-EF01234567ab").Host);
+        Assert.Equal($"defaultabcdef0123456789abcdef01234567a.b.environment.{host}",
+            PowerPlatformApiDiscovery.GetEnvironmentEndpoint(target, "Default-ABCDEF01-2345-6789-ABCD-EF01234567ab").Host);
+    }
+
+    [Theory]
+    [InlineData(PowerPlatformApiRing.Preprod)]
+    [InlineData(PowerPlatformApiRing.Test)]
+    public void NonProductionDefaultEnvironmentUsesOneCharacterShard(PowerPlatformApiRing ring)
+    {
+        var target = PowerPlatformApiRingSelection.TargetFor(ring);
+        Assert.Equal($"defaultabcdef0123456789abcdef01234567a.b.environment.{target.GlobalEndpoint.Host}",
+            PowerPlatformApiDiscovery.GetEnvironmentEndpoint(target,
+                "/providers/Microsoft.PowerApps/environments/Default-ABCDEF01-2345-6789-ABCD-EF01234567ab").Host);
+    }
+
+    [Fact]
+    public void ChinaGlobalEndpointDoesNotImplyAVerifiedEnvironmentRoute()
+    {
+        var target = PowerPlatformApiTargetConfig.Public with
+        {
+            Cloud = CloudInstance.China,
+            GlobalEndpoint = new Uri("https://api.powerplatform.partner.microsoftonline.cn"),
+        };
+        Assert.True(PowerPlatformCloudMap.ForTarget(target).IsTrusted(target.GlobalEndpoint));
+        var error = Assert.Throws<NotSupportedException>(() =>
+            PowerPlatformApiDiscovery.GetEnvironmentEndpoint(target, "11111111-2222-3333-4444-555555555555"));
+        Assert.Contains("China", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UntrustedCoordinatesCannotWidenDiscoveryTrust()
+    {
+        var target = PowerPlatformApiTargetConfig.Public with { GlobalEndpoint = new Uri("https://attacker.example") };
+        Assert.Throws<EndpointTrustException>(() => PowerPlatformApiDiscovery.GetEnvironmentEndpoint(target, "env-1"));
+    }
+
+    [Theory]
+    [InlineData(PowerPlatformApiRing.Production, "e-n-v-1", "en.v1")]
+    [InlineData(PowerPlatformApiRing.Production, "a-b-c", "a.bc")]
+    [InlineData(PowerPlatformApiRing.Preprod, "A-B", "a.b")]
+    [InlineData(PowerPlatformApiRing.Test, "A-B", "a.b")]
+    public void ExistingNonGuidIdentifiersKeepTheirRoutingShape(PowerPlatformApiRing ring, string id, string split)
+    {
+        var target = PowerPlatformApiRingSelection.TargetFor(ring);
+        Assert.Equal($"{split}.environment.{target.GlobalEndpoint.Host}",
+            PowerPlatformApiDiscovery.GetEnvironmentEndpoint(target, id).Host);
+    }
+
+    [Theory]
+    [InlineData(PowerPlatformApiRing.Production, 2)]
+    [InlineData(PowerPlatformApiRing.Test, 1)]
+    public void EnvironmentIdentifierCannotCreateAnOversizedDnsLabel(PowerPlatformApiRing ring, int suffixLength)
+    {
+        var target = PowerPlatformApiRingSelection.TargetFor(ring);
+        var valid = new string('a', 63 + suffixLength);
+        Assert.True(PowerPlatformCloudMap.ForTarget(target).IsTrusted(
+            PowerPlatformApiDiscovery.GetEnvironmentEndpoint(target, valid)));
+        Assert.Throws<ArgumentException>(() => PowerPlatformApiDiscovery.GetEnvironmentEndpoint(target, valid + "a"));
+    }
+
+    [Theory]
     [InlineData(
         "11111111-2222-3333-4444-555555555555",
         "111111112222333344445555555555.55.environment.api.powerplatform.com")]
@@ -54,12 +128,18 @@ public sealed class PowerPlatformApiDiscoveryTests
     [InlineData("environment.example.com")]
     [InlineData("environment/one")]
     [InlineData("a")]
+    [InlineData(null)]
+    [InlineData("--")]
+    [InlineData("ab")]
+    [InlineData(" env-1")]
+    [InlineData("env_1")]
+    [InlineData("env-1?query")]
     public void EnvironmentEndpointRejectsIdentifiersThatCannotFormATrustedHost(
-        string environmentId) =>
+        string? environmentId) =>
         Assert.Throws<ArgumentException>(() =>
             PowerPlatformApiDiscovery.GetEnvironmentEndpoint(
                 PowerPlatformApiTargetConfig.Public,
-                environmentId));
+                environmentId!));
 }
 
 public sealed class PowerPlatformApiEnvironmentGeographyClientTests

@@ -77,13 +77,13 @@ public sealed class ManagedAgentPullService
 
             if (collectionWorkspace is not null && string.Equals(collectionWorkspace.EnvironmentId, environment.EnvironmentId, StringComparison.OrdinalIgnoreCase))
             {
-                var pulledCollection = await _workspaces.PullAsync(new CopilotPullRequest { ProjectDirectory = collection }, cancellationToken).ConfigureAwait(false);
+                var pulledCollection = await _workspaces.PullForEnvironmentAsync(new CopilotPullRequest { ProjectDirectory = collection }, environment, cancellationToken).ConfigureAwait(false);
                 changes.AddRange(pulledCollection.Changes);
                 warnings.AddRange(pulledCollection.Warnings);
             }
         }
 
-        var pulled = await _workspaces.PullAsync(new CopilotPullRequest { ProjectDirectory = workspaceDirectory }, cancellationToken).ConfigureAwait(false);
+        var pulled = await _workspaces.PullForEnvironmentAsync(new CopilotPullRequest { ProjectDirectory = workspaceDirectory }, environment, cancellationToken).ConfigureAwait(false);
         changes.AddRange(pulled.Changes);
         warnings.AddRange(pulled.Warnings);
 

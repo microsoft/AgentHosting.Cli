@@ -111,12 +111,12 @@ public class CommandHostTests
     }
 
     [Fact]
-    public void SwitchMissingRequiredAccount_IsUsageError_ExitTwo()
+    public void RemovedSwitch_IsUsageError_ExitTwo()
     {
         var (exitCode, _, stderr) = Run(new FakeOperations(), color: false, "auth", "switch");
 
         Assert.Equal(ExitCodes.Usage, exitCode);
-        Assert.Contains("--account", stderr);
+        Assert.Contains("switch", stderr);
     }
 
     [Fact]

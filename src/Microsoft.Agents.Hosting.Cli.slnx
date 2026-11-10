@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="Microsoft.Agents.Hosting.Cli/Microsoft.Agents.Hosting.Cli.csproj" />
   <Project Path="Microsoft.Agents.Hosting.Cli.Auth/Microsoft.Agents.Hosting.Cli.Auth.csproj" />
+  <Project Path="Microsoft.Agents.Hosting.Cli.AuthenticationChecks/Microsoft.Agents.Hosting.Cli.AuthenticationChecks.csproj" />
   <Project Path="Microsoft.Agents.Hosting.Cli.Commands/Microsoft.Agents.Hosting.Cli.Commands.csproj" />
   <Project Path="Microsoft.Agents.Hosting.Cli.Core/Microsoft.Agents.Hosting.Cli.Core.csproj" />
   <Project Path="Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests.csproj" />

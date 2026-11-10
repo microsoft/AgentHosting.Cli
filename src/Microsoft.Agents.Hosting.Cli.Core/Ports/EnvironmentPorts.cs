@@ -1,4 +1,28 @@
+using System.Text.Json.Serialization;
+using Microsoft.Agents.Hosting.Cli.Core.Auth;
+using Microsoft.Agents.Hosting.Cli.Core.Environments;
+
 namespace Microsoft.Agents.Hosting.Cli.Core.Ports;
+
+/// <summary>Immutable coordinates captured once before any asynchronous environment work.</summary>
+public sealed record EnvironmentResolutionContext(AuthProfile Profile, PowerPlatformApiTargetConfig Target);
+
+/// <summary>
+/// Creates an inventory client bound to the exact captured profile, including staged or inactive
+/// profiles. Implementations must not substitute the active profile when acquiring credentials.
+/// </summary>
+public interface IProfileEnvironmentClientFactory
+{
+    IEnvironmentClient CreateClient(EnvironmentResolutionContext context);
+}
+
+/// <summary>Durable ownership, independent of display metadata and profile mutation revisions.</summary>
+public sealed record EnvironmentSelectionOwner(
+    string ProfileId,
+    CloudInstance Cloud,
+    PowerPlatformApiRing Ring,
+    string TenantId,
+    string IdentityFingerprint);
 
 /// <summary>
 /// One Power Platform environment as the inventory reports it, carrying the endpoint/audience pair the
@@ -9,11 +33,18 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Ports;
 /// </summary>
 public sealed record PowerPlatformEnvironment
 {
+    /// <summary>Captured authentication coordinates for downstream calls, never persisted or rendered.</summary>
+    [JsonIgnore]
+    public EnvironmentResolutionContext? Context { get; init; }
+
     /// <summary>The environment id the operator passes to <c>msagent env select</c>.</summary>
     public required string EnvironmentId { get; init; }
 
     /// <summary>The environment's display name.</summary>
     public required string DisplayName { get; init; }
+
+    /// <summary>A unique inventory name, when supplied separately from the id and display name.</summary>
+    public string? UniqueName { get; init; }
 
     /// <summary>The tenant that owns the environment.</summary>
     public required string TenantId { get; init; }
@@ -68,6 +99,12 @@ public interface IResolvedEnvironmentObserver
     void Observe(ResolvedEnvironmentTarget target);
 }
 
+/// <summary>Optional observation extension that retains the exact product-resolution profile.</summary>
+public interface IProfileResolvedEnvironmentObserver : IResolvedEnvironmentObserver
+{
+    void Observe(ResolvedEnvironmentTarget target, EnvironmentResolutionContext context);
+}
+
 /// <summary>
 /// Reads the authoritative geography for one already-resolved environment. Implementations may
 /// authenticate only through the explicitly selected-account silent-token seam.
@@ -92,6 +129,19 @@ public interface IEnvironmentGeographyClient
 /// </summary>
 public sealed record ActiveEnvironment
 {
+    /// <summary>Explicit ownership; absent legacy selections remain unbound.</summary>
+    public EnvironmentSelectionOwner? Owner { get; init; }
+
+    /// <summary>
+    /// Opaque default-commit generation. A secondary selection from an older default commit cannot
+    /// override a newer default, even if its file write completes last.
+    /// </summary>
+    public string? DefaultGeneration { get; init; }
+
+    /// <summary>Captured authentication coordinates, never persisted or rendered.</summary>
+    [JsonIgnore]
+    public EnvironmentResolutionContext? Context { get; init; }
+
     /// <summary>The selected environment id.</summary>
     public required string EnvironmentId { get; init; }
 

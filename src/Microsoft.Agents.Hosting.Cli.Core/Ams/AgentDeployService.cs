@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
@@ -47,7 +48,7 @@ public sealed class AgentDeployService
             .ResolveForCommandAsync(request.EnvironmentId, cancellationToken)
             .ConfigureAwait(false);
         var targetEnvironment = await _environments
-            .ResolveForCommandAsync(targetEnvironmentId, cancellationToken)
+            .ResolveForProfileAsync(ResourceTokenContext.Require(homeEnvironment.Context).Profile, targetEnvironmentId, cancellationToken)
             .ConfigureAwait(false);
 
         if (!string.Equals(
@@ -64,6 +65,7 @@ public sealed class AgentDeployService
                 new AmsAgentReadTransportRequest
                 {
                     Endpoint = homeEnvironment.ApiEndpoint,
+                    Context = homeEnvironment.Context,
                     Audience = homeEnvironment.ApiAudience,
                     TenantId = homeEnvironment.TenantId,
                     EnvironmentId = homeEnvironment.EnvironmentId,
@@ -77,7 +79,8 @@ public sealed class AgentDeployService
             .CreateAsync(
                 new AmsDeploymentCreateTransportRequest
                 {
-                    Endpoint = _controlPlaneEndpoint,
+                    Endpoint = ControlPlane(homeEnvironment),
+                    Context = homeEnvironment.Context,
                     Audience = homeEnvironment.ApiAudience,
                     TenantId = homeEnvironment.TenantId,
                     HomeEnvironmentId = homeEnvironment.EnvironmentId,
@@ -109,6 +112,11 @@ public sealed class AgentDeployService
         return ToResult(deployment, "deployment-projection-acknowledged");
     }
 
+    private Uri ControlPlane(PowerPlatformEnvironment environment) =>
+        environment.Context is { } context
+            ? PowerPlatformCloudMap.ForTarget(context.Target).RequireTrusted(context.Target.GlobalEndpoint, "AMS control plane")
+            : _controlPlaneEndpoint;
+
     public async Task<AgentDeployResult> UpdateAsync(
         AgentDeploymentPackageUpdateRequest request,
         CancellationToken cancellationToken)
@@ -126,7 +134,8 @@ public sealed class AgentDeployService
             .ConfigureAwait(false);
         var reference = new AmsDeploymentReadTransportRequest
         {
-            Endpoint = _controlPlaneEndpoint,
+            Endpoint = ControlPlane(homeEnvironment),
+            Context = homeEnvironment.Context,
             Audience = homeEnvironment.ApiAudience,
             TenantId = homeEnvironment.TenantId,
             HomeEnvironmentId = homeEnvironment.EnvironmentId,
@@ -157,6 +166,7 @@ public sealed class AgentDeployService
                     new AmsDeploymentUpdateTransportRequest
                     {
                         Endpoint = reference.Endpoint,
+                        Context = reference.Context,
                         Audience = reference.Audience,
                         TenantId = reference.TenantId,
                         HomeEnvironmentId = reference.HomeEnvironmentId,

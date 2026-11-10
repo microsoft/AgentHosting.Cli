@@ -6,8 +6,41 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
-internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluationOperations
+internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluationOperations, IAuthProfileOperations
 {
+    public Func<AuthCreateRequest, CancellationToken, Task<AuthProfileOperationResult>>? OnAuthCreate { get; init; }
+    public AuthCreateRequest? LastAuthCreate { get; private set; }
+    public AuthProfileSelectRequest? LastAuthSelect { get; private set; }
+    public Core.Ports.AuthProfileSelector? LastAuthDelete { get; private set; }
+    public (Core.Ports.AuthProfileSelector Selector, string Name)? LastAuthName { get; private set; }
+    internal static AuthProfileInfo SafeAuthProfile => new()
+    {
+        ProfileId = "opaque-profile", Account = "operator@example.test", Cloud = "Public",
+        Name = "Dev", Index = 1, IsActive = true,
+    };
+    public Task<AuthProfileOperationResult> CreateAsync(AuthCreateRequest request, CancellationToken token)
+    {
+        LastAuthCreate = request;
+        return OnAuthCreate?.Invoke(request, token) ?? Task.FromResult(new AuthProfileOperationResult("created", SafeAuthProfile));
+    }
+    public Task<AuthProfileListResult> ListAsync(CancellationToken token) => Task.FromResult(new AuthProfileListResult([SafeAuthProfile]));
+    public Task<AuthProfileOperationResult> SelectAsync(AuthProfileSelectRequest request, CancellationToken token)
+    {
+        LastAuthSelect = request;
+        return Task.FromResult(new AuthProfileOperationResult("selected", SafeAuthProfile));
+    }
+    public Task<AuthProfileOperationResult> DeleteAsync(Core.Ports.AuthProfileSelector selector, CancellationToken token)
+    {
+        LastAuthDelete = selector;
+        return Task.FromResult(new AuthProfileOperationResult("deleted", SafeAuthProfile));
+    }
+    public Task<AuthProfileOperationResult> NameAsync(Core.Ports.AuthProfileSelector selector, string name, CancellationToken token)
+    {
+        LastAuthName = (selector, name);
+        return Task.FromResult(new AuthProfileOperationResult("named", SafeAuthProfile));
+    }
+    public Task<AuthWhoResult> WhoAsync(CancellationToken token) => Task.FromResult(new AuthWhoResult("selected", SafeAuthProfile, null, null));
+    public Task<AuthLogoutResult> ClearAsync(CancellationToken token) => Task.FromResult(new AuthLogoutResult { Status = "signed-out" });
     public Func<AuthLoginRequest, AuthLoginResult>? OnLogin { get; init; }
     public Func<AuthStatusReport>? OnStatus { get; init; }
     public Func<CancellationToken, Task<AuthStatusReport>>? OnStatusAsync { get; init; }

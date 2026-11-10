@@ -416,7 +416,13 @@ internal static class ManagedAgentFixtures
 
     public static IWorkflowWorkspacePort WorkflowWorkspace() => new FakeWorkflowWorkspacePort();
 
-    public static ManagedAgentPrincipalResolver Principals() => new(InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant));
+    public static ManagedAgentPrincipalResolver Principals() => new(
+        InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant),
+        new RecordingTokenProvider
+        {
+            AccessTokenReturns = FakeJwt.Create(scopes: PowerPlatformApiPermissions.AppsRead,
+                objectId: "22222222-2222-2222-2222-222222222222"),
+        });
 
     public static ManagedAgentRecord Agent(string agentId = "agent-1", string displayName = "Contoso Agent", string environmentId = "env-1") => new()
     {
@@ -450,6 +456,11 @@ internal static class ManagedAgentFixtures
         EnvironmentId = environmentId,
         TenantId = EnvironmentFixtures.ContosoTenant,
         DataverseOrganization = new Uri(CopilotTestFixtures.DataverseOrganization),
+        Context = new(new AuthProfile
+        {
+            AccountKey = "operator-home", Username = Principal, TenantId = EnvironmentFixtures.ContosoTenant,
+            ClientId = PowerPlatformApiPermissions.AgentHostCliApplicationId,
+        }, PowerPlatformApiTargetConfig.Public),
     };
 
     public static CopilotConnectionView Reference(string logicalName, string connectorId, string? boundConnectionId = null, params CopilotConnectionCandidate[] candidates) =>

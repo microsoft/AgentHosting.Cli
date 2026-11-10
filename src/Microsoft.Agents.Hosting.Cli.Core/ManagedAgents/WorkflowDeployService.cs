@@ -52,6 +52,8 @@ public sealed class WorkflowDeployService
         }
 
         var (target, deployment, environment) = await _resolver.ResolveDeploymentAsync(request.Project, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName, "msagent agent deploy", cancellationToken, requireExplicitDeployment: true).ConfigureAwait(false);
+        environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
+        var deployedBy = await _principals.ResolveAsync(environment, cancellationToken).ConfigureAwait(false);
 
         if (!request.Overwrite && deployment.DeploymentType == DeploymentStages.Dev)
         {
@@ -71,7 +73,6 @@ public sealed class WorkflowDeployService
         var reportedByActivation = activation.Reported.Count > 0;
 
         var deployedOn = _clock.UtcNow;
-        var deployedBy = await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false);
 
         try
         {

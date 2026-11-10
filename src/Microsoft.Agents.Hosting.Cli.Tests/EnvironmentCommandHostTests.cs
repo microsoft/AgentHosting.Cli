@@ -306,7 +306,7 @@ public sealed class EnvironmentCommandHostTests
 
         // Exit 3 is "not signed in": the command refuses rather than prompting.
         Assert.Equal(ExitCodes.NotSignedIn, exitCode);
-        Assert.Contains("msagent auth login", stderr);
+        Assert.Contains("msagent auth create", stderr);
         Assert.Equal(0, session.TotalLoginCalls);
     }
 

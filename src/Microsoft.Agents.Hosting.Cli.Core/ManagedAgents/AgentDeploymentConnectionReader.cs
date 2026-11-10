@@ -14,7 +14,7 @@ public sealed class AgentDeploymentConnectionReader
     private readonly AgentDeploymentConnectionResolver _targets;
     private readonly ICopilotConnectionPort _connections;
     private readonly WorkflowStateCache _workflowStates;
-    private readonly CoreServicesClusterCategory _cluster;
+    private readonly Func<CoreServicesClusterCategory> _cluster;
 
     /// <summary>Creates the reader.</summary>
     /// <param name="targets">Resolves the deployment, environment and workspace the verb acts on.</param>
@@ -22,11 +22,20 @@ public sealed class AgentDeploymentConnectionReader
     /// <param name="workflowStates">Reports the workflow states last observed in the environment.</param>
     /// <param name="cluster">The cluster category the environment belongs to.</param>
     public AgentDeploymentConnectionReader(AgentDeploymentConnectionResolver targets, ICopilotConnectionPort connections, WorkflowStateCache workflowStates, CoreServicesClusterCategory cluster)
+        : this(targets, connections, workflowStates, () => cluster)
+    {
+    }
+
+    /// <summary>Creates a reader that resolves its legacy cluster only when reporting connections.</summary>
+    public static AgentDeploymentConnectionReader CreateDeferred(AgentDeploymentConnectionResolver targets, ICopilotConnectionPort connections, WorkflowStateCache workflowStates, Func<CoreServicesClusterCategory> cluster) =>
+        new(targets, connections, workflowStates, cluster);
+
+    private AgentDeploymentConnectionReader(AgentDeploymentConnectionResolver targets, ICopilotConnectionPort connections, WorkflowStateCache workflowStates, Func<CoreServicesClusterCategory> cluster)
     {
         _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
         _workflowStates = workflowStates ?? throw new ArgumentNullException(nameof(workflowStates));
-        _cluster = cluster;
+        _cluster = cluster ?? throw new ArgumentNullException(nameof(cluster));
     }
 
     /// <summary>Reports the deployment's connection and workflow state.</summary>
@@ -56,7 +65,7 @@ public sealed class AgentDeploymentConnectionReader
             ConnectionsReady = connectionsReady,
             WorkflowsReady = workflowsReady,
             Ready = ConnectionReport.IsReady(connectionsReady, workflowsReady),
-            Connections = ConnectionReport.Connections(plan, _cluster, environment.EnvironmentId),
+            Connections = ConnectionReport.Connections(plan, environment.Context is { } context ? PowerAppsServiceTarget.ClusterFor(context) : _cluster(), environment.EnvironmentId),
             Workflows = workflows,
             Diagnostics = [],
             ReferenceFirst = request.ByReference,

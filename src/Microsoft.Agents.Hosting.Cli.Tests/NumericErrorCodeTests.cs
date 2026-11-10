@@ -8,6 +8,26 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 public sealed class NumericErrorCodeTests
 {
+    [Fact]
+    public void OwnedCleanupOnlyHasItsOwnCodeAndPreservesPrimaryFailures()
+    {
+        Assert.Equal(12020, RenderCode(new Auth.ProfileCredentialCleanupException(false)));
+        var primary = new CacheProtectionUnavailableException("Protected storage is locked.");
+        var wrapper = new Auth.ProfileCredentialCleanupException(true, primary);
+        Assert.Equal(12006, RenderCode(wrapper));
+        Assert.Equal(primary.ExitCode, wrapper.ExitCode);
+        Assert.Equal(primary.ErrorCode, RenderCode(new AuthOperationException(true, true, null, primary)));
+    }
+    [Fact]
+    public void CleanupKeepsPrimaryKindAndExceptionWithoutRenderingItsBody()
+    {
+        var primary = new TokenClaimException("FAKE_PRIMARY_CANARY", TokenClaimFailure.WrongTenant);
+        var cleanup = new Auth.ProfileCredentialCleanupException(true, primary);
+        Assert.Equal(primary.ErrorKind, cleanup.ErrorKind);
+        Assert.Same(primary, cleanup.InnerException);
+        Assert.DoesNotContain(primary.Message, cleanup.Message);
+    }
+
     public static TheoryData<Exception, int, int> GeneralFailures() => new()
     {
         { new UnclassifiedException(), 99001, ExitCodes.Failure },

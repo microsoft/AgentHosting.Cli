@@ -28,7 +28,7 @@ public static class AcquiredTokenTenant
             throw new TokenClaimException(
                 $"The access token was acquired for tenant '{acquisition.TenantId}', but this operation targets tenant '{expectedTenantId}'.",
                 TokenClaimFailure.WrongTenant,
-                remediation: $"Run `msagent auth login --tenant {expectedTenantId}` with an account in that tenant.");
+                remediation: $"Run `msagent auth create --tenant {expectedTenantId}` for the intended cloud with an account in that tenant.");
         }
 
         return acquisition.AccessToken;

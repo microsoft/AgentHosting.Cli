@@ -69,6 +69,7 @@ public sealed class WorkflowCreateService
         RequireValidName(displayName);
 
         var environment = await _environmentResolver.ResolveAsync(request.EnvironmentId, cancellationToken).ConfigureAwait(false);
+        environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
         var projectDirectory = PrepareProjectDirectory(request.Project);
         var folderName = _workspace.ProjectFolderName(displayName);
         var workspaceRoot = PrepareWorkspaceRoot(projectDirectory, displayName, folderName);
@@ -76,7 +77,7 @@ public sealed class WorkflowCreateService
 
         var createdFiles = ProjectRelative(folderName, _scaffold.Scaffold(workspaceRoot, displayName, workflowId));
         _workflows.WriteConnectionReferenceDeclaration(workspaceRoot);
-        var stored = Register(projectDirectory, displayName, request.Description, folderName, environment, workflowId, await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false));
+        var stored = Register(projectDirectory, displayName, request.Description, folderName, environment, workflowId, await _principals.ResolveAsync(environment, cancellationToken).ConfigureAwait(false));
 
         return new ManagedAgentCreateResult
         {
@@ -104,7 +105,8 @@ public sealed class WorkflowCreateService
         }
 
         var source = await _environmentResolver.ResolveAsync(request.CloneEnvironmentId ?? request.EnvironmentId, cancellationToken).ConfigureAwait(false);
-        var target = string.IsNullOrWhiteSpace(request.EnvironmentId) ? source : await _environmentResolver.ResolveAsync(request.EnvironmentId, cancellationToken).ConfigureAwait(false);
+        var target = string.IsNullOrWhiteSpace(request.EnvironmentId) ? source : await _environmentResolver.ResolveForContextAsync(source.Context!, request.EnvironmentId, cancellationToken).ConfigureAwait(false);
+        target = await _principals.BindUserAsync(target, cancellationToken).ConfigureAwait(false);
 
         var remote = await _workflows.GetAsync(source, workflowId, cancellationToken).ConfigureAwait(false)
             ?? throw ManagedAgentException.WorkflowSourceNotFound(workflowId.ToString(), source.EnvironmentId);
@@ -121,7 +123,7 @@ public sealed class WorkflowCreateService
         var workspaceRoot = PrepareWorkspaceRoot(projectDirectory, displayName, folderName);
 
         var downloaded = await _workflows.DownloadAsync(source, workflowId, workspaceRoot, cancellationToken).ConfigureAwait(false);
-        var stored = Register(projectDirectory, displayName, request.Description ?? remote.Description, folderName, target, workflowId, await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false));
+        var stored = Register(projectDirectory, displayName, request.Description ?? remote.Description, folderName, target, workflowId, await _principals.ResolveAsync(target, cancellationToken).ConfigureAwait(false));
         var deployment = _homeDeployments.Register(projectDirectory, stored, target.EnvironmentId);
 
         return new ManagedAgentCreateResult

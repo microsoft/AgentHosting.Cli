@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Auth;
+using Microsoft.Agents.Hosting.Cli.Auth.OwnedStorage;
 using Microsoft.Agents.Hosting.Cli.Commands.Common;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
@@ -129,7 +130,7 @@ internal static class Program
             ConfigDirectory = configDirectory,
             AllowUnprotectedCache = ParseBoolean(Environment.GetEnvironmentVariable("AH_CLI_ALLOW_UNPROTECTED_CACHE")),
             Cloud = powerPlatformApiTarget.Cloud,
-            InteractionAllowed = !GlobalOptions.IsPresent(args, "--non-interactive"),
+            InteractionAllowed = AgentHostCli.ResolveInteractionAllowed(args, featureFlags),
             DebugOutput = GlobalOptions.IsPresent(args, "--debug") ? Console.Error : null,
             MessageOutput = progressSpinner.Error,
         };
@@ -146,18 +147,14 @@ internal static class Program
             sp => sp.GetRequiredService<CommandTelemetryTenantObserver>());
         services.AddSingleton<CommandTelemetryEnvironmentObserver>();
         services.AddSingleton<IResolvedEnvironmentObserver>(
-            sp => sp.GetRequiredService<CommandTelemetryEnvironmentObserver>());
+            sp => new CapturedProfileEnvironmentObserver(
+                sp.GetRequiredService<CapturedProfileClients>(),
+                sp.GetRequiredService<CommandTelemetryEnvironmentObserver>()));
 
         // The Power Platform API transport lives here, in the composition root, rather than in the auth
         // package: this is the only place that should decide how an HttpClient behaves. Automatic
         // redirect following is disabled so a host-changing redirect can never cause the delegated
         // bearer token to be replayed to a host the cloud map never approved.
-        services.AddSingleton<IEnvironmentClient>(sp => new PowerPlatformApiEnvironmentClient(
-            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
-            sp.GetRequiredService<ITokenProvider>(),
-            powerPlatformApiTarget,
-            claimsValidator: sp.GetRequiredService<PpapiTokenClaimsValidator>()));
-
         services.AddSingleton<AgentCreationTarget>();
 
         // Automatic redirect following is disabled at client construction — before any authorization
@@ -167,11 +164,13 @@ internal static class Program
         services.AddSingleton<IAmsPackagePublicationTransport>(sp => new AmsPackagePublicationAdapter(
             new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
-            sp.GetRequiredService<PpapiTokenClaimsValidator>()));
+            sp.GetRequiredService<PpapiTokenClaimsValidator>(),
+            profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
         services.AddSingleton(sp => new AmsDeploymentAdapter(
             new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
-            sp.GetRequiredService<PpapiTokenClaimsValidator>()));
+            sp.GetRequiredService<PpapiTokenClaimsValidator>(),
+            profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
         services.AddSingleton<IAmsAgentReadTransport>(
             sp => sp.GetRequiredService<AmsDeploymentAdapter>());
         services.AddSingleton<IAmsDeploymentTransport>(
@@ -179,20 +178,16 @@ internal static class Program
         services.AddSingleton<IAmsAgentCreationTransport>(sp => new AmsAgentCreationAdapter(
             new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
-            sp.GetRequiredService<PpapiTokenClaimsValidator>()));
+            sp.GetRequiredService<PpapiTokenClaimsValidator>(),
+            profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
 
-        services.AddAgentHostAuthentication(options, powerPlatformApiTarget);
+        ConfigureProfileAuthentication(services, options, powerPlatformApiTarget, Environment.GetEnvironmentVariable,
+            bootstrapProfile: invocation.Profile);
         services.AddSingleton<ICommandTelemetryProfileContextSource>(
             sp => new CommandTelemetryProfileContextSource(
                 sp.GetRequiredService<IAuthProfileTelemetryStore>(),
                 sp.GetRequiredService<AuthSessionContext>()));
         services.AddAgentHostCopilotStudio(progressSpinner.Error, powerPlatformApiTarget, debugRequested);
-        services.AddSingleton<IEnvironmentGeographyClient>(
-            sp => new PowerPlatformApiEnvironmentGeographyClient(
-                new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
-                sp.GetRequiredService<ISelectedAccountTokenProvider>(),
-                powerPlatformApiTarget,
-                sp.GetRequiredService<PpapiTokenClaimsValidator>()));
 
         services.AddSingleton<CopilotSchemaName>();
         services.AddSingleton<CopilotEnvironmentResolver>();
@@ -208,6 +203,7 @@ internal static class Program
         services.AddSingleton<IAgentDeploymentRegistry>(sp => sp.GetRequiredService<JsonAgentConfigStore>());
         services.AddSingleton<IDeploymentStore, ProjectDeploymentStore>();
         services.AddSingleton<IConfirmationPrompt>(_ => new ConsoleConfirmationPrompt(PromptInput(progressSpinner), progressSpinner.Error));
+        services.AddSingleton<IAuthProfilePicker>(_ => new ConsoleAuthProfilePicker(PromptInput(progressSpinner), progressSpinner.Error));
         services.AddSingleton<ManagedAgentPrincipalResolver>();
         services.AddSingleton<ManagedAgentResolver>();
         services.AddSingleton<LiveTestTargetResolver>();
@@ -266,26 +262,7 @@ internal static class Program
         services.AddSingleton<DeploymentAgentTypeResolver>();
         services.AddSingleton<IBrowserLauncher, SystemBrowserLauncher>();
         services.AddSingleton<IOperatorInterrupt, ConsoleEscapeInterrupt>();
-        services.AddSingleton<IConnectionConsentFlow>(sp => new ConnectionConsentLadder(
-            [
-                new ConsentLinkConnectionConsentFlow(
-                    new PowerAppsConnectionClient(
-                        sp.GetRequiredService<ITokenProvider>(),
-                        CoreServicesCluster.For(powerPlatformApiTarget),
-                        diagnostics: debugRequested ? Console.Error : null),
-                    sp.GetRequiredService<IInteractiveMessagePresenter>(),
-                    sp.GetRequiredService<IBrowserLauncher>(),
-                    CoreServicesCluster.For(powerPlatformApiTarget),
-                    sp.GetRequiredService<IOperatorInterrupt>()),
-                new BrowserConnectionConsentFlow(
-                    sp.GetRequiredService<IBrowserLauncher>(),
-                    sp.GetRequiredService<IInteractiveMessagePresenter>(),
-                    sp.GetRequiredService<IConnectorCatalogPort>(),
-                    sp.GetRequiredService<ManagedAgentPrincipalResolver>(),
-                    CoreServicesCluster.For(powerPlatformApiTarget),
-                    sp.GetRequiredService<IOperatorInterrupt>(),
-                    confirmations: sp.GetRequiredService<IConfirmationPrompt>()),
-            ]));
+        ConfigureConnectionConsent(services, powerPlatformApiTarget, debugRequested);
         services.AddSingleton(sp => new ConnectorReadinessWait(sp.GetRequiredService<IConnectorCatalogPort>()));
         services.AddSingleton<AgentDeploymentConnectionResolver>();
         services.AddSingleton<ConnectionTargetResolver>();
@@ -295,19 +272,19 @@ internal static class Program
         services.AddSingleton<IConnectionSelectionPrompt>(_ => new ConsoleConnectionSelectionPrompt(PromptInput(progressSpinner), progressSpinner.Error));
         services.AddSingleton<ConnectionCreationFlow>();
         services.AddSingleton<ConnectionBindingCoordinator>();
-        services.AddSingleton(sp => new AgentDeploymentConnectionService(
+        services.AddSingleton(sp => AgentDeploymentConnectionService.CreateDeferred(
             sp.GetRequiredService<AgentDeploymentConnectionResolver>(),
             sp.GetRequiredService<ICopilotConnectionPort>(),
             sp.GetRequiredService<ConnectionBindingCoordinator>(),
             sp.GetRequiredService<IConnectionSelectionPrompt>(),
             sp.GetRequiredService<WorkflowStateCache>(),
             sp.GetRequiredService<ManagedAgentPrincipalResolver>(),
-            CoreServicesCluster.For(powerPlatformApiTarget)));
-        services.AddSingleton(sp => new AgentDeploymentConnectionReader(
+            () => PowerAppsServiceTarget.ClusterFor(powerPlatformApiTarget)));
+        services.AddSingleton(sp => AgentDeploymentConnectionReader.CreateDeferred(
             sp.GetRequiredService<AgentDeploymentConnectionResolver>(),
             sp.GetRequiredService<ICopilotConnectionPort>(),
             sp.GetRequiredService<WorkflowStateCache>(),
-            CoreServicesCluster.For(powerPlatformApiTarget)));
+            () => PowerAppsServiceTarget.ClusterFor(powerPlatformApiTarget)));
         services.AddSingleton<AgentDeploymentConnectorListService>();
         services.AddSingleton(sp => new AgentDeploymentConnectionCreateService(
             sp.GetRequiredService<ConnectionTargetResolver>(),
@@ -349,16 +326,12 @@ internal static class Program
         var telemetryPreferences =
             FileTelemetryPreferenceStore.CreateForAhConfigDirectory(options.ConfigDirectory);
         services.AddSingleton<ITelemetryPreferenceStore>(telemetryPreferences);
-        services.AddSingleton(sp => new TelemetryDestinationResolver(
-            powerPlatformApiTarget,
-            sp.GetRequiredService<IEnvironmentGeographyClient>(),
-            TelemetryIngestionConfiguration.ProductionKey,
-            TelemetryIngestionConfiguration.NonProductionKey,
-            sp.GetRequiredService<CommandTelemetryTenantObserver>()));
         services.AddSingleton<ITelemetryDestinationResolver>(
-            sp => SelectTelemetryDestinationResolver(
-                invocation.RingKnown,
-                sp.GetRequiredService<TelemetryDestinationResolver>()));
+            sp => new CapturedProfileTelemetryDestinationResolver(
+                sp.GetRequiredService<CapturedProfileClients>(),
+                sp.GetRequiredService<IEnvironmentGeographyClient>(),
+                powerPlatformApiTarget, invocation.RingKnown,
+                sp.GetRequiredService<CommandTelemetryTenantObserver>()));
         services.AddSingleton(sp => new TelemetryControlService(
             sp.GetRequiredService<ITelemetryPreferenceStore>(),
             () => Environment.GetEnvironmentVariable(
@@ -390,7 +363,7 @@ internal static class Program
         var cli = new AgentHostCli(
             operations,
             provider.GetRequiredService<CommandTelemetrySessionFactory>(),
-            new CompositeHandlerProvider(new FacadeHandlerProvider(operations), provider),
+            new CompositeHandlerProvider(new FacadeHandlerProvider(operations, provider.GetRequiredService<IAuthProfileOperations>()), provider),
             featureFlags,
             provider.GetRequiredService<CommandTelemetrySessionAccessor>(),
             progressSpinner: progressSpinner);
@@ -470,8 +443,7 @@ internal static class Program
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(configDirectory);
 
-        return PowerPlatformApiRingSelection.TargetFor(
-            await ActiveProfileRing.ReadAsync(ProfilesPath(configDirectory)).ConfigureAwait(false));
+        return (await ReadInvocationTargetAsync(configDirectory).ConfigureAwait(false)).Target;
     }
 
     /// <summary>
@@ -482,7 +454,8 @@ internal static class Program
     /// Whether <paramref name="Target"/> came from the stored sign-in. False where the ring could not
     /// be read and the command runs anyway, which is a fallback rather than a classification.
     /// </param>
-    internal readonly record struct InvocationTarget(PowerPlatformApiTargetConfig Target, bool RingKnown);
+    /// <param name="Profile">Token-free authentication coordinates captured by bootstrap.</param>
+    internal readonly record struct InvocationTarget(PowerPlatformApiTargetConfig Target, bool RingKnown, AuthProfile? Profile = null);
 
     /// <summary>
     /// Resolves the cloud for one invocation, letting the commands that repair the stored sign-in run
@@ -498,10 +471,10 @@ internal static class Program
 
         try
         {
-            return new InvocationTarget(await ResolvePowerPlatformApiTargetAsync(configDirectory).ConfigureAwait(false), RingKnown: true);
+            return await ReadInvocationTargetAsync(configDirectory).ConfigureAwait(false);
         }
         catch (Exception failure) when (
-            GlobalOptions.IsRingIndependent(args)
+            AgentHostCli.IsRingIndependent(args)
             && failure is AgentHostingException or IOException or UnauthorizedAccessException)
         {
             return new InvocationTarget(PowerPlatformApiRingSelection.Default, RingKnown: false);
@@ -534,13 +507,114 @@ internal static class Program
         ArgumentException.ThrowIfNullOrWhiteSpace(configDirectory);
         ArgumentNullException.ThrowIfNull(failure);
 
-        return $"The cloud this command targets could not be read from the stored sign-in, so nothing was run: {failure.Message} "
-            + $"Run `msagent auth logout` to clear the local sign-in state, then `msagent auth login` to sign in again. "
-            + $"Deleting {ProfilesPath(configDirectory)} has the same effect as the logout.";
+        return $"The cloud this command targets could not be read from {ProfilesPath(configDirectory)}, so nothing was run. "
+            + "Run `msagent auth clear` to clear local sign-in state and owned credentials, then `msagent auth create` to sign in again. "
+            + "Deleting profile metadata alone does not remove owned credentials.";
     }
 
     private static string ProfilesPath(string configDirectory) =>
         Path.Combine(configDirectory, AgentHostAuthOptions.ProfilesFileName);
+
+    private static async Task<InvocationTarget> ReadInvocationTargetAsync(string configDirectory)
+    {
+        var profile = await new FileAuthProfileStore(ProfilesPath(configDirectory))
+            .GetActiveProfileAsync(CancellationToken.None).ConfigureAwait(false);
+        return new(profile is null ? PowerPlatformApiTargetConfig.Public
+            : PowerPlatformApiTargetSelection.TargetFor(profile.Cloud, profile.Ring), true, profile);
+    }
+
+    internal static void ConfigureConnectionConsent(IServiceCollection services, PowerPlatformApiTargetConfig target, bool debugRequested)
+    {
+        services.AddSingleton<IConnectionConsentFlow>(sp => new CapturedConnectionConsentFlow(environment =>
+        {
+            var cluster = environment.Context is { } context
+                ? PowerAppsServiceTarget.ClusterFor(context) : PowerAppsServiceTarget.ClusterFor(target);
+            return new ConnectionConsentLadder(
+            [
+                new ConsentLinkConnectionConsentFlow(
+                    new PowerAppsConnectionClient(
+                        sp.GetRequiredService<ITokenProvider>(), cluster,
+                        diagnostics: debugRequested ? Console.Error : null,
+                        profileCredentials: sp.GetRequiredService<IProfileCredentialProvider>()),
+                    sp.GetRequiredService<IInteractiveMessagePresenter>(),
+                    sp.GetRequiredService<IBrowserLauncher>(), cluster,
+                    sp.GetRequiredService<IOperatorInterrupt>()),
+                new BrowserConnectionConsentFlow(
+                    sp.GetRequiredService<IBrowserLauncher>(),
+                    sp.GetRequiredService<IInteractiveMessagePresenter>(),
+                    sp.GetRequiredService<IConnectorCatalogPort>(),
+                    sp.GetRequiredService<ManagedAgentPrincipalResolver>(), cluster,
+                    sp.GetRequiredService<IOperatorInterrupt>(),
+                    confirmations: sp.GetRequiredService<IConfirmationPrompt>()),
+            ]);
+        }));
+    }
+
+    internal static void ConfigureProfileAuthentication(
+        IServiceCollection services, AgentHostAuthOptions options, PowerPlatformApiTargetConfig target,
+        Func<string, string?> readEnvironment,
+        Func<IOwnedProtectedStorageBackend>? createOwnedStorage = null,
+        Func<ILegacyMsalTokenCacheBackend>? createLegacyCache = null,
+        AuthProfile? bootstrapProfile = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(readEnvironment);
+        var nativeSettings = new Dictionary<string, string?>
+        {
+            ["DBUS_SESSION_BUS_ADDRESS"] = readEnvironment("DBUS_SESSION_BUS_ADDRESS"),
+            ["G_DBUS_DEBUG"] = readEnvironment("G_DBUS_DEBUG"),
+        };
+        var macPolicy = new Lazy<MacOsKeychainProcessPolicy?>(() => OperatingSystem.IsMacOS()
+            ? MacOsKeychainProcessPolicy.EstablishForCliProcess() : null);
+        services.AddAgentHostAuthentication(options, target);
+        var ownedStorage = new DeferredOwnedProtectedStorage(createOwnedStorage ?? (() =>
+            OwnedProtectedStorageBackendFactory.Create(options.ConfigDirectory, macPolicy.Value, nativeSettings.GetValueOrDefault)),
+            OperatingSystem.IsLinux() && options.AllowUnprotectedCache ? options.ConfigDirectory : null);
+        var runtime = new ProfileCredentialRuntimeOptions
+        {
+            GitHubRequestUrl = readEnvironment("ACTIONS_ID_TOKEN_REQUEST_URL"),
+            GitHubRequestToken = readEnvironment("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
+            AzureDevOpsRequestUrl = readEnvironment("MSAGENT_ADO_ID_TOKEN_REQUEST_URL"),
+            AzureDevOpsRequestToken = readEnvironment("MSAGENT_ADO_ID_TOKEN_REQUEST_TOKEN"),
+            AzureTenantId = readEnvironment("AZURE_TENANT_ID"),
+            AzureClientId = readEnvironment("AZURE_CLIENT_ID"),
+            AzureClientSecret = readEnvironment("AZURE_CLIENT_SECRET"),
+            AzureCertificatePath = readEnvironment("AZURE_CLIENT_CERTIFICATE_PATH"),
+            AzureCertificatePassword = readEnvironment("AZURE_CLIENT_CERTIFICATE_PASSWORD"),
+            AzureFederatedTokenFile = readEnvironment("AZURE_FEDERATED_TOKEN_FILE"),
+            ManagedIdentityClientId = readEnvironment("AZURE_CLIENT_ID"),
+            AzureCredentialSelection = readEnvironment("AZURE_TOKEN_CREDENTIALS"),
+        };
+        var legacyCache = new DeferredLegacyMsalTokenCache(createLegacyCache ?? (() =>
+            OperatingSystem.IsLinux() && options.AllowUnprotectedCache
+                ? LegacyMsalTokenCacheBackendFactory.CreateWithUnprotectedTokenCacheFallback(options.ConfigDirectory, nativeSettings.GetValueOrDefault)
+                : LegacyMsalTokenCacheBackendFactory.Create(options.ConfigDirectory, macPolicy.Value, nativeSettings.GetValueOrDefault)));
+        services.AddAgentHostProfileCredentials(ownedStorage, runtime, legacyCache);
+        // These wrappers are host-owned, unlike arbitrary caller-supplied adapter instances.
+        services.AddSingleton<IOwnedProtectedStorageBackend>(_ => ownedStorage);
+        services.AddSingleton<ILegacyMsalTokenCacheBackend>(_ => legacyCache);
+        services.AddKeyedSingleton<HttpClient>("profile-environments", (_, _) =>
+            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()));
+        services.AddSingleton<IProfileResourceTokenProvider>(sp => new ProfileResourceTokenProvider(
+            sp.GetRequiredService<IProfileCredentialProvider>(), sp.GetRequiredService<PpapiTokenClaimsValidator>()));
+        services.AddSingleton(sp => new CapturedProfileClients(
+            sp.GetRequiredKeyedService<HttpClient>("profile-environments"),
+            sp.GetRequiredService<IProfileResourceTokenProvider>(), bootstrapProfile));
+        services.AddSingleton<IProfileEnvironmentClientFactory>(sp => sp.GetRequiredService<CapturedProfileClients>());
+        services.AddKeyedSingleton<HttpClient>("profile-geography", (_, _) =>
+            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()));
+        services.AddSingleton<IEnvironmentGeographyClient>(sp => new CapturedProfileGeographyClient(
+            sp.GetRequiredKeyedService<HttpClient>("profile-geography"), sp.GetRequiredService<CapturedProfileClients>(),
+            sp.GetRequiredService<MsalSilentTokenProvider>()));
+        services.AddSingleton(sp => new EnvironmentSelectionService(
+            sp.GetRequiredService<IProfileEnvironmentClientFactory>(),
+            sp.GetRequiredService<IEnvironmentSelectionStore>(),
+            sp.GetRequiredService<IAuthProfileStore>(),
+            sp.GetRequiredService<IClock>(),
+            sp.GetService<IResolvedEnvironmentObserver>()));
+    }
 
     /// <summary>
     /// Resolves the config directory. This is shared by every ring: identity state is ring-neutral,

@@ -1,0 +1,82 @@
+name: Dedicated native-nonsecret authentication acceptance
+
+# Never part of push/PR/offline tests. No authentication or live services are exercised.
+on:
+  workflow_dispatch:
+    inputs:
+      dedicated:
+        description: Authorize disposable hosted test-owned native stores (never live sign-in)
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  authorization:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require explicit native-nonsecret authorization
+        run: test "${{ inputs.dedicated }}" = "true"
+  native:
+    needs: authorization
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x86
+            runner: windows-2025
+            architecture: x86
+          - rid: win-x64
+            runner: windows-2025
+            architecture: x64
+          - rid: win-arm64
+            runner: windows-11-arm
+            architecture: arm64
+          - rid: osx-x64
+            runner: macos-15-intel
+            architecture: x64
+          - rid: osx-arm64
+            runner: macos-15
+            architecture: arm64
+          - rid: linux-x64
+            runner: ubuntu-24.04
+            architecture: x64
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+            architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Reject tracked local agent artifacts
+        shell: pwsh
+        run: ./.github/scripts/verify-no-local-agent-artifacts.ps1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+          architecture: ${{ matrix.architecture }}
+      - uses: dotnet/nbgv@705dad19ab067f12f4e9eeaa60812e01edef5d25 # v0.5.2
+        with:
+          path: src
+          setAllVars: true
+      - name: Dedicated Linux prerequisites only
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libglib2.0-0t64 dbus gnome-keyring libx11-6 libc++1 libc++abi1 libsecret-1-0 libwebkit2gtk-4.1-0
+      - name: Restore
+        run: dotnet restore Microsoft.Agents.Hosting.Cli.proj
+      - name: Build Debug
+        run: dotnet build Microsoft.Agents.Hosting.Cli.proj --no-restore -c Debug
+      - name: Main offline suite
+        run: dotnet test src/Microsoft.Agents.Hosting.Cli.Tests/Microsoft.Agents.Hosting.Cli.Tests.csproj --no-build --no-restore -c Debug
+      - name: Core-only embedding suite
+        run: dotnet test src/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests.csproj --no-build --no-restore -c Debug
+      - name: Package all seven RID inputs
+        shell: pwsh
+        run: ./.github/scripts/build-authentication-packages.ps1 -Configuration Debug
+      - name: Prepare exact test-owned session and run native-nonsecret tier
+        shell: pwsh
+        run: ./.github/scripts/test-authentication-native.ps1 -ExpectedRid ${{ matrix.rid }} -Dedicated -Configuration Debug

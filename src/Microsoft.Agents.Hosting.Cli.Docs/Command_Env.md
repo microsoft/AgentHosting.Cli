@@ -9,15 +9,17 @@
 | [`msagent env list`](#msagent-env-list) | List environments available to the signed-in account. |
 | [`msagent env select`](#msagent-env-select) | Select the active environment used by later commands. |
 
-Both commands require an active signed-in CLI account and query the live Power Platform API
-inventory using silent token acquisition. They never open identity UI, even without
-`--non-interactive`. If sign-in or consent is required, run `msagent auth login` separately.
-Inventory access requires the Power Platform API delegated permission `PowerApps.Environments.Read`.
+Both commands require a selected CLI profile and query the live Power Platform API
+inventory using its captured credential. They never open identity UI, even without
+`--non-interactive`. If sign-in or consent is required, run `msagent auth create` separately
+for the intended account and cloud.
+User inventory access requires the Power Platform API delegated permission `PowerApps.Environments.Read`;
+application access is checked against the required application principal and product permissions.
 
-The active account's `prod`, `preprod`, or `test` ring selects the API endpoint and ring-specific
-selection store. These are public-cloud API rings, not sovereign-cloud selectors; these commands
-have no `--cloud` option. Use `msagent auth switch --cloud <ring>` before listing/selecting in a
-different ring.
+The selected profile's registered cloud selects the API endpoint and compatible owned selection
+state. These commands have no `--cloud` or separate authentication `--ring` option. Create/select
+the intended cloud profile first with `msagent auth create` and `msagent auth select`. Registered
+authentication coordinates do not guarantee every sovereign downstream service route is available.
 
 ## `msagent env list`
 
@@ -37,7 +39,7 @@ Listing does not change the active selection.
 
 ## `msagent env select`
 
-Persists the environment that later agent commands use.
+Persists the selected profile's default environment and a compatible owned override for later commands.
 
 ```text
 msagent env select <environment-id>
@@ -54,10 +56,10 @@ without replacing the existing selection.
 
 The result status is `selected` and includes environment ID, display name, tenant ID, API endpoint,
 and selection timestamp. This persists local targeting state; it does not modify the cloud
-environment or grant permissions. Later environment-dependent commands require a selection rather
-than silently falling back to a default, unless they support an explicit command-scoped target.
-An explicit target on another command does not change this persisted selection.
+environment or grant permissions. Target precedence is an explicit command environment, a compatible
+owned override, the profile default, then a missing-target error. An explicit target on another
+command does not change this persisted selection.
 
-`msagent auth status` shows the stored selection and whether it remains tenant-bound. Login or
-account switching clears selections across all rings when the account, tenant, or ring changes;
-select again afterward. Logout leaves the selection on disk but it cannot be used while signed out.
+`msagent auth status` and `msagent auth who` show the stored binding. Incompatible or foreign overrides
+are not silently reused. To change another profile's default, first select it with `msagent auth select`,
+then run `msagent env select`. `auth clear` clears owned state; shared tool selections are not adopted.

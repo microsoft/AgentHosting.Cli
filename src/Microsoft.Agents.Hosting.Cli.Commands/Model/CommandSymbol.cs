@@ -31,6 +31,9 @@ public sealed record CommandOption(string Name, string Description) : CommandSym
     /// <summary>Additional long spellings the option answers to.</summary>
     public IReadOnlyList<string> ExtraAliases { get; init; } = [];
 
+    /// <summary>Whether parser diagnostics must not include this option's values.</summary>
+    public bool IsSensitive { get; init; }
+
     /// <summary>Whether descendants of the owning command also accept the option.</summary>
     public bool Recursive { get; init; }
 

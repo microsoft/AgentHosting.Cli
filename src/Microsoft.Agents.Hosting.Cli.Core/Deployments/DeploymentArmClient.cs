@@ -79,7 +79,7 @@ public abstract class DeploymentArmClient
             throw new ProvisioningException(
                 ProvisioningErrorKind.MissingContext,
                 "No accessible Azure subscriptions were found for the signed-in account.",
-                "Sign in with `msagent auth login` to an account that can access a subscription, or pass --subscription.");
+                "Sign in with `msagent auth create` for the intended cloud to an account that can access a subscription, or pass --subscription.");
         }
 
         if (!string.IsNullOrWhiteSpace(preferredSubscriptionId))

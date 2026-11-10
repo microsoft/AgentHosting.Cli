@@ -1,6 +1,6 @@
 # MSAgent CLI command reference
 
-Last updated: 2026-10-21
+Last updated: 2026-11-06
 
 This document describes the MSAgent CLI command surface. The packaged executable is named
 `msagent`, and the CLI project is `Microsoft.Agents.Hosting.Cli`.
@@ -59,6 +59,7 @@ have an `errorKind`. Error codes identify conditions and are not process exit co
 | `1` | The operation failed. |
 | `2` | Invalid usage, configuration, context, or a conflicting operation. |
 | `3` | Sign-in or user interaction is required. |
+| `130` | Caller cancellation; authentication can also report safe committed/cleanup state. |
 
 Live-test commands have their own output contract: `test ask --json` streams one activity/result
 document, not the ordinary envelope, and `test playground` rejects `--json`. Playground
@@ -71,7 +72,7 @@ normal success envelope.
 
 | Module | Subcommands | Description |
 | --- | --- | --- |
-| [`msagent auth`](Command_Auth.md) | `login`, `status`, `switch`, `logout` | Authenticate operators and manage stored accounts. |
+| [`msagent auth`](Command_Auth.md) | `create`, `list`, `select`, `delete`, `name`, `update`, `clear`, `who`, `login`, `status`, `logout` | Authenticate users/workloads and manage owned profiles without exporting tokens. |
 | [`msagent env`](Command_Env.md) | `list`, `select` | List and select Power Platform environments. |
 | [`msagent agent`](Command_Agent.md) | `create`, `init` (**MCS-specific**), `list` (**MCS-specific**), `show`, `pull` (**MCS-specific**), `delete` (**MCS-specific**), `deploy`, `share` (**MCSAgent-only**), `share show` (**MCSAgent-only**), `unshare` (**MCSAgent-only**), `package upload` (**Gated**), [`eval`](Command_Agent_Eval.md) {`run`, `list`, `show`, `cancel`, `delete`, `generate`, `testset`} (**Gated**, **MCSAgent-only**) | Create, list, inspect, and delete hosted agents or standalone workflows; initialize or pull MCS source; deploy agents and workflows; manage MCS agent sharing; run MCS evaluations; and upload agent packages. |
 | [`msagent deployment`](Command_Deployment.md) | `create`, `list`, `show`, `update`, `delete`, `channel` {`create`, `update`, `delete`, `show`, `list`} (**CodeAgent-specific**), [`connection`](Command_Deployment_Connection.md) {`list`, `add`, `update`, `remove`, `connectors`} (**MCS-specific**), [`oauth`](Command_Deployment_OAuth.md) {`create`, `delete`, `list`, `list-providers`, `show`, `update`} (**CodeAgent-specific**) | Manage deployment records, CodeAgent channels and OAuth settings, and MCS connections. |

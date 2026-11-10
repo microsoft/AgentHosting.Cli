@@ -159,6 +159,7 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
     public Dictionary<string, string> EnvironmentIdByDirectory { get; } = [];
 
     public List<string> PushedDirectories { get; } = [];
+    public List<CopilotWorkspaceInfo> PushedWorkspaces { get; } = [];
 
     public List<string> PulledDirectories { get; } = [];
 
@@ -242,6 +243,7 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
     public Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
     {
         PushCalls++;
+        PushedWorkspaces.Add(workspace);
         LastPushOverwrite = overwrite;
         PushedDirectories.Add(workspace.WorkspacePath);
 
@@ -316,6 +318,7 @@ internal sealed class RecordingAttachPort : ICopilotWorkspaceAttachPort
     public bool AgentCreated { get; init; } = true;
 
     public Action? OnAttach { get; init; }
+    public Action<CopilotAttachCommand>? OnAttachCommand { get; init; }
 
     public Exception? Throws { get; init; }
 
@@ -334,6 +337,7 @@ internal sealed class RecordingAttachPort : ICopilotWorkspaceAttachPort
         }
 
         OnAttach?.Invoke();
+        OnAttachCommand?.Invoke(command);
 
         return Task.FromResult(new CopilotAttachOutcome
         {

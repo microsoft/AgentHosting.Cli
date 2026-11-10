@@ -44,6 +44,10 @@ public sealed record PowerPlatformApiTargetConfig
     /// <summary>The environment-management api-version.</summary>
     public required string EnvironmentsApiVersion { get; init; }
 
+    /// <summary>The selected cloud's default login authority, before an optional tenant is pinned.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public AuthorityInfo Authority => AgentHostAuthorityResolver.Resolve(Cloud);
+
     /// <summary>Public-cloud defaults.</summary>
     public static PowerPlatformApiTargetConfig Public { get; } = new()
     {
@@ -125,7 +129,11 @@ public sealed class PowerPlatformApiEnvironmentClient : IEnvironmentClient
     /// The exact scope the client requests for the inventory call, exposed so scope construction is
     /// assertable without issuing a request.
     /// </summary>
-    public string InventoryScope => _scopeBuilder.DefaultScope(_config.Audience);
+    public string InventoryScope => _tokenProvider is ProfileBoundTokenProvider bound
+        && (bound.Context.Profile.PrincipalType == AuthPrincipalType.ServicePrincipal
+            || bound.Context.Profile.CredentialMethod == AuthCredentialMethod.DefaultAzureCredential)
+            ? _config.Audience.TrimEnd('/') + "/.default"
+            : _scopeBuilder.DefaultScope(_config.Audience);
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<PowerPlatformEnvironment>> ListEnvironmentsAsync(CancellationToken cancellationToken)
@@ -142,12 +150,12 @@ public sealed class PowerPlatformApiEnvironmentClient : IEnvironmentClient
             .AcquireTokenSilentAsync(_config.Audience, targetTenantId: null, cancellationToken)
             .ConfigureAwait(false);
 
-        // Fail fast on a token the service would reject anyway. There is no tenant to bind to here:
-        // the inventory is what discovers tenants, so this call runs before any tenant is known.
-        var claims = _claimsValidator.ValidateWithoutTenantBinding(
-            token.AccessToken,
-            _config.Audience,
-            PowerPlatformApiPermissions.EnvironmentsRead);
+        // Profile-bound inventory checks its captured tenant; legacy discovery has no tenant yet.
+        var claims = _tokenProvider is ProfileBoundTokenProvider bound
+            ? _claimsValidator.ValidateForProfile(token.AccessToken, _config.Audience,
+                bound.Context.Profile.TenantId ?? string.Empty, bound.Context.Profile, [PowerPlatformApiPermissions.EnvironmentsRead])
+            : _claimsValidator.ValidateWithoutTenantBinding(
+                token.AccessToken, _config.Audience, PowerPlatformApiPermissions.EnvironmentsRead);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
@@ -266,6 +274,7 @@ public sealed class PowerPlatformApiEnvironmentClient : IEnvironmentClient
 
         return new PowerPlatformEnvironment
         {
+            Context = (_tokenProvider as ProfileBoundTokenProvider)?.Context,
             EnvironmentId = environmentId,
             DisplayName = displayName,
             TenantId = tenantId,

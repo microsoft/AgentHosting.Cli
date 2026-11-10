@@ -22,7 +22,7 @@ public static class AmsAgentCreationErrorMap
                 "ams-missing-user-identity",
                 "The Agent Management Service Data Plane did not receive a user identity for this request.",
                 ExitCodes.NotSignedIn,
-                $"Run `{binaryName} auth login` and retry."),
+                $"Run `{binaryName} auth create` for the intended account and cloud, then retry."),
 
             "tenantidmismatch" => AgentCreationException.ServiceRejected(
                 "tenant-mismatch",

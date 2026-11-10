@@ -17,8 +17,8 @@
 supplied App Registration and an ARM-only, zero-Graph provisioning path.
 
 The shipped CLI targets Azure public-cloud ARM (`management.azure.com`); these commands expose
-no sovereign-cloud or Power Platform API ring selector. Retargeting the account with
-`auth switch --cloud` does not change the ABS ARM endpoint.
+no sovereign-cloud or Power Platform API ring selector. Selecting an authentication profile with
+`auth select` does not change the ABS ARM endpoint.
 
 ## `msagent abs preview`
 

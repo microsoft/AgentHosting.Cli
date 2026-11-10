@@ -33,7 +33,8 @@ public sealed class EmbeddabilityTests
     private static AgentHostingOperations CreateEmbeddedOperations(
         EmbeddedAuthenticationSession session,
         EmbeddedAuthProfileStore store,
-        SilentMessagePresenter presenter)
+        SilentMessagePresenter presenter,
+        int constructorShape = 0)
     {
         var reader = new EmbeddedAbsStateReader();
         var environments = new EnvironmentSelectionService(
@@ -45,29 +46,42 @@ public sealed class EmbeddabilityTests
 
         // The apply seam is wired with the pending mutation port: the preview path must never resolve or
         // call it, so any accidental mutation from the read-only path would throw here.
-        return new AgentHostingOperations(
-            session,
-            store,
-            StaticInteractionPolicy.NonInteractive,
-            new RuntimePlatformInfo(),
-            presenter,
-            Context,
-            new AbsProvisioningService(reader),
-            new AbsApplyService(reader, new PendingAbsMutationPort()),
-            environments,
-            new AgentCreateService(
-                new AgentCreationTarget(),
-                environments,
-                new PendingAmsAgentCreationTransport()),
-            new AgentPackageUploadService(
-                environments,
-                new PendingAmsAgentReadTransport(),
-                new PendingAmsPackagePublicationTransport()),
-            new AgentDeployService(
-                PowerPlatformApiTargetConfig.Public,
-                environments,
-                new PendingAmsAgentReadTransport(),
-                new PendingAmsDeploymentTransport()));
+        var platform = new RuntimePlatformInfo();
+        var provisioning = new AbsProvisioningService(reader);
+        var apply = new AbsApplyService(reader, new PendingAbsMutationPort());
+        var create = new AgentCreateService(new AgentCreationTarget(), environments, new PendingAmsAgentCreationTransport());
+        var upload = new AgentPackageUploadService(environments, new PendingAmsAgentReadTransport(), new PendingAmsPackagePublicationTransport());
+        var deploy = new AgentDeployService(PowerPlatformApiTargetConfig.Public, environments,
+            new PendingAmsAgentReadTransport(), new PendingAmsDeploymentTransport());
+        return constructorShape switch
+        {
+            0 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
+                provisioning, apply, environments, create, upload, deploy),
+            1 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
+                provisioning, apply, environments, create, upload, deploy, null),
+            2 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
+                provisioning, apply, environments, create, upload, deploy, null, null),
+            3 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
+                provisioning, apply, environments, create, upload, deploy, null, null, null),
+            4 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
+                provisioning, apply, environments, create, upload, deploy, null, null, null, null),
+            5 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
+                provisioning, apply, environments, create, upload, deploy, null, null, null, null, null),
+            6 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
+                provisioning, apply, environments, create, upload, deploy, null, null, null, null, null, null),
+            7 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
+                provisioning, apply, environments, create, upload, deploy, null, null, null, null, null, null, null),
+            8 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
+                provisioning, apply, environments, create, upload, deploy, blueprintIdentity: null),
+            9 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
+                provisioning, apply, environments, create, upload, deploy,
+                deploymentChannels: null, managedAgents: null, appRegistrationIdentity: null),
+            10 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
+                provisioning, apply, environments, create, upload, deploy,
+                evaluations: null, deploymentChannels: null, deploymentOAuth: null, deployments: null,
+                managedAgents: null, appRegistrationIdentity: null, blueprintIdentity: null),
+            _ => throw new ArgumentOutOfRangeException(nameof(constructorShape)),
+        };
     }
 
     private static AbsProvisioningRequest CompletePreviewRequest() => new()
@@ -80,6 +94,20 @@ public sealed class EmbeddabilityTests
         Endpoint = "https://gateway.contoso.com/api/messages",
         MsaAppId = MsaAppId,
     };
+
+    [Fact]
+    public async Task EmbeddedLegacyConstructorsAcceptNullLiteralsAndNamedArguments()
+    {
+        var session = new EmbeddedAuthenticationSession();
+        var presenter = new SilentMessagePresenter();
+        for (int shape = 0; shape <= 10; shape++)
+        {
+            var operations = CreateEmbeddedOperations(session, new EmbeddedAuthProfileStore(), presenter, shape);
+            Assert.Equal("signed-out", (await operations.GetAuthStatusAsync(default)).Status);
+        }
+        Assert.Equal(0, session.LoginFlowCalls);
+        Assert.Equal(0, presenter.PresentCalls);
+    }
 
     [Fact]
     public void EmbeddableCore_ReferencesNoHostOrIdentityAssembly()
@@ -127,6 +155,90 @@ public sealed class EmbeddabilityTests
         Assert.Null(status.Account);
         Assert.Equal(0, session.LoginFlowCalls);
         Assert.Equal(0, presenter.PresentCalls);
+    }
+
+    [Fact]
+    public async Task EmbeddedDacUserProfile_DoesNotInventMsalHomeAccountId()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"msagent-embedding-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "profiles.json");
+            var store = new FileAuthProfileStore(path);
+            var created = await store.CreateAsync(new AuthProfile
+            {
+                AccountKey = "55555555-5555-5555-5555-555555555555",
+                Username = "developer@contoso.com",
+                TenantId = Tenant,
+                ClientId = Context.ClientId,
+                Authority = Context.Authority,
+                CredentialMethod = AuthCredentialMethod.DefaultAzureCredential,
+                PrincipalType = AuthPrincipalType.User,
+            }, CancellationToken.None);
+
+            Assert.Null(created.HomeAccountId);
+            var persisted = Assert.Single(
+                await new FileAuthProfileStore(path).GetProfilesAsync(CancellationToken.None));
+            Assert.Null(persisted.HomeAccountId);
+            Assert.Equal(created.AccountKey, persisted.AccountKey);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EmbeddedProfileDefault_CarriesCapturedDacProfileWithoutConstructingCredentialClient()
+    {
+        var directory = Path.Combine(Directory.GetCurrentDirectory(), $".test-embedding-profile-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var store = new FileAuthProfileStore(Path.Combine(directory, "profiles.json"));
+            var created = await store.CreateAsync(new AuthProfile
+            {
+                AccountKey = "55555555-5555-5555-5555-555555555555",
+                Username = "developer@contoso.com",
+                TenantId = Tenant,
+                ClientId = Context.ClientId,
+                Authority = Context.Authority,
+                CredentialMethod = AuthCredentialMethod.DefaultAzureCredential,
+                DefaultEnvironment = new ActiveEnvironment
+                {
+                    EnvironmentId = "env-embedding",
+                    DisplayName = "Embedded",
+                    TenantId = Tenant,
+                    ApiEndpoint = new Uri("https://embedded.api.powerplatform.com"),
+                    ApiAudience = PowerPlatformApiTargetConfig.Public.Audience,
+                },
+            }, default);
+            var factory = new UnusedProfileEnvironmentClientFactory();
+            var environments = new EnvironmentSelectionService(factory, new EmbeddedEnvironmentSelectionStore(), store, new EmbeddedClock());
+            var binding = await environments.GetActiveBindingAsync(created, default);
+            var resolved = await environments.ResolveForCommandAsync(null, default);
+
+            Assert.True(binding?.IsBound);
+            Assert.Equal(created.ProfileId, resolved.Context?.Profile.ProfileId);
+            Assert.Null(resolved.Context?.Profile.HomeAccountId);
+            Assert.Equal("env-embedding", resolved.EnvironmentId);
+            Assert.Equal(0, factory.Calls);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private sealed class UnusedProfileEnvironmentClientFactory : IProfileEnvironmentClientFactory
+    {
+        public int Calls { get; private set; }
+        public IEnvironmentClient CreateClient(EnvironmentResolutionContext context)
+        {
+            Calls++;
+            throw new InvalidOperationException("Metadata and profile defaults must not construct credential clients.");
+        }
     }
 
     [Theory]

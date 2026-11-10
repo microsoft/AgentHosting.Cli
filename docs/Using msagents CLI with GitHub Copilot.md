@@ -40,7 +40,7 @@ Below are recipes that agents can use to achieve a specific outcome
 
 ```
 # Authenticate
-msagent auth login
+msagent auth create
 
 # Select target environment
 msagent env list
@@ -57,7 +57,7 @@ msagent agent deploy -p <project-path> -dn <deployment-name> --publish
 
 ```
 # Authenticate
-msagent auth login
+msagent auth create
 
 # Select target environment
 msagent env list

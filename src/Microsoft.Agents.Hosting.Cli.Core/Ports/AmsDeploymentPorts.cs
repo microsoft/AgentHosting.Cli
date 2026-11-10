@@ -2,6 +2,9 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 public sealed record AmsAgentReadTransportRequest
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public EnvironmentResolutionContext? Context { get; init; }
+
     public required Uri Endpoint { get; init; }
     public required string Audience { get; init; }
     public required string TenantId { get; init; }
@@ -30,6 +33,9 @@ public interface IAmsAgentReadTransport
 
 public sealed record AmsDeploymentCreateTransportRequest
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public EnvironmentResolutionContext? Context { get; init; }
+
     public required Uri Endpoint { get; init; }
     public required string Audience { get; init; }
     public required string TenantId { get; init; }
@@ -72,6 +78,9 @@ public sealed record AmsDeploymentCreateResult
 /// <summary>Coordinates for reading an existing deployment through the public control plane.</summary>
 public record AmsDeploymentReadTransportRequest
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public EnvironmentResolutionContext? Context { get; init; }
+
     public required Uri Endpoint { get; init; }
     public required string Audience { get; init; }
     public required string TenantId { get; init; }

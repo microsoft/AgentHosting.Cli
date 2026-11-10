@@ -31,6 +31,10 @@ TypeScript proposal.
 
 ## Command surface
 
+For cross-platform offline, installed-package, and explicitly dedicated native-nonsecret
+acceptance prerequisites and evidence limits, see [Authentication validation](../../docs/AuthenticationValidation.md).
+Native checks are not part of ordinary tests and must never run on a shared workstation.
+
 The packaged tool command is `msagent`. The table below describes the full implemented
 surface, including features that ship disabled. AMS operations, the ABS group,
 and the identity group require their respective [feature controls](#feature-controls).
@@ -38,10 +42,14 @@ MCS routes and shared authentication/environment commands remain enabled by defa
 
 | Command | Purpose |
 |---|---|
-| `msagent auth login` | Sign in through the operating-system broker's account picker on Windows, macOS, and Linux (silently first for an `--account` the broker already holds), falling back to device code and reporting the broker's failure when the broker cannot sign in; `--device-code` skips the broker. The only command that may open identity UI, and only when interaction is allowed. |
+| `msagent auth create` | Create/replace and activate an owned user or workload profile with registered cloud coordinates. |
+| `msagent auth list / who` | Read token-free profile, principal and default environment metadata. |
+| `msagent auth select --index / --name` | Activate a stored profile without authenticating; selector-free picker requires interaction permission. |
+| `msagent auth delete / name` | Delete or rename one profile without silently activating an inactive profile. |
+| `msagent auth clear` | Repair corrupt metadata and clear owned msagent state only. |
+| `msagent auth login` | Legacy interactive sign-in; requires `LegacyAuth` (off by default). Prefer `auth create`. |
 | `msagent auth status` | Report the current sign-in state. Never acquires a token or opens UI. |
-| `msagent auth switch --account <id>` | Activate a stored account. Never acquires a token. |
-| `msagent auth logout` | Sign out and clear cached accounts. Never opens identity UI. |
+| `msagent auth logout` | Legacy sign-out contract; requires `LegacyAuth` (off by default). Prefer `auth clear` or delete one profile with `auth delete`. |
 | `msagent env list` | List environments available to the signed-in account. |
 | `msagent env select <environment-id>` | Select the active environment used by agent commands. |
 | `msagent agent create` | Create an agent: a CodeAgent record and repository, or a local MCS project registered for deployment. |
@@ -608,9 +616,12 @@ remaining harness, runner integration, and campaign evidence; no hosted fuzzing 
 
 ### Blueprint identity
 
+The following legacy scoped-login example requires `LegacyAuth` in addition to
+`IdentityFeatures`; identity commands do not enable legacy authentication commands themselves.
 Sign in to the target tenant with the required delegated Graph scopes:
 
 ```pwsh
+$env:AH_CLI_FEATURES = "IdentityFeatures;LegacyAuth"
 msagent auth login --tenant <tenant-id> `
   --scope https://graph.microsoft.com/AgentIdentityBlueprint.ReadWrite.All `
   --scope https://graph.microsoft.com/AgentIdentityBlueprintPrincipal.Create `
@@ -716,7 +727,7 @@ temporary Microsoft Graph CLI and Azure CLI client defaults.
 Sign in for ARM Bot Service provisioning:
 
 ```pwsh
-msagent auth login
+msagent auth create
 ```
 
 Create a CodeAgent deployment (provisions a real Azure Bot Service resource):
@@ -1115,8 +1126,8 @@ environment itself:
 | `AH_CLI_ARM_CLIENT_ID` | ARM counterpart of `AH_CLI_GRAPH_CLIENT_ID`, used for managed-identity provisioning. Defaults to the well-known Azure CLI public client. |
 | `AH_CLI_ARM_REDIRECT_URI` | Redirect URI for the ARM consent client. |
 | `AH_CLI_CONFIG_DIR` | Override the profile/config directory (defaults under `LocalApplicationData`). Shared by every ring; only the ring-bound files inside it are suffixed. |
-| `AH_CLI_ALLOW_UNPROTECTED_CACHE` | Allow an unprotected token cache when a protected store is unavailable. |
-| `AH_CLI_FEATURES` | Semicolon-separated, case-insensitive feature names to enable over shipped defaults. Supported: `AmsFeatures`, `AzureBotServiceFeatures`, `IdentityFeatures`. |
+| `AH_CLI_ALLOW_UNPROTECTED_CACHE` | Linux token-cache-only baseline opt-in when protected storage is unavailable; never permits plaintext credential records. |
+| `AH_CLI_FEATURES` | Semicolon-separated, case-insensitive feature names to enable over shipped defaults. Supported: `AmsFeatures`, `AzureBotServiceFeatures`, `IdentityFeatures`, `LegacyAuth`. |
 | `AH_CLI_TELEMETRY_OPTOUT` | Overrides the remembered telemetry preference. `1`/`true` opts out, `0`/`false` opts in; unset defers to `msagent telemetry`. |
 | `AH_CLI_AMS_ENDPOINT` | Agent Management Service **control plane** endpoint, used by deploy. Absolute HTTPS; deployment-configured, not settable per command. |
 | `AH_CLI_AMSDP_ENDPOINT` | Agent Management Service **data plane** endpoint, used by package upload and by `agent create` as a direct Dev-island override. Absolute HTTPS. |
@@ -1125,60 +1136,66 @@ environment itself:
 
 The CLI supports TLS 1.3 and TLS 1.2.
 
-## Selecting a deployment ring
+## Authentication profiles, clouds and environments
 
-`msagent auth login --cloud` records which Power Platform API ring the sign-in targets. The ring is a
-property of the account, not a per-command argument, so the selected sign-in and the ring it
-addresses cannot disagree:
-
-```pwsh
-msagent auth login --cloud preprod     # sign in, targeting preprod
-msagent auth switch --cloud test       # retarget the active account; no sign-in
-msagent auth status                    # shows the ring in use
-```
-
-| Ring | Global endpoint | Environment selection file |
-|---|---|---|
-| `prod` | `https://api.powerplatform.com` | `environment-selection-csharp.json` |
-| `preprod` | `https://api.preprod.powerplatform.com` | `environment-selection-csharp-preprod.json` |
-| `test` | `https://api.test.powerplatform.com` | `environment-selection-csharp-test.json` |
-
-An account signs in once and keeps its ring until `auth switch --cloud` changes it; omitting
-`--cloud` on a later `auth login` preserves the ring already recorded. Signing a new account in
-inherits the ring the session is already on, so a login during a preprod session produces a preprod
-account rather than one no command in that session could use; the very first sign-in, with nothing
-active, defaults to `prod`. An unrecognized value is a usage error (exit 2) naming the accepted rings.
-
-The ring is resolved once per sign-in and used both for the token request and for the stored profile,
-so the audience a credential was minted for and the cloud the account is recorded against cannot
-disagree.
-
-`auth login --cloud` also asks for *that ring's* audience, so a ring whose resource needs consent or
-resource-specific Conditional Access can be satisfied by signing in for it. `auth switch --cloud`
-changes the account's ring without signing in, so the clients this process already built still
-address the ring it started in: `env list`/`env select` refuse rather than use the old one, and
-`auth status` reports the new ring without the selection it left behind. Running the next command
-rebuilds against the new ring.
-
-## The environment selection follows the account
-
-The selected environment belongs to the account that selected it, in the cloud it was selected for.
-`auth login` and `auth switch` therefore discard every stored selection whenever the now-active
-account or cloud is not the one that was active before, and say so, rather than leaving `auth status`
-reporting a target the operator did not choose:
+See the [authentication reference](../Microsoft.Agents.Hosting.Cli.Docs/Command_Auth.md) for the
+exact create aliases, lifecycle selectors and credential limitations. Authentication uses one
+`--cloud` selector: `Public`, `Preprod`, `Test`, `UsGov`, `UsGovHigh`, `UsGovDod`, `China`, `UsNat`,
+`UsSec`. Retained login additionally accepts `prod`/`production`, `preprod` and `test`.
+There is no separate authentication ring option; other commands retain their own existing controls.
 
 ```pwsh
-msagent env select fa5c1b48-…        # selected by op@contoso.com
-msagent auth login                   # signs in other@contoso.com
-# Signed in as other@contoso.com (prod).
-# Cleared the selected environment because the active account or cloud changed. Run `msagent env select` to choose one.
+msagent auth create -n Dev -ci Public
+msagent auth list
+msagent auth select --name Dev
+msagent env select <environment-id>
+msagent auth who
+msagent auth name --index 1 --name Development
 ```
 
-Signing the same account in again, against the same cloud, keeps the selection. Any other transition
-— a different account (in this tenant or another), a different cloud, or a sign-in after `auth
-logout` — discards it. Because selections are stored per cloud, every cloud's selection is discarded,
-so switching back cannot resurrect one. A selection that cannot be read at all is discarded too, so a
-damaged selection file cannot block a sign-in.
+Names are case-sensitive unique, 1–30 characters. List positions are transient and 1-based.
+No selector means a metadata picker only when interaction is allowed, never an implicit first
+profile. Create preserves the opaque ID when replacing an equal identity. Renaming an inactive
+profile does not activate it. Deleting the active profile reports the persisted Universal-kind
+fallback or no active profile. List/select/status/who/name do not renew credentials or unlock stores.
+
+Explicit environment > compatible owned override > profile default > missing-target error.
+`env select` updates the selected default using the captured profile and revision. Select the intended
+profile with `auth select` before changing its default. Foreign/incompatible overrides are not adopted.
+Clear/logout repair/remove only
+owned msagent state, never shared PAC/Azure/broker state or source PFX files.
+
+The public-client ID remains `21fadfba-178a-47f0-8ce6-07c05eb346ca`; registered PPAPI resources
+are production `0ddb742a-e7dc-4899-a31e-80e797ec7144` and nonproduction
+`8578e004-a5c6-46e7-913e-12f58912df43`. China global PPAPI is
+`https://api.powerplatform.partner.microsoftonline.cn`. Sovereign nonproduction, unsupported China
+derived routes and UsNat/UsSec Studio gateways fail closed. Profiles do not establish downstream support.
+
+NI rejects explicit interactive create/login/device code with 12007 / exit 3 before sources or
+cache enumeration; JSON alone is not NI. Configured DefaultAzureCredential permits baseline
+environment/workload/managed sources but is not a promise of managed identity selection.
+Pinned AzureCLI/PowerShell/azd renewal cannot construct sources or launch processes in NI.
+Secret/certificate/federation require explicit tenant/application GUIDs; ROPC requires the pair
+and cannot satisfy MFA. Passwords/assertions are never persisted. Owned client secrets/PFX
+passwords/private caches require protected native storage; token-only baseline opt-in never
+permits plaintext credentials.
+
+Native prerequisites remain lazy: Windows current-user DPAPI; macOS usable Keychain access with
+an explicit process-lifetime no-prompt policy; Linux GIO, session D-Bus and an already-unlocked
+Secret Service. The CLI does not unlock stores or change machine-wide policy. Native/RID behavior
+still requires separate platform validation.
+
+The host resolves `ACTIONS_ID_TOKEN_REQUEST_URL`/`TOKEN` and
+`MSAGENT_ADO_ID_TOKEN_REQUEST_URL`/`TOKEN` for federation with audience
+`api://AzureADTokenExchange`. Redirects and replay are refused. Secret arguments remain visible
+to shell history/process inspection even though CLI diagnostics are redacted.
+
+Caller cancellation stays 130 and renders only recognized safe committed/cleanup markers.
+Primary errors retain numeric/exit contracts; cleanup-only failure is 12020. No postcommit rollback
+is claimed. Inspect metadata before another mutation; retry intended owned cleanup after fixing
+storage or waiting for active owned leases. Native OS/RID/live-service validation is separate.
+Committed-deletion partials mark the deleted profile inactive and carry the atomic active-profile
+snapshot; an absent fallback means no profile remained active at that commit.
 
 ## Feature controls
 
@@ -1203,15 +1220,17 @@ Shipped defaults are:
 | `AmsFeatures` | `off` | CodeAgent creation, AMS package upload, and AMS package-revision deployment. |
 | `AzureBotServiceFeatures` | `off` | The `abs` group and CodeAgent deployment routes backed by Azure Bot Service. |
 | `IdentityFeatures` | `off` | The user-facing `identity` command group. |
+| `LegacyAuth` (`legacyAuth` in JSON) | `off` | Only `auth login` and `auth logout`; profile commands and `auth status` remain available. |
 | `EvaluationFeatures` | `on` | The `agent eval` group and its `testset` subgroup. |
 
-The selected AMS, ABS, and identity surfaces ship off independently. Enable one or combine several
+The selected AMS, ABS, identity, and legacy authentication surfaces ship off independently. Enable one or combine several
 for a process:
 
 ```pwsh
 $env:AH_CLI_FEATURES = "AmsFeatures"
 $env:AH_CLI_FEATURES = "AzureBotServiceFeatures"
 $env:AH_CLI_FEATURES = "IdentityFeatures"
+$env:AH_CLI_FEATURES = "LegacyAuth"
 $env:AH_CLI_FEATURES = "AmsFeatures;AzureBotServiceFeatures;IdentityFeatures"
 ```
 
@@ -1228,8 +1247,15 @@ The source-backed boundary is:
 | `AmsFeatures` | `agent package upload`; default/CodeAgent route of `agent create`; AMS package-revision route of `agent deploy` | `AgentPackageUploadCommand.cs` → `AgentPackageUploadRequest`; `AgentCreateCommand.cs` → `AgentCreateRequest`; `AgentDeployCommand.cs` → `AgentDeployRequest` |
 | `AzureBotServiceFeatures` | `abs preview/apply`; resolved CodeAgent routes of `deployment create/show/update/delete` | `Groups/AbsGroup.cs` and `Commands/Abs/AbsCommands.cs` → `AbsPreviewRequest`/`AbsApplyRequest`; mixed deployment command files → `DeploymentCreateRequest`, `DeploymentRequest`, or `DeploymentUpdateRequest` |
 | `IdentityFeatures` | `identity create blueprint/app` | `Groups/IdentityGroup.cs` and `Commands/Identity/*` → `BlueprintIdentityRequest` or `AppRegistrationIdentityRequest` |
+| `LegacyAuth` | `auth login/logout` | `Commands/Auth/AuthCommands.cs` → retained `AuthLoginRequest`/`AuthLoginResult` and `AuthLogoutRequest`/`AuthLogoutResult` |
 | `EvaluationFeatures` | `agent eval run/list/show/cancel/delete/generate`; `agent eval testset list/show/create/update/export/delete` | `Groups/AgentGroup.cs` (`AgentEvalGroup`, `AgentEvalTestSetGroup`) and `Commands/Agent/Eval/*` → `Evaluation*Request` and matching result contracts |
-| Always-on shared prerequisites | `auth`, `env`, profile/configuration storage, common agent/deployment selectors | `Groups/AuthGroup.cs`, `Groups/EnvGroup.cs`, `Program.ResolveConfigDirectory`, and Core auth/environment/profile services |
+| Always-on shared prerequisites | `auth` except `login/logout`, `env`, profile/configuration storage, common agent/deployment selectors | `Groups/AuthGroup.cs`, `Groups/EnvGroup.cs`, `Program.ResolveConfigDirectory`, and Core auth/environment/profile services |
+
+`LegacyAuth` removes login/logout from help and parsing when off; it does not remove their Core
+operations or alter their enabled JSON/exit contracts. Use `auth create` for sign-in,
+`auth delete --index/--name` to remove one profile, and `auth clear` to reset all owned state.
+When recreating a sovereign or nonproduction profile, supply its intended `--cloud`; create defaults
+to `Public`, unlike legacy login's compatible stored-profile inheritance.
 
 `IdentityFeatures` gates only the user-facing `identity` metadata subtree. Identity, authentication,
 environment, and configuration services remain registered because MCS operations can depend on that

@@ -20,7 +20,7 @@ public sealed class EnvironmentSelectionCompositionTests : IDisposable
     }
 
     [Fact]
-    public async Task AnAccountChange_DiscardsEverySelectionTheConfigDirectoryHolds()
+    public async Task AnAccountChange_PreservesEverySelectionTheConfigDirectoryHolds()
     {
         var production = RingStore(PowerPlatformApiRing.Production);
         var preprod = RingStore(PowerPlatformApiRing.Preprod);
@@ -38,10 +38,10 @@ public sealed class EnvironmentSelectionCompositionTests : IDisposable
                 EnvironmentFixtures.Account(accountKey: "other-key", username: "other@contoso.com"),
                 CancellationToken.None);
 
-        Assert.True(discarded);
-        Assert.Null(await production.GetActiveAsync(CancellationToken.None));
-        Assert.Null(await preprod.GetActiveAsync(CancellationToken.None));
-        Assert.Null(await test.GetActiveAsync(CancellationToken.None));
+        Assert.False(discarded);
+        Assert.NotNull(await production.GetActiveAsync(CancellationToken.None));
+        Assert.NotNull(await preprod.GetActiveAsync(CancellationToken.None));
+        Assert.NotNull(await test.GetActiveAsync(CancellationToken.None));
     }
 
     [Fact]

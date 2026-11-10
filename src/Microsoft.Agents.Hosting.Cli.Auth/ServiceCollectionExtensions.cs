@@ -3,8 +3,10 @@ using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using Microsoft.Agents.Hosting.Cli.Core.Evaluations;
 using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Identity;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,6 +23,40 @@ namespace Microsoft.Agents.Hosting.Cli.Auth;
 /// </summary>
 public static class ServiceCollectionExtensions
 {
+    public static IServiceCollection AddAgentHostProfileCredentials(this IServiceCollection services,
+        OwnedStorage.IOwnedProtectedStorageBackend backend, ProfileCredentialRuntimeOptions runtime,
+        ILegacyMsalTokenCacheBackend? legacyTokenCache = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(backend);
+        ArgumentNullException.ThrowIfNull(runtime);
+        services.AddSingleton(backend);
+        services.AddSingleton(runtime);
+        if (legacyTokenCache is not null) services.AddSingleton(legacyTokenCache);
+        services.AddSingleton<ProfileFederationAssertionProvider>();
+        services.AddSingleton<IProfileMsalClientFactory, ProfileMsalClientFactory>();
+        services.AddSingleton<IProfileAzureCredentialSourceFactory, ProfileAzureCredentialSourceFactory>();
+        services.AddSingleton<IProfileTokenAcquisition, ProfileTokenAcquisition>();
+        services.AddSingleton<ProfileCredentialProvider>();
+        services.AddSingleton<IProfileCredentialProvider>(sp => sp.GetRequiredService<ProfileCredentialProvider>());
+        services.AddSingleton<IOwnedProfileCredentialCleanup>(sp => sp.GetRequiredService<ProfileCredentialProvider>());
+        services.AddSingleton<IProfileCachedAccountReader>(sp => sp.GetRequiredService<ProfileCredentialProvider>());
+        services.AddSingleton<IProfileSelectedAccountTokenAcquisition>(sp => sp.GetRequiredService<ProfileCredentialProvider>());
+        services.AddSingleton<IProfileConsentTokenAcquisition>(sp => sp.GetRequiredService<ProfileCredentialProvider>());
+        services.AddSingleton<IAuthProfileOperations>(sp => new AuthProfileOperations(
+            sp.GetRequiredService<IAuthProfileManagementStore>(),
+            sp.GetRequiredService<IProfileCredentialProvider>(),
+            sp.GetRequiredService<EnvironmentSelectionService>(),
+            sp.GetRequiredService<IEnvironmentSelectionStore>(),
+            sp.GetRequiredService<IInteractionPolicy>(),
+            sp.GetRequiredService<IClock>(),
+            sp.GetService<IOwnedProfileCredentialCleanup>(),
+            sp.GetService<IAuthProfilePicker>(),
+            sp.GetRequiredService<IAuthenticationSession>(),
+            sp.GetService<EnvironmentSelectionScopes>()));
+        return services;
+    }
+
     /// <summary>
     /// Registers the AgentHost authentication services (profile store, MSAL session/token/probe
     /// adapters, interaction policy, message presenter, session context), the environment cloud map,
@@ -55,10 +91,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISecureTokenCacheProbe, MsalSecureTokenCacheProbe>();
         services.AddSingleton<MsalPublicClientProvider>();
         services.AddSingleton(new PpapiTokenClaimsValidator(options.ClientId));
-        services.AddSingleton(GraphConsentClientConfiguration.Resolve(
+        services.AddSingleton(GraphConsentClientConfiguration.ResolveDeferred(
             options.GraphClientId,
             options.GraphRedirectUri));
-        services.AddSingleton(ArmConsentClientConfiguration.Resolve(
+        services.AddSingleton(ArmConsentClientConfiguration.ResolveDeferred(
             options.ArmClientId,
             options.ArmRedirectUri));
         services.AddSingleton<AuthProfileMutationRevision>();
@@ -72,17 +108,24 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<AuthProfileMutationRevision>()));
         services.AddSingleton<IAuthProfileStore>(
             sp => sp.GetRequiredService<FileAuthProfileStore>());
+        services.AddSingleton<IAuthProfileManagementStore>(
+            sp => sp.GetRequiredService<FileAuthProfileStore>());
+        services.AddSingleton<IAuthProfileCreationStore>(
+            sp => sp.GetRequiredService<FileAuthProfileStore>());
         services.AddSingleton<IAuthProfileTelemetryStore>(
             sp => sp.GetRequiredService<FileAuthProfileStore>());
 
         services.AddSingleton<IAuthenticationSession>(sp => new MsalAuthenticationSession(
             sp.GetRequiredService<MsalPublicClientProvider>(),
             sp.GetRequiredService<AgentHostAuthOptions>(),
-            sp.GetService<IAuthenticationResultObserver>()));
+            sp.GetService<IAuthenticationResultObserver>(),
+            sp.GetService<IOwnedProfileCredentialCleanup>()));
         services.AddSingleton(sp => new MsalSilentTokenProvider(
             sp.GetRequiredService<MsalPublicClientProvider>(),
             sp.GetRequiredService<IAuthProfileStore>(),
-            sp.GetService<IAuthenticationResultObserver>()));
+            sp.GetService<IAuthenticationResultObserver>(),
+            sp.GetService<IProfileCredentialProvider>(),
+            sp.GetService<IProfileSelectedAccountTokenAcquisition>()));
         services.AddSingleton<ITokenProvider>(
             sp => sp.GetRequiredService<MsalSilentTokenProvider>());
         services.AddSingleton<ISelectedAccountTokenProvider>(
@@ -92,7 +135,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IAuthProfileStore>(),
             sp.GetRequiredService<IInteractionPolicy>(),
             sp.GetRequiredService<IInteractiveMessagePresenter>(),
-            sp.GetService<IAuthenticationResultObserver>()));
+            sp.GetService<IAuthenticationResultObserver>(),
+            sp.GetService<IProfileConsentTokenAcquisition>()));
         services.AddSingleton<MsalLiveTestTokenProvider>();
         services.AddSingleton<IGraphConsentTokenProvider, MsalGraphConsentTokenProvider>();
         services.AddSingleton<IArmConsentTokenProvider, MsalArmConsentTokenProvider>();
@@ -193,7 +237,29 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<DeploymentOAuthService>();
         services.AddSingleton<DeploymentChannelService>();
 
-        services.AddSingleton<IAgentHostingOperations, AgentHostingOperations>();
+        services.AddSingleton<IAgentHostingOperations>(sp => new AgentHostingOperations(
+            sp.GetRequiredService<IAuthenticationSession>(),
+            sp.GetRequiredService<IAuthProfileStore>(),
+            sp.GetRequiredService<IInteractionPolicy>(),
+            sp.GetRequiredService<IPlatformInfo>(),
+            sp.GetRequiredService<IInteractiveMessagePresenter>(),
+            sp.GetRequiredService<AuthSessionContext>(),
+            sp.GetRequiredService<AbsProvisioningService>(),
+            sp.GetRequiredService<AbsApplyService>(),
+            sp.GetRequiredService<EnvironmentSelectionService>(),
+            sp.GetRequiredService<AgentCreateService>(),
+            sp.GetRequiredService<AgentPackageUploadService>(),
+            sp.GetRequiredService<AgentDeployService>(),
+            sp.GetService<IAuthProfileOperations>(),
+            sp.GetService<IProfileCredentialProvider>(),
+            sp.GetService<IProfileCachedAccountReader>(),
+            sp.GetService<BlueprintIdentityService>(),
+            sp.GetService<AppRegistrationIdentityService>(),
+            sp.GetService<ManagedAgentServices>(),
+            sp.GetService<DeploymentService>(),
+            sp.GetService<DeploymentOAuthService>(),
+            sp.GetService<DeploymentChannelService>(),
+            sp.GetService<EvaluationServices>()));
 
         return services;
     }

@@ -11,7 +11,7 @@ internal sealed class TempDir : IDisposable
 {
     public TempDir()
     {
-        Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ah-cn3-" + Guid.NewGuid().ToString("N"));
+        Path = System.IO.Path.GetFullPath("ah-cn3-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path);
     }
 
@@ -56,6 +56,16 @@ public sealed class FileAuthProfileStoreTests
     };
 
     [Fact]
+    public async Task SameAccountInDifferentTenants_RemainsTwoProfiles()
+    {
+        using var dir = new TempDir();
+        var store = new FileAuthProfileStore(dir.File("profiles.json"));
+        await store.UpsertAsync(Profile("home-1", "one@contoso.com", "tenant-a"), default);
+        await store.UpsertAsync(Profile("home-1", "one@contoso.com", "tenant-b"), default);
+        Assert.Equal(2, (await store.GetProfilesAsync(default)).Count);
+    }
+
+    [Fact]
     public async Task AnUndeclaredRingOnDisk_IsRefusedRatherThanReadAsProduction()
     {
         using var dir = new TempDir();
@@ -70,7 +80,7 @@ public sealed class FileAuthProfileStoreTests
             () => new FileAuthProfileStore(path).GetActiveProfileAsync(default));
 
         Assert.Contains("987", failure.Message, StringComparison.Ordinal);
-        Assert.Contains("logout", failure.Remediation, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("msagent auth clear", failure.Remediation, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -323,6 +333,8 @@ public sealed class FileAuthProfileStoreTests
             { "authenticatedTenantId", "123" },
             { "authenticatedTenantId", "true" },
             { "authenticatedTenantId", """{ "value": "ignored" }""" },
+            { "authenticatedTenantId", """{ "value": 1, "value": 2 }""" },
+            { "authenticatedTenantId", """[{ "value": 1, "value": 2 }]""" },
             { "authenticatedTenantId", """["ignored"]""" },
             { "authenticatedTenantId", "null" },
             { "authenticatedTenantId", "\"not-a-guid\"" },
@@ -331,6 +343,8 @@ public sealed class FileAuthProfileStoreTests
             { "principalObjectId", "123" },
             { "principalObjectId", "true" },
             { "principalObjectId", """{ "value": "ignored" }""" },
+            { "principalObjectId", """{ "value": 1, "value": 2 }""" },
+            { "principalObjectId", """[{ "value": 1, "value": 2 }]""" },
             { "principalObjectId", """["ignored"]""" },
             { "principalObjectId", "null" },
             { "principalObjectId", "\"not-a-guid\"" },
@@ -409,7 +423,7 @@ public sealed class FileAuthProfileStoreTests
 
         var ex = await Assert.ThrowsAsync<AuthProfileStateException>(() => store.GetProfilesAsync(default));
         Assert.Equal(ExitCodes.Failure, ex.ExitCode);
-        Assert.Contains("logout", ex.Remediation, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("msagent auth clear", ex.Remediation, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -131,7 +131,7 @@ mean a change partially completed or its result is uncertain.
 | [12003](ErrorCodes/12003.md) | The client application ID is missing, invalid, or not permitted. |
 | [12004](ErrorCodes/12004.md) | Saved authentication profiles could not be safely read or written. |
 | [12005](ErrorCodes/12005.md) | Interactive consent returned an identity other than the active CLI account. |
-| [12006](ErrorCodes/12006.md) | The CLI refused to silently persist tokens without platform protection. |
+| [12006](ErrorCodes/12006.md) | Required native protection for owned credentials or token storage is unavailable. |
 | [12007](ErrorCodes/12007.md) | The required token cannot be obtained without interactive sign-in or consent. |
 | [12008](ErrorCodes/12008.md) | Microsoft Entra ID is limiting token requests; wait before retrying. |
 | [12009](ErrorCodes/12009.md) | The Microsoft corporate account must authenticate through the operating-system broker. |
@@ -142,6 +142,10 @@ mean a change partially completed or its result is uncertain.
 | [12014](ErrorCodes/12014.md) | The token's client application does not match the application the CLI expects. |
 | [12015](ErrorCodes/12015.md) | The acquired token does not match the operation's required tenant. |
 | [12016](ErrorCodes/12016.md) | The token does not carry the delegated permission needed for the operation. |
+| [12017](ErrorCodes/12017.md) | The token's user/application mode differs from the captured profile. |
+| [12018](ErrorCodes/12018.md) | A required directory object ID is missing from the token. |
+| [12019](ErrorCodes/12019.md) | The operation requires a user principal, not an application profile. |
+| [12020](ErrorCodes/12020.md) | Owned credential finalization or cleanup is incomplete without another primary error. |
 
 ## Environment
 

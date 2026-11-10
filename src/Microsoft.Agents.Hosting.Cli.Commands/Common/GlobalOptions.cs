@@ -40,7 +40,7 @@ public static class GlobalOptions
     }
 
     /// <summary>The <c>auth</c> verbs that must run whatever the stored sign-in says.</summary>
-    public static IReadOnlyList<string> RingIndependentAuthVerbs => ["login", "logout"];
+    public static IReadOnlyList<string> RingIndependentAuthVerbs => ["login", "logout", "list", "select"];
 
     /// <summary>
     /// Whether the arguments name work that runs without a cloud read from the stored sign-in.
@@ -56,7 +56,26 @@ public static class GlobalOptions
             return true;
         }
 
-        string[] verbs = [.. args.Where(argument => !argument.StartsWith('-')).Take(2)];
+        var words = new List<string>(2);
+        for (var index = 0; index < args.Count && words.Count < 2; index++)
+        {
+            var argument = args[index];
+            if (!argument.StartsWith('-'))
+            {
+                words.Add(argument);
+            }
+            else if (!IsPresent([argument], "--json")
+                && !IsPresent([argument], "--debug")
+                && !IsPresent([argument], "--no-color")
+                && !IsPresent([argument], "--non-interactive"))
+            {
+                // Before command recognition, unknown/value options consume their value. Never
+                // reinterpret a secret or selector as a recovery verb.
+                if (!argument.Contains('=') && index + 1 < args.Count && !args[index + 1].StartsWith('-'))
+                    index++;
+            }
+        }
+        string[] verbs = [.. words];
 
         return verbs.Length switch
         {

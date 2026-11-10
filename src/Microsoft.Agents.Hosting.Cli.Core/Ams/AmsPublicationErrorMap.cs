@@ -50,7 +50,7 @@ public static class AmsPublicationErrorMap
                 "ams-missing-user-identity",
                 $"The {AudienceLabel} did not receive a user identity for this request.",
                 ExitCodes.NotSignedIn,
-                $"Run `{binaryName} auth login` and retry. If sign-in succeeds and this persists, the request is not reaching the service with the delegated token attached."),
+                $"Run `{binaryName} auth create` for the intended account and cloud, then retry. If sign-in succeeds and this persists, the request is not reaching the service with the delegated token attached."),
 
             "tenantidmismatch" => PackagePublicationException.ServiceRejected(
                 "tenant-mismatch",

@@ -83,7 +83,8 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, command.Environment);
+        using var lease = await DataverseTargeting.EnterAsync(_dataverseClient, cancellationToken).ConfigureAwait(false);
+        using var scope = DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, command.Environment);
 
         var agentId = Guid.Parse(command.AgentId);
         var agentInfo = await _dataverseClient.GetAgentInfoAsync(agentId, cancellationToken).ConfigureAwait(false);
@@ -265,7 +266,8 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     {
         ArgumentNullException.ThrowIfNull(workspace);
 
-        DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, workspace);
+        using var lease = await DataverseTargeting.EnterAsync(_dataverseClient, cancellationToken).ConfigureAwait(false);
+        using var scope = DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, workspace);
 
         var (workspaceFolder, syncInfo, operationContext) = await ReadWorkspaceAsync(workspace).ConfigureAwait(false);
         var localDefinition = await WorkspaceDefinitionReader.ReadAsync(_synchronizer, workspaceFolder, checkKnowledgeFiles: true, cancellationToken).ConfigureAwait(false);
@@ -284,7 +286,8 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     {
         ArgumentNullException.ThrowIfNull(workspace);
 
-        DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, workspace);
+        using var lease = await DataverseTargeting.EnterAsync(_dataverseClient, cancellationToken).ConfigureAwait(false);
+        using var scope = DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, workspace);
 
         var (workspaceFolder, syncInfo, operationContext) = await ReadWorkspaceAsync(workspace).ConfigureAwait(false);
         var (_, remoteChanges) = await _synchronizer.GetRemoteChangesAsync(workspaceFolder, operationContext, _dataverseClient, syncInfo, cancellationToken).ConfigureAwait(false);
@@ -306,7 +309,8 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     {
         ArgumentNullException.ThrowIfNull(workspace);
 
-        DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, workspace);
+        using var lease = await DataverseTargeting.EnterAsync(_dataverseClient, cancellationToken).ConfigureAwait(false);
+        using var scope = DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, workspace);
 
         var (workspaceFolder, syncInfo, operationContext) = await ReadWorkspaceAsync(workspace).ConfigureAwait(false);
         var localDefinition = await WorkspaceDefinitionReader.ReadAsync(_synchronizer, workspaceFolder, checkKnowledgeFiles: true, cancellationToken).ConfigureAwait(false);

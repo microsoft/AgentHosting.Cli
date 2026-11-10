@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.Commands\Microsoft.Agents.Hosting.Cli.Commands.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.AuthenticationChecks\Microsoft.Agents.Hosting.Cli.AuthenticationChecks.csproj" />
 	<ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.E2E\Microsoft.Agents.Hosting.Cli.E2E.Tests.csproj" />
 	<ProjectReference Include="..\Microsoft.Agents.Hosting.Cli\Microsoft.Agents.Hosting.Cli.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.Hosting.Cli.Core\Microsoft.Agents.Hosting.Cli.Core.csproj" />

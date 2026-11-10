@@ -1,9 +1,13 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Http;
 using System.Net.Http.Headers;
+using System.Text.Json.Nodes;
 using Microsoft.Agents.Platform.Content.Abstractions;
 using Microsoft.CopilotStudio.Sync;
 using Microsoft.CopilotStudio.Sync.Dataverse;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using CoreCluster = Microsoft.Agents.Hosting.Cli.Core.Environments.CoreServicesClusterCategory;
 
 namespace Microsoft.Agents.Hosting.Cli.CopilotStudio;
 
@@ -43,7 +47,7 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
     // organization on the same object they later create clients from.
 #pragma warning disable CA1822
     public void SetDataverseOrganization(Uri dataverseOrganization) =>
-        DataverseOperationScope.Set(dataverseOrganization ?? throw new ArgumentNullException(nameof(dataverseOrganization)), DataverseOperationScope.TenantId);
+        DataverseOperationScope.Set(dataverseOrganization ?? throw new ArgumentNullException(nameof(dataverseOrganization)), DataverseOperationScope.TenantId, DataverseOperationScope.Context);
 #pragma warning restore CA1822
 
     /// <summary>
@@ -56,10 +60,49 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
     /// <returns>A client that attaches a bearer token to every request.</returns>
     public HttpClient CreateClient()
     {
-        var organization = DataverseOperationScope.Organization
+        var target = DataverseOperationScope.Capture()
             ?? throw new InvalidOperationException("The Dataverse organization has not been set. Call SetDataverseOrganization before creating a client.");
 
-        return new HttpClient(new BearerTokenHandler(_authProvider, organization, new DataverseRetryHandler { InnerHandler = SharedHandler() }), disposeHandler: true) { Timeout = RequestTimeout };
+        return CreateClient(target);
+    }
+
+    internal HttpClient CreateClient(CopilotEnvironmentContext environment) =>
+        CreateClient(new DataverseOperationScope.DataverseTarget(environment.DataverseOrganization, environment.TenantId, environment.Context), sdkRequests: false);
+
+    private HttpClient CreateClient(DataverseOperationScope.DataverseTarget target, bool sdkRequests = true)
+    {
+        DataverseTargeting.RequireTarget(target);
+        return new(new BearerTokenHandler(_authProvider, target, target.Organization, new DataverseRetryHandler
+        {
+            InnerHandler = new NoReplayResponseHandler(SharedHandler(), sdkRequests),
+        }), disposeHandler: true) { Timeout = RequestTimeout };
+    }
+
+    internal HttpClient CreateGatewayClient(PowerPlatformCloudMap legacyCloud, CoreCluster legacyCluster)
+        => CreateGatewayClient(legacyCloud, () => legacyCluster);
+
+    internal HttpClient CreateGatewayClient(PowerPlatformCloudMap legacyCloud, Func<CoreCluster> legacyCluster)
+        => new(new DeferredGatewayHandler(this, legacyCloud, legacyCluster, DataverseOperationScope.Capture()), disposeHandler: true) { Timeout = RequestTimeout };
+
+    private BearerTokenHandler CreateGatewayHandler(PowerPlatformCloudMap legacyCloud, Func<CoreCluster> legacyCluster,
+        DataverseOperationScope.DataverseTarget? target)
+    {
+        if (target is not null)
+            DataverseTargeting.RequireTarget(target);
+        var cloud = target?.Context is { } context ? PowerPlatformCloudMap.ForTarget(context.Target) : legacyCloud;
+        var cluster = target?.Context is { } captured ? PowerAppsServiceTarget.ClusterFor(captured) : legacyCluster();
+        var audience = AgentHostSyncAuthProvider.IslandAudienceFor(cluster);
+        return new BearerTokenHandler(_authProvider, target, audience, SharedHandler(), cloud);
+    }
+
+    private sealed class DeferredGatewayHandler(AgentHostDataverseHttpClientAccessor accessor, PowerPlatformCloudMap cloud,
+        Func<CoreCluster> cluster, DataverseOperationScope.DataverseTarget? target) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            using var invoker = new HttpMessageInvoker(accessor.CreateGatewayHandler(cloud, cluster, target));
+            return await invoker.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Disposes the transport shared by every client this accessor created.</summary>
@@ -88,27 +131,80 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
         }
     }
 
+    // The SDK retries every 429, including POST, and several write methods on transient errors.
+    // Terminate unsafe failures inside both its accessor retry layer and its outer SDK policy.
+    private sealed class NoReplayResponseHandler(HttpMessageHandler transport, bool sdkRequests) : DelegatingHandler(transport)
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (request.Method != HttpMethod.Get && request.Method != HttpMethod.Head && request.Method != HttpMethod.Options
+                && (int)response.StatusCode >= 400
+                && (sdkRequests || response.StatusCode != System.Net.HttpStatusCode.NotFound))
+            {
+                try
+                {
+                    if (sdkRequests)
+                    {
+                        var failure = await DataverseWebApiClient.DescribeFailureWithCodeAsync(response, cancellationToken).ConfigureAwait(false);
+                        var body = new JsonObject
+                        {
+                            ["error"] = new JsonObject { ["code"] = failure.Code, ["message"] = failure.Description },
+                        }.ToJsonString();
+                        throw new DataverseRequestException(response.StatusCode, body);
+                    }
+                    throw CopilotStudioException.ServiceError($"{request.Method.Method} {request.RequestUri!.PathAndQuery.TrimStart('/')}",
+                        await DataverseWebApiClient.DescribeFailureAsync(response, cancellationToken).ConfigureAwait(false));
+                }
+                finally
+                {
+                    response.Dispose();
+                }
+            }
+            return response;
+        }
+    }
+
     private sealed class BearerTokenHandler : DelegatingHandler
     {
         private readonly ISyncAuthProvider _authProvider;
         private readonly Uri _audience;
+        private readonly DataverseOperationScope.DataverseTarget? _target;
+        private readonly PowerPlatformCloudMap? _gatewayTrust;
 
-        public BearerTokenHandler(ISyncAuthProvider authProvider, Uri audience, HttpMessageHandler innerHandler) : base(innerHandler)
+        public BearerTokenHandler(ISyncAuthProvider authProvider, DataverseOperationScope.DataverseTarget? target, Uri audience, HttpMessageHandler innerHandler, PowerPlatformCloudMap? gatewayTrust = null) : base(innerHandler)
         {
             _authProvider = authProvider;
             _audience = audience;
+            _target = target;
+            _gatewayTrust = gatewayTrust;
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (request.RequestUri is null || !IsSameOrigin(request.RequestUri, _audience))
+            if (request.RequestUri is { IsAbsoluteUri: true, Fragment.Length: > 0 })
+                throw new EndpointTrustException("The Sync destination must not contain a URI fragment.");
+            if (_gatewayTrust is not null)
+            {
+                if (request.RequestUri is null || !_gatewayTrust.IsTrustedAgentManagementGateway(request.RequestUri)
+                    || request.RequestUri.Query.Length != 0)
+                    throw new EndpointTrustException("The Sync gateway destination is not trusted for the captured authentication target.");
+            }
+            else if (request.RequestUri is null || !IsSameOrigin(request.RequestUri, _audience))
             {
                 throw CopilotStudioException.UntrustedDataverseOrigin(request.RequestUri?.GetLeftPart(UriPartial.Authority) ?? "(none)", _audience.GetLeftPart(UriPartial.Authority));
             }
 
+            using var scope = DataverseOperationScope.Push(_target);
             var token = await _authProvider.AcquireTokenAsync(_audience, cancellationToken).ConfigureAwait(false);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if ((int)response.StatusCode is >= 300 and < 400)
+            {
+                response.Dispose();
+                throw new EndpointTrustException("The Sync request returned a redirect; redirect destinations are not trusted.");
+            }
+            return response;
         }
 
         protected override void Dispose(bool disposing)

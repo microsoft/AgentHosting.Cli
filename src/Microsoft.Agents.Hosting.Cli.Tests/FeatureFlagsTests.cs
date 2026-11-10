@@ -30,12 +30,15 @@ public sealed class FeatureFlagsTests : IDisposable
         Assert.False(flags.IsFeatureEnabled(FeatureName.AmsFeatures));
         Assert.False(flags.IsFeatureEnabled(FeatureName.AzureBotServiceFeatures));
         Assert.False(flags.IsFeatureEnabled(FeatureName.IdentityFeatures));
+        Assert.False(flags.IsFeatureEnabled(FeatureName.LegacyAuth));
     }
 
     [Theory]
     [InlineData(nameof(FeatureName.AmsFeatures), FeatureName.AmsFeatures)]
     [InlineData(nameof(FeatureName.AzureBotServiceFeatures), FeatureName.AzureBotServiceFeatures)]
     [InlineData(nameof(FeatureName.IdentityFeatures), FeatureName.IdentityFeatures)]
+    [InlineData(nameof(FeatureName.LegacyAuth), FeatureName.LegacyAuth)]
+    [InlineData("legacyauth", FeatureName.LegacyAuth)]
     public void EnvironmentList_IndependentlyEnablesEachReviewedSurface(
         string environment,
         FeatureName expectedFeature)
@@ -47,6 +50,7 @@ public sealed class FeatureFlagsTests : IDisposable
             FeatureName.AmsFeatures,
             FeatureName.AzureBotServiceFeatures,
             FeatureName.IdentityFeatures,
+            FeatureName.LegacyAuth,
         })
         {
             Assert.Equal(feature == expectedFeature, flags.IsFeatureEnabled(feature));
@@ -207,7 +211,8 @@ public sealed class FeatureFlagsTests : IDisposable
             {
               "amsFeatures": "off",
               "azureBotServiceFeatures": "off",
-              "identityFeatures": "off"
+              "identityFeatures": "off",
+              "legacyAuth": "off"
             }
             """);
         Environment.SetEnvironmentVariable(FeatureFlags.OverrideEnvironmentVariable, environment);

@@ -105,7 +105,7 @@ public sealed class MsalLiveTestTokenProvider
             throw new TokenClaimException(
                 "The access token did not report the tenant required by the live-test destination.",
                 TokenClaimFailure.WrongTenant,
-                remediation: $"Run `msagent auth login --tenant {targetTenantId}` with an account in that tenant.");
+                remediation: $"Run `msagent auth create --tenant {targetTenantId}` for the intended cloud with an account in that tenant.");
         }
 
         return AcquiredTokenTenant.Require(result, targetTenantId);

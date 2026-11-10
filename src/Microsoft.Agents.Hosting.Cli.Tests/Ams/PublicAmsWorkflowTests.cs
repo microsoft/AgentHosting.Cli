@@ -79,11 +79,13 @@ public sealed class PublicAmsWorkflowTests
         var selections = new InMemoryEnvironmentSelectionStore();
         if (useStoredGlobalEndpoint)
         {
+            var profile = (await profiles.GetActiveProfileAsync(default))!;
+            var committed = await profiles.SetDefaultEnvironmentAsync(
+                profile.ProfileId, profile.Revision,
+                EnvironmentFixtures.Selection(Home, endpoint: globalEndpoint) with { ApiAudience = target.Audience },
+                default);
             await selections.SetActiveAsync(
-                EnvironmentFixtures.Selection(Home, endpoint: globalEndpoint) with
-                {
-                    ApiAudience = target.Audience,
-                },
+                committed.DefaultEnvironment!,
                 default);
         }
 

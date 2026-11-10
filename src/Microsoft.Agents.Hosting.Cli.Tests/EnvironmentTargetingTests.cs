@@ -301,11 +301,11 @@ public sealed class EnvironmentSelectionServiceTests
     }
 
     [Fact]
-    public async Task RequireActive_AfterASameTenantAccountChange_KeepsTheSelectionUsable()
+    public async Task RequireActive_AfterASameTenantAccountChange_RejectsTheOtherProfilesSelection()
     {
         var (service, selection, profiles) = await SelectedEnvironmentAsync();
 
-        // A read never discards a selection; only an account or cloud change does.
+        // A read never discards or adopts another profile's selection.
         await profiles.UpsertAsync(
             new AuthProfile
             {
@@ -315,9 +315,7 @@ public sealed class EnvironmentSelectionServiceTests
             },
             CancellationToken.None);
 
-        var active = await service.RequireActiveAsync(CancellationToken.None);
-
-        Assert.Equal("env-1", active.EnvironmentId);
+        await Assert.ThrowsAsync<EnvironmentNotSelectedException>(() => service.RequireActiveAsync(CancellationToken.None));
         Assert.NotNull(selection.Active);
     }
 
@@ -338,14 +336,11 @@ public sealed class EnvironmentSelectionServiceTests
             },
             CancellationToken.None);
 
-        var error = await Assert.ThrowsAsync<EnvironmentTenantMismatchException>(
+        var error = await Assert.ThrowsAsync<EnvironmentNotSelectedException>(
             () => service.RequireActiveAsync(CancellationToken.None));
 
         Assert.Equal(ExitCodes.Usage, error.ExitCode);
-        Assert.Equal("tenant-mismatch", error.ErrorKind);
-        Assert.Contains(EnvironmentFixtures.ContosoTenant, error.Message);
-        Assert.Contains(EnvironmentFixtures.FabrikamTenant, error.Message);
-        Assert.Contains($"msagent auth login --tenant {EnvironmentFixtures.ContosoTenant}", error.Remediation!);
+        Assert.Equal("environment-not-selected", error.ErrorKind);
 
         // Rejected, never cleared: forgetting the selection would send the next command somewhere the
         // operator did not choose, and would destroy the record of what was chosen.
@@ -367,7 +362,7 @@ public sealed class EnvironmentSelectionServiceTests
             CancellationToken.None);
         await profiles.SetActiveAsync("fabrikam-key", CancellationToken.None);
 
-        await Assert.ThrowsAsync<EnvironmentTenantMismatchException>(
+        await Assert.ThrowsAsync<EnvironmentNotSelectedException>(
             () => service.RequireActiveAsync(CancellationToken.None));
     }
 
@@ -381,7 +376,7 @@ public sealed class EnvironmentSelectionServiceTests
             CancellationToken.None);
 
         // A comparison that passes because it lacks information is not a check.
-        await Assert.ThrowsAsync<EnvironmentTenantMismatchException>(
+        await Assert.ThrowsAsync<EnvironmentNotSelectedException>(
             () => service.RequireActiveAsync(CancellationToken.None));
     }
 
@@ -430,7 +425,7 @@ public sealed class EnvironmentSelectionServiceTests
         SelectedEnvironmentAsync() => EnvironmentFixtures.SelectedEnvironmentAsync();
 }
 
-/// <summary>Discarding environment selections when the operator changes account or cloud.</summary>
+/// <summary>Preserving ownership metadata when the operator changes account or cloud.</summary>
 public sealed class EnvironmentSelectionClearingTests : IDisposable
 {
     private readonly string _directory =
@@ -445,7 +440,7 @@ public sealed class EnvironmentSelectionClearingTests : IDisposable
     }
 
     [Fact]
-    public async Task WhenAnotherAccountInTheSameTenantBecomesActive_TheSelectionIsDiscarded()
+    public async Task WhenAnotherAccountInTheSameTenantBecomesActive_TheSelectionIsPreserved()
     {
         var (service, selection, _) = await SelectedEnvironmentAsync();
 
@@ -454,12 +449,12 @@ public sealed class EnvironmentSelectionClearingTests : IDisposable
             EnvironmentFixtures.Account(accountKey: "other-key", username: "other@contoso.com"),
             CancellationToken.None);
 
-        Assert.True(discarded);
-        Assert.Null(selection.Active);
+        Assert.False(discarded);
+        Assert.NotNull(selection.Active);
     }
 
     [Fact]
-    public async Task WhenAnotherAccountInAnotherTenantBecomesActive_TheSelectionIsDiscarded()
+    public async Task WhenAnotherAccountInAnotherTenantBecomesActive_TheSelectionIsPreserved()
     {
         var (service, selection, _) = await SelectedEnvironmentAsync();
 
@@ -471,12 +466,12 @@ public sealed class EnvironmentSelectionClearingTests : IDisposable
                 tenantId: EnvironmentFixtures.FabrikamTenant),
             CancellationToken.None);
 
-        Assert.True(discarded);
-        Assert.Null(selection.Active);
+        Assert.False(discarded);
+        Assert.NotNull(selection.Active);
     }
 
     [Fact]
-    public async Task WhenTheSameAccountMovesToAnotherCloud_TheSelectionIsDiscarded()
+    public async Task WhenTheSameAccountMovesToAnotherCloud_TheSelectionIsPreserved()
     {
         var (service, selection, _) = await SelectedEnvironmentAsync();
 
@@ -485,12 +480,12 @@ public sealed class EnvironmentSelectionClearingTests : IDisposable
             EnvironmentFixtures.Account(ring: PowerPlatformApiRing.Test),
             CancellationToken.None);
 
-        Assert.True(discarded);
-        Assert.Null(selection.Active);
+        Assert.False(discarded);
+        Assert.NotNull(selection.Active);
     }
 
     [Fact]
-    public async Task WhenNoAccountWasActive_TheSelectionIsDiscarded()
+    public async Task WhenNoAccountWasActive_TheSelectionIsPreserved()
     {
         var (service, selection, _) = await SelectedEnvironmentAsync();
 
@@ -499,8 +494,8 @@ public sealed class EnvironmentSelectionClearingTests : IDisposable
             EnvironmentFixtures.Account(),
             CancellationToken.None);
 
-        Assert.True(discarded);
-        Assert.Null(selection.Active);
+        Assert.False(discarded);
+        Assert.NotNull(selection.Active);
     }
 
     [Fact]
@@ -550,7 +545,7 @@ public sealed class EnvironmentSelectionClearingTests : IDisposable
     }
 
     [Fact]
-    public async Task ASelectionThisCloudWouldNotTrust_IsStillDiscarded()
+    public async Task ASelectionThisCloudWouldNotTrust_IsStillPreserved()
     {
         var selection = new InMemoryEnvironmentSelectionStore();
         await selection.SetActiveAsync(
@@ -571,12 +566,12 @@ public sealed class EnvironmentSelectionClearingTests : IDisposable
             EnvironmentFixtures.Account(),
             CancellationToken.None);
 
-        Assert.True(discarded);
-        Assert.Null(selection.Active);
+        Assert.False(discarded);
+        Assert.NotNull(selection.Active);
     }
 
     [Fact]
-    public async Task AnUnreadableSelection_IsDiscardedRatherThanBlockingTheAccountChange()
+    public async Task AnUnreadableSelection_IsPreservedWithoutBlockingTheAccountChange()
     {
         Directory.CreateDirectory(_directory);
         var path = Path.Combine(_directory, "environment-selection.json");
@@ -593,12 +588,13 @@ public sealed class EnvironmentSelectionClearingTests : IDisposable
             EnvironmentFixtures.Account(),
             CancellationToken.None);
 
-        Assert.True(discarded);
-        Assert.Null(await store.GetActiveAsync(CancellationToken.None));
+        Assert.False(discarded);
+        await Assert.ThrowsAsync<AgentHostingStateException>(() => store.GetActiveAsync(CancellationToken.None));
+        Assert.Equal("{ not json", await File.ReadAllTextAsync(path));
     }
 
     [Fact]
-    public async Task EveryCloudsSelectionIsDiscarded_NotOnlyTheOneThisProcessTargets()
+    public async Task EveryCloudsSelectionIsPreserved_NotOnlyTheOneThisProcessTargets()
     {
         var (production, test) = await SelectedInEveryCloudAsync();
 
@@ -613,9 +609,9 @@ public sealed class EnvironmentSelectionClearingTests : IDisposable
             EnvironmentFixtures.Account(accountKey: "other-key", username: "other@contoso.com"),
             CancellationToken.None);
 
-        Assert.True(discarded);
-        Assert.Null(await production.GetActiveAsync(CancellationToken.None));
-        Assert.Null(await test.GetActiveAsync(CancellationToken.None));
+        Assert.False(discarded);
+        Assert.NotNull(await production.GetActiveAsync(CancellationToken.None));
+        Assert.NotNull(await test.GetActiveAsync(CancellationToken.None));
     }
 
     [Fact]
@@ -671,6 +667,61 @@ public sealed class EnvironmentSelectionClearingTests : IDisposable
 /// </summary>
 public sealed class PowerPlatformCloudMapTests
 {
+    [Fact]
+    public void RegisteredTrustPoliciesCannotBeWidenedByCallers()
+    {
+        var map = PowerPlatformCloudMap.ForCloud(CloudInstance.UsNat);
+        var suffixes = Assert.IsAssignableFrom<IList<string>>(map.TrustedHostSuffixes);
+        var original = suffixes[0];
+        try
+        {
+            Assert.Throws<NotSupportedException>(() => suffixes[0] = "attacker.example");
+            Assert.False(map.IsTrusted(new Uri("https://attacker.example")));
+        }
+        finally
+        {
+            if (suffixes[0] != original) suffixes[0] = original;
+        }
+    }
+
+    [Theory]
+    [InlineData(CloudInstance.UsNat, "eaglex.ic.gov")]
+    [InlineData(CloudInstance.UsSec, "microsoft.scloud")]
+    public void NationalCloudsTrustOnlyVerifiedDataverseAndPpapiHosts(CloudInstance cloud, string suffix)
+    {
+        var map = PowerPlatformCloudMap.ForCloud(cloud);
+        Assert.True(map.IsTrusted(new Uri($"https://abc.d.environment.api.powerplatform.{suffix}")));
+        Assert.True(map.IsTrustedDataverseOrganization(new Uri($"https://org.crm.dynamics.{suffix}")));
+        Assert.True(map.IsTrustedDataverseOrganization(new Uri($"https://org.crm12.dynamics.{suffix}")));
+        foreach (var endpoint in new[]
+        {
+            $"http://org.crm.dynamics.{suffix}",
+            $"https://org.crm.dynamics.{suffix}:8443",
+            $"https://user@org.crm.dynamics.{suffix}",
+            $"https://org.crm.dynamics.{suffix}.attacker.example",
+            $"https://org.crmx.dynamics.{suffix}",
+            $"https://extra.org.crm.dynamics.{suffix}",
+            $"https://-org.crm.dynamics.{suffix}",
+            $"https://org-.crm.dynamics.{suffix}",
+            $"https://org.crm{new string('1', 61)}.dynamics.{suffix}",
+            $"https://{new string('a', 64)}.crm.dynamics.{suffix}",
+            "https://org.crm.dynamics.com",
+        })
+            Assert.False(map.IsTrustedDataverseOrganization(new Uri(endpoint)), endpoint);
+        Assert.Empty(map.TrustedAgentManagementHostSuffixes);
+        foreach (var endpoint in new[]
+        {
+            $"https://gateway.island.powerapps.{suffix}",
+            $"https://api.powerplatform.{suffix}",
+            "https://gateway.island.powerapps.com",
+        })
+        {
+            Assert.False(map.IsTrustedAgentManagementGateway(new Uri(endpoint)));
+            Assert.Throws<EndpointTrustException>(() =>
+                map.RequireTrustedAgentManagementGateway(new Uri(endpoint), "test gateway"));
+        }
+    }
+
     private static readonly PowerPlatformCloudMap Map = PowerPlatformCloudMap.ForCloud(CloudInstance.Public);
 
     [Theory]
@@ -708,14 +759,17 @@ public sealed class PowerPlatformCloudMapTests
     }
 
     [Fact]
-    public void EveryCloud_ResolvesToANonEmptyAllowlist()
+    public void EveryCloud_ResolvesPpapiWithOnlyVerifiedGatewayPolicies()
     {
         foreach (var cloud in Enum.GetValues<CloudInstance>())
         {
             var map = PowerPlatformCloudMap.ForCloud(cloud);
             Assert.Equal(cloud, map.Cloud);
             Assert.NotEmpty(map.TrustedHostSuffixes);
-            Assert.NotEmpty(map.TrustedAgentManagementHostSuffixes);
+            if (cloud is CloudInstance.UsNat or CloudInstance.UsSec)
+                Assert.Empty(map.TrustedAgentManagementHostSuffixes);
+            else
+                Assert.NotEmpty(map.TrustedAgentManagementHostSuffixes);
         }
     }
 
@@ -1029,6 +1083,45 @@ public sealed class PowerPlatformApiEnvironmentClientTests
 
     private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
         new(status) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
+
+    [Fact]
+    public async Task ChinaInventoryWithoutAnAdvertisedEndpointCannotInventAnEnvironmentRoute()
+    {
+        var target = PowerPlatformApiTargetSelection.TargetFor(CloudInstance.China);
+        var body = InventoryBody.Replace("https://env-1.api.powerplatform.com/", "", StringComparison.Ordinal);
+        var handler = new StubHttpMessageHandler(_ => Json(HttpStatusCode.OK, body));
+        var client = Create(handler, ValidToken(target.Audience), target);
+        await Assert.ThrowsAsync<NotSupportedException>(() => client.ListEnvironmentsAsync(default));
+        Assert.Equal(target.GlobalEndpoint.Host, Assert.Single(handler.Requests).Uri.Host);
+    }
+
+    [Fact]
+    public async Task ChinaInventoryMayUseAServiceAdvertisedEndpointWithinItsExistingTrustPolicy()
+    {
+        var target = PowerPlatformApiTargetSelection.TargetFor(CloudInstance.China);
+        const string endpoint = "https://advertised.api.powerplatform.partner.microsoftonline.cn/";
+        var body = InventoryBody.Replace("https://env-1.api.powerplatform.com/", endpoint, StringComparison.Ordinal);
+        var handler = new StubHttpMessageHandler(_ => Json(HttpStatusCode.OK, body));
+        var environments = await Create(handler, ValidToken(target.Audience), target).ListEnvironmentsAsync(default);
+        Assert.Equal(new Uri(endpoint), Assert.Single(environments).ApiEndpoint);
+        Assert.Equal(target.Audience, environments[0].ApiAudience);
+        Assert.Equal(target.GlobalEndpoint.Host, Assert.Single(handler.Requests).Uri.Host);
+    }
+
+    [Theory]
+    [InlineData("https://api.powerplatform.com/")]
+    [InlineData("https://api.powerplatform.partner.microsoftonline.cn.attacker.example/")]
+    [InlineData("https://user@api.powerplatform.partner.microsoftonline.cn/")]
+    [InlineData("https://api.powerplatform.partner.microsoftonline.cn:8443/")]
+    public async Task ChinaInventoryCannotWidenTheSelectedCloudTrustPolicy(string endpoint)
+    {
+        var target = PowerPlatformApiTargetSelection.TargetFor(CloudInstance.China);
+        var body = InventoryBody.Replace("https://env-1.api.powerplatform.com/", endpoint, StringComparison.Ordinal);
+        var handler = new StubHttpMessageHandler(_ => Json(HttpStatusCode.OK, body));
+        await Assert.ThrowsAsync<EndpointTrustException>(() =>
+            Create(handler, ValidToken(target.Audience), target).ListEnvironmentsAsync(default));
+        Assert.Equal(target.GlobalEndpoint.Host, Assert.Single(handler.Requests).Uri.Host);
+    }
 
     [Fact]
     public async Task ListEnvironments_RejectsATokenLackingEnvironmentsRead_BeforeCallingTheService()

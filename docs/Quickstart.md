@@ -11,10 +11,17 @@ See the [Prerequisites](../README.md#prerequisites) section of the root README.
 It is recommended to start in a new directory on your local machine. Sign in and select the environment you want to work in. 
 
 ```
-msagent auth login
+msagent auth create -n Dev
 msagent env list
 msagent env select [environmentid]
 ```
+
+The selected environment becomes this profile's default. Later, use `msagent auth list` and
+`msagent auth select --name Dev` to return to it without signing in; indices are transient.
+`msagent auth who` reads metadata without renewing a token. Interactive create/login, including
+device code, fail with 12007 / exit 3 under `--non-interactive=true`; `--json` alone is not
+non-interactive. See the [authentication reference](../src/Microsoft.Agents.Hosting.Cli.Docs/Command_Auth.md)
+for the nine cloud values, workload limitations and safe owned-state cleanup.
 
 # Create an agent
 

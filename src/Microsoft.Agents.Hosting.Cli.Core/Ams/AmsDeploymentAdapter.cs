@@ -23,16 +23,19 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
     private readonly HttpClient _httpClient;
     private readonly ITokenProvider _tokens;
     private readonly PpapiTokenClaimsValidator _claimsValidator;
+    private readonly IProfileResourceTokenProvider? _profileTokens;
 
     public AmsDeploymentAdapter(
         HttpClient httpClient,
         ITokenProvider tokens,
-        PpapiTokenClaimsValidator? claimsValidator = null)
+        PpapiTokenClaimsValidator? claimsValidator = null,
+        IProfileResourceTokenProvider? profileTokens = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _httpClient.Timeout = Timeout.InfiniteTimeSpan;
         _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens));
         _claimsValidator = claimsValidator ?? new PpapiTokenClaimsValidator();
+        _profileTokens = profileTokens;
     }
 
     public async Task<AmsAgentReadResult> GetAsync(
@@ -53,7 +56,7 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
             content: null,
             outcomeMayBeIndeterminate: false,
             isDeploymentUpdate: false,
-            cancellationToken).ConfigureAwait(false);
+            request.Context, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -111,7 +114,7 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
             content: null,
             outcomeMayBeIndeterminate: false,
             isDeploymentUpdate: true,
-            cancellationToken).ConfigureAwait(false);
+            request.Context, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -178,7 +181,7 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
             content,
             outcomeMayBeIndeterminate: true,
             isDeploymentUpdate: false,
-            cancellationToken).ConfigureAwait(false);
+            request.Context, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -222,7 +225,7 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
             content,
             outcomeMayBeIndeterminate: true,
             isDeploymentUpdate: true,
-            cancellationToken).ConfigureAwait(false);
+            request.Context, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -249,21 +252,19 @@ public sealed class AmsDeploymentAdapter : IAmsAgentReadTransport, IAmsDeploymen
         HttpContent? content,
         bool outcomeMayBeIndeterminate,
         bool isDeploymentUpdate,
+        EnvironmentResolutionContext? context,
         CancellationToken cancellationToken)
     {
         var clientRequestId = Guid.NewGuid().ToString("D");
-        var token = await _tokens
+        if (_profileTokens is null) ResourceTokenContext.RequireBinding(_tokens, context);
+        var token = _profileTokens is not null
+            ? (await _profileTokens.AcquireAsync(ResourceTokenContext.Require(context), audience,
+                tenantId, requiredPermissions, cancellationToken).ConfigureAwait(false)).Token
+            : await _tokens
             .AcquireTokenSilentAsync(audience, tenantId, cancellationToken)
             .ConfigureAwait(false);
-        var claims = _claimsValidator.Validate(
-            token.AccessToken,
-            audience,
-            tenantId,
-            requiredPermissions[0]);
-        foreach (var requiredPermission in requiredPermissions.Skip(1))
-        {
-            _claimsValidator.Validate(claims, audience, tenantId, requiredPermission);
-        }
+        if (_profileTokens is null) ResourceTokenContext.ValidateLegacy(_claimsValidator, _tokens, context,
+            token.AccessToken, audience, tenantId, requiredPermissions);
 
         using var message = new HttpRequestMessage(method, uri);
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);

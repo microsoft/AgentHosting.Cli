@@ -28,9 +28,9 @@ public sealed record ActiveEnvironmentBinding
     public string? AccountTenantId { get; init; }
 
     /// <summary>
-    /// Whether the selection's tenant matches the active account's tenant. A blank tenant on either
-    /// side is unbound rather than bound: a comparison that passes because it lacks information is not
-    /// a check.
+    /// Whether selection ownership matches the captured profile and its current default generation,
+    /// or the default is contained in that profile with compatible tenant and target metadata.
+    /// Tenant equality alone never binds a legacy standalone selection.
     /// </summary>
     public required bool IsBound { get; init; }
 }

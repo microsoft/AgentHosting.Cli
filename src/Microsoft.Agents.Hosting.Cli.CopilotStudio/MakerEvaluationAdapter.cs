@@ -22,6 +22,7 @@ public sealed class MakerEvaluationAdapter : IAgentEvaluationPort, IDisposable
     private const string AgentRole = "agent";
 
     private readonly ITokenProvider _tokenProvider;
+    private readonly IProfileCredentialProvider? _profileCredentials;
     private readonly PowerPlatformCloudMap _cloudMap;
     private readonly Func<HttpMessageHandler> _handlerFactory;
     private readonly Lock _gate = new();
@@ -32,9 +33,12 @@ public sealed class MakerEvaluationAdapter : IAgentEvaluationPort, IDisposable
     /// <param name="tokenProvider">Supplies control-plane tokens.</param>
     /// <param name="cloudMap">Decides which gateways this cloud serves.</param>
     /// <param name="handlerFactory">Creates the transport, replaced in tests.</param>
-    public MakerEvaluationAdapter(ITokenProvider tokenProvider, PowerPlatformCloudMap cloudMap, Func<HttpMessageHandler>? handlerFactory = null)
+    /// <param name="profileCredentials">Binds acquisition to captured profiles when supplied.</param>
+    public MakerEvaluationAdapter(ITokenProvider tokenProvider, PowerPlatformCloudMap cloudMap, Func<HttpMessageHandler>? handlerFactory = null,
+        IProfileCredentialProvider? profileCredentials = null)
     {
         _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
+        _profileCredentials = profileCredentials;
         _cloudMap = cloudMap ?? throw new ArgumentNullException(nameof(cloudMap));
         _handlerFactory = handlerFactory ?? TransportDefaults.CreateRedirectRejectingHandler;
     }
@@ -592,10 +596,13 @@ public sealed class MakerEvaluationAdapter : IAgentEvaluationPort, IDisposable
         ArgumentNullException.ThrowIfNull(environment);
         ArgumentException.ThrowIfNullOrWhiteSpace(agentId);
 
+        CapturedSyncTokenProvider.RequireUser(environment);
         var advertised = environment.AgentManagementUrl ?? throw CopilotStudioException.AgentManagementEndpointMissing(environment.EnvironmentId);
-        var endpoint = _cloudMap.RequireTrustedAgentManagementGateway(advertised, $"environment '{environment.EnvironmentId}' Copilot Studio agent-management");
+        var endpoint = CapturedSyncTokenProvider.CloudMap(environment, _cloudMap)
+            .RequireTrustedAgentManagementGateway(advertised, $"environment '{environment.EnvironmentId}' Copilot Studio agent-management");
+        var tokens = CapturedSyncTokenProvider.For(_tokenProvider, _profileCredentials, environment.Context);
         var token = AcquiredTokenTenant.Require(
-            await _tokenProvider.AcquireTokenSilentAsync([DelegatedScope], environment.TenantId, cancellationToken).ConfigureAwait(false),
+            await tokens.AcquireTokenSilentAsync([DelegatedScope], environment.TenantId, cancellationToken).ConfigureAwait(false),
             environment.TenantId);
 
         using var client = new HttpClient(SharedHandler(), disposeHandler: false);

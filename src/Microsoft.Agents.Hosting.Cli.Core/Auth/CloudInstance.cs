@@ -2,17 +2,16 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Auth;
 
 /// <summary>
 /// The sovereign/national cloud an authority targets. Adapted from PAC's
-/// <c>bolt.system.CloudInstance</c>: the demonstrator keeps the
+/// <c>bolt.system.CloudInstance</c>: the CLI keeps the
 /// cloud-to-login-host abstraction rather than hard-coding the public login host throughout the code,
-/// so a future non-public target only touches <see cref="AgentHostAuthorityResolver"/>.
+/// so authorities are resolved by <see cref="Microsoft.Agents.Hosting.Cli.Core.Auth.AgentHostAuthorityResolver"/>.
 ///
-/// PAC's Dataverse-only <c>Preprod</c> and <c>Test</c> members are intentionally dropped: this
-/// demonstrator's only ABS target is public cloud and it has no Dataverse test rings, so carrying them
-/// would imply support the foundation does not provide.
+/// Public-cloud <c>Preprod</c> and <c>Test</c> are represented separately by
+/// <see cref="Microsoft.Agents.Hosting.Cli.Core.Environments.PowerPlatformApiRing"/>.
 /// </summary>
 public enum CloudInstance
 {
-    /// <summary>Azure commercial (public) cloud. The only ABS target in this demonstrator.</summary>
+    /// <summary>Azure commercial (public) cloud.</summary>
     Public,
 
     /// <summary>US Government (GCC) cloud.</summary>
@@ -26,4 +25,10 @@ public enum CloudInstance
 
     /// <summary>Azure China (operated by 21Vianet).</summary>
     China,
+
+    /// <summary>United States national cloud.</summary>
+    UsNat,
+
+    /// <summary>United States secure cloud.</summary>
+    UsSec,
 }

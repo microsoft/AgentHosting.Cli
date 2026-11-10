@@ -4,8 +4,8 @@ using Microsoft.Agents.Hosting.Cli.Core.Ports;
 namespace Microsoft.Agents.Hosting.Cli.Core.Environments;
 
 /// <summary>
-/// Every cloud's persisted environment selection, so an identity change can forget all of them rather
-/// than only the one the running process happens to be composed for.
+/// Persisted environment selections available for an explicit reset. Identity changes must preserve
+/// these records: ownership is checked on use, and legacy selections remain visible as unbound.
 /// </summary>
 public sealed class EnvironmentSelectionScopes
 {

@@ -25,7 +25,14 @@ public sealed class ManagedAgentDeployGuardTests
             locator,
             new CopilotWorkspaceService(workspaces, locator),
             ManagedAgentFixtures.Identities(),
-            attach ?? new RecordingAttachPort(),
+            attach ?? new RecordingAttachPort
+            {
+                OnAttachCommand = command =>
+                {
+                    workspaces.WorkspaceExists = true;
+                    workspaces.EnvironmentIdByDirectory[Path.GetFileName(command.ProjectDirectory)] = command.Environment.EnvironmentId;
+                },
+            },
             catalog,
             new CopilotCatalogService(catalog, environments, locator, new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
             ManagedAgentFixtures.Principals(),

@@ -96,7 +96,9 @@ public sealed class CliOutputRenderer
     /// exception maps to <see cref="ExitCodes.Failure"/> and <see cref="ErrorCodes.General.Unknown"/>
     /// with no kind or remediation (the generic guard).
     /// </summary>
-    public int RenderFailure(Exception error, bool json)
+    public int RenderFailure(Exception error, bool json) => RenderFailure(error, json, suppressExceptionDetails: false);
+
+    internal int RenderFailure(Exception error, bool json, bool suppressExceptionDetails, Exception? partialState = null)
     {
         int exitCode;
         int errorCode;
@@ -126,8 +128,38 @@ public sealed class CliOutputRenderer
             remediation = null;
         }
 
-        WriteFailure(exitCode, errorCode, Describe(error), errorKind, remediation, partialReport, json, error is ManagedAgentException { HasMultilineGuidance: true });
+        if (HasAuthPartialState(partialState ?? error))
+            partialReport = AuthPartial(partialState ?? error);
+        var message = suppressExceptionDetails && error is not AgentHostingException
+            ? "Authentication failed. No credential details were emitted." : Describe(error);
+        WriteFailure(exitCode, errorCode, message, errorKind, remediation, partialReport, json, error is ManagedAgentException { HasMultilineGuidance: true });
         return exitCode;
+    }
+
+    internal static bool HasAuthPartialState(Exception error) => error is IAuthOperationPartialState
+        || error.Data["msagent.metadata-committed"] is true || error.Data.Contains("msagent.owned-cleanup");
+
+    internal void RenderAuthCancellation(OperationCanceledException error, bool json)
+    {
+        var partial = AuthPartial(error);
+        WriteFailure(130, ErrorCodes.General.Unknown, "Authentication operation canceled.", "cancellation",
+            null, partial, json);
+    }
+
+    private static AuthPartialResult AuthPartial(Exception error)
+    {
+        var state = error as IAuthOperationPartialState;
+        bool committed = state?.MetadataCommitted ?? error.Data["msagent.metadata-committed"] is true;
+        bool cleanup = state?.CleanupIncomplete ?? error.Data.Contains("msagent.owned-cleanup");
+        string guidance = committed ? "Authentication metadata was committed; it was not rolled back."
+            : "Authentication metadata was not committed.";
+        if (cleanup) guidance += " Owned cleanup is incomplete. Repair protected storage and retry `msagent auth clear` to clear only owned state; shared PAC, Azure and broker state is not removed.";
+        else if (committed) guidance += " Inspect `msagent auth list` and `msagent auth who` before another mutation.";
+        return new(committed, cleanup, state?.Profile, guidance)
+        {
+            ProfileDeleted = state?.ProfileDeleted ?? false,
+            ActiveProfile = state?.ActiveProfile,
+        };
     }
 
     private static string Describe(Exception error)
@@ -184,10 +216,17 @@ public sealed class CliOutputRenderer
 
             if (partialReport is not null)
             {
-                envelope["partialResult"] = JsonSerializer.SerializeToNode(
+                var partialNode = JsonSerializer.SerializeToNode(
                     partialReport,
                     partialReport.GetType(),
                     CliJsonContext.Default);
+                if (partialReport is AuthPartialResult { ProfileDeleted: true, ActiveProfile: null }
+                    && partialNode is JsonObject deletion)
+                {
+                    // A committed deletion explicitly reports no fallback; other partial shapes stay unchanged.
+                    deletion["activeProfile"] = null;
+                }
+                envelope["partialResult"] = partialNode;
             }
 
             // The JSON envelope (success or failure) is always the single stdout document, so a parser
@@ -284,10 +323,42 @@ public sealed class CliOutputRenderer
     /// <summary>Renders a payload's human-readable view, falling back to its string form.</summary>
     private static IReadOnlyList<string> DescribeHuman(object payload) => payload switch
     {
+        AuthPartialResult { ProfileDeleted: true } partial =>
+        [
+            partial.Guidance,
+            $"Deleted profile: {DescribeAuthProfile(partial.Profile)}",
+            $"Active profile at commit: {DescribeAuthProfile(partial.ActiveProfile)}",
+        ],
+        AuthPartialResult partial => [partial.Guidance],
+        AuthProfileListResult profiles => profiles.Profiles.Select(profile =>
+            $"{profile.Index} {(profile.IsActive ? "*" : " ")} {profile.Name ?? "(unnamed)"} | {profile.Account} | {profile.Cloud} | {profile.ConnectionUrl}").ToList(),
+        AuthProfileOperationResult { Status: "deleted" } result =>
+        [
+            $"Authentication profile deleted: {DescribeAuthProfile(result.Profile)}",
+            $"Active profile: {DescribeAuthProfile(result.Active)}",
+        ],
+        AuthProfileOperationResult result =>
+        [
+            $"Authentication profile {result.Status}: {DescribeAuthProfile(result.Profile)}",
+            $"Selected: {result.Profile.IsActive}",
+            $"Default environment: {result.Profile.DefaultEnvironment?.EnvironmentId ?? "(none)"}",
+        ],
+        AuthWhoResult who =>
+        [
+            $"Profile: {DescribeAuthProfile(who.Profile)}",
+            $"Principal: {who.Profile?.PrincipalType} | {who.Profile?.CredentialMethod}",
+            $"Tenant: {who.Profile?.TenantId ?? "(none)"}",
+            $"Default environment: {who.Profile?.DefaultEnvironment?.EnvironmentId ?? "(none)"}",
+            $"Effective environment: {who.Environment?.EnvironmentId ?? "(none)"}",
+        ],
         IDeploymentResult result => DescribeDeploymentResult(result),
         ITextGridRenderable renderable => renderable.ToTextLines(),
         _ => DescribeJson(payload),
     };
+
+    private static string DescribeAuthProfile(AuthProfileInfo? profile) => profile is null
+        ? "none"
+        : $"{profile.Index} {profile.Name ?? "(unnamed)"} | {profile.Account} | {profile.Cloud} | {profile.ConnectionUrl}";
 
     private static List<string> DescribeJson(object payload) =>
         (JsonSerializer.SerializeToNode(payload, payload.GetType(), CliJsonContext.Default)

@@ -179,6 +179,8 @@ public sealed class AuthorityResolverTests
     [InlineData(CloudInstance.UsGovHigh, "https://login.microsoftonline.us")]
     [InlineData(CloudInstance.UsGovDod, "https://login.microsoftonline.us")]
     [InlineData(CloudInstance.China, "https://login.partner.microsoftonline.cn")]
+    [InlineData(CloudInstance.UsNat, "https://login.microsoftonline.eaglex.ic.gov")]
+    [InlineData(CloudInstance.UsSec, "https://login.microsoftonline.microsoft.scloud")]
     public void GetAuthorityHost_MapsEachCloud(CloudInstance cloud, string expectedHost)
     {
         Assert.Equal(expectedHost, AgentHostAuthorityResolver.GetAuthorityHost(cloud));
@@ -199,6 +201,37 @@ public sealed class AuthorityResolverTests
     {
         Assert.Throws<ArgumentException>(
             () => AgentHostAuthorityResolver.ResolveFromUrl(CloudInstance.Public, new Uri(url)));
+    }
+
+    [Theory]
+    [InlineData("https://login.microsoftonline.com.attacker.example/organizations")]
+    [InlineData("https://notlogin.microsoftonline.com/organizations")]
+    [InlineData("https://sub.login.microsoftonline.com/organizations")]
+    [InlineData("https://user@login.microsoftonline.com/organizations")]
+    [InlineData("https://login.microsoftonline.com:8443/organizations")]
+    [InlineData("https://login.microsoftonline.us/organizations")]
+    public void ResolveFromUrl_RejectsUntrustedAuthorityBeforeUse(string url) =>
+        Assert.Throws<ArgumentException>(() =>
+            AgentHostAuthorityResolver.ResolveFromUrl(CloudInstance.Public, new Uri(url)));
+
+    [Fact]
+    public void ResolveFromUrl_RejectsUndefinedCloud() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            AgentHostAuthorityResolver.ResolveFromUrl((CloudInstance)99,
+                new Uri("https://login.microsoftonline.com/organizations")));
+
+    [Theory]
+    [InlineData(CloudInstance.UsNat)]
+    [InlineData(CloudInstance.UsSec)]
+    public void NationalAuthoritiesPreserveTenantResolutionPolicy(CloudInstance cloud)
+    {
+        var tenant = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var authority = AgentHostAuthorityResolver.Resolve(cloud, tenant);
+        Assert.Equal(tenant, authority.TenantId);
+        Assert.Equal(new Uri($"{AgentHostAuthorityResolver.GetAuthorityHost(cloud)}/{tenant:D}"), authority.AuthorityUrl);
+        Assert.Equal(authority, AgentHostAuthorityResolver.ResolveFromUrl(cloud, authority.AuthorityUrl) with { TenantId = tenant });
+        Assert.Null(AgentHostAuthorityResolver.Resolve(cloud, Guid.Empty).TenantId);
+        Assert.EndsWith("/organizations", AgentHostAuthorityResolver.Resolve(cloud).AuthorityUrl.AbsoluteUri, StringComparison.Ordinal);
     }
 }
 

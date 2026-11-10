@@ -39,7 +39,8 @@ public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, command.Environment);
+        using var lease = await DataverseTargeting.EnterAsync(_dataverseClient, cancellationToken).ConfigureAwait(false);
+        using var scope = DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, command.Environment);
 
         var workspaceFolder = new DirectoryPath(command.ProjectDirectory.Replace('\\', '/'));
         var isRetarget = _synchronizer.IsSyncInfoAvailable(workspaceFolder);

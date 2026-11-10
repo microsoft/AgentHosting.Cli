@@ -70,6 +70,9 @@ public sealed class BrowserConnectionConsentFlow : IConnectionConsentFlow
     {
         ArgumentNullException.ThrowIfNull(environment);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectorId);
+        if (environment.Context is not null)
+            environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
+        var principal = await _principals.ResolveUsernameAsync(environment, cancellationToken).ConfigureAwait(false);
 
         using var loopback = new ConnectionConsentLoopback(ConnectionConsentLink.BuildConnectionsListLink(_cluster, environment.EnvironmentId));
 
@@ -78,7 +81,6 @@ public sealed class BrowserConnectionConsentFlow : IConnectionConsentFlow
         var consentLink = ConnectionConsentLink.Build(_cluster, environment.EnvironmentId, connectorId, loopback.CallbackUrl, nonce);
 
         var known = await KnownConnectionsAsync(environment, connector, cancellationToken).ConfigureAwait(false);
-        var principal = await PrincipalAsync(cancellationToken).ConfigureAwait(false);
         var scope = known is null ? null : new DiscoveryScope(environment, connector, known, principal);
 
         if (openBrowser)
@@ -93,19 +95,6 @@ public sealed class BrowserConnectionConsentFlow : IConnectionConsentFlow
 
     private static string Where(DiscoveryScope? scope, bool mayPrompt) =>
         scope?.Principal is null || !mayPrompt ? "here, in a browser on this device" : "here, on this or any other device";
-
-    /// <summary>The signed-in operator, or <see langword="null"/> when nobody is or the profile cannot be read.</summary>
-    private async Task<string?> PrincipalAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await _principals.ResolveUsernameAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception failure) when (failure is not OperationCanceledException)
-        {
-            return null;
-        }
-    }
 
     private void LaunchQuietly(Uri consentLink)
     {

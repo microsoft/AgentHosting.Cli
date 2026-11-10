@@ -7,6 +7,14 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Ports;
 /// </summary>
 public sealed record CopilotEnvironmentContext
 {
+    /// <summary>Explicit profile and cloud/ring snapshot for downstream resource adapters.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public EnvironmentResolutionContext? Context { get; init; }
+
+    /// <summary>Operation-local validated user binding; never persisted or rendered.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public ResourceTenantPrincipal? ResourcePrincipal { get; init; }
+
     /// <summary>The environment the operation targets.</summary>
     public required string EnvironmentId { get; init; }
 
@@ -25,6 +33,9 @@ public sealed record CopilotEnvironmentContext
 /// <summary>Identifies the agent a workspace is connected to.</summary>
 public sealed record CopilotWorkspaceInfo
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public EnvironmentResolutionContext? Context { get; init; }
+
     /// <summary>The workspace directory.</summary>
     public required string WorkspacePath { get; init; }
 

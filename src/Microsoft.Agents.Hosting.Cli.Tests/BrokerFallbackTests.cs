@@ -78,8 +78,8 @@ public sealed class BrokerFallbackTests
 
         Assert.Equal("Sign-in was canceled (authentication_canceled).", canceled.Message);
         Assert.Equal(ExitCodes.Failure, canceled.ExitCode);
-        Assert.Contains("msagent auth login", canceled.Remediation);
-        Assert.Contains("--device-code", canceled.Remediation);
+        Assert.Contains("msagent auth create", canceled.Remediation);
+        Assert.Contains("--deviceCode", canceled.Remediation);
     }
 
     [Fact]
@@ -99,7 +99,7 @@ public sealed class BrokerFallbackTests
         Assert.Equal(reason, unavailable.Reason);
         Assert.Equal($"The operating-system broker could not sign you in ({reason}).", unavailable.Message);
         Assert.Equal(ExitCodes.Failure, unavailable.ExitCode);
-        Assert.Contains("--device-code", unavailable.Remediation);
+        Assert.Contains("msagent auth create --deviceCode", unavailable.Remediation);
     }
 }
 
