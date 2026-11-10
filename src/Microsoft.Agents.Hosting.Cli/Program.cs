@@ -49,8 +49,8 @@ internal static class Program
     {
         if (args.Length == 2 &&
             args[0] == PlaygroundTerminalSession.ChildOption &&
-            args[1].StartsWith("msagent-playground-", StringComparison.Ordinal) &&
-            Guid.TryParseExact(args[1]["msagent-playground-".Length..], "N", out _))
+            args[1].StartsWith(PlaygroundTerminalSession.PipeNamePrefix, StringComparison.Ordinal) &&
+            Guid.TryParseExact(args[1][PlaygroundTerminalSession.PipeNamePrefix.Length..], "N", out _))
         {
             using var cancellation = new CancellationTokenSource();
             ConsoleCancelEventHandler cancel = (_, eventArgs) =>

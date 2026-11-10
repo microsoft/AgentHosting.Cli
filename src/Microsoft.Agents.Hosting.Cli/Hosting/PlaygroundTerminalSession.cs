@@ -9,6 +9,7 @@ namespace Microsoft.Agents.Hosting.Cli.Hosting;
 internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
 {
     internal const string ChildOption = "--internal-playground-session";
+    internal const string PipeNamePrefix = "msp-";
     private const byte HandoffCancelled = 2;
     private const byte HandoffCancellationComplete = 3;
     private static readonly TimeSpan HandoffCancelSignalTimeout = TimeSpan.FromSeconds(2);
@@ -48,7 +49,7 @@ internal sealed class PlaygroundTerminalSession : IPlaygroundLauncher
         var launchPlan = PlaygroundLauncher.BuildLaunchPlan(
             tool, connection, inheritedEnvironment: _inheritedEnvironment);
         cancellationToken.ThrowIfCancellationRequested();
-        var pipeName = $"msagent-playground-{Guid.NewGuid():N}";
+        var pipeName = $"{PipeNamePrefix}{Guid.NewGuid():N}";
         using var pipe = new NamedPipeServerStream(
             pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);

@@ -345,8 +345,9 @@ internal sealed class TemporaryWorkspace : IDisposable
 {
     public TemporaryWorkspace(bool withProjectFile = true, string schemaName = "con_agent", string displayName = "Contoso Agent")
     {
-        Root = Path.Combine(Path.GetTempPath(), "ah-managed-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Root);
+        var root = Path.Combine(Path.GetTempPath(), "ah-managed-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Root = AgentConfigLocator.PhysicalPath(root);
 
         if (withProjectFile)
         {
@@ -480,4 +481,3 @@ internal static class ManagedAgentFixtures
     public static CopilotConnectionCandidate Candidate(string connectionId, string status = "Connected", string? owner = Principal) =>
         new() { ConnectionId = connectionId, DisplayName = $"{connectionId}@contoso.com", Status = status, Owner = owner };
 }
-
