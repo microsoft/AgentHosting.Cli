@@ -795,6 +795,7 @@ public sealed class TelemetryFullTests
     [Fact]
     public async Task ResolutionAndTransportShareOneDisposalDeadline()
     {
+        var time = new ManualTimeProvider();
         var resolver = new CancellationIgnoringResolver(
             Destination(new Uri("http://127.0.0.1:1/OneCollector/1.0/")));
         var transport = new CancellationBlockingTransport();
@@ -803,13 +804,15 @@ public sealed class TelemetryFullTests
             new FixedClock(),
             "1.2.3-test",
             flushTimeout: TimeSpan.FromMilliseconds(100),
-            transport: transport);
+            transport: transport,
+            timeProvider: time);
         session.RecordHost(CommandTelemetryHostCategory.Help);
 
         Task disposal = session.DisposeAsync().AsTask();
         await resolver.Started.WaitAsync(TimeSpan.FromSeconds(2));
         resolver.Release();
         await transport.Started.WaitAsync(TimeSpan.FromSeconds(2));
+        time.Advance(TimeSpan.FromMilliseconds(100));
         await disposal.WaitAsync(TimeSpan.FromSeconds(2));
 
         Assert.Equal(resolver.Token, transport.Token);
