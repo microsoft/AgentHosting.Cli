@@ -26,6 +26,16 @@ All docs live in the [AgentHosting.Cli repo](https://github.com/microsoft/AgentH
 - In the CLI: `msagent --help`, `msagent <command> --help`.
 - Full reference: [MSAgent CLI command reference](../src/Microsoft.Agents.Hosting.Cli.Docs/ReadMe.md)
 
+## CLI development
+
+These references are for changing the CLI itself, not authoring agent projects:
+
+- [Contributing](../CONTRIBUTING.md): authoritative architecture, build, test, safety, and documentation requirements.
+- [Developer reference](../src/Microsoft.Agents.Hosting.Cli/agent.md): host configuration and feature controls.
+- [Telemetry details](developer/Telemetry.md): schema, privacy, routing, and counting.
+- [Comparison](developer/Comparison.md): scoped offline conformance and pinned TypeScript input.
+- [Manual testing and records](developer/ManualTesting.md): live checks, approval boundaries, and evidence.
+
 ## msagent info
 
 - Install: See the [Prerequisites](../README.md#prerequisites) section of the root README.
