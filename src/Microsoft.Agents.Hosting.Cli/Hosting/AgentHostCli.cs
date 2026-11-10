@@ -1,12 +1,15 @@
 using System.CommandLine;
 using System.CommandLine.Help;
 using System.Text.RegularExpressions;
+using Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment.OAuth;
 using Microsoft.Agents.Hosting.Cli.Commands.Common;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Groups;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
 using Microsoft.Agents.Hosting.Cli.Core;
+using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Features;
 using Microsoft.Agents.Hosting.Cli.Rendering;
@@ -96,6 +99,7 @@ public sealed class AgentHostCli
     private readonly CommandTelemetrySessionAccessor _telemetryAccessor;
     private readonly SystemCommandLineInputFactory _inputFactory;
     private readonly ProgressSpinner? _progressSpinner;
+    private readonly UpdateCheckService? _updateCheck;
 
     /// <summary>Creates the host.</summary>
     /// <param name="operations">The operations facade the commands dispatch to.</param>
@@ -122,7 +126,8 @@ public sealed class AgentHostCli
         IFeatureFlags? featureFlags = null,
         CommandTelemetrySessionAccessor? telemetryAccessor = null,
         SystemCommandLineInputFactory? inputFactory = null,
-        ProgressSpinner? progressSpinner = null)
+        ProgressSpinner? progressSpinner = null,
+        UpdateCheckService? updateCheck = null)
     {
         ArgumentNullException.ThrowIfNull(operations);
 
@@ -135,6 +140,7 @@ public sealed class AgentHostCli
         _inputFactory =
             inputFactory ?? CommandTreeBuilder.CreateSystemCommandLineInput;
         _progressSpinner = progressSpinner;
+        _updateCheck = updateCheck;
     }
 
     /// <summary>
@@ -202,7 +208,7 @@ public sealed class AgentHostCli
         var splitHelpSubtree = SubtreesHoldingASubgroup(root, isSubgroup);
         SplitSubgroupHelp(root, splitHelpSubtree, isSubgroup, treeBuilder.UsageLines);
 
-        AddDeploymentChannelHelp(root);
+        var channelMutationCommands = AddDeploymentChannelHelp(root);
 
         var parseResult = root.Parse(ExpandEmptyAssignments(root, args));
         HelpOption[] helpOptions = [.. root.Options.OfType<HelpOption>()];
@@ -234,7 +240,25 @@ public sealed class AgentHostCli
         {
             var helpOutput = new StringWriter();
             invocationConfiguration.Output = helpOutput;
-            var exitCode = await parseResult.InvokeAsync(invocationConfiguration, cancellationToken);
+            int exitCode;
+            try
+            {
+                var providers = await GetOAuthProviderHelpAsync(
+                    parseResult, json, parseResult.GetValue(nonInteractiveOption), cancellationToken);
+                exitCode = await parseResult.InvokeAsync(invocationConfiguration, cancellationToken);
+                WriteOAuthProviderParameters(helpOutput, providers);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                telemetry.RecordHost(CommandTelemetryHostCategory.ParserRejection);
+                return renderer.RenderFailure(
+                    ex is OperationCanceledException timeout ? new TransportTimeoutException(timeout) : ex, json);
+            }
+
             await stdout.WriteAsync(
                 UsageExecutable(root.Name).Replace(helpOutput.ToString(), "$1msagent", count: 1));
             telemetry.RecordHost(CommandTelemetryHostCategory.Help);
@@ -247,6 +271,13 @@ public sealed class AgentHostCli
             int exitCode = renderer.RenderUsageError(message, json);
             telemetry.RecordHost(CommandTelemetryHostCategory.ParserRejection);
             return exitCode;
+        }
+
+        if (_updateCheck is not null && !json && !invokesHelp && !invokesVersion
+            && !ReferenceEquals(parseResult.CommandResult.Command, root)
+            && !isSubgroup.Contains(parseResult.CommandResult.Command))
+        {
+            await _updateCheck.NotifyAsync(_progressSpinner?.Error ?? stderr, cancellationToken);
         }
 
         int result;
@@ -279,6 +310,54 @@ public sealed class AgentHostCli
         command.Options.Where(option => option.ValueType == typeof(string))
             .SelectMany(option => new[] { option.Name }.Concat(option.Aliases))
             .Concat(command.Subcommands.SelectMany(ValueOptionNames));
+    private async Task<OAuthProviderDefinition[]> GetOAuthProviderHelpAsync(
+        ParseResult parseResult,
+        bool json,
+        bool nonInteractive,
+        CancellationToken cancellationToken)
+    {
+        var providerCommand = parseResult.RootCommandResult.Command.Subcommands
+            .FirstOrDefault(command => command.Name == "deployment")?.Subcommands
+            .FirstOrDefault(command => command.Name == "oauth")?.Subcommands
+            .FirstOrDefault(command => command.Name == "list-providers");
+        if (providerCommand is null || !ReferenceEquals(parseResult.CommandResult.Command, providerCommand))
+        {
+            return [];
+        }
+
+        var providerOption = providerCommand.Options.OfType<Option<string>>()
+            .Single(option => option.Name == "--provider-name");
+        if (parseResult.GetResult(providerOption) is not { Implicit: false, Tokens.Count: > 0 })
+        {
+            return [];
+        }
+
+        var symbols = providerCommand.Options.ToDictionary(option => option.Name, option => (Symbol)option, StringComparer.Ordinal);
+        return (OAuthProviderDefinition[])await new DeploymentOAuthProviderListCommand().ExecuteAsync(
+            _inputFactory(parseResult, symbols, json, nonInteractive), _services, cancellationToken);
+    }
+
+    private static void WriteOAuthProviderParameters(TextWriter output, IReadOnlyList<OAuthProviderDefinition> providers)
+    {
+        var rows = providers.SelectMany(provider => provider.Parameters).Select(parameter => new
+        {
+            Signature = $"{parameter.Name} <{parameter.Type}>" +
+                (parameter.IsRequired ? " (REQUIRED)" : string.Empty),
+            Description = (parameter.Description ?? parameter.DisplayName) +
+                (parameter.DefaultValue is null ? string.Empty : $" Default: {parameter.DefaultValue}."),
+        }).ToArray();
+        if (rows.Length == 0)
+        {
+            return;
+        }
+
+        output.WriteLine("Parameters:");
+        var signatureWidth = rows.Max(row => row.Signature.Length) + 2;
+        foreach (var row in rows)
+        {
+            output.WriteLine($"  {row.Signature.PadRight(signatureWidth)}{row.Description}");
+        }
+    }
 
     private sealed class FeatureFlagServiceProvider(IFeatureFlags featureFlags) : IServiceProvider
     {
@@ -307,32 +386,68 @@ public sealed class AgentHostCli
         }
     }
 
-    /// <summary>Wraps create/update help with catalog-generated deployment channel parameter metadata.</summary>
-    private static void AddDeploymentChannelHelp(RootCommand root)
+    private static string FormatChannelParseErrors(ParseResult result, HashSet<Command> channelMutationCommands)
+    {
+        var command = result.CommandResult.Command;
+        if (!channelMutationCommands.Contains(command) || result.UnmatchedTokens.Count == 0)
+        {
+            return string.Join(" ", result.Errors.Select(error => error.Message));
+        }
+
+        // Echo option names, never unmatched field values or inline option values.
+        var options = result.UnmatchedTokens
+            .Where(token => token.StartsWith('-'))
+            .Select(token => token.Split('=', 2)[0])
+            .Where(option => option is not "-" and not "--")
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (options.Length == 0)
+        {
+            return "Invalid channel command input. Check the options and Key=Value fields.";
+        }
+
+        var channelOption = command.Options.First(option => option.Name == "--channel");
+        var channelResult = result.GetResult(channelOption);
+        var channelName = channelResult?.Tokens.Count == 1
+            ? DeploymentChannelCatalog.SupportedChannelNames.FirstOrDefault(name =>
+                name.Equals(channelResult.Tokens[0].Value.Trim(), StringComparison.OrdinalIgnoreCase))
+            : null;
+        var target = channelName is null ? $"channel {command.Name}" : $"'{channelName}' channel {command.Name}";
+        return string.Join(" ", options.Select(option =>
+            $"Option '{option}' is misspelled or not valid for {target}."));
+    }
+
+    /// <summary>Wraps channel help with operation availability and create/update parameter metadata.</summary>
+    private static HashSet<Command> AddDeploymentChannelHelp(RootCommand root)
     {
         var deployment = root.Subcommands.FirstOrDefault(command => command.Name == "deployment");
         var channel = deployment?.Subcommands.FirstOrDefault(command => command.Name == "channel");
         if (channel is null)
         {
-            return;
+            return [];
         }
 
-        var mutationCommands = channel.Subcommands
+        var channelCommands = channel.Subcommands.ToHashSet();
+        var mutationCommands = channelCommands
             .Where(command => command.Name is "create" or "update")
             .ToHashSet();
-        if (mutationCommands.Count == 0)
+        if (channelCommands.Count == 0)
         {
-            return;
+            return mutationCommands;
         }
+
+        channelCommands.Add(channel);
 
         foreach (var option in root.Options)
         {
             if (option is HelpOption helpOption &&
                 helpOption.Action is System.CommandLine.Invocation.SynchronousCommandLineAction currentHelp)
             {
-                helpOption.Action = new DeploymentChannelHelpAction(currentHelp, mutationCommands);
+                helpOption.Action = new DeploymentChannelHelpAction(currentHelp, channelCommands);
             }
         }
+
+        return mutationCommands;
     }
 
     // `identity` is excluded from the subgroup split: its only child, `create`, is presented as a

@@ -192,7 +192,7 @@ public interface IAgentHostingOperations
         DeploymentChannelCreateRequest request,
         CancellationToken cancellationToken);
 
-    /// <summary>Updates an existing channel on the deployment's backing bot (GET-merge-PUT).</summary>
+    /// <summary>Updates an existing channel on the deployment's backing bot (GET-merge-PATCH).</summary>
     Task<DeploymentResult<DeploymentChannelRecord>> UpdateChannelAsync(
         DeploymentChannelUpdateRequest request,
         CancellationToken cancellationToken);

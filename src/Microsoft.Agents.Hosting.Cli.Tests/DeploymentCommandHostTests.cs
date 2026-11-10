@@ -175,8 +175,10 @@ public class DeploymentCommandHostTests
         Assert.Contains("\"deploymentId\": \"dep-77\"", NormalizeLines(humanStdout));
     }
 
-    [Fact]
-    public void DeploymentShow_JsonOmitsArmResponse_AndDebugWritesOnlyArmResponseToStderr()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DeploymentShow_JsonOmitsArmResponse_AndDebugPreservesNormalOutput(bool json)
     {
         using var armDoc = JsonDocument.Parse("{\"id\":\"/bot\",\"properties\":{\"endpoint\":\"https://x\"}}");
         var arm = armDoc.RootElement.Clone();
@@ -214,12 +216,11 @@ public class DeploymentCommandHostTests
             "deployment", "show",
             "--deployment-id", "dep-9",
             "--json");
+        string[] outputOptions = json ? ["--json"] : [];
         var (debugExit, debugStdout, debugStderr) = Run(
             ops,
             color: false,
-            "deployment", "show",
-            "--deployment-id", "dep-9",
-            "--debug");
+            ["deployment", "show", "--deployment-id", "dep-9", "--debug", .. outputOptions]);
         var (humanExit, humanStdout, _) = Run(ops, color: false, "deployment", "show", "--deployment-id", "dep-9");
 
         Assert.Equal(ExitCodes.Success, jsonExit);
@@ -234,7 +235,7 @@ public class DeploymentCommandHostTests
         Assert.False(root.GetProperty("deployment").TryGetProperty("armResponse", out _));
         Assert.DoesNotContain("armResponse", humanStdout);
         Assert.Empty(jsonStderr);
-        Assert.Empty(debugStdout);
+        Assert.Equal(NormalizeLines(json ? jsonStdout : humanStdout), NormalizeLines(debugStdout));
         Assert.StartsWith("ARM response:", debugStderr);
         Assert.Contains("ARM response:", debugStderr);
         Assert.Contains("\"id\": \"/bot\"", debugStderr);
@@ -258,7 +259,7 @@ public class DeploymentCommandHostTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void DeploymentDelete_DebugWritesStatusWithoutArmResponse(bool json)
+    public void DeploymentDelete_DebugPreservesNormalOutputWithoutArmResponse(bool json)
     {
         var ops = new FakeOperations();
         var args = new List<string>
@@ -275,8 +276,17 @@ public class DeploymentCommandHostTests
         var (exitCode, stdout, stderr) = Run(ops, color: false, [.. args]);
 
         Assert.Equal(ExitCodes.Success, exitCode);
-        Assert.Empty(stdout);
-        Assert.Equal("Deployment deleted.", NormalizeLines(stderr));
+        Assert.Empty(stderr);
+        if (json)
+        {
+            using var document = JsonDocument.Parse(stdout);
+            Assert.True(document.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal("Deployment deleted.", document.RootElement.GetProperty("message").GetString());
+        }
+        else
+        {
+            Assert.Equal("Deployment deleted.", NormalizeLines(stdout));
+        }
         Assert.Equal("dep-99", ops.LastDeleteDeploymentId);
     }
 

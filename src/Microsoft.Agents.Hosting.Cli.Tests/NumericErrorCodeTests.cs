@@ -60,6 +60,7 @@ public sealed class NumericErrorCodeTests
         { new NotSignedInException("Sign in."), 12 },
         { new EnvironmentNotFoundException("Environment missing."), 13 },
         { DeploymentException.NotFound("deployment"), 14 },
+        { DeploymentException.ChannelConfigurationUnavailable(), 14 },
         { new AgentPackageException(AgentPackageRejection.SourceLink, "Linked source."), 15 },
         { new ProvisioningException(ProvisioningErrorKind.NamingConflict, "Conflict.", "Rename."), 16 },
         { CopilotStudioException.ServiceError("pull"), 17 },

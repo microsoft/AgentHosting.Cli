@@ -120,7 +120,7 @@ public interface IDeploymentOAuthTransport
         CancellationToken cancellationToken);
 }
 
-public sealed record BotServiceChannelUpsertRequest
+public sealed record BotServiceChannelWriteRequest
 {
     /// <summary>The Azure Bot Service channel resource name, such as <c>SlackChannel</c>.</summary>
     public required string ChannelArmName { get; init; }
@@ -140,8 +140,11 @@ public interface IDeploymentChannelTransport
         string botResourceId,
         string? targetTenantId,
         CancellationToken cancellationToken);
-    Task<DeploymentChannelRecord> UpsertChannelAsync(
-        BotServiceChannelUpsertRequest request,
+    Task<DeploymentChannelRecord> CreateChannelAsync(
+        BotServiceChannelWriteRequest request,
+        CancellationToken cancellationToken);
+    Task<DeploymentChannelRecord> UpdateChannelAsync(
+        BotServiceChannelWriteRequest request,
         CancellationToken cancellationToken);
     Task<bool> DeleteChannelAsync(
         string channelArmName,

@@ -4,9 +4,8 @@ using System.Text.Json.Nodes;
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
 
 /// <summary>
-/// Provides the schema-aware response-redaction feature for Azure Bot Service bot, OAuth, and channel resources.
-/// Known safe fields are preserved, declared secrets and recognizable unknown secret fields are masked, nulls
-/// and boolean values are preserved, and malformed required resource structures fail closed to an empty object.
+/// Preserves safe Bot Service, OAuth, and channel fields while masking secrets.
+/// Declared secrets are masked even when null. Unknown nulls and booleans are preserved; malformed resources fail closed.
 /// </summary>
 internal static class BotServiceResponseRedactor
 {
@@ -224,7 +223,7 @@ internal static class BotServiceResponseRedactor
 
     internal static JsonElement RedactChannel(
         JsonElement response,
-        ChannelDefinition definition) =>
+        ChannelDefinition? definition) =>
         RedactResource(
             response,
             ChannelResourceSchema,
@@ -257,7 +256,11 @@ internal static class BotServiceResponseRedactor
             return emptyDocument.RootElement.Clone();
         }
 
-        RedactObject(root, resourceSchema);
+        RedactObject(
+            root,
+            resourceSchema,
+            nestedPropertyHandler: (propertyName, _) =>
+                propertyName.Equals("properties", StringComparison.OrdinalIgnoreCase));
         RedactObject(properties, propertySchema, secretProperties, nestedPropertyHandler);
 
         using var document = JsonDocument.Parse(root.ToJsonString());
@@ -292,8 +295,9 @@ internal static class BotServiceResponseRedactor
                 property.Key.Equals("value", StringComparison.OrdinalIgnoreCase)).Value;
             var isSecret = key is null ||
                 declaredSecretNames?.Contains(key) == true ||
+                key.Equals(DeploymentOAuthParameters.CommonOAuthParameters.ClientSecret, StringComparison.OrdinalIgnoreCase) ||
                 (DeploymentOAuthParameters.IsSecret(key) &&
-                 (parameterValue is null || !IsBoolean(parameterValue)));
+                 parameterValue is not null && !IsBoolean(parameterValue));
 
             RedactObject(
                 parameter,
@@ -314,18 +318,20 @@ internal static class BotServiceResponseRedactor
             return;
         }
 
-        var siteProperties = definition?.Parameters
+        RedactChannelFields(properties, definition?.Parameters ?? []);
+    }
+
+    private static void RedactChannelFields(
+        JsonObject properties,
+        IReadOnlyList<ChannelParameterDefinition> definitions)
+    {
+        var knownProperties = definitions
             .Select(parameter => parameter.Name)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase)
-            ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var knownProperties = definition?.IsNestedParameters == true
-            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sites" }
-            : new HashSet<string>(siteProperties, StringComparer.OrdinalIgnoreCase);
-        var secretProperties = definition?.Parameters
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var secretProperties = definitions
             .Where(parameter => parameter.IsSecret)
             .Select(parameter => parameter.Name)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase)
-            ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         RedactObject(
             properties,
@@ -333,20 +339,38 @@ internal static class BotServiceResponseRedactor
             secretProperties,
             nestedPropertyHandler: (propertyName, nestedValue) =>
             {
-                if (definition?.IsNestedParameters != true ||
-                    !propertyName.Equals("sites", StringComparison.OrdinalIgnoreCase))
+                var field = definitions.FirstOrDefault(parameter =>
+                    propertyName.Equals(parameter.Name, StringComparison.OrdinalIgnoreCase));
+                if (field is not { IsSecret: false, ItemParameters: { } itemParameters })
                 {
                     return false;
                 }
 
-                RedactObjectArray(nestedValue, siteProperties, secretProperties);
+                if (nestedValue is not JsonArray items)
+                {
+                    ReplaceWithMask(nestedValue);
+                    return true;
+                }
+
+                for (var index = 0; index < items.Count; index++)
+                {
+                    if (items[index] is JsonObject item)
+                    {
+                        RedactChannelFields(item, itemParameters);
+                    }
+                    else
+                    {
+                        items[index] = items[index] is null ? null : JsonValue.Create(Mask);
+                    }
+                }
+
                 return true;
             });
     }
 
     private static void RedactObject(
         JsonObject value,
-        IReadOnlySet<string> knownProperties,
+        IReadOnlySet<string>? knownProperties = null,
         IReadOnlySet<string>? secretProperties = null,
         Func<string, JsonNode?, bool>? nestedPropertyHandler = null)
     {
@@ -357,43 +381,36 @@ internal static class BotServiceResponseRedactor
                 continue;
             }
 
-            if (secretProperties?.Contains(property.Key) == true &&
-                property.Value is not null)
+            if (secretProperties?.Contains(property.Key) == true)
             {
                 value[property.Key] = Mask;
                 continue;
             }
 
             if (property.Value is not null &&
-                !knownProperties.Contains(property.Key) &&
+                knownProperties?.Contains(property.Key) != true &&
                 DeploymentOAuthParameters.IsSecret(property.Key) &&
                 !IsBoolean(property.Value))
             {
                 value[property.Key] = Mask;
+                continue;
             }
+
+            RedactNestedValue(property.Value);
         }
     }
 
-    private static void RedactObjectArray(
-        JsonNode? value,
-        IReadOnlySet<string> knownProperties,
-        IReadOnlySet<string> secretProperties)
+    private static void RedactNestedValue(JsonNode? value)
     {
-        if (value is not JsonArray items)
+        if (value is JsonObject nestedObject)
         {
-            ReplaceWithMask(value);
-            return;
+            RedactObject(nestedObject);
         }
-
-        for (var index = 0; index < items.Count; index++)
+        else if (value is JsonArray array)
         {
-            if (items[index] is JsonObject item)
+            foreach (var item in array)
             {
-                RedactObject(item, knownProperties, secretProperties);
-            }
-            else
-            {
-                items[index] =items[index] is null ? null : JsonValue.Create(Mask);
+                RedactNestedValue(item);
             }
         }
     }

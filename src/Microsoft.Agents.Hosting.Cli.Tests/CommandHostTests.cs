@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Hosting;
@@ -162,6 +163,46 @@ public class CommandHostTests
         var root = doc.RootElement;
         Assert.True(root.GetProperty("success").GetBoolean());
         Assert.Equal("complete", root.GetProperty("result").GetString());
+    }
+
+    [Theory]
+    [InlineData("slack", false)]
+    [InlineData("slack", true)]
+    [InlineData("webchat", false)]
+    [InlineData("webchat", true)]
+    public void DebugSuccess_WritesArmResponseBeforeNormalMessagesWarningsAndActions(string channel, bool json)
+    {
+        const string warning = "Review the requested configuration.";
+        var result = new DeploymentResult<DeploymentChannelRecord>
+        {
+            Status = DeploymentOperationStatus.Updated,
+            TargetName = "Channel",
+            TargetInstanceName = channel,
+            Warnings = [warning],
+            AuthorizationUrl = channel == "slack" ? new Uri("https://slack.com/oauth/v2/authorize?state=SYNTHETIC_STATE") : null,
+            Payload = new()
+            {
+                ChannelName = channel,
+                ResourceId = $"/channels/{channel}",
+                RawArmResponse = JsonSerializer.SerializeToElement(new { lastDiagnostic = "ARM_END" }),
+            },
+        };
+        var output = new StringWriter();
+        var renderer = new CliOutputRenderer(output, output, color: false);
+
+        renderer.RenderSuccess(result, json, debug: true);
+
+        var text = output.ToString();
+        Assert.StartsWith("ARM response:", text);
+        var diagnosticEnd = text.IndexOf("ARM_END", StringComparison.Ordinal);
+        var normalStart = text.IndexOf(json ? "\"success\": true" : $"Channel '{channel}'", StringComparison.Ordinal);
+        Assert.True(normalStart > diagnosticEnd, "Normal output must follow the ARM diagnostics.");
+        Assert.True(text.IndexOf(warning, StringComparison.Ordinal) > normalStart);
+        if (channel == "slack")
+        {
+            Assert.True(text.IndexOf(json ? "\"authorizationUrl\":" : "Authorization URL:", StringComparison.Ordinal) > normalStart);
+            Assert.True(text.IndexOf("SYNTHETIC_STATE", StringComparison.Ordinal) > normalStart);
+        }
     }
 
     [Fact]

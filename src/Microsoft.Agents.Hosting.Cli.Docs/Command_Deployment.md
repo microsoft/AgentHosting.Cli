@@ -11,9 +11,9 @@
 | [`msagent deployment update`](#msagent-deployment-update) | Rename an MCS deployment, update a CodeAgent deployment, or update a package revision. |
 | [`msagent deployment delete`](#msagent-deployment-delete) | Delete a CodeAgent or MCS agent deployment record, and optionally the MCS cloud agent. |
 | [`msagent deployment show`](#msagent-deployment-show) | Get an existing CodeAgent or MCS agent deployment. |
-| [`msagent deployment channel`](#msagent-deployment-channel---codeagent-specific) | **CodeAgent-specific.** Group: `create`, `update`, `delete`, `show`, and `list`. Manage Azure Bot Service channels. |
 | [`msagent deployment connection`](Command_Deployment_Connection.md) | **MCS-specific.** Group: `list`, `add`, `update`, `remove`, and `connectors`. Inspect and bind connection references and create connections. See [Command_Deployment_Connection.md](Command_Deployment_Connection.md) for details. |
 | [`msagent deployment oauth`](Command_Deployment_OAuth.md) | **CodeAgent-specific.** Group: `create`, `delete`, `list`, `list-providers`, `show`, and `update`. Manage OAuth connection settings. See [Command_Deployment_OAuth.md](Command_Deployment_OAuth.md) for details. |
+| [`msagent deployment channel`](Command_Deployment_Channel.md) | **CodeAgent-specific.** Group: `create`, `update`, `show`, `list`, and `delete`. Manage channels configuration. |
 
 `msagent deployment create`, `list`, `show`, `update`, and `delete` apply to CodeAgent and Microsoft
 Copilot Studio agents and standalone MCS workflows unless an option says otherwise. The `connection` group is **MCS-specific** and
@@ -357,58 +357,12 @@ when no local record supplies them.
 
 ## `msagent deployment channel` - CodeAgent-specific
 
-Manages channels on an existing locally recorded CodeAgent deployment. This group is not feature-gated
-and is singular (`channel`, not `channels`). Invoking the group without a leaf command is a usage error.
-All leaves accept `--project` (`-p`, current directory), and either `--deployment-id` (`-did`, GUID)
-alone or `--agent-id` (`-aid`, GUID) with `--deployment-name` (`-dn`). They do not accept Azure address
-overrides or `--agent-name`; the backing bot coordinates come from the local record.
-
-| Command | Required options beyond the deployment selector | Behavior |
-| --- | --- | --- |
-| `msagent deployment channel create` | `--channel` | Enable a channel. Returns the existing channel without applying changes if it already exists. Required create parameters are still validated first. |
-| `msagent deployment channel update` | `--channel`, `--parameters` | Read the live channel, merge supplied settings, and PUT the result. Fails if the channel does not exist. |
-| `msagent deployment channel delete` | `--channel` | Delete the channel and remove its local snapshot. An already absent channel is treated as deleted. No confirmation prompt. |
-| `msagent deployment channel show` | `--channel` | Read a live channel and refresh its local snapshot. |
-| `msagent deployment channel list` | None | Read live channels and replace the local channel snapshots. Does not accept `--channel` or `--parameters`. |
-
-`--channel` has **no short alias**. Values are case-insensitive: `directline`, `m365extensions`,
-`msteams`, `slack`, or `webchat`. `create` and `update` accept repeatable `--parameters` (`-par`)
-with one or more `Key=Value` assignments per occurrence. Quote an assignment containing spaces.
-Parameter names are case-insensitive; unknown or duplicate keys, invalid booleans, and read-only
-parameters are rejected. Create rejects blank values; update permits `Key=` to clear an optional
-parameter, but required parameters cannot be cleared.
-
-### Channel parameters and restrictions
-
-Use `msagent deployment channel create --channel <name> --help` (or `update`) for the channel-specific
-parameter schema. These are assignments, not separate typed command options.
-
-| Channel | Parameters |
-| --- | --- |
-| `directline` | Required on create: `siteName`. Optional strings: `appId`, `tenantId`, `trustedOrigins` (comma-separated). Booleans: `isBlockUserUploadEnabled`, `isDetailedLoggingEnabled`, `isEnabled` (create default `true`), `isEndpointParametersEnabled`, `isNoStorageEnabled`, `isSecureSiteEnabled`, `isTokenEnabled`, `isV3Enabled`. `isV1Enabled` is read-only. |
-| `webchat` | Required on create: `siteName`. Optional strings: `appId`, `tenantId`. Booleans: `isBlockUserUploadEnabled`, `isDetailedLoggingEnabled`, `isEnabled` (create default `true`), `isEndpointParametersEnabled`, `isNoStorageEnabled`, `isTokenEnabled`, `isWebchatPreviewEnabled`. |
-| `msteams` | Strings: `callingWebhook`, `deploymentEnvironment` (create default `CommercialDeployment`), `incomingCallRoute`. Booleans: `acceptedTerms`, `enableCalling`, `isEnabled` (create default `true`). |
-| `slack` | Required on create: `clientId`, `clientSecret`, `verificationToken`. Optional strings: `landingPageUrl`, `scopes`, `signingSecret`. Booleans: `isEnabled`, `registerBeforeOAuthFlow` (both create defaults `true`). Secrets are masked in results and local records. |
-| `m365extensions` | No parameters. Create, show, list, and delete are supported; update is not. |
-
-Direct Line and Web Chat are automatically created channels and cannot be deleted through this CLI.
-**Their updates replace the entire sites array with one site**, merging from the first live site;
-additional sites are not preserved and there is no site-selector option. Channel updates preserve safe
-readable settings but do not replay masked secrets; resupply credentials when changing them.
-
-```text
-msagent deployment channel create --deployment-id <id> --channel msteams
-msagent deployment channel update --deployment-id <id> --channel msteams --parameters enableCalling=true
-msagent deployment channel list --deployment-id <id>
-```
-
-Create/update/show results contain a channel snapshot, list contains channel snapshots, and delete
-reports deletion without a channel payload. Successful operations refresh the local aggregate after
-the Azure call; a local-save failure is not a rollback.
+See [deployment channel commands](Command_Deployment_Channel.md) for supported channels,
+parameters, nested configuration, and Slack authorization.
 
 ## Selecting a deployment and project
 
-The [`connection`](Command_Deployment_Connection.md), [`channel`](#msagent-deployment-channel---codeagent-specific), and [`oauth`](Command_Deployment_OAuth.md) commands, like `show`, `update`, and `delete`, use
+The [`connection`](Command_Deployment_Connection.md), [`channel`](Command_Deployment_Channel.md), and [`oauth`](Command_Deployment_OAuth.md) commands, like `show`, `update`, and `delete`, use
 deployment selectors: `--deployment-id` (`-did`), or `--deployment-name` (`-dn`) with `--agent-id`
 (`-aid`). MCS commands also accept `--agent-name` (`-an`). `--project` (`-p`) is the project
 directory holding the configuration and defaults to the current directory.

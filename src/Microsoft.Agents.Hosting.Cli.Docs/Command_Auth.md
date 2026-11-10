@@ -2,6 +2,10 @@
 
 [Back to command index](ReadMe.md)
 
+Authentication commands can display the host's [version notice](ReadMe.md#output-and-exit-codes)
+before their output or sign-in prompt. This adds no auth options or token acquisition; `--json`
+suppresses the notice.
+
 ## Subcommands
 
 | Command | Description |

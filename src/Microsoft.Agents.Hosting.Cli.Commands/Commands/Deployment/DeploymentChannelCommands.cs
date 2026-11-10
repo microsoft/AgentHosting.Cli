@@ -27,6 +27,7 @@ public sealed class DeploymentChannelCreateCommand : DeploymentChannelCommand<De
             DeploymentName = deploymentRequest.DeploymentName,
             ChannelName = input.GetString("--channel")!,
             Parameters = input.GetStrings("--parameters"),
+            NonInteractive = input.NonInteractive,
         };
     }
 }
@@ -34,7 +35,19 @@ public sealed class DeploymentChannelCreateCommand : DeploymentChannelCommand<De
 [Command("update", Description = "Update a channel on a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 20)]
 public sealed class DeploymentChannelUpdateCommand : DeploymentChannelCommand<DeploymentChannelUpdateRequest, DeploymentResult<DeploymentChannelRecord>>
 {
-    public override IReadOnlyList<CommandSymbol> Symbols => MutationCommandSymbols;
+    public override IReadOnlyList<CommandSymbol> Symbols =>
+    [
+        .. MutationCommandSymbols,
+        AssignmentOption("--add-site", "Add a Direct Line or Web Chat site using Key=Value fields."),
+        AssignmentOption("--set-site", "Update a Direct Line or Web Chat site using Key=Value fields."),
+        AssignmentOption("--remove-site", "Remove a Direct Line or Web Chat site using `siteName` as a selector."),
+        AssignmentOption("--add-page", "Add a Facebook page using Key=Value fields."),
+        AssignmentOption("--set-page", "Update a Facebook page using Key=Value fields."),
+        AssignmentOption("--remove-page", "Remove a Facebook page using `id` as a selector."),
+        AssignmentOption("--add-registration", "Add a LINE registration using Key=Value fields."),
+        AssignmentOption("--set-registration", "Update a LINE registration using Key=Value fields."),
+        AssignmentOption("--remove-registration", "Remove a LINE registration using `generatedId` as a selector."),
+    ];
 
     public override IReadOnlyList<UsageRoute> UsageRoutes => DeploymentUsage("--channel");
 
@@ -51,6 +64,16 @@ public sealed class DeploymentChannelUpdateCommand : DeploymentChannelCommand<De
             DeploymentName = deploymentRequest.DeploymentName,
             ChannelName = input.GetString("--channel")!,
             Parameters = input.GetStrings("--parameters"),
+            NonInteractive = input.NonInteractive,
+            AddSite = input.GetStrings("--add-site"),
+            SetSite = input.GetStrings("--set-site"),
+            RemoveSite = input.GetStrings("--remove-site"),
+            AddPage = input.GetStrings("--add-page"),
+            SetPage = input.GetStrings("--set-page"),
+            RemovePage = input.GetStrings("--remove-page"),
+            AddRegistration = input.GetStrings("--add-registration"),
+            SetRegistration = input.GetStrings("--set-registration"),
+            RemoveRegistration = input.GetStrings("--remove-registration"),
         };
     }
 }
@@ -143,18 +166,20 @@ public abstract class DeploymentChannelCommand<TRequest, TResult> : CodeAgentDep
     private static CommandOption ChannelName =>
         new(
             "--channel",
-            "The channel type. Supported: directline, m365extensions, msteams, slack, webchat.")
+            $"The channel type. Supported: {string.Join(", ", DeploymentChannelCatalog.SupportedChannelNames)}.")
         {
             IsRequired = true,
         };
 
     private static CommandOption Parameters =>
-        OptionCatalog.Strings(
+        AssignmentOption(
             "--parameters",
             "Channel-specific Key=Value assignments. " +
-            "Specify --channel <name> to see that channel's parameters") with
+            "Specify --channel <name> to see that channel's parameters");
+
+    protected static CommandOption AssignmentOption(string name, string description) =>
+        OptionCatalog.Strings(name, description) with
         {
             AllowMultipleArgumentsPerToken = true,
         };
-
 }

@@ -216,6 +216,7 @@ mean a change partially completed or its result is uncertain.
 | [14044](ErrorCodes/14044.md) | A channel create or update attempted to assign a service-controlled parameter. |
 | [14045](ErrorCodes/14045.md) | An update explicitly requested an empty value for a required setting. |
 | [14046](ErrorCodes/14046.md) | A Boolean provider or channel setting is not expressed as true or false. |
+| [14047](ErrorCodes/14047.md) | The channel response does not contain a usable configuration. |
 
 ## Package
 

@@ -39,8 +39,19 @@ public sealed class DeploymentChannelAdapter : DeploymentArmClient, IDeploymentC
         }
     }
 
-    public async Task<DeploymentChannelRecord> UpsertChannelAsync(
-        BotServiceChannelUpsertRequest request,
+    public Task<DeploymentChannelRecord> CreateChannelAsync(
+        BotServiceChannelWriteRequest request,
+        CancellationToken cancellationToken) =>
+        WriteChannelAsync(request, HttpMethod.Put, cancellationToken);
+
+    public Task<DeploymentChannelRecord> UpdateChannelAsync(
+        BotServiceChannelWriteRequest request,
+        CancellationToken cancellationToken) =>
+        WriteChannelAsync(request, HttpMethod.Patch, cancellationToken);
+
+    private async Task<DeploymentChannelRecord> WriteChannelAsync(
+        BotServiceChannelWriteRequest request,
+        HttpMethod method,
         CancellationToken cancellationToken)
     {
         var outerProperties = new Dictionary<string, object?>
@@ -59,13 +70,20 @@ public sealed class DeploymentChannelAdapter : DeploymentArmClient, IDeploymentC
         };
 
         var body = await RequestAsync(
-            HttpMethod.Put,
+            method,
             BuildChannelUrl(request.BotResourceId, request.ChannelArmName),
             payload,
             request.TenantId,
             cancellationToken).ConfigureAwait(false);
 
-        return MapChannel(ParseObject(body));
+        var root = ParseObject(body);
+        var authorizationUrl = request.ChannelArmName == "SlackChannel"
+            ? DeploymentChannelSlack.ExtractAuthorizationUrl(root)
+            : null;
+        return MapChannel(root) with
+        {
+            AuthorizationUrl = authorizationUrl,
+        };
     }
 
     public async Task<bool> DeleteChannelAsync(
@@ -121,7 +139,7 @@ public sealed class DeploymentChannelAdapter : DeploymentArmClient, IDeploymentC
         $"{Config.ArmEndpoint}{BotServiceResourceId.ToRequestPath(botResourceId)}/channels" +
         $"?api-version={Config.BotServiceApiVersion}";
 
-    private static DeploymentChannelRecord MapChannel(JsonElement root)
+    private static DeploymentChannelRecord MapChannel(JsonElement root, bool allowAllChannels = false)
     {
         var channelArmName = GetString(GetObject(root, "properties", isOptional: false)!.Value, "channelName");
         if (string.IsNullOrWhiteSpace(channelArmName))
@@ -129,17 +147,24 @@ public sealed class DeploymentChannelAdapter : DeploymentArmClient, IDeploymentC
             throw InvalidResponse("The response did not contain properties.channelName");
         }
 
-        var channelDefinition = DeploymentChannelCatalog.FindChannelDefinition(
+        var channelDefinition = DeploymentChannelCatalog.FindChannelDefinitionOrDefault(
             channelArmName,
             ChannelKeyType.ArmName);
+
+        if (channelDefinition is null && !allowAllChannels)
+        {
+            throw DeploymentException.ChannelDefinitionNotFound(channelArmName);
+        }
 
         var redactedResponse = BotServiceResponseRedactor.RedactChannel(root, channelDefinition);
 
         return new DeploymentChannelRecord
         {
             ResourceId = GetString(redactedResponse, "id")!,
-            ChannelName = channelDefinition.Name,
-            Parameters = ExtractDeclaredChannelProperties(redactedResponse, channelDefinition),
+            ChannelName = channelDefinition?.Name ?? channelArmName,
+            Parameters = channelDefinition is { IsSupported: true }
+                ? ExtractDeclaredChannelProperties(redactedResponse, channelDefinition)
+                : new Dictionary<string, JsonElement>(StringComparer.Ordinal),
             RawArmResponse = redactedResponse,
         };
     }
@@ -149,7 +174,7 @@ public sealed class DeploymentChannelAdapter : DeploymentArmClient, IDeploymentC
         var channels = new List<DeploymentChannelRecord>();
         foreach (var element in ParseArray(body))
         {
-            channels.Add(MapChannel(element));
+            channels.Add(MapChannel(element, allowAllChannels: true));
         }
 
         return channels;
@@ -169,44 +194,6 @@ public sealed class DeploymentChannelAdapter : DeploymentArmClient, IDeploymentC
             return parameters;
         }
 
-        if (!channelDefinition.IsNestedParameters)
-        {
-            foreach (var definition in channelDefinition.Parameters)
-            {
-                if (properties.TryGetProperty(definition.Name, out var value))
-                {
-                    parameters[definition.Name] = value.Clone();
-                }
-            }
-
-            return parameters;
-        }
-
-        if (!properties.TryGetProperty("sites", out var sites) ||
-            sites.ValueKind != JsonValueKind.Array)
-        {
-            return parameters;
-        }
-
-        var projectedSites = new List<Dictionary<string, JsonElement>>();
-        foreach (var site in sites.EnumerateArray().Where(site => site.ValueKind == JsonValueKind.Object))
-        {
-            var projectedSite = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-            foreach (var definition in channelDefinition.Parameters)
-            {
-                if (site.TryGetProperty(definition.Name, out var value))
-                {
-                    projectedSite[definition.Name] = value.Clone();
-                }
-            }
-
-            projectedSites.Add(projectedSite);
-        }
-
-        // Reads and persistence preserve every site returned by ARM. Mutations currently follow the Azure CLI
-        // single-site limitation; future multi-site support will identify and merge sites independently.
-        parameters["sites"] = JsonSerializer.SerializeToElement(projectedSites);
-
-        return parameters;
+        return DeploymentChannelCatalog.ProjectChannelParameters(properties, channelDefinition);
     }
 }

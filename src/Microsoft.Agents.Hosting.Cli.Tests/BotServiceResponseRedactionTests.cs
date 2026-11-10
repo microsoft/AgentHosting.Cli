@@ -5,6 +5,89 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 public sealed class BotServiceResponseRedactionTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("slack")]
+    public void Channel_MasksNestedObjectsAndArraysWithOrWithoutDefinition(string? channelName)
+    {
+        var source = Json(
+            """
+            {
+              "extra": {"apiKey":"SYNTHETIC_ENVELOPE_SECRET","label":"envelope"},
+              "properties": {
+                "extra": [[{"accessToken":"SYNTHETIC_OUTER_SECRET","label":"outer"}]],
+                "properties": {
+                  "clientSecret": null,
+                  "settings": {
+                    "password":"SYNTHETIC_INNER_SECRET",
+                    "entries":[
+                      {"sharedSecret":"SYNTHETIC_ENTRY_SECRET","keyEnabled":true,"secretFlag":"false","nullableSecret":null},
+                      ["visible",{"token":"SYNTHETIC_NESTED_SECRET"}],
+                      null,
+                      42
+                    ]
+                  }
+                }
+              }
+            }
+            """);
+        var definition = channelName is null ? null : Channel(channelName);
+
+        var result = BotServiceResponseRedactor.RedactChannel(source, definition);
+
+        Assert.DoesNotContain("SYNTHETIC_", result.GetRawText());
+        Assert.Equal("envelope", result.GetProperty("extra").GetProperty("label").GetString());
+        Assert.Equal("outer", result.GetProperty("properties").GetProperty("extra")[0][0].GetProperty("label").GetString());
+        var properties = result.GetProperty("properties").GetProperty("properties");
+        if (channelName == "slack")
+        {
+            Assert.Equal("***", properties.GetProperty("clientSecret").GetString());
+        }
+        else
+        {
+            Assert.Equal(JsonValueKind.Null, properties.GetProperty("clientSecret").ValueKind);
+        }
+
+        var entries = properties.GetProperty("settings").GetProperty("entries");
+        Assert.True(entries[0].GetProperty("keyEnabled").GetBoolean());
+        Assert.Equal("false", entries[0].GetProperty("secretFlag").GetString());
+        Assert.Equal(JsonValueKind.Null, entries[0].GetProperty("nullableSecret").ValueKind);
+        Assert.Equal("visible", entries[1][0].GetString());
+        Assert.Equal(JsonValueKind.Null, entries[2].ValueKind);
+        Assert.Equal(42, entries[3].GetInt32());
+        Assert.Contains("SYNTHETIC_", source.GetRawText());
+    }
+
+    [Fact]
+    public void Channel_MasksDeclaredNullSecretsButPreservesUnknownNulls()
+    {
+        var result = BotServiceResponseRedactor.RedactChannel(
+            Json("""{"properties":{"properties":{"clientSecret":null,"verificationToken":null,"futureSecret":null}}}"""),
+            Channel("slack"));
+
+        var properties = result.GetProperty("properties").GetProperty("properties");
+        Assert.Equal("***", properties.GetProperty("clientSecret").GetString());
+        Assert.Equal("***", properties.GetProperty("verificationToken").GetString());
+        Assert.Equal(JsonValueKind.Null, properties.GetProperty("futureSecret").ValueKind);
+    }
+
+    [Fact]
+    public void OAuth_MasksDeclaredNullParametersButPreservesUnknownNulls()
+    {
+        var result = BotServiceResponseRedactor.RedactOAuth(
+            Json("""
+                {"properties":{"parameters":[
+                  {"key":"PrivateValue","value":null},{"key":"UnknownSecret","value":null},
+                  {"key":"ClientSecret","value":null}
+                ]}}
+                """), new HashSet<string>(["PrivateValue"], StringComparer.OrdinalIgnoreCase))!.Value;
+
+        var parameters = result.GetProperty("properties").GetProperty("parameters");
+        Assert.Equal("***", parameters[0].GetProperty("value").GetString());
+        Assert.Equal(JsonValueKind.Null, parameters[1].GetProperty("value").ValueKind);
+        Assert.Equal("***", parameters[2].GetProperty("value").GetString());
+    }
+
     [Fact]
     public void Bot_PreservesSchemaAndUnknownFieldsAndMasksSecrets()
     {
@@ -23,6 +106,7 @@ public sealed class BotServiceResponseRedactionTests
               "systemData": { "createdBy": "operator" },
               "properties": {
                 "displayName": "Bot One",
+                "cmekKeyVaultUrl": "https://vault.example.test",
                 "endpoint": "https://example.test/messages",
                 "msaAppId": "app-1",
                 "publishingCredentials": { "secret": "value" },
@@ -34,13 +118,14 @@ public sealed class BotServiceResponseRedactionTests
 
         Assert.Equal("/bots/bot-1", result.GetProperty("id").GetString());
         Assert.Equal("Bot One", result.GetProperty("properties").GetProperty("displayName").GetString());
+        Assert.Equal("https://vault.example.test", result.GetProperty("properties").GetProperty("cmekKeyVaultUrl").GetString());
         Assert.Equal(
             BotServiceResponseRedactor.Mask,
             result.GetProperty("properties").GetProperty("publishingCredentials").GetString());
         Assert.Equal(
             "unknown-value",
             result.GetProperty("properties").GetProperty("futureProperty").GetString());
-        Assert.Equal(JsonValueKind.Null, result.GetProperty("properties").GetProperty("luisKey").ValueKind);
+        Assert.Equal("***", result.GetProperty("properties").GetProperty("luisKey").GetString());
     }
 
     [Fact]
@@ -114,7 +199,7 @@ public sealed class BotServiceResponseRedactionTests
     }
 
     [Fact]
-    public void OAuth_PreservesDeclaredClientSecret_WhenValueIsNull()
+    public void OAuth_MasksDeclaredClientSecret_WhenValueIsNull()
     {
         var result = BotServiceResponseRedactor.RedactOAuth(Json(
             """
@@ -127,8 +212,8 @@ public sealed class BotServiceResponseRedactionTests
             """));
 
         Assert.Equal(
-            JsonValueKind.Null,
-            result!.Value.GetProperty("properties").GetProperty("clientSecret").ValueKind);
+            "***",
+            result!.Value.GetProperty("properties").GetProperty("clientSecret").GetString());
     }
 
     [Fact]
@@ -242,7 +327,7 @@ public sealed class BotServiceResponseRedactionTests
             BotServiceResponseRedactor.Mask,
             properties.GetProperty("publishingCredentials").GetString());
         Assert.Equal("unknown-value", properties.GetProperty("futureProperty").GetString());
-        Assert.Equal(JsonValueKind.Null, properties.GetProperty("luisKey").ValueKind);
+        Assert.Equal("***", properties.GetProperty("luisKey").GetString());
     }
 
     [Fact]
@@ -420,7 +505,7 @@ public sealed class BotServiceResponseRedactionTests
             BotServiceResponseRedactor.Mask,
             properties.GetProperty("publishingCredentials").GetString());
         Assert.Equal("unknown-value", properties.GetProperty("futureProperty").GetString());
-        Assert.Equal(JsonValueKind.Null, properties.GetProperty("luisKey").ValueKind);
+        Assert.Equal("***", properties.GetProperty("luisKey").GetString());
     }
 
     [Fact]

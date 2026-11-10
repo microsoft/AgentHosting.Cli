@@ -185,6 +185,7 @@ public static class ErrorCodes
         public const int DeploymentReadOnlyParameter = 14044;
         public const int DeploymentCannotClearRequiredParameter = 14045;
         public const int DeploymentInvalidParameterValue = 14046;
+        public const int DeploymentChannelConfigurationUnavailable = 14047;
     }
 
     /// <summary>Error identifiers for the Package area (prefix 15).</summary>
