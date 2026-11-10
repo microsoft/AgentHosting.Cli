@@ -131,7 +131,7 @@ mean a change partially completed or its result is uncertain.
 | [12003](ErrorCodes/12003.md) | The client application ID is missing, invalid, or not permitted. |
 | [12004](ErrorCodes/12004.md) | Saved authentication profiles could not be safely read or written. |
 | [12005](ErrorCodes/12005.md) | Interactive consent returned an identity other than the active CLI account. |
-| [12006](ErrorCodes/12006.md) | Required native protection for owned credentials or token storage is unavailable. |
+| [12006](ErrorCodes/12006.md) | Required native protection for owned credentials or token storage is unavailable; Linux owned-storage failures include a redacted category and operation. |
 | [12007](ErrorCodes/12007.md) | The required token cannot be obtained without interactive sign-in or consent. |
 | [12008](ErrorCodes/12008.md) | Microsoft Entra ID is limiting token requests; wait before retrying. |
 | [12009](ErrorCodes/12009.md) | The Microsoft corporate account must authenticate through the operating-system broker. |

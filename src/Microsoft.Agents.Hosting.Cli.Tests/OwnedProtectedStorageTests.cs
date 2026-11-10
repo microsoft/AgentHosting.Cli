@@ -11,6 +11,67 @@ public sealed class OwnedProtectedStorageTests
     private static OwnedProtectedStorageReference Reference(OwnedProtectedStorageKind kind = OwnedProtectedStorageKind.Credential) => new(kind, Id);
 
     [Theory]
+    [InlineData("unavailable", "service-unavailable", true)]
+    [InlineData("locked", "store-locked", true)]
+    [InlineData("prompt", "prompt-required", true)]
+    [InlineData("malformed", "malformed-response", false)]
+    [InlineData("unknown", "native-failure", false)]
+    [InlineData("not-found", "native-object-not-found", false)]
+    [InlineData("library", "native-library-unavailable", true)]
+    [InlineData("entry-point", "native-entry-point-unavailable", true)]
+    [InlineData("access", "access-denied", false)]
+    [InlineData("io", "io-failure", false)]
+    public async Task LinuxFailuresIdentifySafeCategoryWithoutChangingFallbackEligibility(string problem, string category, bool fallback)
+    {
+        Exception cause = problem switch
+        {
+            "unavailable" => new NativeStorageException(NativeStorageFailure.Unavailable),
+            "locked" => new NativeStorageException(NativeStorageFailure.Locked),
+            "prompt" => new NativeStorageException(NativeStorageFailure.PromptRequired),
+            "malformed" => new NativeStorageException(NativeStorageFailure.Malformed),
+            "unknown" => new NativeStorageException(NativeStorageFailure.Unknown),
+            "not-found" => new NativeStorageException(NativeStorageFailure.NotFound),
+            "library" => new DllNotFoundException("TOP_SECRET"),
+            "entry-point" => new EntryPointNotFoundException("TOP_SECRET"),
+            "access" => new UnauthorizedAccessException("TOP_SECRET"),
+            _ => new IOException("TOP_SECRET"),
+        };
+        var bus = new FakeBus { Override = _ => throw cause };
+        var failure = await Assert.ThrowsAsync<CacheProtectionUnavailableException>(() =>
+            new LinuxOwnedProtectedStorage(bus).ReadAsync(Reference(), default));
+        Assert.Contains($"Linux: {category}; operation: read", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(fallback, Protection.AllowsTokenFallback(failure));
+        AssertRedacted(failure);
+        Assert.True(bus.Disposed);
+    }
+
+    [Theory]
+    [InlineData("read", "GetSecret", "get-secret")]
+    [InlineData("write", "SetSecret", "set-secret")]
+    [InlineData("clear", "Delete", "delete")]
+    public async Task LinuxNativeFailuresIdentifyTheProtocolStep(string operation, string method, string step)
+    {
+        var bus = new FakeBus
+        {
+            Override = request => request.Method == method ? throw new NativeStorageException(NativeStorageFailure.Unknown) : null,
+        };
+        var failure = await Assert.ThrowsAsync<CacheProtectionUnavailableException>(() =>
+            Execute(new LinuxOwnedProtectedStorage(bus), operation));
+        Assert.Contains($"operation: {operation}; step: {step}", failure.Message, StringComparison.Ordinal);
+        AssertRedacted(failure);
+    }
+
+    [Fact]
+    public async Task LinuxMalformedRepliesIdentifyTheProtocolStepWithoutPrintingReplyData()
+    {
+        var bus = new FakeBus { Override = request => request.Method == "OpenSession" ? DbusValue.Text("TOP_SECRET") : null };
+        var failure = await Assert.ThrowsAsync<CacheProtectionUnavailableException>(() =>
+            new LinuxOwnedProtectedStorage(bus).ReadAsync(Reference(), default));
+        Assert.Contains("Linux: malformed-response; operation: read; step: open-session", failure.Message, StringComparison.Ordinal);
+        AssertRedacted(failure);
+    }
+
+    [Theory]
     [InlineData("read", "GetSecret")]
     [InlineData("write", "SetSecret")]
     [InlineData("clear", "Delete")]

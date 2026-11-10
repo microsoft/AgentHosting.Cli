@@ -241,8 +241,23 @@ internal sealed class LinuxOwnedProtectedStorage : OwnedProtectedStorageBackend
                 if (reply.Signature != signature) throw new NativeStorageException(NativeStorageFailure.Malformed);
                 return reply;
             }
-            catch
+            catch (Exception ex)
             {
+                if (ex is NativeStorageException native)
+                {
+                    native.Step ??= method switch
+                    {
+                        "ReadAlias" => NativeStorageStep.ReadAlias,
+                        "SearchItems" => NativeStorageStep.SearchItems,
+                        "OpenSession" => NativeStorageStep.OpenSession,
+                        "Get" => NativeStorageStep.GetProperty,
+                        "GetSecret" => NativeStorageStep.GetSecret,
+                        "SetSecret" => NativeStorageStep.SetSecret,
+                        "CreateItem" => NativeStorageStep.CreateItem,
+                        "Delete" => NativeStorageStep.Delete,
+                        _ => null,
+                    };
+                }
                 reply?.Dispose();
                 throw;
             }

@@ -101,6 +101,40 @@ internal static class Protection
         return failure;
     }
 
+    internal static CacheProtectionUnavailableException ProviderFailure(string platform, string operation, Exception cause)
+    {
+        if (platform != "Linux") return Failure(platform, "native-or-io-failure", cause);
+        string reason = cause switch
+        {
+            NativeStorageException { Failure: NativeStorageFailure.Unavailable } => "service-unavailable",
+            NativeStorageException { Failure: NativeStorageFailure.Locked } => "store-locked",
+            NativeStorageException { Failure: NativeStorageFailure.PromptRequired } => "prompt-required",
+            NativeStorageException { Failure: NativeStorageFailure.Malformed } => "malformed-response",
+            NativeStorageException { Failure: NativeStorageFailure.NotFound } => "native-object-not-found",
+            NativeStorageException => "native-failure",
+            DllNotFoundException => "native-library-unavailable",
+            EntryPointNotFoundException => "native-entry-point-unavailable",
+            PlatformNotSupportedException => "platform-not-supported",
+            UnauthorizedAccessException => "access-denied",
+            CryptographicException => "cryptographic-failure",
+            _ => "io-failure",
+        };
+        string? step = cause is NativeStorageException native ? native.Step switch
+        {
+            NativeStorageStep.Connect => "connect",
+            NativeStorageStep.ReadAlias => "read-alias",
+            NativeStorageStep.SearchItems => "search-items",
+            NativeStorageStep.OpenSession => "open-session",
+            NativeStorageStep.GetProperty => "get-property",
+            NativeStorageStep.GetSecret => "get-secret",
+            NativeStorageStep.SetSecret => "set-secret",
+            NativeStorageStep.CreateItem => "create-item",
+            NativeStorageStep.Delete => "delete",
+            _ => null,
+        } : null;
+        return Failure(platform, $"{reason}; operation: {operation}" + (step is null ? "" : $"; step: {step}"), cause);
+    }
+
     internal static bool IsProviderFailure(Exception ex) => ex is
         IOException or UnauthorizedAccessException or CryptographicException or
         DllNotFoundException or EntryPointNotFoundException or PlatformNotSupportedException or NativeStorageException;
@@ -115,10 +149,12 @@ internal static class Protection
 }
 
 internal enum NativeStorageFailure { Unknown, Unavailable, Locked, NotFound, Malformed, PromptRequired }
+internal enum NativeStorageStep { Connect, ReadAlias, SearchItems, OpenSession, GetProperty, GetSecret, SetSecret, CreateItem, Delete }
 
 internal sealed class NativeStorageException(NativeStorageFailure failure) : Exception("Native protected storage failed.")
 {
     internal NativeStorageFailure Failure { get; } = failure;
+    internal NativeStorageStep? Step { get; set; }
 }
 
 internal abstract class OwnedProtectedStorageBackend(string platform) : IOwnedProtectedStorageBackend
@@ -143,7 +179,7 @@ internal abstract class OwnedProtectedStorageBackend(string platform) : IOwnedPr
             Protection.Wipe(result);
             if (Protection.IsProviderFailure(ex))
             {
-                throw Protection.Failure(platform, "native-or-io-failure", ex);
+                throw Protection.ProviderFailure(platform, "read", ex);
             }
 
             throw;
@@ -166,7 +202,7 @@ internal abstract class OwnedProtectedStorageBackend(string platform) : IOwnedPr
         }
         catch (Exception ex) when (Protection.IsProviderFailure(ex))
         {
-            throw Protection.Failure(platform, "native-or-io-failure", ex);
+            throw Protection.ProviderFailure(platform, "write", ex);
         }
         finally
         {
@@ -184,7 +220,7 @@ internal abstract class OwnedProtectedStorageBackend(string platform) : IOwnedPr
         }
         catch (Exception ex) when (Protection.IsProviderFailure(ex))
         {
-            throw Protection.Failure(platform, "native-or-io-failure", ex);
+            throw Protection.ProviderFailure(platform, "clear", ex);
         }
     }
 

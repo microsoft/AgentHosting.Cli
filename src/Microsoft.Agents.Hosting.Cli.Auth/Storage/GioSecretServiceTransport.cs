@@ -39,8 +39,9 @@ internal sealed class GioSecretServiceTransport : ISecretServiceTransport
             Gio.g_dbus_connection_set_exit_on_close(_connection, 0);
             ct.ThrowIfCancellationRequested();
         }
-        catch
+        catch (Exception ex)
         {
+            if (ex is NativeStorageException native) native.Step ??= NativeStorageStep.Connect;
             Dispose();
             throw;
         }
