@@ -89,23 +89,19 @@ public sealed class AmsRemoteDeployService : ICommandHandler<McsAmsAgentDeployRe
 
     private static string NotConnected(string reason) => $"The deploy finished, but the agent's folder wasn't connected to Dev: {reason} To bring Copilot Studio changes into the repository, run `msagent agent capture`, then `git pull`.";
 
-    private static string CollectionsNotConnected(IReadOnlyList<string> folders) => folders.Count == 1
-        ? $"Dev doesn't hold the collection in {AmsAgentException.FirstFive(folders)} yet, so that folder isn't connected; a Dev deploy that includes the collection connects it."
-        : $"Dev doesn't hold the collections in {AmsAgentException.FirstFive(folders)} yet, so those folders aren't connected; a Dev deploy that includes them connects them.";
-
     private static string? NotConnectedReason(AmsGitDeployState state, string? deployed) => (state, deployed) switch
     {
         ({ Note: not null }, _) => "Git can't tell which commit the agent's folder holds",
         (_, null) => "AMS didn't name the commit it deployed",
         ({ CommitSha: { } held }, { } commit) when !string.Equals(held, commit, StringComparison.OrdinalIgnoreCase) => $"The agent's folder holds {McsAmsCommits.Short(held)}, not the deployed {McsAmsCommits.Short(commit)}",
-        ({ HasLocalChanges: true }, _) => "The agent's folder, or a collection folder it declares, has uncommitted changes",
+        ({ HasLocalChanges: true }, _) => AmsWorkspaceConnector.Uncommitted("The agent's folder"),
         ({ Exact: false }, _) => "The agent's folder holds commits that aren't pushed to GRS",
         _ => null,
     };
 
     private static string NotConnectedNotice(string reason, bool connected) => connected
         ? $"{reason}, so msagent left the folder's connection to Dev as it was; `msagent agent pull` brings the deployed changes into it."
-        : $"{reason}, so msagent didn't connect the folder to Dev; `msagent agent pull` works there after a Dev deploy of the commit the folder holds.";
+        : AmsWorkspaceConnector.NotConnected(reason);
 
     private async Task<(bool Connected, string? Notice)> FinishAsync(string projectDirectory, ManagedAgentRecord agent, AgentDeploymentRecord deployment, string? notConnectedReason, DateTimeOffset deployedTime, List<string> warnings, CancellationToken cancellationToken)
     {
@@ -149,7 +145,7 @@ public sealed class AmsRemoteDeployService : ICommandHandler<McsAmsAgentDeployRe
             var connection = await _connector.ConnectAsync(projectDirectory, workspace, environmentId, schemaName ?? _identities.Require(workspace, agent.AgentId).SchemaName, cancellationToken).ConfigureAwait(false);
             if (connection.SkippedCollectionDirectories.Count > 0)
             {
-                warnings.Add(CollectionsNotConnected([.. connection.SkippedCollectionDirectories.Select(folder => Path.GetRelativePath(projectDirectory, folder))]));
+                warnings.Add(AmsWorkspaceConnector.CollectionsNotConnected(projectDirectory, connection.SkippedCollectionDirectories));
             }
 
             return (connection, null);

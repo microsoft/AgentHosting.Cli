@@ -99,10 +99,26 @@ public sealed class AmsProjectLink
             ? Task.FromResult(true)
             : _prompt.AskAsync(choice.Action switch
             {
-                AmsRepositoryAction.Clone => $"Clone repository {repositoryName} into {projectDirectory} and {(subject is null ? "restore its agents" : $"add {subject} to it")}? [Y/n]",
+                AmsRepositoryAction.Clone => $"Clone repository {repositoryName} into {projectDirectory}{(subject is null ? ", restore its agents and connect them" : $" and add {subject} to it")}? [Y/n]",
                 AmsRepositoryAction.Attach => $"Link {projectDirectory} to repository {repositoryName} and add {subject} to it? [Y/n]",
                 _ => $"Create a GRS repository in environment '{environment}' for {projectDirectory} and push {subject} to it? [Y/n]",
             }, cancellationToken);
+    }
+
+    /// <summary>Asks the operator before a clone joins the AMS agent that holds its agent or flow.</summary>
+    /// <param name="choice">The repository choice.</param>
+    /// <param name="projectDirectory">The project folder.</param>
+    /// <param name="holder">The sentence that names the holder.</param>
+    /// <param name="name">The holder's name.</param>
+    /// <param name="isWorkflow">Whether the holder is a standalone workflow.</param>
+    /// <param name="nonInteractive">Whether the command may not ask.</param>
+    /// <param name="cancellationToken">Cancels the question.</param>
+    /// <returns>Whether the command may go on.</returns>
+    public Task<bool> ConfirmJoinAsync(AmsRepositoryChoice choice, string projectDirectory, string holder, string name, bool isWorkflow, bool nonInteractive, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(choice);
+
+        return nonInteractive ? Task.FromResult(true) : _prompt.AskAsync($"{holder}. {JoinAction(choice.Action, projectDirectory, name)} and {(isWorkflow ? "update it from Copilot Studio" : $"connect {name} there")}? [Y/n]", cancellationToken);
     }
 
     /// <summary>Records the project folder's files and folders, and its .gitignore, before AMS mode changes it.</summary>
@@ -220,6 +236,13 @@ public sealed class AmsProjectLink
     internal static string Kind(bool isWorkflow) => isWorkflow ? "workflow" : "agent";
 
     internal static string Subject(string agentType, string displayName) => $"{Kind(agentType == AgentTypes.McsWorkflow)} '{displayName}'";
+
+    private static string JoinAction(AmsRepositoryAction action, string projectDirectory, string name) => action switch
+    {
+        AmsRepositoryAction.Clone => $"Clone that repository into {projectDirectory}",
+        AmsRepositoryAction.Attach => $"Link {projectDirectory} to that repository",
+        _ => $"Restore {name} in {projectDirectory}",
+    };
 
     private static string[] PushedRevisions(AmsRepositoryChoice choice) => choice.WorkingTree is not { HasCommits: true } ? [] : choice.Action switch
     {

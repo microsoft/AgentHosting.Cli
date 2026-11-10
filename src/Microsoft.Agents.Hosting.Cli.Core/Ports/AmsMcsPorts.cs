@@ -118,6 +118,38 @@ public sealed record AmsMcsAgentListItem
     public IReadOnlyList<AmsMcsDeploymentRecord> Deployments { get; init; } = [];
 }
 
+/// <summary>The AMS agent that holds a Copilot Studio agent or flow through one of its deployments.</summary>
+public sealed record AmsMcsHolder
+{
+    /// <summary>The holding agent.</summary>
+    public required string AgentId { get; init; }
+
+    /// <summary>The holding agent's home environment.</summary>
+    public required string HomeEnvironmentId { get; init; }
+
+    /// <summary>The deployment that holds the Copilot Studio agent or flow, if any.</summary>
+    public string? DeploymentId { get; init; }
+
+    /// <summary>Active, Pending or Releasing.</summary>
+    public required string State { get; init; }
+
+    /// <summary>The holding agent's list item, set only when it is homed in the request's environment.</summary>
+    public AmsMcsAgentListItem? Agent { get; init; }
+}
+
+/// <summary>The states of an AMS agent's hold on a Copilot Studio agent or flow.</summary>
+public static class AmsMcsHolderState
+{
+    /// <summary>Claimed while the agent's register runs.</summary>
+    public const string Pending = "Pending";
+
+    /// <summary>Held by the agent.</summary>
+    public const string Active = "Active";
+
+    /// <summary>Being released while the agent is deleted.</summary>
+    public const string Releasing = "Releasing";
+}
+
 /// <summary>A GRS repository and the agents AMS registered in it.</summary>
 public sealed record AmsMcsRepository
 {
@@ -553,6 +585,13 @@ public interface IAmsMcsAgentReadTransport
     /// <param name="includeDeployments">Whether each agent carries its deployments.</param>
     /// <param name="cancellationToken">Cancels the request.</param>
     Task<AmsMcsRepository> ReadRepositoryAsync(AmsServiceTarget target, string repositoryId, string? agentFolder, bool includeDeployments, CancellationToken cancellationToken);
+
+    /// <summary>Reads the AMS agents that hold a Copilot Studio agent or flow, which are none or one.</summary>
+    /// <param name="target">The data-plane endpoint.</param>
+    /// <param name="botId">The Copilot Studio agent, or null for a flow.</param>
+    /// <param name="workflowId">The flow, or null for a Copilot Studio agent.</param>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    Task<IReadOnlyList<AmsMcsHolder>> FindHoldersAsync(AmsServiceTarget target, string? botId, string? workflowId, CancellationToken cancellationToken);
 }
 
 /// <summary>Registers MCS agents and standalone workflows with their repository folders.</summary>

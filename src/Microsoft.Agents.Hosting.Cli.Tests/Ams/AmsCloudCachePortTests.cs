@@ -203,6 +203,27 @@ public sealed class AmsCloudCachePortTests : IDisposable
     }
 
     [Fact]
+    public async Task ConnectAndMerge_SavesTheAgentEveryCollectionItConnectedAndEveryFolderItAdded_ButNoSkippedOne_AndReturnsWhatTheMergeChanged()
+    {
+        var agent = _repository.Folder(cache: "old");
+        var tools = _repository.Folder("Shared Tools", "old");
+        var archived = _repository.Folder("Archived Tools", "old");
+        var added = _repository.Folder("More Tools", "old");
+        _inner.Skipped.Add(archived);
+        _inner.Added.Add(added);
+        _repository.Checkout(A);
+
+        var merged = await Attachments().ConnectAndMergeAsync(new CopilotConnectMergeCommand(new CopilotConnectCommand { Environment = SyncedFolders.Environment, WorkspaceDirectory = agent, CollectionDirectories = [tools, archived], SchemaName = "cr1a2_contosoHr" }, new Dictionary<string, ReadOnlyMemory<byte>> { ["ContosoHR/topics/A.mcs.yml"] = ReadOnlyMemory<byte>.Empty }), default);
+
+        Assert.Equal(["connect-merge old", "connect-merge old", "connect-merge old"], _inner.Calls);
+        Assert.Equal(("cloud", "cloud", "cloud"), (_repository.Saved(A), _repository.Saved(A, "Shared Tools"), _repository.Saved(A, "More Tools")));
+        Assert.Equal(3, Directory.GetDirectories(_repository.Shelves).Length);
+        Assert.Equal(["ContosoHR/topics/A.mcs.yml"], merged.MergedPaths);
+        Assert.Equal([archived], merged.Connected.SkippedCollectionDirectories);
+        Assert.Equal([added], merged.AddedCollectionDirectories);
+    }
+
+    [Fact]
     public async Task Download_AtACleanCommitThatTheSyncedOneContains_ReplacesTheWorkflow_AndSaysSo()
     {
         var root = WorkflowRoot();

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Playground;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
@@ -14,6 +15,10 @@ public sealed class GitProcessAdapter : IGitPort
     public static readonly TimeSpan NetworkTimeout = TimeSpan.FromMinutes(10);
 
     private const string MainBranch = "main";
+
+    private const int MaximumListingBytes = 64 * 1024 * 1024;
+
+    private const int BatchEntryBytes = 128;
 
     private readonly IPlaygroundProcessRunner _processes;
     private readonly PlaygroundToolLocator _tools;
@@ -87,6 +92,25 @@ public sealed class GitProcessAdapter : IGitPort
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ListTreeAsync(string root, string reference, CancellationToken cancellationToken) => Entries((await RequireAsync(root, ["ls-tree", "-r", "-z", "--name-only", reference], LocalTimeout, null, cancellationToken).ConfigureAwait(false)).StandardOutput);
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<string, ReadOnlyMemory<byte>>> ReadFilesAsync(string root, string commit, IReadOnlyList<string> paths, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+
+        var blobs = paths.Count == 0 ? [] : Blobs((await RequireAsync(root, ["ls-tree", "-r", "-z", "-l", commit, "--", .. paths], LocalTimeout, null, null, MaximumListingBytes, decodeStandardOutput: true, cancellationToken).ConfigureAwait(false)).StandardOutput);
+        var content = blobs.Length == 0 ? ReadOnlyMemory<byte>.Empty : (await RequireAsync(root, ["cat-file", "--batch"], LocalTimeout, null, string.Concat(blobs.Select(blob => $"{blob.Object}\n")), (int)Math.Min(int.MaxValue, blobs.Sum(blob => (long)blob.Size + BatchEntryBytes)), decodeStandardOutput: false, cancellationToken).ConfigureAwait(false)).StandardOutputBytes;
+        var files = new Dictionary<string, ReadOnlyMemory<byte>>(StringComparer.Ordinal);
+        var offset = 0;
+        foreach (var blob in blobs)
+        {
+            offset += content.Span[offset..].IndexOf((byte)'\n') + 1;
+            files[blob.Path] = content.Slice(offset, blob.Size);
+            offset += blob.Size + 1;
+        }
+
+        return files;
+    }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ListTrackedAsync(string root, IReadOnlyList<string> paths, CancellationToken cancellationToken) => paths.Count == 0 ? [] : Entries((await RequireAsync(root, ["ls-files", "-z", "--", .. paths], LocalTimeout, null, cancellationToken).ConfigureAwait(false)).StandardOutput);
@@ -168,6 +192,8 @@ public sealed class GitProcessAdapter : IGitPort
 
     private static string[] Entries(string output) => output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
 
+    private static (string Path, string Object, int Size)[] Blobs(string listing) => [.. Entries(listing).Select(entry => (Fields: entry[..entry.IndexOf('\t', StringComparison.Ordinal)].Split(' ', StringSplitOptions.RemoveEmptyEntries), Path: entry[(entry.IndexOf('\t', StringComparison.Ordinal) + 1)..])).Where(entry => entry.Fields[1] == "blob").Select(entry => (entry.Path, entry.Fields[2], int.Parse(entry.Fields[3], CultureInfo.InvariantCulture)))];
+
     private static List<string> StatusPaths(string output)
     {
         var entries = output.Split('\0');
@@ -194,18 +220,22 @@ public sealed class GitProcessAdapter : IGitPort
 
     private async Task<string> RemoteUrlAsync(string root, string remote, CancellationToken cancellationToken) => (await RequireAsync(root, ["remote", "get-url", remote], LocalTimeout, null, cancellationToken).ConfigureAwait(false)).StandardOutput.Trim();
 
-    private async Task<PlaygroundProcessResult> RequireAsync(string workingDirectory, IReadOnlyList<string> arguments, TimeSpan timeout, string? remoteUrl, CancellationToken cancellationToken)
+    private Task<PlaygroundProcessResult> RequireAsync(string workingDirectory, IReadOnlyList<string> arguments, TimeSpan timeout, string? remoteUrl, CancellationToken cancellationToken) => RequireAsync(workingDirectory, arguments, timeout, remoteUrl, null, PlaygroundProcessRequest.DefaultMaximumOutputBytes, decodeStandardOutput: true, cancellationToken);
+
+    private async Task<PlaygroundProcessResult> RequireAsync(string workingDirectory, IReadOnlyList<string> arguments, TimeSpan timeout, string? remoteUrl, string? standardInput, int maximumOutputBytes, bool decodeStandardOutput, CancellationToken cancellationToken)
     {
-        var result = await RunAsync(workingDirectory, arguments, timeout, remoteUrl, cancellationToken).ConfigureAwait(false);
+        var result = await RunAsync(workingDirectory, arguments, timeout, remoteUrl, standardInput, maximumOutputBytes, decodeStandardOutput, cancellationToken).ConfigureAwait(false);
         return result.ExitCode == 0 ? result : throw Failed(Subcommand(arguments), workingDirectory, result);
     }
 
-    private async Task<PlaygroundProcessResult> RunAsync(string workingDirectory, IReadOnlyList<string> arguments, TimeSpan timeout, string? remoteUrl, CancellationToken cancellationToken)
+    private Task<PlaygroundProcessResult> RunAsync(string workingDirectory, IReadOnlyList<string> arguments, TimeSpan timeout, string? remoteUrl, CancellationToken cancellationToken) => RunAsync(workingDirectory, arguments, timeout, remoteUrl, null, PlaygroundProcessRequest.DefaultMaximumOutputBytes, decodeStandardOutput: true, cancellationToken);
+
+    private async Task<PlaygroundProcessResult> RunAsync(string workingDirectory, IReadOnlyList<string> arguments, TimeSpan timeout, string? remoteUrl, string? standardInput, int maximumOutputBytes, bool decodeStandardOutput, CancellationToken cancellationToken)
     {
         IReadOnlyList<string> helper = remoteUrl is not null && HelperKey(remoteUrl) is { } key ? ["-c", $"{key}=", "-c", $"{key}={_helper.Command()}"] : [];
         try
         {
-            return await _processes.RunAsync(new PlaygroundProcessRequest { ExecutablePath = Git(), Arguments = [.. helper, .. arguments], WorkingDirectory = Path.GetFullPath(workingDirectory), Timeout = timeout, EnvironmentOverrides = new Dictionary<string, string?>(StringComparer.Ordinal) { ["GIT_TERMINAL_PROMPT"] = "0" } }, cancellationToken).ConfigureAwait(false);
+            return await _processes.RunAsync(new PlaygroundProcessRequest { ExecutablePath = Git(), Arguments = [.. helper, .. arguments], WorkingDirectory = Path.GetFullPath(workingDirectory), Timeout = timeout, EnvironmentOverrides = new Dictionary<string, string?>(StringComparer.Ordinal) { ["GIT_TERMINAL_PROMPT"] = "0" }, StandardInput = standardInput, MaximumOutputBytes = maximumOutputBytes, DecodeStandardOutput = decodeStandardOutput }, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception failure) when (failure is InvalidOperationException or TimeoutException)
         {

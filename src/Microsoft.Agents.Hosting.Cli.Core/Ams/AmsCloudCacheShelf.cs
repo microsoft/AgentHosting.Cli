@@ -160,7 +160,7 @@ public sealed class AmsCloudCacheShelf
         AmsCloudCacheCopy? best = null;
         foreach (var copy in copies)
         {
-            if (await IsAncestorAsync(place, copy.Commit, place.Head, cancellationToken).ConfigureAwait(false) && (best is null || await IsAncestorAsync(place, best.Commit, copy.Commit, cancellationToken).ConfigureAwait(false)))
+            if (await IsAncestorAsync(_git, place.Root, copy.Commit, place.Head, cancellationToken).ConfigureAwait(false) && (best is null || await IsAncestorAsync(_git, place.Root, best.Commit, copy.Commit, cancellationToken).ConfigureAwait(false)))
             {
                 best = copy;
             }
@@ -173,7 +173,7 @@ public sealed class AmsCloudCacheShelf
     {
         foreach (var copy in copies)
         {
-            if (await IsAncestorAsync(place, place.Head, copy.Commit, cancellationToken).ConfigureAwait(false))
+            if (await IsAncestorAsync(_git, place.Root, place.Head, copy.Commit, cancellationToken).ConfigureAwait(false))
             {
                 return copy;
             }
@@ -182,8 +182,7 @@ public sealed class AmsCloudCacheShelf
         return null;
     }
 
-    private async Task<bool> IsAncestorAsync(AmsCloudCachePlace place, string ancestor, string descendant, CancellationToken cancellationToken) =>
-        await _git.MergeBaseAsync(place.Root, ancestor, descendant, cancellationToken).ConfigureAwait(false) is { } mergeBase && Same(mergeBase, ancestor);
+    internal static async Task<bool> IsAncestorAsync(IGitPort git, string root, string ancestor, string descendant, CancellationToken cancellationToken) => string.Equals(await git.MergeBaseAsync(root, ancestor, descendant, cancellationToken).ConfigureAwait(false), ancestor, StringComparison.OrdinalIgnoreCase);
 
     private async Task<bool> IsCleanAsync(AmsCloudCachePlace place, CancellationToken cancellationToken) =>
         (await _git.StatusAsync(place.Root, [place.Folder], cancellationToken).ConfigureAwait(false)).Count == 0;

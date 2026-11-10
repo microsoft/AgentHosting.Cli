@@ -1,9 +1,11 @@
+using System.Text;
 using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Playground;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Hosting;
 using Microsoft.Agents.Hosting.Cli.Tests.Ams;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -312,6 +314,79 @@ public sealed class GitProcessAdapterTests
         Assert.Equal((ErrorCodes.Authentication.GitNotFound, "git was not found on PATH, and AMS mode needs it."), (required.ErrorCode, required.Message));
         Assert.Equal(required.ErrorCode, init.ErrorCode);
         Assert.Empty(_runner.Requests);
+    }
+
+    [Fact]
+    public async Task ReadFiles_OfARealRepository_GivesTheFilesOfTheFoldersAtTheCommit_ByteForByte_FromTwoGitProcesses()
+    {
+        using var ams = new AmsHarness();
+        await RealGit.InitAsync(ams.Root);
+        await RealGit.RunAsync(ams.Root, "config", "core.autocrlf", "false");
+        byte[] icon = [0x89, 0x50, 0x4E, 0x47, 0x00, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF];
+        WriteBytes(ams.Root, "Contoso HR/topics/Greeting.mcs.yml", Encoding.UTF8.GetBytes("kind: AdaptiveDialog\r\nbeginDialog: Greeting\r\n"));
+        WriteBytes(ams.Root, "Contoso HR/settings.mcs.yml", Encoding.UTF8.GetBytes("\uFEFFdisplayName: Contoso HR\n"));
+        WriteBytes(ams.Root, "Contoso HR/icon.png", icon);
+        WriteBytes(ams.Root, "Contoso HR/empty.txt", []);
+        WriteBytes(ams.Root, "Shared Tools/deep er/Café tool.mcs.yml", Encoding.UTF8.GetBytes("schemaName: cr1a2_tool\n"));
+        WriteBytes(ams.Root, "Other/settings.mcs.yml", Encoding.UTF8.GetBytes("schemaName: cr1a2_other\n"));
+        await RealGit.RunAsync(ams.Root, "add", "--all");
+        await RealGit.RunAsync(ams.Root, "update-index", "--add", "--cacheinfo", "160000,9fceb02d0ae598e95dc970b74767f19372d61af8,Contoso HR/vendor");
+        await RealGit.RunAsync(ams.Root, "commit", "--quiet", "-m", "Seed");
+        var seed = Assert.Single(await RealGit.RunAsync(ams.Root, "rev-parse", "HEAD"));
+        WriteBytes(ams.Root, "Contoso HR/settings.mcs.yml", Encoding.UTF8.GetBytes("displayName: Contoso Help\n"));
+        await RealGit.RunAsync(ams.Root, "add", "--", "Contoso HR/settings.mcs.yml");
+        await RealGit.RunAsync(ams.Root, "commit", "--quiet", "-m", "Rename");
+        var runner = new CountingProcessRunner();
+        var tools = new PlaygroundToolLocator(runner);
+        var adapter = new GitProcessAdapter(runner, tools, new GitCredentialHelper(tools, new GitHostTrust(PowerPlatformApiTargetConfig.Public, new AmsEndpointProfile())));
+
+        var files = await adapter.ReadFilesAsync(ams.Root, seed, ["Contoso HR", "Shared Tools"], default);
+
+        Assert.Equal(["Contoso HR/empty.txt", "Contoso HR/icon.png", "Contoso HR/settings.mcs.yml", "Contoso HR/topics/Greeting.mcs.yml", "Shared Tools/deep er/Café tool.mcs.yml"], files.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(icon, files["Contoso HR/icon.png"].ToArray());
+        Assert.Empty(files["Contoso HR/empty.txt"].ToArray());
+        Assert.Equal(Encoding.UTF8.GetBytes("kind: AdaptiveDialog\r\nbeginDialog: Greeting\r\n"), files["Contoso HR/topics/Greeting.mcs.yml"].ToArray());
+        Assert.Equal(Encoding.UTF8.GetBytes("\uFEFFdisplayName: Contoso HR\n"), files["Contoso HR/settings.mcs.yml"].ToArray());
+        Assert.Equal("schemaName: cr1a2_tool\n", Encoding.UTF8.GetString(files["Shared Tools/deep er/Café tool.mcs.yml"].Span));
+        Assert.Equal([("ls-tree", true), ("cat-file", false)], runner.Requests);
+    }
+
+    [Fact]
+    public async Task ReadFiles_OfNoPathsOrOfFoldersTheCommitLacks_IsEmpty_AndOfAMissingCommitFails()
+    {
+        using var ams = new AmsHarness();
+        await RealGit.InitAsync(ams.Root);
+        RealGit.Write(ams.Root, "Contoso HR/settings.mcs.yml", "displayName: Contoso HR\n");
+        await RealGit.RunAsync(ams.Root, "add", "--all");
+        await RealGit.RunAsync(ams.Root, "commit", "--quiet", "-m", "Seed");
+        var adapter = RealGit.Adapter();
+
+        Assert.Empty(await Adapter().ReadFilesAsync(Root, "HEAD", [], default));
+        Assert.Empty(_runner.Requests);
+        Assert.Empty(await adapter.ReadFilesAsync(ams.Root, "HEAD", ["Payroll"], default));
+        var failure = await Assert.ThrowsAsync<AmsAgentException>(() => adapter.ReadFilesAsync(ams.Root, "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c", ["Contoso HR"], default));
+        Assert.Equal(ErrorCodes.AmsAgent.GitCommandFailed, failure.ErrorCode);
+        Assert.Contains("git ls-tree", failure.Message, StringComparison.Ordinal);
+    }
+
+    private static void WriteBytes(string root, string path, byte[] content)
+    {
+        var target = Path.Combine(root, path);
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.WriteAllBytes(target, content);
+    }
+
+    private sealed class CountingProcessRunner : IPlaygroundProcessRunner
+    {
+        private readonly PlaygroundProcessRunner _inner = new();
+
+        public List<(string Subcommand, bool Decoded)> Requests { get; } = [];
+
+        public Task<PlaygroundProcessResult> RunAsync(PlaygroundProcessRequest request, CancellationToken cancellationToken)
+        {
+            Requests.Add((request.Arguments[0], request.DecodeStandardOutput));
+            return _inner.RunAsync(request, cancellationToken);
+        }
     }
 
     private GitProcessAdapter Adapter(PlaygroundToolLocatorTests.RecordingProcessRunner? runner = null, PlaygroundToolLocatorTests.FakePlaygroundEnvironment? environment = null)

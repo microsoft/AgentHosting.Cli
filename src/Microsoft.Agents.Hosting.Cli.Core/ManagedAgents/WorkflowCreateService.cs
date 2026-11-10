@@ -123,13 +123,18 @@ public sealed class WorkflowCreateService
         var displayName = requestedName ?? RequireValidName(remote.Name);
         var projectDirectory = _locator.ResolveProjectDirectory(request.Project);
         var projectCreated = !Directory.Exists(projectDirectory);
+        var folderName = _workspace.ProjectFolderName(displayName);
+        var plan = new AgentCreationPlan(projectDirectory, projectCreated, folderName, displayName, AgentTypes.McsWorkflow, target.EnvironmentId, request.RepositoryId, request.NonInteractive, null, CloneEnvironments.IsCopy(source, target) ? null : workflowId.ToString()) { SourceName = remote.Name, RequestedName = requestedName };
+        if (await _creation.JoinAsync(plan, cancellationToken).ConfigureAwait(false) is { } join)
+        {
+            return join.Agent is { } holder ? Cloned(holder, join.Deployment, remote, Path.Combine(projectDirectory, holder.AgentLocation), source, projectDirectory, [], join.Ams) with { Status = "joined" } : Cancelled(projectDirectory, displayName, target, "clone");
+        }
 
         WorkflowRegistrationGuard.RequireUnregistered(_agents, _locator, projectDirectory, workflowId);
 
-        var folderName = _workspace.ProjectFolderName(displayName);
         var staged = CloneStaging.Stage(Path.Combine(projectDirectory, folderName));
         var workspaceRoot = RequireWorkspaceRootIsFree(projectDirectory, displayName, folderName);
-        if (await _creation.PrepareAsync(new AgentCreationPlan(projectDirectory, projectCreated, folderName, displayName, AgentTypes.McsWorkflow, target.EnvironmentId, request.RepositoryId, request.NonInteractive, null, CloneEnvironments.IsCopy(source, target) ? null : workflowId.ToString()), cancellationToken).ConfigureAwait(false) is not { } ticket)
+        if (await _creation.PrepareAsync(plan, cancellationToken).ConfigureAwait(false) is not { } ticket)
         {
             return Cancelled(projectDirectory, displayName, target, "clone");
         }
@@ -140,28 +145,30 @@ public sealed class WorkflowCreateService
         var stored = Register(projectDirectory, displayName, request.Description ?? remote.Description, folderName, target, workflowId, await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false));
         var deployment = _homeDeployments.Register(projectDirectory, stored, target.EnvironmentId);
 
-        return new ManagedAgentCreateResult
-        {
-            AgentId = stored.AgentId,
-            DisplayName = stored.DisplayName,
-            AgentType = stored.AgentType,
-            McsWorkflowId = stored.McsWorkflowId,
-            WorkflowName = downloaded.Workflow.Name,
-            WorkflowFolder = downloaded.FolderPath,
-            WorkflowState = _stateRules.PortalLabel(downloaded.Workflow.State),
-            TenantId = stored.TenantId,
-            EnvironmentId = stored.EnvironmentId,
-            SourceEnvironmentId = source.EnvironmentId,
-            ProjectDirectory = projectDirectory,
-            ConfigPath = _locator.ConfigFilePath(projectDirectory),
-            CreatedFrom = "clone",
-            DeploymentId = deployment.DeploymentId,
-            DeploymentName = deployment.DeploymentName,
-            DeploymentType = deployment.DeploymentType,
-            Warnings = downloaded.Warnings,
-            Ams = await _creation.CompleteAsync(ticket, stored, deployment, [workspaceRoot], cancellationToken).ConfigureAwait(false),
-        };
+        return Cloned(stored, deployment, downloaded.Workflow, downloaded.FolderPath, source, projectDirectory, downloaded.Warnings, await _creation.CompleteAsync(ticket, stored, deployment, [workspaceRoot], cancellationToken).ConfigureAwait(false));
     }
+
+    private ManagedAgentCreateResult Cloned(ManagedAgentRecord agent, AgentDeploymentRecord? deployment, WorkflowDocument workflow, string folder, CopilotEnvironmentContext source, string projectDirectory, IReadOnlyList<string> warnings, AmsAgentRegistration? ams) => new()
+    {
+        AgentId = agent.AgentId,
+        DisplayName = agent.DisplayName,
+        AgentType = agent.AgentType,
+        McsWorkflowId = agent.McsWorkflowId,
+        WorkflowName = workflow.Name,
+        WorkflowFolder = folder,
+        WorkflowState = _stateRules.PortalLabel(workflow.State),
+        TenantId = agent.TenantId,
+        EnvironmentId = agent.EnvironmentId,
+        SourceEnvironmentId = source.EnvironmentId,
+        ProjectDirectory = projectDirectory,
+        ConfigPath = _locator.ConfigFilePath(projectDirectory),
+        CreatedFrom = "clone",
+        DeploymentId = deployment?.DeploymentId,
+        DeploymentName = deployment?.DeploymentName,
+        DeploymentType = deployment?.DeploymentType,
+        Warnings = warnings,
+        Ams = ams,
+    };
 
     private (string Directory, bool Created) PrepareProjectDirectory(string? project)
     {

@@ -60,7 +60,17 @@ public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort, ICop
     }
 
     /// <inheritdoc />
-    public async Task<CopilotConnectOutcome> ConnectAsync(CopilotConnectCommand command, CancellationToken cancellationToken)
+    public Task<CopilotConnectOutcome> ConnectAsync(CopilotConnectCommand command, CancellationToken cancellationToken) => ConnectFoldersAsync(command, async (request, collections) => Connected(await _attachService.ConnectAsync(request, _dataverseClient, cancellationToken).ConfigureAwait(false), collections));
+
+    /// <inheritdoc />
+    public Task<CopilotConnectMergeOutcome> ConnectAndMergeAsync(CopilotConnectMergeCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        return ConnectFoldersAsync(command.Connect, async (request, _) => Merged(await _attachService.ConnectAndMergeAsync(MergeRequest(request, command.BaseFiles), _dataverseClient, cancellationToken).ConfigureAwait(false), command.Connect));
+    }
+
+    private async Task<TOutcome> ConnectFoldersAsync<TOutcome>(CopilotConnectCommand command, Func<WorkspaceConnectRequest, IReadOnlyDictionary<string, string>, Task<TOutcome>> connectAsync)
     {
         ArgumentNullException.ThrowIfNull(command);
 
@@ -69,8 +79,7 @@ public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort, ICop
 
         try
         {
-            var connected = await _attachService.ConnectAsync(Request(command, collections), _dataverseClient, cancellationToken).ConfigureAwait(false);
-            return new CopilotConnectOutcome { AgentId = connected.AgentId.ToString(), SkippedCollectionDirectories = [.. connected.SkippedCollections.Select(schemaName => collections[schemaName])] };
+            return await connectAsync(Request(command, collections), collections).ConfigureAwait(false);
         }
         catch (WorkspaceAttachException failure) when (failure.Failure == WorkspaceAttachFailure.AgentNotFound)
         {
@@ -81,6 +90,29 @@ public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort, ICop
             throw CopilotStudioException.WorkspaceConnectedElsewhere(failure.Message, failure);
         }
     }
+
+    private static CopilotConnectOutcome Connected(WorkspaceConnectResult connected, IReadOnlyDictionary<string, string> collections) => new() { AgentId = connected.AgentId.ToString(), SkippedCollectionDirectories = [.. connected.SkippedCollections.Select(schemaName => collections[schemaName])] };
+
+    private static WorkspaceConnectMergeRequest MergeRequest(WorkspaceConnectRequest connect, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> baseFiles) => new()
+    {
+        Connect = connect,
+        BaseFiles = baseFiles,
+        IsFolderTaken = (folder, _) => ValueTask.FromResult(Path.Exists(Path.Combine(connect.WorkspaceFolder.GetParentDirectoryPath().ToString(), folder))),
+    };
+
+    private static CopilotConnectMergeOutcome Merged(WorkspaceConnectMergeResult merged, CopilotConnectCommand command) => new()
+    {
+        Connected = new CopilotConnectOutcome { AgentId = merged.AgentId.ToString(), SkippedCollectionDirectories = [.. command.CollectionDirectories.Where(directory => merged.SkippedCollectionFolders.Contains(Folder(directory)))] },
+        AddedCollectionDirectories = [.. merged.AddedCollectionFolders.Select(SyncComponentCollectionAdapter.ToDirectory)],
+        MergedPaths = Paths(merged, WorkingCopyMergeOutcome.Merged),
+        AddedPaths = Paths(merged, WorkingCopyMergeOutcome.Added),
+        UpdatedPaths = Paths(merged, WorkingCopyMergeOutcome.Updated),
+        DeletedPaths = Paths(merged, WorkingCopyMergeOutcome.Deleted),
+        ConflictedPaths = Paths(merged, WorkingCopyMergeOutcome.Conflicted),
+        ReplacedPaths = Paths(merged, WorkingCopyMergeOutcome.Replaced),
+    };
+
+    private static string[] Paths(WorkspaceConnectMergeResult merged, WorkingCopyMergeOutcome outcome) => [.. merged.Outcomes.Where(entry => entry.Value == outcome).Select(entry => entry.Key).Order(StringComparer.Ordinal)];
 
     private static IReadOnlyDictionary<string, string> CollectionFolders(IReadOnlyList<string> directories) => ComponentCollectionFolders.ReadSchemaNames(directories) switch
     {

@@ -67,7 +67,7 @@ public sealed record ManagedAgentCreateResult : ITextGridRenderable
     /// <summary>Output-envelope schema version.</summary>
     public int SchemaVersion { get; init; } = 1;
 
-    /// <summary>Machine-readable status string (<c>agent-created</c>).</summary>
+    /// <summary>Machine-readable status string (<c>agent-created</c>, <c>joined</c> or <c>cancelled</c>).</summary>
     public string Status { get; init; } = "agent-created";
 
     /// <summary>The managed-agent record's identifier.</summary>
@@ -143,6 +143,10 @@ public sealed record ManagedAgentCreateResult : ITextGridRenderable
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public AmsAgentRegistration? Ams { get; init; }
 
+    /// <summary>Whether a join connected the holder's folder to Copilot Studio.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? WorkspaceConnected { get; init; }
+
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines() =>
         Status == "cancelled" ? ["Cancelled. Nothing was created."]
@@ -180,15 +184,15 @@ public sealed record ManagedAgentCreateResult : ITextGridRenderable
 
     private List<string> CloneLines()
     {
-        var lines = new List<string>
-        {
+        List<string> lines =
+        [
             $"Cloned {SchemaName} ({DisplayName}) from {McsAgentId} in {EnvironmentId}.",
             $"  agent id    {AgentId}",
             $"  project     {ProjectDirectory}",
-            $"  components  {ClonedComponentCount ?? 0} written",
+            .. Status == "joined" ? [] : new[] { $"  components  {ClonedComponentCount ?? 0} written" },
             $"  deployment  {DeploymentName} ({DeploymentType})",
             $"  config      {ConfigPath}",
-        };
+        ];
 
         lines.AddRange(ClonedWorkspaces.Select(workspace => $"  {(workspace.Kind == "agent" ? "agent      " : "collection ")} {workspace.DisplayName} — {workspace.Path}"));
         lines.AddRange(Warnings.Select(warning => $"  warning     {warning}"));

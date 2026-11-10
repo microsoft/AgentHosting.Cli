@@ -181,10 +181,15 @@ public sealed class ManagedAgentCreateService
         var displayName = requestedName ?? sourceAgent.DisplayName;
         var agentLocation = _workspaces.ProjectFolderName(displayName);
         var workspaceDirectory = Path.Combine(projectDirectory, agentLocation);
+        var plan = new AgentCreationPlan(projectDirectory, projectCreated, agentLocation, displayName, AgentTypes.McsAgent, target.EnvironmentId, request.RepositoryId, request.NonInteractive, CloneEnvironments.IsCopy(source, target) ? null : mcsAgentId, null) { SourceName = sourceAgent.DisplayName, RequestedName = requestedName };
+        if (await _creation.JoinAsync(plan, cancellationToken).ConfigureAwait(false) is { } join)
+        {
+            return join.Agent is { } holder ? Cloned(holder, join.Deployment, sourceAgent.SchemaName, mcsAgentId, source, projectDirectory, request, join.Ams) with { Status = "joined", WorkspaceConnected = join.WorkspaceConnected } : Cancelled(projectDirectory, displayName, target.TenantId, target.EnvironmentId, "clone");
+        }
 
         RequireProjectIsFree(projectDirectory, workspaceDirectory, displayName);
 
-        if (await _creation.PrepareAsync(new AgentCreationPlan(projectDirectory, projectCreated, agentLocation, displayName, AgentTypes.McsAgent, target.EnvironmentId, request.RepositoryId, request.NonInteractive, CloneEnvironments.IsCopy(source, target) ? null : mcsAgentId, null), cancellationToken).ConfigureAwait(false) is not { } ticket)
+        if (await _creation.PrepareAsync(plan, cancellationToken).ConfigureAwait(false) is not { } ticket)
         {
             return Cancelled(projectDirectory, displayName, target.TenantId, target.EnvironmentId, "clone");
         }
@@ -196,28 +201,28 @@ public sealed class ManagedAgentCreateService
         var stored = Register(projectDirectory, request with { Name = displayName, Description = description }, agentLocation, target.TenantId, target.EnvironmentId, await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false), project?.SchemaName, CloneEnvironments.IsCopy(source, target) ? null : mcsAgentId);
         var deployment = _homeDeployments.Register(projectDirectory, stored, target.EnvironmentId);
 
-        return new ManagedAgentCreateResult
-        {
-            AgentId = stored.AgentId,
-            DisplayName = stored.DisplayName,
-            AgentType = stored.AgentType,
-            SchemaName = project?.SchemaName ?? sourceAgent.SchemaName,
-            McsAgentId = mcsAgentId,
-            TenantId = stored.TenantId,
-            EnvironmentId = stored.EnvironmentId,
-            SourceEnvironmentId = source.EnvironmentId,
-            ProjectDirectory = projectDirectory,
-            ConfigPath = _locator.ConfigFilePath(projectDirectory),
-            CreatedFrom = "clone",
-            DeploymentId = deployment.DeploymentId,
-            DeploymentName = deployment.DeploymentName,
-            DeploymentType = deployment.DeploymentType,
-            ClonedComponentCount = materialised?.ComponentCount ?? 0,
-            ClonedWorkspaces = clonedWorkspaces,
-            Warnings = IgnoredCloneOptions(request),
-            Ams = await _creation.CompleteAsync(ticket, stored, deployment, [.. clonedWorkspaces.Select(workspace => workspace.Path)], cancellationToken).ConfigureAwait(false),
-        };
+        return Cloned(stored, deployment, project?.SchemaName ?? sourceAgent.SchemaName, mcsAgentId, source, projectDirectory, request, await _creation.CompleteAsync(ticket, stored, deployment, [.. clonedWorkspaces.Select(workspace => workspace.Path)], cancellationToken).ConfigureAwait(false)) with { ClonedComponentCount = materialised?.ComponentCount ?? 0, ClonedWorkspaces = clonedWorkspaces };
     }
+
+    private ManagedAgentCreateResult Cloned(ManagedAgentRecord agent, AgentDeploymentRecord? deployment, string schemaName, string mcsAgentId, CopilotEnvironmentContext source, string projectDirectory, ManagedAgentCreateRequest request, AmsAgentRegistration? ams) => new()
+    {
+        AgentId = agent.AgentId,
+        DisplayName = agent.DisplayName,
+        AgentType = agent.AgentType,
+        SchemaName = schemaName,
+        McsAgentId = mcsAgentId,
+        TenantId = agent.TenantId,
+        EnvironmentId = agent.EnvironmentId,
+        SourceEnvironmentId = source.EnvironmentId,
+        ProjectDirectory = projectDirectory,
+        ConfigPath = _locator.ConfigFilePath(projectDirectory),
+        CreatedFrom = "clone",
+        DeploymentId = deployment?.DeploymentId,
+        DeploymentName = deployment?.DeploymentName,
+        DeploymentType = deployment?.DeploymentType,
+        Warnings = IgnoredCloneOptions(request),
+        Ams = ams,
+    };
 
     private ManagedAgentCreateResult Cancelled(string projectDirectory, string displayName, string tenantId, string environmentId, string createdFrom) => new()
     {

@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
@@ -80,13 +81,9 @@ public static class AmsMcsSteps
 
     public static string[] WorkflowArguments(ScenarioContext context, string name, string project, params string[] extra) => ["agent", "create", "--agent-type", AgentTypes.McsWorkflow, "--agent-name", name, "--environment-id", Services(context).Config.DevEnvironmentId!, "--project", project, .. extra];
 
-    public static string[] CloneArguments(ScenarioContext context, AmsOffSource source, string project, params string[] extra)
-    {
-        var dev = Services(context).Config.DevEnvironmentId!;
-        string[] clone = source.WorkflowId is { } workflowId ? ["--agent-type", AgentTypes.McsWorkflow, "--mcs-clone-workflow-id", workflowId] : ["--agent-type", AgentTypes.McsAgent, "--mcs-clone-agent-id", source.BotId!];
+    public static string[] CloneArguments(ScenarioContext context, AmsOffSource source, string project, params string[] extra) => source.WorkflowId is { } workflowId ? CloneCommand(context, ["--agent-type", AgentTypes.McsWorkflow, "--mcs-clone-workflow-id", workflowId], project, extra) : CloneBotArguments(context, source.BotId!, project, extra);
 
-        return ["agent", "create", .. clone, "--mcs-clone-environment-id", dev, "--environment-id", dev, "--project", project, .. extra];
-    }
+    public static string[] CloneBotArguments(ScenarioContext context, string botId, string project, params string[] extra) => CloneCommand(context, ["--agent-type", AgentTypes.McsAgent, "--mcs-clone-agent-id", botId], project, extra);
 
     public static string[] InitArguments(string project, params string[] extra) => ["agent", "init", "--mcs-agent-source", project, .. extra];
 
@@ -118,6 +115,15 @@ public static class AmsMcsSteps
         var result = await RawAsync(context, Services(context).On, arguments, LongCall).ConfigureAwait(false);
         Services(context).Record(context.Ledger, result, project, amsOff: false, context.ScenarioId);
         return context.Assert.Refused(result, errorCode, check, exitCode, fragment);
+    }
+
+    public static async Task RefusedBeforeQuestionAsync(ScenarioContext context, string project, IReadOnlyList<string> arguments, int errorCode, string check, string fragment)
+    {
+        var ams = Services(context);
+        var result = await ams.On.RunAsync([.. arguments, "--json"], ams.WorkspaceRoot, stdin: "n", timeout: LongCall, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+        ams.Record(context.Ledger, result, project, amsOff: false, context.ScenarioId);
+        context.Assert.Refused(result, errorCode, check, 2, fragment);
+        context.Assert.False(AmsMcsText.HasQuestion(result.Output), $"{check}: nothing was asked first, so the answer n reached no question");
     }
 
     public static async Task InitUndoneAsync(ScenarioContext context, string what, string outer, string project, IReadOnlyList<string> extra, int errorCode, string check, string fragment)
@@ -186,6 +192,18 @@ public static class AmsMcsSteps
         var listed = result.Json<ManagedAgentListResult>();
         context.Assert.False(listed.Truncated, "the AMS list holds every agent, within --limit 1000");
         return listed;
+    }
+
+    public static async Task<string> AmsAgentIdsAsync(ScenarioContext context, params string[] repositoryIds)
+    {
+        List<string> ids = [];
+
+        foreach (var repositoryId in repositoryIds)
+        {
+            ids.AddRange(AmsMcsResults.Ids((await AmsAgentsAsync(context, repositoryId).ConfigureAwait(false)).Agents));
+        }
+
+        return string.Join(',', ids);
     }
 
     public static async Task UnknownAsync(ScenarioContext context, MsagentCli msagent, string form, IReadOnlyList<string> arguments) => context.Assert.Refused(await RawAsync(context, msagent, arguments).ConfigureAwait(false), 99002, $"{form} is unknown with the flag off (Usage, 99002, exit 2)", 2, "Unrecognized command or argument");
@@ -417,14 +435,40 @@ public static class AmsMcsSteps
         var headNow = await ams.Git.RevParseAsync(project, "HEAD", context.CancellationToken).ConfigureAwait(false);
         var status = await ams.Git.StatusAsync(project, [], context.CancellationToken).ConfigureAwait(false);
         context.Assert.True(AmsIds.Same(AmsMcsFiles.Agent(config, home.AgentId)?.McsAgentId, dev.BotId) && devRow?.LastDeployedTime is not null && GitCommits.Match(headNow, head) && status.Count == 0, $"{label}: the restore wrote A's bot and the Dev deploy time; HEAD is unchanged and git status is clean", $"mcsAgentId={AmsMcsFiles.Agent(config, home.AgentId)?.McsAgentId} bot={dev.BotId} lastDeployedTime={devRow?.LastDeployedTime} head={GitCommits.Short(head)}->{GitCommits.Short(headNow)} status={GitTip.Describe(status)}");
+
+        var held = expected.Where(row => AmsIds.Same(row.AgentType, AgentTypes.McsAgent) && AmsMcsFiles.RecordedBot(project, row.AgentId!) is not null).Select(row => new AmsFolder(project, row.AgentId!, row.AgentFolder!)).ToArray();
+        var unbound = held.Where(agent => !IsBoundToItsDevBot(context, AmsMcsFiles.Connection(project, agent.Folder, agent.AgentId))).Select(agent => agent.Folder).ToArray();
+        context.Assert.True(held.Any(agent => AmsIds.Same(agent.AgentId, home.AgentId)) && unbound.Length == 0 && initialized.Connected == held.Any(agent => AmsIds.Same(agent.AgentId, initialized.AgentId)), $"{label}: the restore connected each restored agent Dev holds, A among them: its folder's .mcs\\conn.json is bound to its Dev bot, and connected reads yes exactly when Dev holds the agent the result names", $"held={string.Join(',', held.Select(agent => agent.Folder))} unbound={string.Join(',', unbound)} connected={initialized.Connected} agent={initialized.AgentId} warnings={string.Join(" | ", initialized.Ams?.Warnings ?? [])}");
+
+        foreach (var agent in held)
+        {
+            await AssertPullUpToDateAsync(context, $"{label}: {agent.Folder}, at once", agent).ConfigureAwait(false);
+        }
     }
 
-    public static async Task<AmsFolder> TeammateAsync(ScenarioContext context, string label, AmsFolder agent, string repositoryId, IReadOnlyList<string> agentIds)
+    public static async Task<AmsFolder> TeammateAsync(ScenarioContext context, string label, AmsFolder agent, string repositoryId, IReadOnlyList<string> agentIds, string? notConnected = null)
     {
         var mate = Folder(context, "mate");
         var restored = await InitAsync(context, "a teammate's agent init --repository-id into a missing folder", mate, "--repository-id", repositoryId).ConfigureAwait(false);
-        context.Assert.True(restored.Status == "agent-initialized" && AmsMcsResults.Restores(restored.Ams, agentIds) && File.Exists(AmsMcsFiles.SettingsPath(mate, agent.Folder)) && AmsMcsFiles.CacheFingerprint(mate, agent.Folder) is null, $"(setup) the teammate's folder holds {label}, restored from the repository, and no .mcs", $"status={restored.Status} restored={string.Join(',', AmsMcsResults.RestoredIds(restored.Ams))} expected={string.Join(',', agentIds)} mcsAgentId={AmsMcsFiles.RecordedBot(mate, agent.AgentId)}");
+        var connection = AmsMcsFiles.Connection(mate, agent.Folder, agent.AgentId);
+        var expected = notConnected is null ? IsBoundToItsDevBot(context, connection) : AmsMcsFiles.CacheFingerprint(mate, agent.Folder) is null && AmsMcsText.Mentions(restored.Ams?.Warnings, $"{notConnected}, so msagent didn't connect the folder to Dev");
+        context.Assert.True(restored.Status == "agent-initialized" && AmsMcsResults.Restores(restored.Ams, agentIds) && File.Exists(AmsMcsFiles.SettingsPath(mate, agent.Folder)) && expected, notConnected is null ? $"(setup) the teammate's folder holds {label}, restored from the repository, and the init connected it: .mcs\\conn.json is bound to the Dev bot" : $"(setup) the teammate's folder holds {label}, restored from the repository, and no .mcs: the init's notice says the commit Dev holds {notConnected}, so it didn't connect the folder", $"status={restored.Status} restored={string.Join(',', AmsMcsResults.RestoredIds(restored.Ams))} expected={string.Join(',', agentIds)} {connection.Describe()} warnings={string.Join(" | ", restored.Ams?.Warnings ?? [])}");
         return agent with { Project = mate };
+    }
+
+    public static async Task DisconnectAsync(ScenarioContext context, AmsFolder agent)
+    {
+        var git = Services(context).Git;
+        Directory.Delete(Path.Combine(agent.Project, agent.Folder, WorkflowStateCache.FolderName), recursive: true);
+
+        foreach (var shelf in GitCli.ReadShelves(agent.Project).Where(shelf => shelf.Names(agent.Folder)))
+        {
+            Directory.Delete(shelf.KeyDirectory, recursive: true);
+        }
+
+        await git.RestoreAsync(agent.Project, [agent.Folder], context.CancellationToken).ConfigureAwait(false);
+        var status = await git.StatusAsync(agent.Project, [agent.Folder], context.CancellationToken).ConfigureAwait(false);
+        context.Assert.True(AmsMcsFiles.CacheFingerprint(agent.Project, agent.Folder) is null && !GitCli.ReadShelves(agent.Project).Any(shelf => shelf.Names(agent.Folder)) && status.Count == 0, "(setup) the teammate's folder is a plain clone's again, as when init's connect fails: no .mcs, no copy of one, and nothing uncommitted", $"{McsShelf.Describe(GitCli.ShelfOf(agent.Project, agent.Folder))} git status: {GitTip.Describe(status)}");
     }
 
     public static async Task<AmsOffScaffold> AmsOffScaffoldAsync(ScenarioContext context, string label, bool workflow = false)
@@ -534,6 +578,15 @@ public static class AmsMcsSteps
         context.Assert.True(registration is not null, check, $"status={status}");
         return registration!;
     }
+
+    private static string[] CloneCommand(ScenarioContext context, string[] clone, string project, string[] extra)
+    {
+        var dev = Services(context).Config.DevEnvironmentId!;
+
+        return ["agent", "create", .. clone, "--mcs-clone-environment-id", dev, "--environment-id", dev, "--project", project, .. extra];
+    }
+
+    private static bool IsBoundToItsDevBot(ScenarioContext context, AmsConnectionFacts connection) => connection.BindsTo(connection.RecordedBot, Services(context).Config.DevEnvironmentId, Services(context).DevOrganization);
 
     private static void AssertGrsInitialParent(ScenarioContext context, GitCloneFacts clone) => context.Assert.True(clone.ParentIsGrsInitialCommit, $"the add commit's parent is GRS's initial commit: by {GitCloneFacts.GrsAuthor}, with no parent, holding only {GitCloneFacts.GrsReadme}", $"parent={clone.Parent?.Sha} author={clone.Parent?.AuthorEmail} itsParents={string.Join(' ', clone.Parent?.Parents ?? [])} files={string.Join(',', clone.ParentTree ?? [])}");
 

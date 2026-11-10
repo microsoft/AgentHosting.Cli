@@ -183,10 +183,42 @@ public sealed class AmsMcsTextTests
     }
 
     [Theory]
-    [InlineData("Clone repository ahe2e Home (r-1.x) into C:\\work\\mate and restore its agents? [Y/n]", "r-1.x", true)]
-    [InlineData("clone REPOSITORY r (R-1.X) into c:\\m AND RESTORE ITS AGENTS? [y/N]", "r-1.x", true)]
-    [InlineData("Clone repository ahe2e Home (r-1ax) into C:\\work\\mate and restore its agents? [Y/n]", "r-1.x", false)]
-    [InlineData("Clone repository ahe2e Home (r-2) into C:\\work\\mate and restore its agents? [Y/n]", "r-1.x", false)]
+    [InlineData("mcs.metadata:\n  componentName: Greeting\n  description: ahe2e Dev edit x\nkind: AdaptiveDialog\n", "ahe2e Dev edit x")]
+    [InlineData("mcs.metadata:\r\n  description: 'ahe2e Dev edit x'\r\n", "ahe2e Dev edit x")]
+    [InlineData("description: top level\n", null)]
+    [InlineData("    description: nested\n", null)]
+    [InlineData(null, null)]
+    public void TheDescriptionIsTheMetadataLineUnquoted(string? yaml, string? description)
+    {
+        Assert.Equal(description, AmsMcsText.Description(yaml));
+    }
+
+    [Theory]
+    [InlineData("mcs.metadata:\n  componentName: Greeting\n  description: Greets.\nkind: AdaptiveDialog\n  description: kept\n", "mcs.metadata:\n  componentName: Greeting\n  description: ahe2e New x\nkind: AdaptiveDialog\n  description: kept\n")]
+    [InlineData("mcs.metadata:\r\n  description: \"Greets.\"\r\n", "mcs.metadata:\r\n  description: \"ahe2e New x\"\r\n")]
+    [InlineData("description: top level\n", "description: top level\n")]
+    public void ANewDescriptionReplacesTheFirstMetadataOneAndKeepsItsQuotes(string yaml, string described)
+    {
+        Assert.Equal(described, AmsMcsText.WithDescription(yaml, "ahe2e New x"));
+    }
+
+    [Theory]
+    [InlineData("a\n<<<<<<< ours\n  description: one\n=======\n  description: two\n>>>>>>> theirs\nb\n", true)]
+    [InlineData("<<<<<<< ours\r\nx\r\n=======\r\ny\r\n>>>>>>> theirs\r\n", true)]
+    [InlineData("=======\n<<<<<<< ours\n>>>>>>> theirs\n", false)]
+    [InlineData("  <<<<<<< ours\n=======\n>>>>>>> theirs\n", false)]
+    [InlineData(null, false)]
+    public void ConflictMarkersAreALeftAMiddleAndARightMarkerInOrderAtTheStartOfTheirLines(string? text, bool marked)
+    {
+        Assert.Equal(marked, AmsMcsText.HasConflictMarkers(text));
+    }
+
+    [Theory]
+    [InlineData("Clone repository ahe2e Home (r-1.x) into C:\\work\\mate, restore its agents and connect them? [Y/n]", "r-1.x", true)]
+    [InlineData("clone REPOSITORY r (R-1.X) into c:\\m, RESTORE ITS AGENTS AND CONNECT THEM? [y/N]", "r-1.x", true)]
+    [InlineData("Clone repository ahe2e Home (r-1ax) into C:\\work\\mate, restore its agents and connect them? [Y/n]", "r-1.x", false)]
+    [InlineData("Clone repository ahe2e Home (r-2) into C:\\work\\mate, restore its agents and connect them? [Y/n]", "r-1.x", false)]
+    [InlineData("Clone repository ahe2e Home (r-1.x) into C:\\work\\mate and restore its agents? [Y/n]", "r-1.x", false)]
     [InlineData("Clone repository ahe2e Home (r-1.x) into C:\\work\\mate and add agent 'a' to it? [Y/n]", "r-1.x", false)]
     public void TheRestoreQuestionNamesTheRepository(string text, string repositoryId, bool asks)
     {

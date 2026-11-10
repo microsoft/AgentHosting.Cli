@@ -248,6 +248,15 @@ public sealed record DataverseBot
     public string? Template { get; init; }
 }
 
+public sealed record DataverseBotComponent
+{
+    public required string ComponentId { get; init; }
+
+    public string? Name { get; init; }
+
+    public string? Description { get; init; }
+}
+
 public sealed record DataverseConnector
 {
     public required string ConnectorId { get; init; }
@@ -271,6 +280,7 @@ public sealed class DataverseProbe
     private const string UnmanagedFlowFilter = "category eq 5 and type eq 1 and ismanaged eq false";
     private const string ManagedFlowFilter = "category eq 5 and type eq 1 and ismanaged eq true";
     private const string BotColumns = "botid,name,schemaname,template";
+    private const string ComponentColumns = "botcomponentid,name,description";
     private const string ConnectorColumns = "connectorid,name,displayname,description,connectorinternalid";
     private const string ConnectorDefinitionColumns = "name,displayname,description,openapidefinition,connectionparameters,connectionparametersets,policytemplateinstances,iconbrandcolor,iconblob";
     private const string DefaultPublisherPrefix = "new";
@@ -388,6 +398,14 @@ public sealed class DataverseProbe
     public Task<DataverseBot?> RenameBotAsync(string environmentId, string botId, string name, CancellationToken cancellationToken) => PatchAsync(environmentId, $"bots({RowId(botId, "bot")})", new JsonObject { ["name"] = name }, "the bot rename", () => BotAsync(environmentId, botId, cancellationToken), cancellationToken);
 
     public Task<DataverseWorkflow?> RenameFlowAsync(string environmentId, string workflowId, string name, CancellationToken cancellationToken) => PatchAsync(environmentId, $"workflows({RowId(workflowId, "workflow")})", new JsonObject { ["name"] = name }, "the flow rename", () => WorkflowAsync(environmentId, workflowId, includeDefinition: false, cancellationToken), cancellationToken);
+
+    public async Task<DataverseBotComponent?> EditComponentDescriptionAsync(string environmentId, string botId, string name, string description, CancellationToken cancellationToken)
+    {
+        var named = await RowsAsync(environmentId, $"botcomponents?$select={ComponentColumns}&$filter={Uri.EscapeDataString($"_parentbotid_value eq {RowId(botId, "bot")} and name eq '{Literal(name)}'")}", ReadComponent, "the bot component query", cancellationToken).ConfigureAwait(false);
+        var row = named is [var component] ? $"botcomponents({RowId(component.ComponentId, "bot component")})" : throw new E2EException($"Bot {botId} holds {named.Count} components named {name}, not one.");
+
+        return await PatchAsync(environmentId, row, new JsonObject { ["description"] = description }, "the bot component edit", () => RowAsync(environmentId, $"{row}?$select={ComponentColumns}", ReadComponent, "the bot component read", cancellationToken), cancellationToken).ConfigureAwait(false);
+    }
 
     public async Task<string> PublisherPrefixAsync(string environmentId, CancellationToken cancellationToken) => (await RowsAsync(environmentId, $"publishers?$select=customizationprefix&$filter={Uri.EscapeDataString("isreadonly eq false")}", row => Text(row, "customizationprefix"), "the publisher query", cancellationToken).ConfigureAwait(false)).FirstOrDefault(prefix => prefix is { Length: > 0 } && !string.Equals(prefix, DefaultPublisherPrefix, StringComparison.OrdinalIgnoreCase)) ?? throw new E2EException($"Environment {environmentId} has no writable publisher whose prefix isn't {DefaultPublisherPrefix}, so a custom connector can't be named.");
 
@@ -558,6 +576,13 @@ public sealed class DataverseProbe
         Name = Text(row, "name"),
         SchemaName = Text(row, "schemaname"),
         Template = Text(row, "template"),
+    };
+
+    private static DataverseBotComponent ReadComponent(JsonElement row) => new()
+    {
+        ComponentId = Text(row, "botcomponentid") ?? string.Empty,
+        Name = Text(row, "name"),
+        Description = Text(row, "description"),
     };
 
     private static DataverseConnector ReadConnector(JsonElement row) => new()

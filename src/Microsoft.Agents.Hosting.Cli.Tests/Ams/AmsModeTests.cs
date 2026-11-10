@@ -114,6 +114,17 @@ public sealed class AmsModeTests
     }
 
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheComposedContainer_ResolvesTheJoinThatCreateAndInitShare_OnlyWithTheFlagOn(bool amsMcsAgents)
+    {
+        using var workspace = new TemporaryWorkspace();
+        await using var provider = Program.ComposeServices([], new Program.InvocationTarget(PowerPlatformApiTargetConfig.Public, RingKnown: true), amsMcsAgents ? new TestFeatureFlags(FeatureName.AmsMcsAgents) : new TestFeatureFlags(), new AgentHostAuthOptions { ConfigDirectory = Path.Combine(workspace.Root, "config") }, new ProgressSpinner(TextWriter.Null, enabled: false, ansi: false, TimeProvider.System, () => 80)).BuildServiceProvider();
+
+        Assert.Equal((amsMcsAgents, amsMcsAgents), (provider.GetService<IAgentCreationHook>() is AmsAgentCreation, provider.GetService<ICommandHandler<ManagedAgentInitRequest, ManagedAgentInitResult>>() is AmsAgentInitStep));
+    }
+
+    [Theory]
     [InlineData("instance")]
     [InlineData("factory")]
     [InlineData("type")]

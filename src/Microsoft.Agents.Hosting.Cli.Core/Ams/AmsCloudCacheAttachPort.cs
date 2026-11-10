@@ -40,11 +40,25 @@ public sealed class AmsCloudCacheAttachPort : ICopilotWorkspaceAttachPort, ICopi
         ArgumentNullException.ThrowIfNull(command);
 
         var connected = await _connect.ConnectAsync(command, cancellationToken).ConfigureAwait(false);
-        foreach (var folder in command.CollectionDirectories.Except(connected.SkippedCollectionDirectories, StringComparer.Ordinal).Prepend(command.WorkspaceDirectory))
+        await SaveConnectedAsync(command, connected, [], cancellationToken).ConfigureAwait(false);
+        return connected;
+    }
+
+    /// <inheritdoc />
+    public async Task<CopilotConnectMergeOutcome> ConnectAndMergeAsync(CopilotConnectMergeCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        var merged = await _connect.ConnectAndMergeAsync(command, cancellationToken).ConfigureAwait(false);
+        await SaveConnectedAsync(command.Connect, merged.Connected, merged.AddedCollectionDirectories, cancellationToken).ConfigureAwait(false);
+        return merged;
+    }
+
+    private async Task SaveConnectedAsync(CopilotConnectCommand command, CopilotConnectOutcome connected, IEnumerable<string> addedCollectionDirectories, CancellationToken cancellationToken)
+    {
+        foreach (var folder in command.CollectionDirectories.Except(connected.SkippedCollectionDirectories, StringComparer.Ordinal).Prepend(command.WorkspaceDirectory).Concat(addedCollectionDirectories))
         {
             await _shelf.SaveConnectedAsync(_workspaces, folder, cancellationToken).ConfigureAwait(false);
         }
-
-        return connected;
     }
 }

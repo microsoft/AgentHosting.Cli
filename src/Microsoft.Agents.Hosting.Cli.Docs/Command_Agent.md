@@ -71,7 +71,9 @@ in this reference without it. While it is on, every command still works on the l
 - [`agent create`](#ams-mode-for-agent-create-gated) and [`agent init`](#ams-mode-for-agent-init-gated)
   register the agent in AMS, with its folder in a GRS repository, then commit and push the folder;
   `agent init` also restores the agents AMS holds for the repository, in a clone or, with
-  `--repository-id`, in an empty or missing folder that it clones the repository into;
+  `--repository-id`, in an empty or missing folder that it clones the repository into, and connects
+  each one Dev holds. A clone that `agent create` makes of a Copilot Studio agent or flow another AMS
+  agent holds joins that agent instead;
 - [`agent deploy`](#ams-mode-for-agent-deploy-gated) tells AMS which commit a deploy from the folder
   held, and `--remote` deploys a commit of the repository through AMS, connecting the agent's folder
   after a deploy to Dev of exactly the commit the folder holds;
@@ -287,7 +289,8 @@ the new record from `.config` and the files the command added to the project fol
 or push, or a failed deploy record, is a warning, and the agent stays registered. A link to a new
 repository that git cannot finish, for example because the folder already holds a `README.md`, is a
 warning too: msagent takes the link back, commits nothing, and names the git commands that finish it.
-AMS refuses a Copilot Studio agent or flow another AMS agent holds ([19013](ErrorCodes/19013.md)).
+A clone of a Copilot Studio agent or flow that another AMS agent holds joins that agent instead, as
+below.
 
 The result adds the repository, whether this command created it, its git url, and the commit:
 
@@ -296,6 +299,11 @@ The result adds the repository, whether this command created it, its git url, an
   git url      https://<host>/<path>
   commit       1a2b3c4 (pushed to main)
 ```
+
+A clone from the Copilot Studio agent's or flow's own environment first asks AMS which AMS agent
+holds it. With none, the command runs as above. Otherwise it joins that agent: the project becomes a
+clone of the holder's repository with the holder's records, and msagent registers, commits, and
+pushes nothing. 
 
 ```text
 # New repository for a new project
@@ -367,21 +375,25 @@ as `agent create` does, asks before it clones or links one, and then:
 - **completes** an agent AMS already knows but `.config` does not record as registered, creating the
   deployments AMS lacks;
 - adds `/.config/agent.config.json` and `.mcs/` to `.gitignore`, then commits the folders it restored or
-  registered and pushes the commit to `main`.
+  registered and pushes the commit to `main`;
+- **connects** each agent it restored that Dev holds, after that commit and push, as a clone of an
+  agent AMS already holds.
 
 `--agent-name` is not needed when the run only restores or registers agents. With nothing to restore
 or register, `agent init` works as without AMS; after a clone into an empty or missing folder, it
 then fails as without AMS and removes the clone. When AMS refuses the register, `agent init` takes
 back what it did, the clone or link included. The result adds the repository, git url, and commit
-lines of `agent create`, and one `restored` line per restored agent.
+lines of `agent create`, and one `restored` line per restored agent. Its `connected` field, and its
+`connected to Copilot Studio` line, say whether the agent's folder is connected.
 
 A top-level agent or workflow folder that `.config` doesn't list and the run doesn't restore is a new
 agent, which needs `--agent-name`. Without it, `agent init` fails with [99002](ErrorCodes/99002.md),
 names the folder, and takes back any clone or link. If the folder's agent was deleted, remove the
 folder from the repository instead.
 
-A teammate starts with one command, which clones the repository into a new folder and restores its
-agents, or with `git clone` and then `agent init` in the clone:
+A teammate starts with one command, which clones the repository into a new folder and restores and
+connects its agents, or with `git clone` and then `agent init` in the clone. Cloning one of its
+agents from Copilot Studio with `agent create` into a new folder joins it the same way:
 
 ```text
 msagent agent init --repository-id <repository-id> --mcs-agent-source contoso-agents
@@ -389,6 +401,8 @@ msagent agent init --repository-id <repository-id> --mcs-agent-source contoso-ag
 git clone <git-url> contoso-agents
 cd contoso-agents
 msagent agent init
+
+msagent agent create --agent-type MCSAgent --mcs-clone-agent-id <copilot-studio-agent-id> --project contoso-hr
 ```
 
 ## `msagent agent list` - MCS-specific
@@ -485,11 +499,12 @@ and replaces the local workflow from its environment, refusing unpushed local ed
 `--overwrite` is supplied. It can recreate missing workflow files. It does not merge those edits.
 The result reports the environment, changes, and whether the workspace was already up to date.
 
-With AMS mode on (**Gated**), a folder that `agent init` restored or git cloned has no connection
-until a deploy to Dev connects it: from the folder with `msagent agent deploy`, or from GRS with
-`msagent agent deploy --remote` when the folder holds exactly the deployed commit. Until then, an
-MCSAgent pull of an agent AMS registered fails with [10011](ErrorCodes/10011.md) and says how to
-bring Copilot Studio changes into the repository instead: `msagent agent capture`, then `git pull`.
+With AMS mode on (**Gated**), a folder that a clone joining its agent or `agent init` connected
+pulls at once. A folder that neither could connect has no connection until a deploy to Dev connects
+it: from the folder with `msagent agent deploy`, or from GRS with `msagent agent deploy --remote`
+when the folder holds exactly the deployed commit. Until then, an MCSAgent pull of an agent AMS
+registered fails with [10011](ErrorCodes/10011.md) and says how to bring Copilot Studio changes into
+the repository instead: `msagent agent capture`, then `git pull`.
 
 With AMS mode on (**Gated**), msagent keeps a copy of each folder's `.mcs` for every commit it
 synced at, under the clone's git folder, and a pull merges against the copy for the commit the

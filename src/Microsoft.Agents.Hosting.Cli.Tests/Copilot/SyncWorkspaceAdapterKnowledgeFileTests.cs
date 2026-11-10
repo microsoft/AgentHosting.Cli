@@ -174,6 +174,8 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
 
     public IReadOnlyDictionary<string, string> ClonedFiles { get; init; } = new Dictionary<string, string>();
 
+    public IReadOnlyDictionary<string, string>? ClonedCollectionFiles { get; init; }
+
     public Exception? ApplyTouchupsThrows { get; init; }
 
     public List<SyncDataverseClient.AIPromptResponse> PromptResponses { get; } = [];
@@ -241,7 +243,7 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
         {
             Directory.CreateDirectory(Path.Combine(workspaceFolder.ToString(), ".mcs"));
 
-            foreach (var (relativePath, content) in ClonedFiles)
+            foreach (var (relativePath, content) in operationContext is BotComponentCollectionAuthoringOperationContext && ClonedCollectionFiles is { } collectionFiles ? collectionFiles : ClonedFiles)
             {
                 File.WriteAllText(Path.Combine(workspaceFolder.ToString(), relativePath), content);
             }

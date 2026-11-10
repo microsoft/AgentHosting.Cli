@@ -41,6 +41,12 @@ public static class AmsRoutes
     /// <param name="includeDeployments">Whether each agent carries its deployments.</param>
     public static Uri McsRepository(AmsServiceTarget target, string repositoryId, string? agentFolder, bool includeDeployments) => Build(target, $"{McsAgentCollectionPath}/repositories/{Escape(repositoryId)}", $"{Query("agentFolder", agentFolder)}{(includeDeployments ? Query("includeDeployments", "true") : null)}");
 
+    /// <summary>The AMS agents that hold one Copilot Studio agent or flow.</summary>
+    /// <param name="target">The data-plane endpoint.</param>
+    /// <param name="botId">The Copilot Studio agent, or null for a flow.</param>
+    /// <param name="workflowId">The flow, or null for a Copilot Studio agent.</param>
+    public static Uri McsHolders(AmsServiceTarget target, string? botId, string? workflowId) => Build(target, $"{McsAgentCollectionPath}/holders", $"{Query("botId", botId)}{Query("workflowId", workflowId)}");
+
     /// <summary>The deploy records of one deployment, where msagent records a deploy it made from the working folder.</summary>
     /// <param name="target">The on-behalf-of capable data-plane endpoint.</param>
     /// <param name="agentId">The agent.</param>

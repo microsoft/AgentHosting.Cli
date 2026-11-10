@@ -107,6 +107,8 @@ internal sealed class SyncedFolders : ICopilotWorkspacePort, ICopilotWorkspaceAt
 
     public List<string> Skipped { get; } = [];
 
+    public List<string> Added { get; } = [];
+
     public static CopilotWorkspaceInfo Info(string folder, string identity = CloudCacheRepository.Identity) => new() { WorkspacePath = folder, EnvironmentId = identity.Split('|')[0], AgentId = identity.Split('|')[1], DataverseOrganization = Environment.DataverseOrganization };
 
     public bool IsWorkspace(string directory) => Record("is-workspace", true);
@@ -130,15 +132,9 @@ internal sealed class SyncedFolders : ICopilotWorkspacePort, ICopilotWorkspaceAt
 
     public Task<CopilotAttachOutcome> AttachAsync(CopilotAttachCommand command, CancellationToken cancellationToken) => Task.FromResult(Sync("attach", command.ProjectDirectory, new CopilotAttachOutcome { AgentId = "agent-1", SchemaName = command.SchemaName, Notices = ["attach notice"] }));
 
-    public Task<CopilotConnectOutcome> ConnectAsync(CopilotConnectCommand command, CancellationToken cancellationToken)
-    {
-        foreach (var folder in command.CollectionDirectories.Except(Skipped).Prepend(command.WorkspaceDirectory))
-        {
-            Sync("connect", folder);
-        }
+    public Task<CopilotConnectOutcome> ConnectAsync(CopilotConnectCommand command, CancellationToken cancellationToken) => Task.FromResult(Connect("connect", command, []));
 
-        return Task.FromResult(new CopilotConnectOutcome { AgentId = "agent-1", SkippedCollectionDirectories = Skipped });
-    }
+    public Task<CopilotConnectMergeOutcome> ConnectAndMergeAsync(CopilotConnectMergeCommand command, CancellationToken cancellationToken) => Task.FromResult(new CopilotConnectMergeOutcome { Connected = Connect("connect-merge", command.Connect, Added), AddedCollectionDirectories = Added, MergedPaths = [.. command.BaseFiles.Keys] });
 
     public Task<WorkflowDocument> ReadLocalAsync(string workspaceRoot, CancellationToken cancellationToken) => Task.FromResult(Record("read-local", Workflow));
 
@@ -195,4 +191,14 @@ internal sealed class SyncedFolders : ICopilotWorkspacePort, ICopilotWorkspaceAt
     }
 
     private void Sync(string call, string folder) => Sync(call, folder, true);
+
+    private CopilotConnectOutcome Connect(string call, CopilotConnectCommand command, IEnumerable<string> added)
+    {
+        foreach (var folder in command.CollectionDirectories.Except(Skipped).Prepend(command.WorkspaceDirectory).Concat(added))
+        {
+            Sync(call, folder);
+        }
+
+        return new CopilotConnectOutcome { AgentId = "agent-1", SkippedCollectionDirectories = Skipped };
+    }
 }

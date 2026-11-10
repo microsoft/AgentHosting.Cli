@@ -95,6 +95,12 @@ public sealed class ManagedAgentResultTextTests
     public void CloneText_CarriesTheManagedAgentId() =>
         Assert.Contains($"  agent id    {AgentId}", CreateResult("clone").ToTextLines());
 
+    [Theory]
+    [InlineData("agent-created", true)]
+    [InlineData("joined", false)]
+    public void CloneText_CountsTheComponentsTheCloneWrote_ButAJoinWroteNone(string status, bool counted) =>
+        Assert.Equal(counted, (CreateResult("clone") with { Status = status }).ToTextLines().Contains("  components  13 written"));
+
     [Fact]
     public void ScaffoldText_CarriesTheManagedAgentId() =>
         Assert.Contains($"  agent id  {AgentId}", CreateResult("scaffold").ToTextLines());

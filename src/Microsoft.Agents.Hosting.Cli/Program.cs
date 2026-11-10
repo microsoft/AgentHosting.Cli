@@ -606,6 +606,7 @@ internal static class Program
         services.AddSingleton<AmsRecordMirror>();
         services.AddSingleton<IAgentRecordMirror>(sp => sp.GetRequiredService<AmsRecordMirror>());
         services.AddSingleton<IAgentCreationHook, AmsAgentCreation>();
+        services.AddSingleton<AmsRepositoryJoin>();
         services.AddSingleton<AmsAgentInitStep>();
         services.AddSingleton<AmsLocalDeployStep>();
         services.AddSingleton<AmsReadSteps>();

@@ -34,5 +34,5 @@ public sealed class SyncComponentCollectionAdapter : ICopilotComponentCollection
         };
     }
 
-    private static string ToDirectory(DirectoryPath folder) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder.ToString()));
+    internal static string ToDirectory(DirectoryPath folder) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder.ToString()));
 }

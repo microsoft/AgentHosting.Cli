@@ -162,6 +162,10 @@ public static class AmsMcsOperationErrorMap
 
     internal static string Annotated(string sentence, ServiceCorrelation correlation) => correlation.Describe().Length > 0 ? correlation.Annotate(sentence.TrimEnd('.')) : sentence;
 
+    internal static AmsAgentException BotClaimed(string holder, string? remediation = null) => Create(Entries[BotClaimedCode] with { Message = $"{Entries[BotClaimedCode].Message.TrimEnd('.')}: {holder}", Remediation = remediation ?? Entries[BotClaimedCode].Remediation, IncludesServiceDetail = false }, null, string.Empty, null);
+
+    internal static AmsAgentException Rejoinable(AmsAgentException claimed) => AmsAgentException.Rejected(claimed.ErrorCode, claimed.Message, claimed.ExitCode, Entries[BotClaimedCode].ErrorKind, "Run the same command again: it joins that agent.", claimed.RetryAfter);
+
     private static AmsAgentException? MapKnown(AmsMcsOperationError? error, ServiceCorrelation correlation, TimeSpan? retryAfter) => Find(error) is { } entry ? Create(Worded(entry, error, null, null, null) ?? entry, error, correlation.Annotate(string.Empty).Trim(), retryAfter) : null;
 
     private static Entry OperationEntry(AmsMcsOperationRecord operation, string? requestedCommitSha, string? agentType)

@@ -334,7 +334,7 @@ public sealed record AmsDeploymentState(string DeploymentId, string? LastDeploye
 /// <param name="Deployments">What AMS reports about each of the agent's deployments.</param>
 public sealed record AmsAgentDetails(string AgentId, string RepositoryId, string Folder, string? GitUrl, IReadOnlyList<AmsDeploymentState> Deployments);
 
-/// <summary>An agent <c>msagent agent init</c> restored from AMS.</summary>
+/// <summary>An agent <c>msagent agent init</c>, or a clone that joined the agent holding it, restored from AMS.</summary>
 /// <param name="AgentId">The agent.</param>
 /// <param name="DisplayName">The agent's name.</param>
 /// <param name="Folder">The agent's folder.</param>
@@ -371,9 +371,21 @@ public sealed record AmsAgentRegistration
     /// <summary>The branch the commit was pushed to.</summary>
     public string Branch { get; init; } = "main";
 
-    /// <summary>The agents <c>msagent agent init</c> restored from AMS.</summary>
+    /// <summary>The agents <c>msagent agent init</c>, or a clone that joined the agent holding it, restored from AMS.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public IReadOnlyList<AmsRestoredAgent>? Restored { get; init; }
+
+    /// <summary>Whether this command joined the AMS agent that holds the cloned agent or flow.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Joined { get; init; }
+
+    /// <summary>The files Copilot Studio's edits were merged into, as uncommitted changes.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public IReadOnlyList<string>? MergedFiles { get; init; }
+
+    /// <summary>The merged files with conflicts to resolve.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public IReadOnlyList<string>? ConflictedFiles { get; init; }
 
     /// <summary>Advisories that did not stop the command, such as a failed push.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -382,9 +394,9 @@ public sealed record AmsAgentRegistration
     /// <summary>The lines main's create and init results append, in their column style.</summary>
     public IEnumerable<string> ToTextLines() =>
     [
-        $"  repository   {RepositoryId}{(RepositoryName is null ? string.Empty : $" ({RepositoryName})")}{(RepositoryCreated ? ", created" : string.Empty)}",
+        $"  repository   {RepositoryId}{(RepositoryName is null ? string.Empty : $" ({RepositoryName})")}{(RepositoryCreated ? ", created" : Joined ? ", joined" : string.Empty)}",
         $"  git url      {GitUrl}",
-        $"  commit       {(CommitSha is null ? "none (nothing to commit)" : $"{McsAmsCommits.Short(CommitSha)} ({(Pushed ? $"pushed to {Branch}" : "not pushed")})")}",
+        .. Joined ? [] : new[] { $"  commit       {(CommitSha is null ? "none (nothing to commit)" : $"{McsAmsCommits.Short(CommitSha)} ({(Pushed ? $"pushed to {Branch}" : "not pushed")})")}" },
         .. (Restored ?? []).Select(agent => $"  restored     {agent.DisplayName} ({agent.AgentId}) in {agent.Folder}"),
         .. (Warnings ?? []).Select(TextGrid.StatusWarningLine),
     ];

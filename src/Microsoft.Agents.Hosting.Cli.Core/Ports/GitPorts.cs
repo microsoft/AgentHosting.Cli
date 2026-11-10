@@ -80,6 +80,14 @@ public interface IGitPort
     /// <returns>The files, as paths relative to the root that '/' separates.</returns>
     Task<IReadOnlyList<string>> ListTreeAsync(string root, string reference, CancellationToken cancellationToken);
 
+    /// <summary>Reads the files under some paths as a commit holds them, byte for byte.</summary>
+    /// <param name="root">The working tree's root.</param>
+    /// <param name="commit">The commit.</param>
+    /// <param name="paths">The folders or files, relative to the root.</param>
+    /// <param name="cancellationToken">Cancels git.</param>
+    /// <returns>Each file's content, by its path relative to the root.</returns>
+    Task<IReadOnlyDictionary<string, ReadOnlyMemory<byte>>> ReadFilesAsync(string root, string commit, IReadOnlyList<string> paths, CancellationToken cancellationToken);
+
     /// <summary>Lists the files git tracks under some paths.</summary>
     /// <param name="root">The working tree's root.</param>
     /// <param name="paths">The paths, relative to the root.</param>

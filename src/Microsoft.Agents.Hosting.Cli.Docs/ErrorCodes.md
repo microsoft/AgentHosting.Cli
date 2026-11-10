@@ -361,6 +361,7 @@ mean a change partially completed or its result is uncertain.
 | [19070](ErrorCodes/19070.md) | The service refused a value msagent sent. |
 | [19071](ErrorCodes/19071.md) | A commit that never synced holds uncommitted changes. |
 | [19072](ErrorCodes/19072.md) | A commit that never synced lacks the commit Copilot Studio synced from. |
+| [19077](ErrorCodes/19077.md) | The project folder can't join the AMS agent that holds the Copilot Studio agent. |
 
 ## General
 

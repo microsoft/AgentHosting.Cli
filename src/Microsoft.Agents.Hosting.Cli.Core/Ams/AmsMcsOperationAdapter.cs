@@ -67,6 +67,21 @@ public sealed class AmsMcsOperationAdapter : IAmsMcsAgentReadTransport, IAmsMcsR
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<AmsMcsHolder>> FindHoldersAsync(AmsServiceTarget target, string? botId, string? workflowId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        try
+        {
+            return Read(await SendAsync(new AmsMcsCall(HttpMethod.Get, AmsRoutes.McsHolders(target, botId, workflowId), target, PowerPlatformApiPermissions.AppsRead, "Holders read"), cancellationToken).ConfigureAwait(false), AmsMcsWire.ReadHolders);
+        }
+        catch (TargetRequestException exception) when (exception.Status == 404)
+        {
+            return [];
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<AmsMcsAgentRecord> RegisterAsync(AmsMcsRegistration request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

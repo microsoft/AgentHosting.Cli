@@ -69,6 +69,10 @@ public static class AmsMcsFiles
 
     public static string SettingsEntry(string folder) => $"{folder}/{WorkspaceFileNames.Settings}";
 
+    public static string TopicPath(string project, string folder, string topic) => Path.Combine(project, folder, "topics", $"{topic}.mcs.yml");
+
+    public static string TopicEntry(string folder, string topic) => $"{folder}/topics/{topic}.mcs.yml";
+
     public static string? RecordedBot(string project, string agentId) => Agent(ReadAgentConfig(project), agentId)?.McsAgentId;
 
     public static string? CacheFingerprint(string project, string folder) => Fingerprint(Path.Combine(project, folder, WorkflowStateCache.FolderName));
@@ -94,18 +98,9 @@ public static class AmsMcsFiles
 
     public static string TopEntries(string directory) => Directory.Exists(directory) ? string.Join(',', Directory.EnumerateFileSystemEntries(directory).Select(Path.GetFileName).Order(StringComparer.Ordinal)) : string.Empty;
 
-    public static void SetDisplayName(string path, string name)
-    {
-        var text = File.ReadAllText(path);
-        var renamed = AmsMcsText.WithDisplayName(text, name);
+    public static void SetDisplayName(string path, string name) => Rewrite(path, text => AmsMcsText.WithDisplayName(text, name), $"no displayName, or already holds '{name}'");
 
-        if (renamed == text)
-        {
-            throw new E2EException($"{path} declares no displayName, or already holds '{name}'.");
-        }
-
-        Write(path, renamed);
-    }
+    public static void SetDescription(string path, string description) => Rewrite(path, text => AmsMcsText.WithDescription(text, description), $"no description, or already holds '{description}'");
 
     public static void AddYamlComment(string path, string comment) => Append(path, File.ReadAllText(path), $"# {comment}");
 
@@ -192,6 +187,19 @@ public static class AmsMcsFiles
     {
         var newLine = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         Write(path, $"{text}{(text.Length == 0 || text.EndsWith('\n') ? string.Empty : newLine)}{string.Concat(lines.Select(line => line + newLine))}");
+    }
+
+    private static void Rewrite(string path, Func<string, string> change, string unchanged)
+    {
+        var text = File.ReadAllText(path);
+        var changed = change(text);
+
+        if (changed == text)
+        {
+            throw new E2EException($"{path} declares {unchanged}.");
+        }
+
+        Write(path, changed);
     }
 
     private static void Write(string path, string text) => File.WriteAllText(path, text, File.Exists(path) && File.ReadAllBytes(path).AsSpan().StartsWith(WithBom.Preamble) ? WithBom : NoBom);

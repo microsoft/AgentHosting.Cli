@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Copilot;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
@@ -6,6 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.Agents.Hosting.Cli.Rendering;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 using Microsoft.CopilotStudio.McsCore;
 
@@ -1060,6 +1062,93 @@ public sealed class ManagedAgentCreateServiceTests
             new ManagedAgentCreateRequest(),
             CancellationToken.None));
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Clone_OfAnAgentAmsHolds_ReturnsTheJoin_WithoutMainsChecksCloneRegisterOrHomeDeployment(bool withDeployment)
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent("agent-9", "Fork") with { AgentLocation = "Fork" });
+        var botId = Guid.NewGuid().ToString();
+        var holder = ManagedAgentFixtures.Agent("holder-1", "Contoso HR") with { AgentLocation = "ContosoHR", McsAgentId = botId };
+        var dev = ManagedAgentFixtures.Deployment("deployment-1", "holder-1", "contoso-dev", DeploymentStages.Dev, "env-1", null);
+        var ams = new AmsAgentRegistration { Joined = true, RepositoryId = "repository-1", RepositoryName = "contoso-agents", GitUrl = "https://git.example.invalid/r", Folder = "ContosoHR", Restored = [new AmsRestoredAgent("holder-1", "Contoso HR", "ContosoHR")], MergedFiles = ["ContosoHR/topics/A.mcs.yml"], ConflictedFiles = ["ContosoHR/topics/A.mcs.yml"] };
+        var creation = new RecordingAgentCreationHook { Joined = new AgentCreationJoin(holder, withDeployment ? dev : null, ams, true) };
+        var workspaces = new FakeCopilotWorkspacePort();
+
+        var result = await Create(store, new FakeCopilotCatalogPort { ResolveReturns = botId }, workspaces: workspaces, creation: creation).CreateAsync(
+            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = botId, CloneEnvironmentId = "env-1", InitTemplate = "default" },
+            CancellationToken.None);
+
+        Assert.Equal(("joined", "holder-1", "Contoso HR", "clone", botId, "con_agent", "env-1", (bool?)true), (result.Status, result.AgentId, result.DisplayName, result.CreatedFrom, result.McsAgentId, result.SchemaName, result.SourceEnvironmentId, result.WorkspaceConnected));
+        Assert.Equal(withDeployment ? "deployment-1" : null, result.DeploymentId);
+        Assert.Equal(withDeployment ? "contoso-dev" : null, result.DeploymentName);
+        Assert.Equal(withDeployment ? DeploymentStages.Dev : null, result.DeploymentType);
+        Assert.Same(ams, result.Ams);
+        Assert.Equal(["--init-template is ignored in clone mode: there is nothing to scaffold."], result.Warnings);
+        var plan = Assert.Single(creation.Joins);
+        Assert.Equal((workspace.Root, "Fork", "Fork", "Contoso Agent", "Fork", botId, (string?)null), (plan.ProjectDirectory, plan.AgentLocation, plan.DisplayName, plan.SourceName, plan.RequestedName, plan.ClaimedBotId, plan.ClaimedWorkflowId));
+        Assert.Empty(creation.Prepared);
+        Assert.Equal(0, workspaces.CloneCalls);
+        Assert.Equal(["agent-9"], store.List(workspace.Root).Select(agent => agent.AgentId));
+        Assert.Empty(((IAgentDeploymentRegistry)store).List(workspace.Root));
+        using var stdout = new StringWriter();
+        new CliOutputRenderer(stdout, TextWriter.Null, color: false).RenderSuccess(result, json: true);
+        using var document = JsonDocument.Parse(stdout.ToString());
+        Assert.Equal(("joined", true), (document.RootElement.GetProperty("status").GetString(), document.RootElement.GetProperty("workspaceConnected").GetBoolean()));
+        var json = document.RootElement.GetProperty("ams");
+        Assert.Equal((true, false, "ContosoHR/topics/A.mcs.yml", "ContosoHR/topics/A.mcs.yml", "holder-1"), (json.GetProperty("joined").GetBoolean(), json.GetProperty("registered").GetBoolean(), json.GetProperty("mergedFiles")[0].GetString(), json.GetProperty("conflictedFiles")[0].GetString(), json.GetProperty("restored")[0].GetProperty("agentId").GetString()));
+    }
+
+    [Fact]
+    public async Task Clone_WhoseJoinIsDeclined_IsCancelled_AndWritesNothing()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        var creation = new RecordingAgentCreationHook { Joined = AgentCreationJoin.Declined };
+        var workspaces = new FakeCopilotWorkspacePort();
+
+        var result = await Create(store, new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() }, workspaces: workspaces, creation: creation).CreateAsync(
+            new ManagedAgentCreateRequest { CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            CancellationToken.None);
+
+        Assert.Equal(("cancelled", "clone", "Contoso Agent"), (result.Status, result.CreatedFrom, result.DisplayName));
+        Assert.Null(Assert.Single(creation.Joins).RequestedName);
+        Assert.Empty(creation.Prepared);
+        Assert.Equal(0, workspaces.CloneCalls);
+        Assert.Empty(store.List(workspace.Root));
+    }
+
+    [Fact]
+    public async Task Clone_OfAnAgentNoneHolds_WhoseQuestionIsDeclined_IsCancelled_AndClonesNothing()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        var creation = new RecordingAgentCreationHook { Declines = true };
+        var workspaces = new FakeCopilotWorkspacePort();
+
+        var result = await Create(store, new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() }, workspaces: workspaces, creation: creation).CreateAsync(
+            new ManagedAgentCreateRequest { CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            CancellationToken.None);
+
+        Assert.Equal(("cancelled", "clone"), (result.Status, result.CreatedFrom));
+        Assert.Same(Assert.Single(creation.Joins), Assert.Single(creation.Prepared));
+        Assert.Equal(0, workspaces.CloneCalls);
+        Assert.Empty(store.List(workspace.Root));
+    }
+
+    [Fact]
+    public async Task Create_WithTheHookThatAddsNothing_NeverJoins()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+
+        Assert.Null(await NoAgentCreationHook.Instance.JoinAsync(new AgentCreationPlan(workspace.Root, false, "Fork", "Fork", AgentTypes.McsAgent, "env-1", null, false, Guid.NewGuid().ToString(), null), CancellationToken.None));
+    }
 }
 
 internal sealed class UnwritableDeploymentRegistry : IAgentDeploymentRegistry
@@ -1080,18 +1169,31 @@ internal sealed class UnwritableDeploymentRegistry : IAgentDeploymentRegistry
 
 internal sealed class RecordingAgentCreationHook : IAgentCreationHook
 {
+    public List<AgentCreationPlan> Joins { get; } = [];
+
     public List<AgentCreationPlan> Prepared { get; } = [];
 
     public List<IReadOnlyList<string>> ClonedFolders { get; } = [];
 
     public Action<AgentCreationPlan>? OnPrepare { get; init; }
 
+    public AgentCreationJoin? Joined { get; init; }
+
+    public bool Declines { get; init; }
+
+    public Task<AgentCreationJoin?> JoinAsync(AgentCreationPlan plan, CancellationToken cancellationToken)
+    {
+        Joins.Add(plan);
+
+        return Task.FromResult(Joined);
+    }
+
     public Task<AgentCreationTicket?> PrepareAsync(AgentCreationPlan plan, CancellationToken cancellationToken)
     {
         Prepared.Add(plan);
         OnPrepare?.Invoke(plan);
 
-        return NoAgentCreationHook.Instance.PrepareAsync(plan, cancellationToken);
+        return Declines ? Task.FromResult<AgentCreationTicket?>(null) : NoAgentCreationHook.Instance.PrepareAsync(plan, cancellationToken);
     }
 
     public Task<AmsAgentRegistration?> CompleteAsync(AgentCreationTicket ticket, ManagedAgentRecord stored, AgentDeploymentRecord? homeDeployment, IReadOnlyList<string> clonedFolders, CancellationToken cancellationToken)

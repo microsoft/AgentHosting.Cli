@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Copilot;
@@ -13,6 +14,8 @@ using Microsoft.Agents.Hosting.Cli.Hosting;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 using Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 using Microsoft.CopilotStudio.McsCore;
+using Microsoft.CopilotStudio.Sync;
+using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Ams;
 
@@ -94,6 +97,8 @@ internal static class McsRecords
         Agents = agents,
     };
 
+    public static AmsMcsAgentListItem WorkflowListItem(string? workflowId = WorkflowId) => ListItem("env-1", Deployment() with { AgentType = AgentTypes.McsWorkflow, BotId = null, WorkflowId = workflowId }) with { AgentId = WorkflowAgentId, AgentType = AgentTypes.McsWorkflow, DisplayName = "Escalate", SchemaName = null, AgentFolder = "Escalate" };
+
     public static AmsMcsOperationRecord Operation(string status, string kind = "Deploy", string operationId = "op-deploy") => new()
     {
         OperationId = operationId,
@@ -141,6 +146,10 @@ internal sealed class FakeMcsService : IAmsMcsAgentReadTransport, IAmsMcsOperati
     public AmsMcsRepository Repository { get; set; } = McsRecords.Repository();
 
     public Exception? RepositoryFailure { get; set; }
+
+    public List<AmsMcsHolder> Holders { get; } = [];
+
+    public Exception? HoldersFailure { get; set; }
 
     public List<AmsMcsRegistration> Registrations { get; } = [];
 
@@ -194,6 +203,12 @@ internal sealed class FakeMcsService : IAmsMcsAgentReadTransport, IAmsMcsOperati
     {
         Record($"read-repository {repositoryId} {agentFolder ?? "-"} {(includeDeployments ? "with-deployments" : "agents")}", target);
         return RepositoryFailure is null ? Task.FromResult(string.Equals(Repository.RepositoryId, repositoryId, StringComparison.OrdinalIgnoreCase) ? Repository : Repository with { RepositoryId = repositoryId }) : Task.FromException<AmsMcsRepository>(RepositoryFailure);
+    }
+
+    public Task<IReadOnlyList<AmsMcsHolder>> FindHoldersAsync(AmsServiceTarget target, string? botId, string? workflowId, CancellationToken cancellationToken)
+    {
+        Record($"find-holders {botId ?? "-"} {workflowId ?? "-"}", target);
+        return HoldersFailure is null ? Task.FromResult<IReadOnlyList<AmsMcsHolder>>([.. Holders]) : Task.FromException<IReadOnlyList<AmsMcsHolder>>(HoldersFailure);
     }
 
     public Task<AmsMcsAgentRecord> RegisterAsync(AmsMcsRegistration request, CancellationToken cancellationToken)
@@ -306,6 +321,10 @@ internal sealed class FakeGitPort : IGitPort
     public bool RemoteHasMain { get; set; }
 
     public Dictionary<string, string> RemoteFiles { get; } = new(StringComparer.Ordinal);
+
+    public Dictionary<string, string> BaseFiles { get; } = new(StringComparer.Ordinal);
+
+    public Dictionary<string, string> Fetched { get; } = new(StringComparer.Ordinal);
 
     public GitCommitResult CommitResult { get; set; } = new(McsRecords.NewCommit, null);
 
@@ -425,6 +444,11 @@ internal sealed class FakeGitPort : IGitPort
     public Task<bool> FetchBranchAsync(string root, string remote, string branch, CancellationToken cancellationToken)
     {
         Calls.Add($"fetch {remote} {branch}");
+        foreach (var (revision, commit) in Fetched)
+        {
+            Commits[revision] = commit;
+        }
+
         return FetchFailure is null ? Task.FromResult(RemoteHasMain) : Task.FromException<bool>(FetchFailure);
     }
 
@@ -445,6 +469,12 @@ internal sealed class FakeGitPort : IGitPort
     {
         Calls.Add($"ls-tree {reference}");
         return Task.FromResult<IReadOnlyList<string>>([.. RemoteFiles.Keys]);
+    }
+
+    public Task<IReadOnlyDictionary<string, ReadOnlyMemory<byte>>> ReadFilesAsync(string root, string commit, IReadOnlyList<string> paths, CancellationToken cancellationToken)
+    {
+        Calls.Add($"read-files {commit} {string.Join(' ', paths)}");
+        return Task.FromResult<IReadOnlyDictionary<string, ReadOnlyMemory<byte>>>(BaseFiles.Where(file => paths.Any(path => file.Key.StartsWith(path + "/", StringComparison.Ordinal))).ToDictionary(file => file.Key, file => new ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes(file.Value)), StringComparer.Ordinal));
     }
 
     public Task<IReadOnlyList<string>> ListTrackedAsync(string root, IReadOnlyList<string> paths, CancellationToken cancellationToken)
@@ -585,7 +615,7 @@ internal sealed class AmsHarness : IDisposable
 
     public FakeYesNoPrompt Prompt { get; } = new();
 
-    public AmsTargets Targets { get; } = McsRecords.Targets();
+    public AmsTargets Targets { get; set; } = McsRecords.Targets();
 
     public FixedClock Clock { get; } = new(new DateTimeOffset(2026, 8, 2, 10, 15, 0, TimeSpan.Zero));
 
@@ -594,6 +624,10 @@ internal sealed class AmsHarness : IDisposable
     public FakeCopilotWorkspacePort Workspaces { get; } = new() { WorkspaceExists = false };
 
     public RecordingConnectPort Connect { get; } = new();
+
+    public RecordingWorkflowClient Flows { get; } = new();
+
+    public WorkflowDataverseClient FlowStore => new(Flows, new StandaloneWorkflowSynchronizer(Flows), new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()));
 
     public IAgentWorkspaceIdentityPort WorkspaceIdentities { get; set; } = new SyncAgentWorkspaceIdentityReader();
 
@@ -623,13 +657,19 @@ internal sealed class AmsHarness : IDisposable
 
     public AmsAgentCreation Creation => CreationOver(Git);
 
-    public AmsAgentCreation CreationOver(IGitPort git) => new(git, Repositories, new(git, Prompt, new SyncStatePathRule()), Registrar, new(git, Collections), DeployRecords, Targets, Service, Store, Clock, new(git, Clock), Workspaces);
+    public AmsAgentCreation CreationOver(IGitPort git) => CreationOver(git, Connect);
 
-    public AmsAgentInitStep InitStep(IAgentHostingOperations operations) => new(operations, Git, Locator, Store, Store, new WorkflowWorkspaceAdapter(), Repositories, Link, Registrar, Mirror, Committer, Targets, Service);
+    public AmsAgentCreation CreationOver(IGitPort git, ICopilotWorkspaceConnectPort connect) => new(git, Repositories, new(git, Prompt, new SyncStatePathRule()), Registrar, new(git, Collections), DeployRecords, Targets, Service, Store, Clock, new(git, Clock), Workspaces, JoinOver(git, connect));
+
+    public AmsRepositoryJoin JoinOver(IGitPort git, ICopilotWorkspaceConnectPort connect) => new(Locator, Store, Store, new WorkflowWorkspaceAdapter(), new(git, Prompt, new SyncStatePathRule()), git, new(CopilotTestFixtures.Locator(Workspaces, new SystemCopilotFileSystem()), ManagedAgentFixtures.Resolver(), Collections, connect, git), WorkflowPullOver(git), new CopilotProjectIdentityReader(Locator, WorkspaceIdentities));
+
+    public WorkflowPullService WorkflowPullOver(IGitPort git) => new(new WorkflowProjectResolver(Resolver, Locator, ManagedAgentFixtures.Resolver(), new WorkflowWorkspaceAdapter()), new AmsCloudCacheWorkflowStore(FlowStore, new AmsCloudCacheShelf(git, Clock)), ManagedAgentFixtures.WorkflowStates(), ManagedAgentFixtures.StateRules);
+
+    public AmsAgentInitStep InitStep(IAgentHostingOperations operations) => new(operations, Git, Locator, Store, Store, Repositories, Link, JoinOver(Git, Connect), Registrar, Mirror, Committer, Targets, Service);
 
     public AmsLocalDeployStep LocalDeployStep(IAgentHostingOperations operations) => new(operations, Resolver, DeployRecords);
 
-    public AmsWorkspaceConnector Connector => new(CopilotTestFixtures.Locator(Workspaces, new SystemCopilotFileSystem()), ManagedAgentFixtures.Resolver(), Collections, Connect);
+    public AmsWorkspaceConnector Connector => new(CopilotTestFixtures.Locator(Workspaces, new SystemCopilotFileSystem()), ManagedAgentFixtures.Resolver(), Collections, Connect, Git);
 
     public AmsRemoteDeployService RemoteDeploy(List<TimeSpan>? delays = null) => new(Resolver, Store, Store, new CopilotProjectIdentityReader(Locator, WorkspaceIdentities), new ManagedAgentPrincipalResolver(Profiles), Git, States, Targets, Service, new McsOperationWaiter(Service, Clock, (_, _) => Task.CompletedTask), Connector, Clock, (delay, _) =>
     {
@@ -652,6 +692,16 @@ internal sealed class AmsHarness : IDisposable
         File.WriteAllText(Path.Combine(collection, WorkspaceFileNames.Collection), "schemaName: cr1a2_sharedTools\n");
         File.WriteAllText(Path.Combine(Root, AgentFolder, WorkspaceFileNames.References), "componentCollections:\n  - schemaName:\n    directory: ../Shared Tools/\n");
         return collection;
+    }
+
+    public async Task<string> AddWorkflowFolderAsync()
+    {
+        var workflowId = Guid.Parse(McsRecords.WorkflowId);
+        var folder = Path.Combine(Root, "Escalate");
+        Flows.Cloud[workflowId] = new SyncDataverseClient.WorkflowMetadata { WorkflowId = workflowId, Name = "Escalate", StateCode = 1, StatusCode = 2, ClientData = "{\"properties\":{}}" };
+        await FlowStore.DownloadAsync(ManagedAgentFixtures.EnvironmentContext(), workflowId, folder, CancellationToken.None);
+        Directory.Delete(Path.Combine(folder, ".mcs"), recursive: true);
+        return folder;
     }
 
     public ManagedAgentRecord AddAgent(string agentId = McsRecords.AgentId, string folder = AgentFolder, bool registered = true, string? mcsAgentId = null, string displayName = "Contoso HR", string? project = null)
@@ -693,14 +743,32 @@ internal sealed class RecordingConnectPort : ICopilotWorkspaceConnectPort
 
     public List<CopilotConnectCommand> Commands { get; } = [];
 
+    public List<CopilotConnectMergeCommand> MergeCommands { get; } = [];
+
     public Exception? Failure { get; set; }
 
     public List<string> SkippedCollectionDirectories { get; } = [];
+
+    public CopilotConnectMergeOutcome Merged { get; set; } = new() { Connected = new CopilotConnectOutcome { AgentId = DevBotId } };
+
+    public Action? OnMerge { get; set; }
 
     public Task<CopilotConnectOutcome> ConnectAsync(CopilotConnectCommand command, CancellationToken cancellationToken)
     {
         Commands.Add(command);
         return Failure is null ? Task.FromResult(new CopilotConnectOutcome { AgentId = DevBotId, SkippedCollectionDirectories = SkippedCollectionDirectories }) : Task.FromException<CopilotConnectOutcome>(Failure);
+    }
+
+    public Task<CopilotConnectMergeOutcome> ConnectAndMergeAsync(CopilotConnectMergeCommand command, CancellationToken cancellationToken)
+    {
+        MergeCommands.Add(command);
+        if (Failure is not null)
+        {
+            return Task.FromException<CopilotConnectMergeOutcome>(Failure);
+        }
+
+        OnMerge?.Invoke();
+        return Task.FromResult(Merged with { Connected = new CopilotConnectOutcome { AgentId = DevBotId, SkippedCollectionDirectories = SkippedCollectionDirectories } });
     }
 }
 

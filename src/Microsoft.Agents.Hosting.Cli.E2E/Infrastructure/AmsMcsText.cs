@@ -30,7 +30,13 @@ public static partial class AmsMcsText
 
     public static string? WorkflowName(string? yaml) => YamlValue(NameLine(), yaml);
 
-    public static string WithDisplayName(string yaml, string name) => DisplayNameLine().Replace(yaml, match => $"displayName: {Quoted(match.Groups[1].Value.Trim(), name)}");
+    public static string WithDisplayName(string yaml, string name) => WithValue(DisplayNameLine(), yaml, "displayName", name, -1);
+
+    public static string? Description(string? yaml) => YamlValue(DescriptionLine(), yaml);
+
+    public static string WithDescription(string yaml, string description) => WithValue(DescriptionLine(), yaml, "  description", description, 1);
+
+    public static bool HasConflictMarkers(string? text) => ConflictMarkers().IsMatch(text ?? string.Empty);
 
     public static IReadOnlyList<string> AmsWarnings(IEnumerable<string>? warnings) => [.. (warnings ?? []).Where(warning => AmsWarning().IsMatch(warning))];
 
@@ -38,7 +44,7 @@ public static partial class AmsMcsText
 
     public static bool AsksToClone(string text, string agentName) => Regex.IsMatch(text, $@"Clone repository .+ into .+ and add agent '{Regex.Escape(agentName)}' to it\? \[Y/n\]", RegexOptions.IgnoreCase);
 
-    public static bool AsksToRestore(string text, string repositoryId) => Regex.IsMatch(text, $@"Clone repository .+ \({Regex.Escape(repositoryId)}\) into .+ and restore its agents\? \[Y/n\]", RegexOptions.IgnoreCase);
+    public static bool AsksToRestore(string text, string repositoryId) => Regex.IsMatch(text, $@"Clone repository .+ \({Regex.Escape(repositoryId)}\) into .+, restore its agents and connect them\? \[Y/n\]", RegexOptions.IgnoreCase);
 
     public static bool Says(string? text, string phrase) => text?.Contains(phrase, StringComparison.OrdinalIgnoreCase) == true;
 
@@ -70,6 +76,8 @@ public static partial class AmsMcsText
 
     private static string? YamlValue(Regex line, string? yaml) => line.Match(yaml ?? string.Empty) is var match && match.Success ? Unquoted(match.Groups[1].Value.Trim()) : null;
 
+    private static string WithValue(Regex line, string yaml, string key, string value, int count) => line.Replace(yaml, match => $"{key}: {Quoted(match.Groups[1].Value.Trim(), value)}", count);
+
     private static string Unquoted(string value) => IsQuoted(value) ? value[1..^1] : value;
 
     private static string Quoted(string current, string name) => IsQuoted(current) ? $"{current[0]}{name}{current[0]}" : name;
@@ -81,6 +89,12 @@ public static partial class AmsMcsText
 
     [GeneratedRegex(@"(?m)^name:[ \t]*([^\r\n]*)")]
     private static partial Regex NameLine();
+
+    [GeneratedRegex(@"(?m)^  description:[ \t]*([^\r\n]*)")]
+    private static partial Regex DescriptionLine();
+
+    [GeneratedRegex(@"(?ms)^<{7}.*?^={7}.*?^>{7}")]
+    private static partial Regex ConflictMarkers();
 
     [GeneratedRegex("AMS doesn't know|holds no git commit|shares no commit|wasn't told|AMS wasn't updated", RegexOptions.IgnoreCase)]
     private static partial Regex AmsWarning();

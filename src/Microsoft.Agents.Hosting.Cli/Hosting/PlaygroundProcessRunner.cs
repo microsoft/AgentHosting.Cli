@@ -7,7 +7,6 @@ namespace Microsoft.Agents.Hosting.Cli.Hosting;
 /// <summary>Runs a playground process without shell interpolation and captures bounded output.</summary>
 public sealed class PlaygroundProcessRunner : IPlaygroundProcessRunner
 {
-    private const int MaximumCapturedOutputBytes = 64 * 1024;
     private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan MaximumTaskDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
 
@@ -43,14 +42,11 @@ public sealed class PlaygroundProcessRunner : IPlaygroundProcessRunner
             request.Timeout,
             timeoutCancellation.Token);
         var budgetCancellationTask = Task.Delay(Timeout.InfiniteTimeSpan, budget.Token);
-        var standardOutputTask = CaptureOutputAsync(
-            process.StandardOutput.BaseStream,
-            budget.Token);
-        var standardErrorTask = CaptureOutputAsync(
-            process.StandardError.BaseStream,
-            budget.Token);
+        var standardOutputTask = CaptureOutputAsync(process.StandardOutput.BaseStream, request.MaximumOutputBytes, budget.Token);
+        var standardErrorTask = CaptureOutputAsync(process.StandardError.BaseStream, PlaygroundProcessRequest.DefaultMaximumOutputBytes, budget.Token);
+        var standardInputTask = WriteInputAsync(process, request.StandardInput, budget.Token);
         var waitTask = process.WaitForExitAsync(budget.Token);
-        var processTasks = Task.WhenAll(waitTask, standardOutputTask, standardErrorTask);
+        var processTasks = Task.WhenAll(waitTask, standardOutputTask, standardErrorTask, standardInputTask);
 
         var needsCleanup = false;
         var timedOut = false;
@@ -84,10 +80,8 @@ public sealed class PlaygroundProcessRunner : IPlaygroundProcessRunner
 
             if (!needsCleanup)
             {
-                return new PlaygroundProcessResult(
-                    process.ExitCode,
-                    await standardOutputTask.ConfigureAwait(false),
-                    await standardErrorTask.ConfigureAwait(false));
+                var standardOutput = await standardOutputTask.ConfigureAwait(false);
+                return new PlaygroundProcessResult(process.ExitCode, request.DecodeStandardOutput ? Encoding.UTF8.GetString(standardOutput.Span) : string.Empty, Encoding.UTF8.GetString((await standardErrorTask.ConfigureAwait(false)).Span)) { StandardOutputBytes = standardOutput };
             }
         }
         finally
@@ -135,7 +129,8 @@ public sealed class PlaygroundProcessRunner : IPlaygroundProcessRunner
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                RedirectStandardInput = false,
+                RedirectStandardInput = request.StandardInput is not null,
+                StandardInputEncoding = request.StandardInput is null ? null : new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
                 CreateNoWindow = true,
             };
 
@@ -198,13 +193,11 @@ public sealed class PlaygroundProcessRunner : IPlaygroundProcessRunner
         ArgumentNullException.ThrowIfNull(request.EnvironmentOverrides);
     }
 
-    private static async Task<string> CaptureOutputAsync(
-        Stream stream,
-        CancellationToken cancellationToken)
+    private static async Task<ReadOnlyMemory<byte>> CaptureOutputAsync(Stream stream, int maximumBytes, CancellationToken cancellationToken)
     {
         try
         {
-            using var captured = new MemoryStream(MaximumCapturedOutputBytes);
+            using var captured = new MemoryStream(PlaygroundProcessRequest.DefaultMaximumOutputBytes);
             var buffer = new byte[8192];
 
             while (true)
@@ -218,9 +211,7 @@ public sealed class PlaygroundProcessRunner : IPlaygroundProcessRunner
                     break;
                 }
 
-                var bytesToCapture = Math.Min(
-                    bytesRead,
-                    MaximumCapturedOutputBytes - checked((int)captured.Length));
+                var bytesToCapture = Math.Min(bytesRead, maximumBytes - checked((int)captured.Length));
                 if (bytesToCapture > 0)
                 {
                     await captured.WriteAsync(buffer.AsMemory(0, bytesToCapture), cancellationToken)
@@ -228,12 +219,23 @@ public sealed class PlaygroundProcessRunner : IPlaygroundProcessRunner
                 }
             }
 
-            return Encoding.UTF8.GetString(captured.ToArray());
+            return captured.GetBuffer().AsMemory(0, checked((int)captured.Length));
         }
         catch (Exception)
         {
             throw new InvalidOperationException("The process output could not be captured safely.");
         }
+    }
+
+    private static async Task WriteInputAsync(Process process, string? input, CancellationToken cancellationToken)
+    {
+        if (input is null)
+        {
+            return;
+        }
+
+        await process.StandardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false);
+        process.StandardInput.Close();
     }
 
     private static async Task<Exception?> CleanupAfterFailureAsync(

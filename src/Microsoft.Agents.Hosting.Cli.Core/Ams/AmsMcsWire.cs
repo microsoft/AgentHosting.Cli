@@ -14,6 +14,7 @@ internal static class AmsMcsWire
     private static readonly string[] AgentTypeNames = [AgentTypes.CodeAgent, AgentTypes.McsAgent, AgentTypes.McsWorkflow];
     private static readonly string[] NoticeKinds = [AmsMcsOperationNoticeKind.FlowLeftInDraft, AmsMcsOperationNoticeKind.CollectionSharedWithOtherBots, AmsMcsOperationNoticeKind.PushWarning];
     private static readonly string[] CloudStates = ["NotDeployed", "Deployed"];
+    private static readonly string[] HolderStates = [AmsMcsHolderState.Pending, AmsMcsHolderState.Active, AmsMcsHolderState.Releasing];
 
     internal static AmsMcsAgentRecord ReadAgent(JsonElement root) => ReadAgent(root, null);
 
@@ -67,6 +68,8 @@ internal static class AmsMcsWire
         HasMore = HasNextLink(root),
         NextSkipToken = NextSkipToken(root),
     };
+
+    internal static IReadOnlyList<AmsMcsHolder> ReadHolders(JsonElement root) => [.. RequiredArray(root, "value").Select(ReadHolder)];
 
     internal static AmsMcsOperationRecord ReadOperation(JsonElement root)
     {
@@ -192,6 +195,15 @@ internal static class AmsMcsWire
             Deployments = agent.Deployments,
         };
     }
+
+    private static AmsMcsHolder ReadHolder(JsonElement holder) => new()
+    {
+        AgentId = RequiredString(holder, "agentId"),
+        HomeEnvironmentId = RequiredString(holder, "homeEnvironmentId"),
+        DeploymentId = OptionalString(holder, "deploymentId"),
+        State = Canonical(EnumText(holder, "state", HolderStates), HolderStates) ?? throw new FormatException("state is missing."),
+        Agent = OptionalObject(holder, "agent") is { } agent ? ReadAgentListItem(agent) : null,
+    };
 
     private static AmsMcsOperationError ReadError(JsonElement failure) => new()
     {

@@ -275,7 +275,7 @@ public sealed class AmsAgentInitStepTests : IDisposable
 
         var result = await _ams.InitStep(_operations).HandleAsync(CloneRequest(project), default);
 
-        Assert.Equal([$"Clone repository 'contoso-agents' ({McsRecords.RepositoryId}) into {project} and restore its agents? [Y/n]"], _ams.Prompt.Questions);
+        Assert.Equal([$"Clone repository 'contoso-agents' ({McsRecords.RepositoryId}) into {project}, restore its agents and connect them? [Y/n]"], _ams.Prompt.Questions);
         Assert.Contains($"clone {McsRecords.GitUrl}", _ams.Git.Calls);
         var restored = Assert.Single(_ams.Store.List(project));
         Assert.Equal((McsRecords.AgentId, McsRecords.BotId, new AgentSourceControlMetadata(McsRecords.RepositoryId, "main", AmsHarness.AgentFolder)), (restored.AgentId, restored.McsAgentId, restored.SourceControlMetadata));
@@ -440,6 +440,187 @@ public sealed class AmsAgentInitStepTests : IDisposable
         Assert.Null(_operations.LastManagedAgentInitRequest);
         Assert.Equal(before, Contents(_ams.Root));
     }
+
+    [Fact]
+    public async Task TheAgentsItRestoresThatDevHolds_AreMergedAndConnectedAfterItsCommitAndPush_WithOneSyncCallEach()
+    {
+        _ams.LinkToRepository();
+        _ams.AddAgentWorkspace();
+        _ams.AddAgentWorkspace(PayrollFolder, "cr1a2_payroll", "Payroll");
+        _ams.AddAgent("aaaaaaaa-1111-4111-8111-000000000041", "Notes", registered: false, displayName: "Notes");
+        _ams.Git.Changed.Add("Notes/settings.mcs.yml");
+        _ams.Git.Commits[McsRecords.Commit] = McsRecords.Commit;
+        _ams.Service.Repository = McsRecords.Repository(McsRecords.ListItem("env-1", BaseDev()), Payroll(BaseDev() with { DeploymentId = "eeeeeeee-5555-4555-8555-000000000035", AgentId = PayrollId }));
+        _ams.Connect.Merged = new CopilotConnectMergeOutcome { Connected = new CopilotConnectOutcome { AgentId = RecordingConnectPort.DevBotId }, UpdatedPaths = ["ContosoHR/topics/A.mcs.yml"], ConflictedPaths = ["ContosoHR/topics/C.mcs.yml"] };
+        _ams.Connect.OnMerge = () => _ams.Workspaces.WorkspaceExists = true;
+
+        var result = await Init();
+
+        Assert.Equal([$"status {AmsHarness.AgentFolder} {PayrollFolder} Notes .gitignore", "commit msagent: add MCSAgent Notes", "push origin main", $"rev-parse {McsRecords.Commit}", $"merge-base {McsRecords.Commit} HEAD", $"status {AmsHarness.AgentFolder}", $"read-files {McsRecords.Commit} {AmsHarness.AgentFolder}", $"rev-parse {McsRecords.Commit}", $"merge-base {McsRecords.Commit} HEAD", $"status {PayrollFolder}", $"read-files {McsRecords.Commit} {PayrollFolder}"], _ams.Git.Calls.SkipWhile(call => !call.StartsWith("status", StringComparison.Ordinal)));
+        Assert.Equal([Path.Combine(_ams.Root, AmsHarness.AgentFolder), Path.Combine(_ams.Root, PayrollFolder)], _ams.Connect.MergeCommands.Select(command => command.Connect.WorkspaceDirectory));
+        Assert.Empty(_ams.Connect.Commands);
+        Assert.True(result.Connected);
+        Assert.Equal(["ContosoHR/topics/A.mcs.yml", "ContosoHR/topics/C.mcs.yml", "ContosoHR/topics/A.mcs.yml", "ContosoHR/topics/C.mcs.yml"], result.Ams!.MergedFiles!);
+        Assert.Equal(["ContosoHR/topics/C.mcs.yml", "ContosoHR/topics/C.mcs.yml"], result.Ams.ConflictedFiles!);
+        Assert.Equal(
+            [
+                "Copilot Studio holds edits to Contoso HR that main lacks. They are merged into ContosoHR as uncommitted changes, which `git status` lists. 1 file has a conflict to resolve: ContosoHR/topics/C.mcs.yml.",
+                "Copilot Studio holds edits to Payroll that main lacks. They are merged into Payroll as uncommitted changes, which `git status` lists. 1 file has a conflict to resolve: ContosoHR/topics/C.mcs.yml.",
+            ],
+            result.Ams.Warnings!);
+    }
+
+    [Fact]
+    public async Task ARestoredAgentDevNeverDeployed_IsLeftUnconnected_WithoutASyncCallOrANotice()
+    {
+        _ams.LinkToRepository();
+        _ams.AddAgentWorkspace();
+        _ams.Service.Repository = McsRecords.Repository(McsRecords.ListItem("env-1", McsRecords.Deployment() with { BotId = null, State = "NotDeployed" }));
+
+        var result = await Init();
+
+        Assert.False(result.Connected);
+        Assert.Empty(_ams.Connect.MergeCommands);
+        Assert.Null(result.Ams!.Warnings);
+    }
+
+    [Fact]
+    public async Task ARestoredFolderThatCannotBeConnected_ReadsNotConnected_WithTheNoticeThatSaysWhy()
+    {
+        _ams.LinkToRepository();
+        _ams.AddAgentWorkspace();
+        _ams.Service.Repository = McsRecords.Repository(McsRecords.ListItem("env-1", McsRecords.Deployment()));
+
+        var result = await Init();
+
+        Assert.False(result.Connected);
+        Assert.Equal([$"AMS doesn't know which commit Dev holds for {AmsHarness.AgentFolder}, so msagent didn't connect the folder to Dev; `msagent agent pull` works there after a Dev deploy of the commit the folder holds."], result.Ams!.Warnings);
+        Assert.Empty(_ams.Connect.MergeCommands);
+        Assert.Equal(McsRecords.BotId, _ams.Agent().McsAgentId);
+    }
+
+    [Fact]
+    public async Task RestoredAgentsWhoseBaseTheCloneLacks_FetchMainOnce()
+    {
+        _ams.LinkToRepository();
+        _ams.AddAgentWorkspace();
+        _ams.AddAgentWorkspace(PayrollFolder, "cr1a2_payroll", "Payroll");
+        _ams.Service.Repository = McsRecords.Repository(McsRecords.ListItem("env-1", BaseDev()), Payroll(BaseDev() with { DeploymentId = "eeeeeeee-5555-4555-8555-000000000035", AgentId = PayrollId }));
+
+        var result = await Init();
+
+        Assert.Equal(1, _ams.Git.Calls.Count(call => call == "fetch origin main"));
+        Assert.Equal(2, result.Ams!.Warnings!.Count(warning => warning.EndsWith("which the repository lacks even after a fetch, so msagent didn't connect the folder to Dev; `msagent agent pull` works there after a Dev deploy of the commit the folder holds.", StringComparison.Ordinal)));
+        Assert.Empty(_ams.Connect.MergeCommands);
+    }
+
+    [Fact]
+    public async Task ARegisterRefusedWith19013_KeepsTheMapsRemediation_ForAgentInit()
+    {
+        _ams.AddAgent(registered: false);
+        _ams.Git.HoldGrsInitialCommit();
+        var refusal = McsRecords.Rejected(ErrorCodes.AmsAgent.BotClaimed, "mcs-bot-claimed", ExitCodes.Usage);
+        _ams.Service.OnRegister = _ => throw refusal;
+
+        Assert.Same(refusal, await Assert.ThrowsAsync<AmsAgentException>(Init));
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task ATeammatesCloneOfAStandaloneWorkflow_RestoresItOnMain_EvenWhenAmsNamesNoBranch_AndTakesDevsVersionAfterItsCommitAndPush_UnlessDevNeverDeployedIt(bool deployed, bool hasDev)
+    {
+        _ams.LinkToRepository();
+        _ams.Git.Changed.Add(".gitignore");
+        var folder = await _ams.AddWorkflowFolderAsync();
+        _ams.Flows.Cloud[Guid.Parse(McsRecords.WorkflowId)].ClientData = "{\"properties\":{\"definition\":{\"triggers\":{}}}}";
+        var before = _ams.Flows.Calls.Count;
+        var listed = McsRecords.WorkflowListItem(deployed ? McsRecords.WorkflowId : null) with { Branch = null };
+        _ams.Service.Repository = McsRecords.Repository(hasDev ? listed : listed with { Deployments = [] });
+
+        var result = await Init();
+
+        Assert.Equal((McsRecords.WorkflowAgentId, AgentTypes.McsWorkflow, folder, TextGrid.Dash, false), (result.AgentId, result.AgentType, result.WorkflowFolder, result.WorkflowState, result.Connected));
+        Assert.Equal(new AgentSourceControlMetadata(McsRecords.RepositoryId, "main", "Escalate"), _ams.Agent(McsRecords.WorkflowAgentId).SourceControlMetadata);
+        Assert.Empty(_ams.Connect.MergeCommands);
+        Assert.Equal(deployed ? 1 : 0, _ams.Flows.Calls.Count - before);
+        Assert.Equal(deployed ? ["Copilot Studio's version of workflow 'Escalate' replaced the repository's in folder Escalate, uncommitted: `git status` lists it, and `git restore \"Escalate\"` undoes it."] : null, result.Ams!.Warnings);
+        Assert.Equal(["status Escalate .gitignore", "commit msagent: add MCSWorkflow Escalate", "push origin main", .. deployed ? ["status Escalate", "find", "rev-parse HEAD", "git-dir"] : Array.Empty<string>()], _ams.Git.Calls.SkipWhile(call => !call.StartsWith("status", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task ACodeAgentConfigHolds_IsNeitherRegisteredNorRecorded()
+    {
+        _ams.LinkToRepository();
+        _ams.AddAgentWorkspace();
+        _ams.Store.Add(_ams.Root, ManagedAgentFixtures.Agent("bbbbbbbb-2222-4222-8222-000000000051", "Helper") with { AgentType = AgentTypes.CodeAgent, AgentLocation = "Helper" });
+        _ams.Service.Repository = McsRecords.Repository(McsRecords.ListItem("env-1", McsRecords.Deployment()));
+
+        var result = await Init();
+
+        Assert.Equal([McsRecords.AgentId], result.Ams!.Restored!.Select(agent => agent.AgentId));
+        Assert.Empty(_ams.Service.Registrations);
+        Assert.Null(_ams.Agent("bbbbbbbb-2222-4222-8222-000000000051").SourceControlMetadata);
+    }
+
+    [Fact]
+    public async Task TwoFoldersItWouldRegisterAsNew_AreAmbiguous_BeforeAnythingChanges()
+    {
+        _ams.AddAgentWorkspace();
+        _ams.AddAgentWorkspace(PayrollFolder, "cr1a2_payroll", "Payroll");
+        var before = Contents(_ams.Root);
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => _ams.InitStep(_operations).HandleAsync(new ManagedAgentInitRequest { McsAgentSource = _ams.Root, Name = "Contoso HR" }, default));
+
+        Assert.Equal(ErrorCodes.Workspace.WorkspaceAmbiguous, failure.ErrorCode);
+        Assert.Empty(_ams.Prompt.Questions);
+        Assert.Equal(before, Contents(_ams.Root));
+    }
+
+    [Fact]
+    public async Task ACloneThatBringsAnUnreadableConfig_FailsReadingIt_AndIsTakenBack()
+    {
+        _ams.Git.RemoteHasMain = true;
+        _ams.Git.RemoteFiles[$"{AmsHarness.AgentFolder}/settings.mcs.yml"] = $"displayName: Contoso HR\nschemaName: {AmsHarness.SchemaName}\n";
+        _ams.Git.RemoteFiles[".config/agent.config.json"] = "{";
+        _ams.Service.Repository = McsRecords.Repository(McsRecords.ListItem("env-1", McsRecords.Deployment()));
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => _ams.InitStep(_operations).HandleAsync(CloneRequest(_ams.Root), default));
+
+        Assert.Equal(ErrorCodes.Workspace.ConfigInvalid, failure.ErrorCode);
+        Assert.Contains($"clone {McsRecords.GitUrl}", _ams.Git.Calls);
+        Assert.Empty(Contents(_ams.Root));
+    }
+
+    [Fact]
+    public void TheStepItsJoinAndTheConnector_NeedEachOfTheirParts()
+    {
+        var workflows = new WorkflowWorkspaceAdapter();
+        var identities = new CopilotProjectIdentityReader(_ams.Locator, _ams.WorkspaceIdentities);
+        var locator = CopilotTestFixtures.Locator(_ams.Workspaces, new SystemCopilotFileSystem());
+        var pull = _ams.WorkflowPullOver(_ams.Git);
+        Func<AmsRepositoryJoin>[] joins =
+        [
+            () => new(null!, _ams.Store, _ams.Store, workflows, _ams.Link, _ams.Git, _ams.Connector, pull, identities),
+            () => new(_ams.Locator, null!, _ams.Store, workflows, _ams.Link, _ams.Git, _ams.Connector, pull, identities),
+            () => new(_ams.Locator, _ams.Store, null!, workflows, _ams.Link, _ams.Git, _ams.Connector, pull, identities),
+            () => new(_ams.Locator, _ams.Store, _ams.Store, null!, _ams.Link, _ams.Git, _ams.Connector, pull, identities),
+            () => new(_ams.Locator, _ams.Store, _ams.Store, workflows, null!, _ams.Git, _ams.Connector, pull, identities),
+            () => new(_ams.Locator, _ams.Store, _ams.Store, workflows, _ams.Link, null!, _ams.Connector, pull, identities),
+            () => new(_ams.Locator, _ams.Store, _ams.Store, workflows, _ams.Link, _ams.Git, null!, pull, identities),
+            () => new(_ams.Locator, _ams.Store, _ams.Store, workflows, _ams.Link, _ams.Git, _ams.Connector, null!, identities),
+            () => new(_ams.Locator, _ams.Store, _ams.Store, workflows, _ams.Link, _ams.Git, _ams.Connector, pull, null!),
+        ];
+
+        Assert.Equal(["locator", "agents", "deployments", "workflows", "link", "git", "connector", "workflowPull", "identities"], joins.Select(join => Assert.Throws<ArgumentNullException>(join).ParamName));
+        Assert.Equal("join", Assert.Throws<ArgumentNullException>(() => new AmsAgentInitStep(_operations, _ams.Git, _ams.Locator, _ams.Store, _ams.Store, _ams.Repositories, _ams.Link, null!, _ams.Registrar, _ams.Mirror, _ams.Committer, _ams.Targets, _ams.Service)).ParamName);
+        Assert.Equal("git", Assert.Throws<ArgumentNullException>(() => new AmsWorkspaceConnector(locator, ManagedAgentFixtures.Resolver(), _ams.Collections, _ams.Connect, null!)).ParamName);
+    }
+
+    private static AmsMcsDeploymentRecord BaseDev() => McsRecords.Deployment() with { CloudBaseCommitSha = McsRecords.Commit };
+
+    private static AmsMcsAgentListItem Payroll(params AmsMcsDeploymentRecord[] deployments) => McsRecords.ListItem("env-1", deployments) with { AgentId = PayrollId, DisplayName = "Payroll", SchemaName = "cr1a2_payroll", AgentFolder = PayrollFolder };
 
     private static FakeOperations MainInit(AmsHarness ams)
     {

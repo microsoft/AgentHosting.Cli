@@ -59,6 +59,12 @@ public sealed class AmsAgentException : AgentHostingException
     public static AmsAgentException RepositoryMismatch(string requestedRepositoryId, string projectRepositoryId, bool registered = false) =>
         new(ErrorCodes.AmsAgent.RepositoryMismatch, $"--repository-id {TerminalText.Sanitize(requestedRepositoryId)} differs from repository {projectRepositoryId} that {(registered ? "holds the project's registered agents" : "the folder's remote names")}.", ExitCodes.Usage, "repository-mismatch", "Drop --repository-id, or use another folder.");
 
+    /// <summary>Creates the failure for a project folder that can't join the holder.</summary>
+    /// <param name="holder">The sentence that names the holder.</param>
+    /// <param name="reason">Why the folder can't join the holder.</param>
+    /// <param name="pullFirst">Whether a pull would bring in the holder's folder.</param>
+    public static AmsAgentException CannotJoinHolder(string holder, string reason, bool pullFirst) => new(ErrorCodes.AmsAgent.CannotJoinHolder, $"{holder}, and {reason}.", ExitCodes.Usage, "cannot-join-holder", pullFirst ? "Run `git pull`, then the same command again." : "Run the same command with --project <an empty folder>, without --repository-id.");
+
     /// <summary>Creates the failure for an agent folder that already exists on the repository's main branch.</summary>
     /// <param name="folder">The agent's folder.</param>
     /// <param name="repository">The repository, worded as its name or id.</param>

@@ -93,7 +93,7 @@ public sealed class AmsMcsCatalogueTests : IDisposable
     {
         var ids = ScenarioCatalogue.All().Select(scenario => scenario.Id).ToArray();
 
-        Assert.Equal(["AM-01", "AM-02", "AM-03", "AM-04", "AM-05", "AM-06", "AM-07", "AM-08", "AM-10", "AM-11", "AM-12", "AM-13", "AM-14", "AM-15", "AM-09", "AM-16", "AM-18", "AM-19", "AM-20", "AM-21", "AM-25", "AM-26", "AM-28", "AM-29", "AM-32", "AM-33", "AM-35"], ScenarioCatalogue.Select(new RunFilters { Packs = ["ams"] }).Select(scenario => scenario.Id));
+        Assert.Equal(["AM-01", "AM-02", "AM-03", "AM-04", "AM-05", "AM-06", "AM-07", "AM-08", "AM-10", "AM-11", "AM-12", "AM-13", "AM-14", "AM-15", "AM-09", "AM-16", "AM-18", "AM-19", "AM-20", "AM-21", "AM-25", "AM-26", "AM-28", "AM-29", "AM-32", "AM-33", "AM-35", "AM-36", "AM-37"], ScenarioCatalogue.Select(new RunFilters { Packs = ["ams"] }).Select(scenario => scenario.Id));
         Assert.Equal(ids.Length, ids.Distinct(StringComparer.Ordinal).Count());
     }
 
@@ -104,9 +104,9 @@ public sealed class AmsMcsCatalogueTests : IDisposable
     }
 
     [Fact]
-    public void AFullAmsRunMakesThirteenRepositoriesAndASmokeRunTwo()
+    public void AFullAmsRunMakesFourteenRepositoriesAndASmokeRunTwo()
     {
-        Assert.Equal(13, AmsRepositories.Count(AmsMcsScenarios.Repositories, ScenarioCatalogue.Select(new RunFilters { Packs = ["ams"] }).Select(scenario => scenario.Id)));
+        Assert.Equal(14, AmsRepositories.Count(AmsMcsScenarios.Repositories, ScenarioCatalogue.Select(new RunFilters { Packs = ["ams"] }).Select(scenario => scenario.Id)));
         Assert.Equal(2, AmsRepositories.Count(AmsMcsScenarios.Repositories, ScenarioCatalogue.Select(new RunFilters { Packs = ["ams"], Smoke = true }).Select(scenario => scenario.Id)));
     }
 

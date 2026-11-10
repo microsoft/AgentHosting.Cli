@@ -88,6 +88,33 @@ public sealed class AmsMcsDataverseTests : IDisposable
     }
 
     [Fact]
+    public async Task AComponentEditPatchesTheDescriptionOfTheBotsOnlyComponentOfThatNameAndReturnsItAsReadAgain()
+    {
+        _oracle.Answer(HttpMethod.Get, "/botcomponents?", HttpStatusCode.OK, $$"""{"value":[{"botcomponentid":"{{FirstComponent}}","name":"Thank you","description":"before"}]}""")
+            .Answer(HttpMethod.Patch, $"/botcomponents({FirstComponent})", HttpStatusCode.NoContent)
+            .Answer(HttpMethod.Get, $"/botcomponents({FirstComponent})", HttpStatusCode.OK, $$"""{"botcomponentid":"{{FirstComponent}}","name":"Thank you","description":"after"}""");
+
+        var edited = await _dataverse.EditComponentDescriptionAsync(AmsMcsTestKit.Dev, BotId.ToUpperInvariant(), "Thank you", "after", CancellationToken.None);
+
+        Assert.Equal(new DataverseBotComponent { ComponentId = FirstComponent, Name = "Thank you", Description = "after" }, edited);
+        Assert.Equal([$"GET {Rows}botcomponents?$select=botcomponentid,name,description&$filter=_parentbotid_value eq {BotId} and name eq 'Thank you'", $"PATCH {Rows}botcomponents({FirstComponent})", $"GET {Rows}botcomponents({FirstComponent})?$select=botcomponentid,name,description"], _oracle.Calls.Select(call => call.Target));
+        Assert.Equal("""{"description":"after"}""", _oracle.Calls[1].Body);
+    }
+
+    [Theory]
+    [InlineData("""{"value":[]}""", 0)]
+    [InlineData("""{"value":[{"botcomponentid":"77777777-0000-4000-8000-000000000007"},{"name":"Greeting"}]}""", 2)]
+    public async Task AComponentEditIsRefusedUnlessTheBotHoldsExactlyOneComponentOfThatName(string rows, int count)
+    {
+        _oracle.Answer(HttpMethod.Get, "/botcomponents?", HttpStatusCode.OK, rows);
+
+        var refused = await Assert.ThrowsAsync<E2EException>(() => _dataverse.EditComponentDescriptionAsync(AmsMcsTestKit.Dev, BotId, "Greeting", "after", CancellationToken.None));
+
+        Assert.Equal($"Bot {BotId} holds {count} components named Greeting, not one.", refused.Message);
+        Assert.Single(_oracle.Calls);
+    }
+
+    [Fact]
     public async Task ABotWhoseSchemaNameDiffersIsNeverDeleted()
     {
         _oracle.Answer(HttpMethod.Get, "/bots(", HttpStatusCode.OK, $$"""{"botid":"{{BotId}}","schemaname":"cr123_realAgent"}""");

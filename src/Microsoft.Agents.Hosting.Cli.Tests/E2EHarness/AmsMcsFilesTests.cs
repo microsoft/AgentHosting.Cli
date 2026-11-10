@@ -213,6 +213,13 @@ public sealed class AmsMcsFilesTests : IDisposable
     }
 
     [Fact]
+    public void AnAgentsTopicLivesInItsTopicsFolderAsGitNamesIt()
+    {
+        Assert.Equal(Path.Combine("project", "Agent A", "topics", "ThankYou.mcs.yml"), AmsMcsFiles.TopicPath("project", "Agent A", "ThankYou"));
+        Assert.Equal("Agent A/topics/ThankYou.mcs.yml", AmsMcsFiles.TopicEntry("Agent A", "ThankYou"));
+    }
+
+    [Fact]
     public void TheRecordedBotAndTheCacheAreReadFromTheProject()
     {
         var project = WriteProject(McsAgentId);
@@ -371,6 +378,31 @@ public sealed class AmsMcsFilesTests : IDisposable
         var failure = Assert.Throws<E2EException>(() => AmsMcsFiles.SetDisplayName(path, "New"));
 
         Assert.Equal($"{path} declares no displayName, or already holds 'New'.", failure.Message);
+        Assert.Equal(yaml, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void ANewDescriptionIsWrittenWithTheFilesLineEndingsAndBom()
+    {
+        var path = Path.Combine(_scratch.Path, "Greeting.mcs.yml");
+        File.WriteAllText(path, "mcs.metadata:\r\n  componentName: Greeting\r\n  description: Greets.\r\nkind: AdaptiveDialog\r\n", new UTF8Encoding(true));
+
+        AmsMcsFiles.SetDescription(path, "ahe2e main edit x");
+
+        Assert.True(HasBom(path));
+        Assert.Equal("mcs.metadata:\r\n  componentName: Greeting\r\n  description: ahe2e main edit x\r\nkind: AdaptiveDialog\r\n", File.ReadAllText(path));
+    }
+
+    [Theory]
+    [InlineData("mcs.metadata:\n  componentName: Greeting\n")]
+    [InlineData("mcs.metadata:\n  description: New\n")]
+    public void ADescriptionThatChangesNothingIsRefused(string yaml)
+    {
+        var path = _scratch.Place("Greeting.mcs.yml", yaml);
+
+        var failure = Assert.Throws<E2EException>(() => AmsMcsFiles.SetDescription(path, "New"));
+
+        Assert.Equal($"{path} declares no description, or already holds 'New'.", failure.Message);
         Assert.Equal(yaml, File.ReadAllText(path));
     }
 

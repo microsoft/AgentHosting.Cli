@@ -1,0 +1,11 @@
+{
+  "value": [
+    {
+      "agentId": "AAAAAAAA-1111-4111-8111-000000000021",
+      "homeEnvironmentId": "14141414-1414-4141-8141-141414141414",
+      "deploymentId": "EEEEEEEE-5555-4555-8555-000000000025",
+      "state": "Active",
+      "agent": null
+    }
+  ]
+}

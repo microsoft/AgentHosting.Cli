@@ -50,6 +50,8 @@ public static class AmsMcsScenarios
         ["AM-32"] = new([], 2),
         ["AM-33"] = new([], 1),
         ["AM-35"] = new([AmsMcsSteps.WorkflowsSetup], 0),
+        ["AM-36"] = new([], 1),
+        ["AM-37"] = new([AmsMcsSteps.HomeSetup, AmsMcsSteps.WorkflowsSetup], 0),
     };
 
     public static IEnumerable<Scenario> All() =>
@@ -81,6 +83,8 @@ public static class AmsMcsScenarios
         UnknownBot(),
         ConnectorEdit(),
         WorkflowEdit(),
+        CloneOfAHeldBot(),
+        CloneIntoAnotherRepository(),
     ];
 
     private static Scenario FlagOff() => Builder.Make("AM-01", "the flag off: the AMS-only forms are unknown, and create, deploy, pull, init and delete are main's", RingOracle, SafetyTier.Creating, async context =>
@@ -201,7 +205,7 @@ public static class AmsMcsScenarios
         context.Assert.True(AmsMcsFiles.IsMissingOrEmpty(project) && named.Count == 0, "nothing was written: the folder is missing or empty, and AMS has no agent of that name", $"rows={named.Count}");
     });
 
-    private static Scenario CloneIntoTheHomeProject() => Builder.Make("AM-06", "a clone of a Dev bot inside the home project joins its repository; capture and a remote Dev deploy work; a second clone fails with BotClaimed", HomeOracle, SafetyTier.Creating, async context =>
+    private static Scenario CloneIntoTheHomeProject() => Builder.Make("AM-06", "a clone of a Dev bot inside the home project joins its repository; capture and a remote Dev deploy work; a second clone fails with AlreadyRegistered before any question, naming the first", HomeOracle, SafetyTier.Creating, async context =>
     {
         var ams = await AmsMcsSteps.StartAsync(context);
         var home = await AmsMcsSteps.HomeAsync(context);
@@ -235,13 +239,13 @@ public static class AmsMcsScenarios
         var statusBefore = await ams.Git.StatusAsync(home.Project, [], context.CancellationToken);
         var entriesBefore = AmsMcsFiles.TopEntries(home.Project);
         var countBefore = (await AmsMcsSteps.AmsAgentsAsync(context, home.RepositoryId)).Agents.Count;
-        await AmsMcsSteps.RefusedAsync(context, home.Project, AmsMcsSteps.CloneArguments(context, source, home.Project, "--agent-name", AmsMcsSteps.Name(context, "Second")), 19013, "a second clone of the bot into P, under a name of its own because P already holds the first clone's, fails with BotClaimed (19013, exit 2)", 2);
+        await AmsMcsSteps.RefusedBeforeQuestionAsync(context, home.Project, AmsMcsSteps.CloneArguments(context, source, home.Project, "--agent-name", AmsMcsSteps.Name(context, "Second")), 10009, "a second clone of the bot into P, under a name of its own, fails with AlreadyRegistered (10009, exit 2) before any question, naming the first clone, which P's .config holds", $"already registered as {created.DisplayName} ({created.AgentId})");
         var countAfter = (await AmsMcsSteps.AmsAgentsAsync(context, home.RepositoryId)).Agents.Count;
         var statusAfter = await ams.Git.StatusAsync(home.Project, [], context.CancellationToken);
         context.Assert.True(File.ReadAllBytes(AmsMcsFiles.AgentConfigPath(home.Project)).SequenceEqual(configBefore) && statusAfter.SequenceEqual(statusBefore) && AmsMcsFiles.TopEntries(home.Project) == entriesBefore && countAfter == countBefore, "the refused clone was undone: P's .config, git status and top-level entries, and the number of AMS agents in R, are unchanged", $"entries={AmsMcsFiles.TopEntries(home.Project)} agents={countBefore}->{countAfter} git status: {GitTip.Describe(statusAfter)}");
     });
 
-    private static Scenario Workflows() => Builder.Make("AM-07", "a workflow scaffolded into a new repository W, and a clone of a Dev workflow that joins W; AMS lists both, and a remote deploy connects no folder", HomeOracle, SafetyTier.Creating, async context =>
+    private static Scenario Workflows() => Builder.Make("AM-07", "a workflow scaffolded into a new repository W, and a clone of a Dev workflow that joins W; AMS lists both, and a remote deploy connects no folder; a second clone into W's project joins the first clone", HomeOracle, SafetyTier.Creating, async context =>
     {
         var ams = await AmsMcsSteps.StartAsync(context);
         var source = await AmsMcsSteps.AmsOffSourceAsync(context, "FlowSource", workflow: true);
@@ -275,12 +279,17 @@ public static class AmsMcsScenarios
         context.Assert.True(AmsMcsResults.Holding(listed, workflows.AgentId, workflows.Folder, AgentTypes.McsWorkflow).Count == 1 && AmsMcsResults.Holding(listed, cloned.AgentId, registration.Folder, AgentTypes.McsWorkflow).Count == 1, "AMS lists both workflows in W, each with its folder and type", AmsMcsResults.Describe(listed));
 
         await AmsMcsSteps.SyncAsync(context, workflows.Project);
-        var configBefore = File.ReadAllBytes(AmsMcsFiles.AgentConfigPath(workflows.Project));
+        mainBefore = await AmsMcsSteps.RemoteMainAsync(context, workflows.Project);
         var entriesBefore = AmsMcsFiles.TopEntries(workflows.Project);
-        var statusBefore = await ams.Git.StatusAsync(workflows.Project, [], context.CancellationToken);
-        await AmsMcsSteps.RefusedAsync(context, workflows.Project, AmsMcsSteps.CloneArguments(context, source, workflows.Project, "--agent-name", AmsMcsSteps.Name(context, "Second")), 19013, "a second clone of the workflow into W's project, under a name of its own because git pull brought the first clone's folder there, fails with BotClaimed (19013, exit 2)", 2);
-        var statusAfter = await ams.Git.StatusAsync(workflows.Project, [], context.CancellationToken);
-        context.Assert.True(File.ReadAllBytes(AmsMcsFiles.AgentConfigPath(workflows.Project)).SequenceEqual(configBefore) && AmsMcsFiles.TopEntries(workflows.Project) == entriesBefore && statusAfter.SequenceEqual(statusBefore), "the refused clone was undone: .config, git status and the project folder are unchanged", $"entries={AmsMcsFiles.TopEntries(workflows.Project)} git status: {GitTip.Describe(statusAfter)}");
+        var agentsBefore = await AmsMcsSteps.AmsAgentIdsAsync(context, workflows.RepositoryId);
+        var joined = await AmsMcsSteps.CloneAsync(context, source, workflows.Project, "--agent-name", AmsMcsSteps.Name(context, "Second"));
+        var record = AmsMcsFiles.Agent(AmsMcsFiles.ReadAgentConfig(workflows.Project), cloned.AgentId);
+        string[] joinWarnings = [.. joined.Warnings, .. joined.Ams?.Warnings ?? []];
+        context.Assert.True(joined.Status == "joined" && AmsIds.Same(joined.AgentId, cloned.AgentId) && joined.Ams is { Joined: true, Registered: false } && AmsIds.Same(record?.SourceControlMetadata?.Directory, registration.Folder) && AmsIds.Same(record?.McsWorkflowId, source.WorkflowId), "a second clone of the workflow into W's project, which git pull gave the first clone's folder but not its record, joins the first clone: status joined, and W's .config gains its record, with its AMS id", $"status={joined.Status} agentId={joined.AgentId} first={cloned.AgentId} joined={joined.Ams?.Joined} directory={record?.SourceControlMetadata?.Directory} workflow={record?.McsWorkflowId} warnings={string.Join(" | ", joinWarnings)}");
+        var mainAfter = await AmsMcsSteps.RemoteMainAsync(context, workflows.Project);
+        var agentsAfter = await AmsMcsSteps.AmsAgentIdsAsync(context, workflows.RepositoryId);
+        var status = await ams.Git.StatusAsync(workflows.Project, [], context.CancellationToken);
+        context.Assert.True(agentsAfter == agentsBefore && GitCommits.Match(mainAfter, mainBefore) && status.Count == 0 && AmsMcsFiles.TopEntries(workflows.Project) == entriesBefore, "AMS lists the same agents in W, GRS main doesn't move, and git status stays clean", $"agents={agentsBefore} -> {agentsAfter} main={mainBefore}->{mainAfter} entries={AmsMcsFiles.TopEntries(workflows.Project)} git status: {GitTip.Describe(status)}");
     });
 
     private static Scenario Init() => Builder.Make("AM-08", "agent init: a new repository, an attach with --repository-id, refused attaches that leave the folder as it was, and a working tree with history", Home, SafetyTier.Creating, async context =>
@@ -658,7 +667,7 @@ public static class AmsMcsScenarios
         context.Assert.True(again.Status == "deployed" && AmsMcsResults.Notices(again, "FlowLeftInDraft").Count == 0 && AmsMcsResults.Holds(listed, connectionId) && flow?.StateCode == 1, "the redeploy kept the binding and the flow on, with no draft notice", $"notices={AmsMcsResults.DescribeNotices(again)} connection={connectionId} {AmsMcsResults.Describe(listed)} statecode={flow?.StateCode}");
     });
 
-    private static Scenario Teammate() => Builder.Make("AM-09", "a teammate, two ways: git clone then agent init, or agent init --repository-id alone; P4 and an empty repository fail and remove the clone", Home, SafetyTier.Creating, async context =>
+    private static Scenario Teammate() => Builder.Make("AM-09", "a teammate, two ways: git clone then agent init, or agent init --repository-id alone, each restoring and connecting the agents Dev holds; P4 and an empty repository fail and remove the clone", Home, SafetyTier.Creating, async context =>
     {
         var ams = await AmsMcsSteps.StartAsync(context);
         var home = await AmsMcsSteps.HomeAsync(context);
@@ -787,7 +796,7 @@ public static class AmsMcsScenarios
         }
     });
 
-    private static Scenario PullAfterRemoteDeploy() => Builder.Make("AM-19", "pull after a remote deploy (P30 to P32): a deploy of the commit a clean folder holds connects it, another branch's commit leaves a teammate's folder alone (10011), the connected folder pulls the change, and a downloaded knowledge file keeps its CRLF bytes", HomeOracle, SafetyTier.Creating, async context =>
+    private static Scenario PullAfterRemoteDeploy() => Builder.Make("AM-19", "pull after a remote deploy (P30 to P32): a deploy of the commit a clean folder holds connects it, a teammate's init merges a portal edit and connects its folder, another branch's commit leaves an unconnected teammate's folder alone (10011), the connected folder pulls the change, and a downloaded knowledge file keeps its CRLF bytes", HomeOracle, SafetyTier.Creating, async context =>
     {
         var ams = await AmsMcsSteps.StartAsync(context);
         var x = await AmsMcsSteps.RemoteAsync(context);
@@ -812,6 +821,8 @@ public static class AmsMcsScenarios
         await AmsMcsSteps.AssertPulledAsync(context, "the pull after the portal edit brought only it", x.Agent, await AmsMcsSteps.PullAsync(context, ams.On, x.Project, x.AgentId), portal);
 
         var teammate = await AmsMcsSteps.TeammateAsync(context, "X", x.Agent, x.RepositoryId, [x.AgentId]);
+        await AmsMcsSteps.AssertOnlySettingsChangedAsync(context, "the teammate's init merged the portal rename into the folder as an uncommitted change", teammate, portal);
+        await AmsMcsSteps.DisconnectAsync(context, teammate);
         await AmsMcsSteps.PullRefusedAsync(context, ams.On, teammate, "the teammate");
         var captured = await AmsMcsSteps.CaptureAsync(context, teammate.Project, x.AgentId);
         await ams.Git.PullAsync(teammate.Project, AmsMcsSteps.Branch, context.CancellationToken);
@@ -935,7 +946,7 @@ public static class AmsMcsScenarios
         await AmsMcsSteps.HoldsCommitAsync(context, $"(setup) after git restore and git switch {branch}, Z's folder holds b1 exactly", z.Agent, b1);
         await AmsMcsSteps.AssertPullUpToDateAsync(context, $"on {branch}, agent pull puts b1's copy in place", z.Agent);
 
-        var teammate = await AmsMcsSteps.TeammateAsync(context, "Z", z.Agent, z.RepositoryId, [z.AgentId]);
+        var teammate = await AmsMcsSteps.TeammateAsync(context, "Z", z.Agent, z.RepositoryId, [z.AgentId], "isn't HEAD or an ancestor of it");
         var mateShelf = GitCli.ShelfOf(teammate.Project, z.Folder);
         context.Assert.True(McsShelf.IsEmpty(mateShelf), "(setup) the teammate's folder has no copy of .mcs either", McsShelf.Describe(mateShelf));
         await ams.Git.SwitchAsync(teammate.Project, branch, create: false, context.CancellationToken);
@@ -1092,6 +1103,7 @@ public static class AmsMcsScenarios
         context.Assert.True(pulled.Status == "up-to-date" && name == next && !AmsMcsText.Mentions(pulled.Warnings, "git restore") && shelf is not null && shelf.Holds(n1) && GitCommits.Match(shelf.Live, n1), "a HEAD with no copy of its own pulls with its nearest ancestor's copy: up-to-date, n1's name kept, no git restore; the pull saved a copy for n1, now live", $"status={pulled.Status} changes={pulled.ChangeCount} displayName='{name}' warnings={string.Join(" | ", pulled.Warnings)} {McsShelf.Describe(shelf)}");
 
         var teammate = await AmsMcsSteps.TeammateAsync(context, "every agent of Z's repository", agent, z.RepositoryId, AmsMcsResults.Ids((await AmsMcsSteps.AmsAgentsAsync(context, z.RepositoryId)).Agents));
+        await AmsMcsSteps.DisconnectAsync(context, teammate);
         var mateBranch = "ahe2e/am26-b";
         await ams.Git.SwitchAsync(teammate.Project, mateBranch, create: true, context.CancellationToken);
         var b1 = await AmsMcsSteps.CommitDisplayNameAsync(context, teammate.Project, agent.Folder, AmsMcsSteps.Name(context, "Branch26"), mateBranch);
@@ -1305,5 +1317,112 @@ public static class AmsMcsScenarios
         flow = await ams.Dataverse.WorkflowAsync(dev, flowId, includeDefinition: false, context.CancellationToken);
         slot = await AmsMcsSteps.SlotAsync(context, workflows.Project, workflows.AgentId, development.DeploymentId);
         context.Assert.True(overwritten.Status == "deployed" && GitCommits.Match(overwritten.CommitSha, changed) && string.IsNullOrEmpty(overwritten.CapturedCommitSha) && flow?.Name == renamed && GitCommits.Match(slot?.LastDeployedCommitSha, changed), "--overwrite deployed main over the Dev edit, as today: commitSha is main's change with no capture, the flow has main's name again, and AMS records main", $"commitSha={overwritten.CommitSha} capturedCommitSha={overwritten.CapturedCommitSha} flow='{flow?.Name}' lastDeployedCommitSha={slot?.LastDeployedCommitSha}");
+    });
+
+    private static Scenario CloneOfAHeldBot() => Builder.Make("AM-36", "a clone of a held Dev bot into an empty folder joins the agent that holds it: Dev's edits merge into main's as uncommitted changes, with conflict markers where they collide, and the folder is connected; the same command again fails with AlreadyRegistered, and in a plain git clone it restores the holder without cloning", HomeOracle, SafetyTier.Creating, async context =>
+    {
+        var ams = await AmsMcsSteps.StartAsync(context);
+        var dev = ams.Config.DevEnvironmentId!;
+        var holder = AmsMcsSteps.Folder(context, "holder");
+        var created = await AmsMcsSteps.CreateAsync(context, ams.On, holder, AmsMcsSteps.Name(context, "Merge"), "--mcs-agent-type", "Classic");
+        var registration = AmsMcsSteps.Registered(context, created);
+        var folder = registration.Folder;
+        var development = await AmsMcsSteps.DeploymentCreateAsync(context, ams.On, holder, created.AgentId, "development", "dev", null);
+        var deployed = await AmsMcsSteps.RemoteDeployAsync(context, ams.On, holder, created.AgentId, development.DeploymentId);
+        var bots = await ams.Dataverse.BotsNamedAsync(dev, created.SchemaName!, context.CancellationToken);
+        context.Assert.True(deployed.Status == "deployed" && bots.Count == 1, "(setup) the remote Dev deploy made the classic agent's bot in Dev, which its Dev deployment holds", $"status={deployed.Status} bots={AmsMcsResults.Describe(bots)}");
+        var botId = bots[0].BotId;
+        var projection = await AmsMcsSteps.CaptureAsync(context, holder, created.AgentId);
+        await AmsMcsSteps.SyncAsync(context, holder);
+        context.Assert.True(projection.Status is "captured" or "unchanged", "(setup) agent capture right after the deploy is unchanged, or saved Dev's projection on main, which git pull brought", $"status={projection.Status} commit={projection.CommitSha}");
+
+        (string File, string Name)[] topics = [("Greeting", "Greeting"), ("ThankYou", "Thank you"), ("Escalate", "Escalate")];
+        var devEdit = AmsMcsSteps.Name(context, "Dev edit");
+        var mainEdit = AmsMcsSteps.Name(context, "main edit");
+
+        foreach (var (_, name) in new[] { topics[0], topics[2] })
+        {
+            var edited = await ams.Dataverse.EditComponentDescriptionAsync(dev, botId, name, devEdit, context.CancellationToken);
+            context.Assert.True(edited?.Description == devEdit, $"(setup) topic {name}'s description is edited in Dev (a portal edit)", $"description='{edited?.Description}'");
+        }
+
+        foreach (var (file, _) in new[] { topics[1], topics[2] })
+        {
+            AmsMcsFiles.SetDescription(AmsMcsFiles.TopicPath(holder, folder, file), mainEdit);
+        }
+
+        await ams.Git.CommitAsync(holder, "ahe2e: main edits topics B and C", [AmsMcsFiles.TopicEntry(folder, topics[1].File), AmsMcsFiles.TopicEntry(folder, topics[2].File)], context.CancellationToken);
+        await ams.Git.PushAsync(holder, AmsMcsSteps.Branch, context.CancellationToken);
+        var main = await AmsMcsSteps.RemoteMainAsync(context, holder);
+        var agentsBefore = await AmsMcsSteps.AmsAgentIdsAsync(context, registration.RepositoryId);
+
+        var project = AmsMcsSteps.EmptyFolder(context, "join");
+        var other = AmsMcsSteps.Name(context, "Other");
+        var arguments = AmsMcsSteps.CloneBotArguments(context, botId, project, "--agent-name", other);
+        var joined = await AmsMcsSteps.RecordedAsync<ManagedAgentCreateResult>(context, ams.On, "agent create, cloning the held bot into an empty folder", project, arguments, AmsMcsSteps.LongCall);
+        string[] warnings = [.. joined.Warnings, .. joined.Ams?.Warnings ?? []];
+        var connection = AmsMcsFiles.Connection(project, folder, created.AgentId);
+        context.Assert.True(joined.Status == "joined" && AmsIds.Same(joined.AgentId, created.AgentId) && joined.Ams is { Joined: true, Registered: false } && joined.WorkspaceConnected == true && connection.BindsTo(botId, dev, ams.DevOrganization) && AmsMcsText.Mentions(warnings, $"--agent-name '{other}' is ignored"), "the clone joined the agent that holds the bot: status joined, the holder's AMS id, a warning that --agent-name is ignored, and the folder connected to the Dev bot", $"status={joined.Status} agentId={joined.AgentId} holder={created.AgentId} joined={joined.Ams?.Joined} registered={joined.Ams?.Registered} workspaceConnected={joined.WorkspaceConnected} {connection.Describe()} warnings={string.Join(" | ", warnings)}");
+
+        var clone = await ams.Git.InspectAsync(project, ams.Config.GitHost!, context.CancellationToken);
+        var config = AmsMcsFiles.ReadAgentConfig(project);
+        var deployments = AmsMcsFiles.DeploymentSignature(config, created.AgentId);
+        var holderDeployments = AmsMcsFiles.DeploymentSignature(AmsMcsFiles.ReadAgentConfig(holder), created.AgentId);
+        context.Assert.True(clone.IsRootOf(project) && clone.OriginIs(registration.GitUrl) && GitCommits.Match(clone.Head?.Sha, main) && AmsMcsFiles.Agent(config, created.AgentId) is not null && deployments.Length > 0 && deployments == holderDeployments, "the folder is a clone of R at GRS main, and .config holds the holder with its AMS id and deployments", $"toplevel={clone.TopLevel} origin={clone.Origin} head={clone.Head?.Sha} main={main} deployments={deployments} holder's={holderDeployments}");
+
+        var texts = topics.Select(topic => File.ReadAllText(AmsMcsFiles.TopicPath(project, folder, topic.File))).ToArray();
+        List<bool> modified = [];
+
+        foreach (var (file, _) in topics)
+        {
+            modified.Add(await ams.Git.IsModifiedAsync(project, AmsMcsFiles.TopicEntry(folder, file), context.CancellationToken));
+        }
+
+        var conflicted = AmsMcsFiles.TopicEntry(folder, topics[2].File);
+        context.Assert.True(AmsMcsText.Description(texts[0]) == devEdit && AmsMcsText.Description(texts[1]) == mainEdit && AmsMcsText.HasConflictMarkers(texts[2]) && texts[2].Contains(devEdit, StringComparison.Ordinal) && texts[2].Contains(mainEdit, StringComparison.Ordinal) && modified is [true, false, true] && joined.Ams?.ConflictedFiles is [var only] && only == conflicted && AmsMcsText.Mentions(warnings, conflicted), "topic A holds Dev's edit and topic B main's, and topic C, which both edited, holds conflict markers around both edits; A and C are uncommitted changes, and the warning names C", $"A='{AmsMcsText.Description(texts[0])}' B='{AmsMcsText.Description(texts[1])}' C has markers: {AmsMcsText.HasConflictMarkers(texts[2])} modified={string.Join(',', modified)} merged={string.Join(',', joined.Ams?.MergedFiles ?? [])} conflicted={string.Join(',', joined.Ams?.ConflictedFiles ?? [])}");
+
+        context.Assert.Refused(await AmsMcsSteps.RawAsync(context, ams.On, AmsMcsSteps.PullArguments(project, created.AgentId), AmsMcsSteps.LongCall), 10022, "agent pull right after the join refuses topic C until its conflict markers are resolved (WorkspaceFilesUnreadable, 10022, exit 2)", 2, $"topics/{topics[2].File}.mcs.yml");
+        await ams.Git.RestoreAsync(project, [conflicted], context.CancellationToken);
+        var statusBefore = await ams.Git.StatusAsync(project, [], context.CancellationToken);
+        var pulled = await AmsMcsSteps.PullAsync(context, ams.On, project, created.AgentId);
+        var statusAfter = await ams.Git.StatusAsync(project, [], context.CancellationToken);
+        context.Assert.True(pulled.Status == "up-to-date" && statusAfter.SequenceEqual(statusBefore) && statusAfter.Count == 1, "once topic C takes main's version, agent pull finds nothing to pull and leaves Dev's merged edit of topic A as it is", $"status={pulled.Status} changes={pulled.ChangeCount} git status: {GitTip.Describe(statusBefore)} -> {GitTip.Describe(statusAfter)}");
+        var agentsAfter = await AmsMcsSteps.AmsAgentIdsAsync(context, registration.RepositoryId);
+        var mainAfter = await AmsMcsSteps.RemoteMainAsync(context, holder);
+        context.Assert.True(agentsAfter == agentsBefore && GitCommits.Match(mainAfter, main), "AMS's agents in R and GRS main didn't change", $"agents={agentsBefore} -> {agentsAfter} main={main}->{mainAfter}");
+
+        await AmsMcsSteps.RefusedBeforeQuestionAsync(context, project, arguments, 10009, "the same command again fails with AlreadyRegistered (10009, exit 2) before any question, naming the holder, which the folder's .config holds", $"already registered as {created.DisplayName}");
+
+        var plain = AmsMcsSteps.Folder(context, "plain");
+        await ams.Git.CloneWithHelperAsync(registration.GitUrl, plain, ams.Config.GitHost!, await ams.Git.LastHelperAsync(holder, ams.Config.GitHost!, context.CancellationToken), context.CancellationToken);
+        var head = await ams.Git.RevParseAsync(plain, "HEAD", context.CancellationToken);
+        var restored = await AmsMcsSteps.RecordedAsync<ManagedAgentCreateResult>(context, ams.On, "the same command without --agent-name, in a plain git clone of R", plain, AmsMcsSteps.CloneBotArguments(context, botId, plain), AmsMcsSteps.LongCall);
+        var headAfter = await ams.Git.RevParseAsync(plain, "HEAD", context.CancellationToken);
+        string[] restoredWarnings = [.. restored.Warnings, .. restored.Ams?.Warnings ?? []];
+        context.Assert.True(restored.Status == "joined" && restored.Ams is { Joined: true } && AmsIds.Same(restored.AgentId, created.AgentId) && AmsMcsFiles.Agent(AmsMcsFiles.ReadAgentConfig(plain), created.AgentId) is not null && GitCommits.Match(headAfter, head) && !AmsMcsText.Mentions(restoredWarnings, "--agent-name"), "in a plain git clone of R, the same command without --agent-name joins by restoring the holder into .config, without cloning: HEAD is still the clone's", $"status={restored.Status} agentId={restored.AgentId} head={head}->{headAfter} warnings={string.Join(" | ", restoredWarnings)}");
+    });
+
+    private static Scenario CloneIntoAnotherRepository() => Builder.Make("AM-37", "a clone of a held bot into a clone of another repository, or with --repository-id naming another repository, fails with CannotJoinHolder before any question, and changes nothing", Home, SafetyTier.Creating, async context =>
+    {
+        var ams = await AmsMcsSteps.StartAsync(context);
+        var home = await AmsMcsSteps.HomeAsync(context);
+        await AmsMcsSteps.DeploymentsAsync(context);
+        var dev = await AmsMcsSteps.DevDeployedAsync(context);
+        var workflows = await AmsMcsSteps.WorkflowsAsync(context);
+        var clone = AmsMcsSteps.Folder(context, "other-clone");
+        await ams.Git.CloneWithHelperAsync(workflows.Created.Ams!.GitUrl, clone, ams.Config.GitHost!, await ams.Git.LastHelperAsync(workflows.Project, ams.Config.GitHost!, context.CancellationToken), context.CancellationToken);
+        var empty = AmsMcsSteps.EmptyFolder(context, "other-id");
+        var entriesBefore = AmsMcsFiles.TopEntries(clone);
+        var statusBefore = await ams.Git.StatusAsync(clone, [], context.CancellationToken);
+        var agentsBefore = await AmsMcsSteps.AmsAgentIdsAsync(context, home.RepositoryId, workflows.RepositoryId);
+
+        foreach (var (what, project, extra, reason) in new (string What, string Project, string[] Extra, string Reason)[] { ("into a plain git clone of W", clone, [], $"is a clone of repository {workflows.RepositoryId}"), ("into an empty folder, with --repository-id naming W", empty, ["--repository-id", workflows.RepositoryId], $"--repository-id names repository {workflows.RepositoryId}") })
+        {
+            await AmsMcsSteps.RefusedBeforeQuestionAsync(context, project, AmsMcsSteps.CloneBotArguments(context, dev.BotId, project, extra), 19077, $"a clone of A's Dev bot, which A holds in R, {what} fails with CannotJoinHolder (19077, exit 2) before any question", reason);
+        }
+
+        var statusAfter = await ams.Git.StatusAsync(clone, [], context.CancellationToken);
+        var agentsAfter = await AmsMcsSteps.AmsAgentIdsAsync(context, home.RepositoryId, workflows.RepositoryId);
+        context.Assert.True(AmsMcsFiles.TopEntries(clone) == entriesBefore && !File.Exists(AmsMcsFiles.AgentConfigPath(clone)) && statusAfter.SequenceEqual(statusBefore) && AmsMcsFiles.IsMissingOrEmpty(empty) && agentsAfter == agentsBefore, "nothing changed: the clone of W keeps its entries and git status and has no .config, the empty folder stays empty, and AMS lists the same agents in R and W", $"entries={entriesBefore} -> {AmsMcsFiles.TopEntries(clone)} git status: {GitTip.Describe(statusBefore)} -> {GitTip.Describe(statusAfter)} empty={AmsMcsFiles.TopEntries(empty)} agents={agentsBefore} -> {agentsAfter}");
     });
 }

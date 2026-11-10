@@ -681,6 +681,83 @@ public sealed class AmsMcsOperationAdapterTests
         Assert.Contains("Agent list", (await Assert.ThrowsAsync<AgentDeployException>(() => Adapter(handler, PowerPlatformApiPermissions.AppsRead).ListAgentsAsync(FrontDoor, 100, null, null, null, default))).Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("b0b0 b0b0/1", null, "botId=b0b0%20b0b0%2F1")]
+    [InlineData(null, "flow&1", "workflowId=flow%261")]
+    public async Task FindHolders_AsksForExactlyOneIdEscaped_AndReadsEveryFieldOfTheHolder(string? botId, string? workflowId, string query)
+    {
+        var handler = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.OK, WireFixture.Read("mcs-agent-holders.json")));
+
+        var holder = Assert.Single(await Adapter(handler, PowerPlatformApiPermissions.AppsRead).FindHoldersAsync(FrontDoor, botId, workflowId, default));
+
+        Assert.Equal($"https://env-1.api.powerplatform.com/agenthosting/agents/mcs/holders?api-version=1&{query}", Assert.Single(handler.Requests).Uri.AbsoluteUri);
+        var wire = WireFixture.Node("mcs-agent-holders.json")["value"]![0]!;
+        Assert.Equal(((string?)wire["agentId"], (string?)wire["homeEnvironmentId"], (string?)wire["deploymentId"], AmsMcsHolderState.Active), (holder.AgentId, holder.HomeEnvironmentId, holder.DeploymentId, holder.State));
+        WireFixture.AssertReadsListItem(wire["agent"]!, holder.Agent!);
+    }
+
+    [Fact]
+    public async Task FindHolders_ReadsAHolderHomedElsewhere_WithoutItsAgent()
+    {
+        var handler = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.OK, WireFixture.Read("mcs-agent-holders.other-home.json")));
+
+        var holder = Assert.Single(await Adapter(handler, PowerPlatformApiPermissions.AppsRead).FindHoldersAsync(FrontDoor, "bot-1", null, default));
+
+        Assert.Equal(("AAAAAAAA-1111-4111-8111-000000000021", "14141414-1414-4141-8141-141414141414", "EEEEEEEE-5555-4555-8555-000000000025", AmsMcsHolderState.Active, null), (holder.AgentId, holder.HomeEnvironmentId, holder.DeploymentId, holder.State, holder.Agent));
+    }
+
+    [Theory]
+    [InlineData("{\"value\":[{\"agentId\":\"a\",\"homeEnvironmentId\":\"e\",\"deploymentId\":\"d\",\"state\":2}]}", AmsMcsHolderState.Releasing)]
+    [InlineData("{\"value\":[{\"agentId\":\"a\",\"homeEnvironmentId\":\"e\",\"deploymentId\":\"d\",\"state\":\"pending\"}]}", AmsMcsHolderState.Pending)]
+    public async Task FindHolders_ReadsTheStateByNameOrNumber(string body, string state)
+    {
+        var handler = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.OK, body));
+
+        Assert.Equal(state, Assert.Single(await Adapter(handler, PowerPlatformApiPermissions.AppsRead).FindHoldersAsync(FrontDoor, "bot-1", null, default)).State);
+    }
+
+    [Theory]
+    [InlineData("{\"value\":[{\"agentId\":\"a\",\"homeEnvironmentId\":\"e\",\"deploymentId\":null,\"state\":\"Active\",\"agent\":null}]}")]
+    [InlineData("{\"value\":[{\"agentId\":\"a\",\"homeEnvironmentId\":\"e\",\"state\":\"Active\"}]}")]
+    public async Task FindHolders_ReadsAHolderThatHoldsTheBotWithoutADeployment(string body)
+    {
+        var handler = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.OK, body));
+
+        var holder = Assert.Single(await Adapter(handler, PowerPlatformApiPermissions.AppsRead).FindHoldersAsync(FrontDoor, "bot-1", null, default));
+
+        Assert.Equal(("a", "e", (string?)null, AmsMcsHolderState.Active, (AmsMcsAgentListItem?)null), (holder.AgentId, holder.HomeEnvironmentId, holder.DeploymentId, holder.State, holder.Agent));
+    }
+
+    [Fact]
+    public async Task FindHolders_ReadsNoHolder_FromAnEmptyAnswerOrANotFound()
+    {
+        var empty = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.OK, WireFixture.Read("mcs-agent-holders.empty.json")));
+        var notFound = new CapturingPackageHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        Assert.Empty(await Adapter(empty, PowerPlatformApiPermissions.AppsRead).FindHoldersAsync(FrontDoor, "bot-1", null, default));
+        Assert.Empty(await Adapter(notFound, PowerPlatformApiPermissions.AppsRead).FindHoldersAsync(FrontDoor, "bot-1", null, default));
+    }
+
+    [Fact]
+    public async Task FindHolders_OtherFailures_MapAsTheRepositoryReadsDo()
+    {
+        var forbidden = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.Forbidden, Error("Forbidden", "No access.")));
+        var known = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.NotFound, Error("McsBotNotFound", "No bot.")));
+
+        Assert.Equal(403, (await Assert.ThrowsAsync<TargetRequestException>(() => Adapter(forbidden, PowerPlatformApiPermissions.AppsRead).FindHoldersAsync(FrontDoor, "bot-1", null, default))).Status);
+        Assert.Equal(ErrorCodes.AmsAgent.BotNotFound, (await Assert.ThrowsAsync<AmsAgentException>(() => Adapter(known, PowerPlatformApiPermissions.AppsRead).FindHoldersAsync(FrontDoor, "bot-1", null, default))).ErrorCode);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"value\":[{\"agentId\":\"a\",\"homeEnvironmentId\":\"e\",\"deploymentId\":\"d\"}]}")]
+    public async Task FindHolders_AMalformedAnswer_IsAnInvalidResponse(string body)
+    {
+        var handler = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.OK, body));
+
+        Assert.Contains("Holders read", (await Assert.ThrowsAsync<AgentDeployException>(() => Adapter(handler, PowerPlatformApiPermissions.AppsRead).FindHoldersAsync(FrontDoor, "bot-1", null, default))).Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task UnknownServiceCode_FallsBackToTheStatusMapping_WithCorrelation()
     {

@@ -300,6 +300,9 @@ public sealed record PlaygroundFailure
 /// <summary>The process request used by the future captured process runner.</summary>
 public sealed record PlaygroundProcessRequest
 {
+    /// <summary>The most bytes of standard output a runner captures unless the request asks for more.</summary>
+    public const int DefaultMaximumOutputBytes = 64 * 1024;
+
     public required string ExecutablePath { get; init; }
 
     public IReadOnlyList<string> Arguments { get; init; } = [];
@@ -311,10 +314,23 @@ public sealed record PlaygroundProcessRequest
     /// <summary>A null value removes an inherited child environment variable.</summary>
     public IReadOnlyDictionary<string, string?> EnvironmentOverrides { get; init; } =
         new Dictionary<string, string?>(StringComparer.Ordinal);
+
+    /// <summary>The text written to the process's standard input, if any.</summary>
+    public string? StandardInput { get; init; }
+
+    /// <summary>The most bytes of standard output the runner captures, beyond which it drops the rest.</summary>
+    public int MaximumOutputBytes { get; init; } = DefaultMaximumOutputBytes;
+
+    /// <summary>Whether the runner decodes standard output into text.</summary>
+    public bool DecodeStandardOutput { get; init; } = true;
 }
 
 /// <summary>Captured output from a completed child process.</summary>
-public sealed record PlaygroundProcessResult(int ExitCode, string StandardOutput, string StandardError);
+public sealed record PlaygroundProcessResult(int ExitCode, string StandardOutput, string StandardError)
+{
+    /// <summary>The captured standard output, byte for byte as the process wrote it.</summary>
+    public ReadOnlyMemory<byte> StandardOutputBytes { get; init; }
+}
 
 /// <summary>Runs a process without shell interpolation and captures bounded output for the caller.</summary>
 public interface IPlaygroundProcessRunner

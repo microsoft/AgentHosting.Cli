@@ -424,6 +424,9 @@ public static class ErrorCodes
 
         /// <summary>A pull met a folder whose commit never synced with Copilot Studio and lacks the commit Copilot Studio last synced from.</summary>
         public const int SyncedCommitNotMerged = 19072;
+
+        /// <summary>The project folder can't join the AMS agent that holds the cloned agent or flow.</summary>
+        public const int CannotJoinHolder = 19077;
     }
 
     /// <summary>Error identifiers for the General area (prefix 99).</summary>

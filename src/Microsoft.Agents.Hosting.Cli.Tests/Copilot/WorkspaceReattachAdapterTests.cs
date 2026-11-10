@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
@@ -20,6 +21,8 @@ public sealed class WorkspaceReattachAdapterTests : IDisposable
     private static readonly Guid ExistingAgentId = Guid.Parse("cccccccc-dddd-eeee-ffff-000000000000");
 
     private static readonly Guid SharedCollectionId = Guid.Parse("dddddddd-eeee-ffff-0000-111111111111");
+
+    private static readonly Guid PoliciesCollectionId = Guid.Parse("eeeeeeee-ffff-0000-1111-222222222222");
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "ah-reattach-" + Guid.NewGuid().ToString("N"));
 
@@ -464,12 +467,14 @@ public sealed class WorkspaceReattachAdapterTests : IDisposable
         Assert.Equal([Folder(_directory), Folder(held)], retargetService.CloudCacheWrites.Select(folder => folder.ToString()));
     }
 
-    [Fact]
-    public async Task Connect_WhenNoAgentCarriesTheSchemaName_ReportsItAsNotFound()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Connect_WhenNoAgentCarriesTheSchemaName_ReportsItAsNotFound(bool merge)
     {
         var retargetService = new RecordingRetargetService();
 
-        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(Unconnected(), retargetService).ConnectAsync(ConnectCommand(), CancellationToken.None));
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => ConnectAsync(Create(Unconnected(), retargetService), ConnectCommand(), merge));
 
         Assert.Equal((ErrorCodes.CopilotStudio.AgentNotFound, "No agent matching 'con_contosohelpdesk' was found in environment env-1."), (failure.ErrorCode, failure.Message));
         Assert.Empty(retargetService.CloudCacheWrites);
@@ -483,13 +488,15 @@ public sealed class WorkspaceReattachAdapterTests : IDisposable
         Assert.Same(dataverseClient.SolutionVersionsThrows, await Assert.ThrowsAsync<InvalidOperationException>(() => Create(Unconnected(), new RecordingRetargetService(), dataverseClient).ConnectAsync(ConnectCommand(), CancellationToken.None)));
     }
 
-    [Fact]
-    public async Task Connect_WhenTheFolderIsConnectedToAnotherAgent_RefusesNamingItAndKeepsItsCache()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Connect_WhenTheFolderIsConnectedToAnotherAgent_RefusesNamingItAndKeepsItsCache(bool merge)
     {
         PlantCloudCache();
         var retargetService = new RecordingRetargetService();
 
-        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(new RecordingWorkspaceSynchronizer(), retargetService, new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId }).ConnectAsync(ConnectCommand(), CancellationToken.None));
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => ConnectAsync(Create(new RecordingWorkspaceSynchronizer(), retargetService, new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId }), ConnectCommand(), merge));
 
         Assert.Equal((ErrorCodes.Workspace.CopilotWorkspaceAlreadyConnected, CopilotErrorKinds.WorkspaceAlreadyConnected), (failure.ErrorCode, failure.ErrorKind));
         Assert.Equal(Assert.IsType<WorkspaceAttachException>(failure.InnerException).Message, failure.Message);
@@ -566,6 +573,61 @@ public sealed class WorkspaceReattachAdapterTests : IDisposable
         Assert.Equal([(Folder(_directory), (Guid?)null), (Folder(collection), SharedCollectionId)], synchronizer.SavedSyncInfo.Select(saved => (saved.Folder, saved.SyncInfo.ComponentCollectionId)));
     }
 
+    [Fact]
+    public async Task ConnectAndMerge_MapsTheFoldersAndBaseToSync_AndEachOutcomeBack_SkippingAnUnlinkedCollection_AndAddingALinkedOneBesideWhatTheProjectHolds()
+    {
+        var project = Directory.CreateDirectory(Path.Combine(_directory, "repo")).FullName;
+        var agent = ProjectFolder(project, "Contoso Helpdesk", new Dictionary<string, string> { ["updated.mcs.yml"] = "kind: A\n", ["deleted.mcs.yml"] = "kind: D\n", ["merged.mcs.yml"] = "ONE\ntwo\nthree\n", ["conflicted.mcs.yml"] = "local\n", ["replaced.bin"] = "\0local" });
+        var held = ProjectFolder(project, "HR Shared", new Dictionary<string, string> { [WorkspaceFileNames.Collection] = "schemaName: con_hrshared\n" });
+        var unlinked = ProjectFolder(project, "Finance Shared", new Dictionary<string, string> { [WorkspaceFileNames.Collection] = "schemaName: con_financeshared\n" });
+        File.WriteAllText(Path.Combine(project, "Policies"), "taken");
+        var dataverseClient = new RecordingAgentCreationClient { ExistingAgentId = ExistingAgentId, LinkedCollections = { new ComponentCollectionInfo { Id = SharedCollectionId, SchemaName = "con_hrshared", DisplayName = "HR Shared" }, new ComponentCollectionInfo { Id = PoliciesCollectionId, SchemaName = "con_policies", DisplayName = "Policies" } } };
+        var synchronizer = new RecordingWorkspaceSynchronizer
+        {
+            SyncInfoAvailable = false,
+            ClonedFiles = new Dictionary<string, string> { ["updated.mcs.yml"] = "kind: B\n", ["added.mcs.yml"] = "kind: N\n", ["merged.mcs.yml"] = "one\ntwo\nTHREE\n", ["conflicted.mcs.yml"] = "remote\n", ["replaced.bin"] = "\0remote" },
+            ClonedCollectionFiles = new Dictionary<string, string> { [WorkspaceFileNames.Collection] = "schemaName: con_hrshared\n" },
+        };
+        var baseFiles = new Dictionary<string, ReadOnlyMemory<byte>>
+        {
+            ["Contoso Helpdesk/updated.mcs.yml"] = Encoding.UTF8.GetBytes("kind: A\n"),
+            ["Contoso Helpdesk/deleted.mcs.yml"] = Encoding.UTF8.GetBytes("kind: D\n"),
+            ["Contoso Helpdesk/merged.mcs.yml"] = Encoding.UTF8.GetBytes("one\ntwo\nthree\n"),
+            ["Contoso Helpdesk/conflicted.mcs.yml"] = Encoding.UTF8.GetBytes("base\n"),
+            ["Contoso Helpdesk/replaced.bin"] = Encoding.UTF8.GetBytes("\0base"),
+        };
+
+        var merged = await Create(synchronizer, new RecordingRetargetService(), dataverseClient).ConnectAndMergeAsync(new CopilotConnectMergeCommand(ConnectCommand(held, unlinked) with { WorkspaceDirectory = agent }, baseFiles), CancellationToken.None);
+
+        Assert.Equal(ExistingAgentId.ToString(), merged.Connected.AgentId);
+        Assert.Equal([unlinked], merged.Connected.SkippedCollectionDirectories);
+        Assert.Equal([Path.Combine(project, "Policies-2")], merged.AddedCollectionDirectories);
+        Assert.Equal(["Contoso Helpdesk/merged.mcs.yml"], merged.MergedPaths);
+        Assert.Equal(["Contoso Helpdesk/added.mcs.yml", "Policies-2/collection.mcs.yml"], merged.AddedPaths);
+        Assert.Equal(["Contoso Helpdesk/updated.mcs.yml"], merged.UpdatedPaths);
+        Assert.Equal(["Contoso Helpdesk/deleted.mcs.yml"], merged.DeletedPaths);
+        Assert.Equal(["Contoso Helpdesk/conflicted.mcs.yml"], merged.ConflictedPaths);
+        Assert.Equal(["Contoso Helpdesk/replaced.bin"], merged.ReplacedPaths);
+        Assert.Equal("ONE\ntwo\nTHREE\n", File.ReadAllText(Path.Combine(agent, "merged.mcs.yml")));
+        Assert.Equal("taken", File.ReadAllText(Path.Combine(project, "Policies")));
+        Assert.Equal(["con_contosohelpdesk"], dataverseClient.SchemaNameLookups);
+    }
+
+    private static Task<CopilotConnectOutcome> ConnectAsync(WorkspaceReattachAdapter adapter, CopilotConnectCommand command, bool merge) => merge ? MergedAsync(adapter, command) : adapter.ConnectAsync(command, CancellationToken.None);
+
+    private static async Task<CopilotConnectOutcome> MergedAsync(WorkspaceReattachAdapter adapter, CopilotConnectCommand command) => (await adapter.ConnectAndMergeAsync(new CopilotConnectMergeCommand(command, new Dictionary<string, ReadOnlyMemory<byte>>()), CancellationToken.None)).Connected;
+
+    private static string ProjectFolder(string project, string name, Dictionary<string, string> files)
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(project, name)).FullName;
+        foreach (var (path, content) in files)
+        {
+            File.WriteAllText(Path.Combine(folder, path), content);
+        }
+
+        return folder;
+    }
+
     private CopilotConnectCommand ConnectCommand(params string[] collectionDirectories) => new()
     {
         Environment = Command(TenantId).Environment,
@@ -610,9 +672,13 @@ internal sealed class RecordingAgentCreationClient : RecordingConnectionReferenc
 
     public Dictionary<string, ComponentCollectionInfo> Collections { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public List<ComponentCollectionInfo> LinkedCollections { get; } = [];
+
     public List<string[]> CollectionLookups { get; } = [];
 
     public List<string> SchemaNameLookups { get; } = [];
+
+    public override Task<AgentInfo> GetAgentInfoAsync(Guid agentId, CancellationToken cancellationToken) => Task.FromResult(new AgentInfo { ComponentCollections = [.. LinkedCollections] });
 
     public override Task<IReadOnlyDictionary<string, ComponentCollectionInfo>> GetComponentCollectionsBySchemaNamesAsync(IEnumerable<string> schemaNames, CancellationToken cancellationToken)
     {

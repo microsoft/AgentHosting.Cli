@@ -63,7 +63,7 @@ public sealed class AmsRepositoryResolver
         ArgumentNullException.ThrowIfNull(projectEntries);
 
         var requested = repositoryId is null ? null : GrsRemote.RequireRepositoryId(repositoryId);
-        if (agents.Select(agent => agent.SourceControlMetadata?.RepositoryId).FirstOrDefault(registered => registered is not null) is { } registered)
+        if (RegisteredRepository(agents) is { } registered)
         {
             requested = requested is null || string.Equals(requested, registered, StringComparison.OrdinalIgnoreCase) ? registered : throw AmsAgentException.RepositoryMismatch(requested, registered, registered: true);
         }
@@ -71,7 +71,9 @@ public sealed class AmsRepositoryResolver
         return workingTree is null ? ChooseForFolder(projectDirectory, requested, agents, projectEntries) : ChooseForWorkingTree(projectDirectory, workingTree, requested);
     }
 
-    private AmsRepositoryChoice ChooseForWorkingTree(string projectDirectory, GitWorkingTree workingTree, string? requested)
+    internal static string? RegisteredRepository(IReadOnlyList<ManagedAgentRecord> agents) => agents.Select(agent => agent.SourceControlMetadata?.RepositoryId).FirstOrDefault(registered => registered is not null);
+
+    internal string? RepositoryOf(string projectDirectory, GitWorkingTree workingTree)
     {
         if (!string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(workingTree.Root)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(projectDirectory)), StringComparison.OrdinalIgnoreCase))
         {
@@ -85,12 +87,16 @@ public sealed class AmsRepositoryResolver
             _ => throw AmsAgentException.NotAGrsRepository(string.Join(", ", workingTree.Remotes.Select(candidate => $"{candidate.Name} ({candidate.Url})"))),
         });
 
-        if (remote is null)
+        return remote is null ? null : GrsRemote.RepositoryId(remote.Url, _trust) ?? throw AmsAgentException.NotAGrsRepository($"{remote.Name} ({remote.Url})");
+    }
+
+    private AmsRepositoryChoice ChooseForWorkingTree(string projectDirectory, GitWorkingTree workingTree, string? requested)
+    {
+        if (RepositoryOf(projectDirectory, workingTree) is not { } repositoryId)
         {
             return requested is null ? new(null, AmsRepositoryAction.AddOrigin, workingTree) : new(requested, AmsRepositoryAction.Attach, workingTree);
         }
 
-        var repositoryId = GrsRemote.RepositoryId(remote.Url, _trust) ?? throw AmsAgentException.NotAGrsRepository($"{remote.Name} ({remote.Url})");
         return requested is null || string.Equals(requested, repositoryId, StringComparison.OrdinalIgnoreCase) ? new(repositoryId, AmsRepositoryAction.None, workingTree) : throw AmsAgentException.RepositoryMismatch(requested, repositoryId);
     }
 

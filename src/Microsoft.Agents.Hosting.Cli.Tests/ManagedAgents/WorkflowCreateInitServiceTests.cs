@@ -277,6 +277,63 @@ public sealed class WorkflowCreateServiceTests : IDisposable
         Assert.Contains($"clone:{workflowId}", _store.Calls);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CloneOfAWorkflowAmsHolds_ReturnsTheJoin_WithoutMainsChecksDownloadRegisterOrHomeDeployment(bool withDeployment)
+    {
+        var workflowId = SourceWorkflow();
+        var store = ManagedAgentFixtures.Store();
+        await Service(store).CreateAsync(new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), Project = _workspace.Root }, CancellationToken.None);
+        _store.Calls.Clear();
+        var holder = ManagedAgentFixtures.Agent("holder-1", "Escalate") with { AgentType = AgentTypes.McsWorkflow, AgentLocation = "Escalate", McsWorkflowId = workflowId.ToString() };
+        var ams = new AmsAgentRegistration { Joined = true, RepositoryId = "repository-1", GitUrl = "https://git.example.invalid/r", Folder = "Escalate" };
+        var creation = new RecordingAgentCreationHook { Joined = new AgentCreationJoin(holder, withDeployment ? ManagedAgentFixtures.Deployment("deployment-1", "holder-1", "develop", DeploymentStages.Dev, "env-1", null) : null, ams, null) };
+
+        var result = await Service(store, creation: creation).CreateAsync(new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), Project = _workspace.Root, Name = "Copy" }, CancellationToken.None);
+
+        Assert.Equal(("joined", "holder-1", "Escalate", "clone", "Remote Flow", Path.Combine(_workspace.Root, "Escalate"), workflowId.ToString(), (bool?)null), (result.Status, result.AgentId, result.DisplayName, result.CreatedFrom, result.WorkflowName, result.WorkflowFolder, result.McsWorkflowId, result.WorkspaceConnected));
+        Assert.Equal(withDeployment ? "deployment-1" : null, result.DeploymentId);
+        Assert.Same(ams, result.Ams);
+        Assert.Empty(result.Warnings);
+        var plan = Assert.Single(creation.Joins);
+        Assert.Equal(("Copy", "Remote Flow", "Copy", workflowId.ToString(), (string?)null), (plan.DisplayName, plan.SourceName, plan.RequestedName, plan.ClaimedWorkflowId, plan.ClaimedBotId));
+        Assert.Empty(creation.Prepared);
+        Assert.DoesNotContain($"clone:{workflowId}", _store.Calls);
+        Assert.Single(store.List(_workspace.Root));
+        Assert.Single(ListDeployments(store));
+    }
+
+    [Fact]
+    public async Task CloneWhoseJoinIsDeclined_IsCancelled_AndWritesNothing()
+    {
+        var workflowId = SourceWorkflow();
+        var store = ManagedAgentFixtures.Store();
+        var creation = new RecordingAgentCreationHook { Joined = AgentCreationJoin.Declined };
+
+        var result = await Service(store, creation: creation).CreateAsync(new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), Project = _workspace.Root }, CancellationToken.None);
+
+        Assert.Equal(("cancelled", "clone", "Remote Flow"), (result.Status, result.CreatedFrom, result.DisplayName));
+        Assert.Empty(creation.Prepared);
+        Assert.DoesNotContain($"clone:{workflowId}", _store.Calls);
+        Assert.Empty(store.List(_workspace.Root));
+    }
+
+    [Fact]
+    public async Task CloneOfAWorkflowNoneHolds_WhoseQuestionIsDeclined_IsCancelled_AndDownloadsNothing()
+    {
+        var workflowId = SourceWorkflow();
+        var store = ManagedAgentFixtures.Store();
+        var creation = new RecordingAgentCreationHook { Declines = true };
+
+        var result = await Service(store, creation: creation).CreateAsync(new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = workflowId.ToString(), Project = _workspace.Root }, CancellationToken.None);
+
+        Assert.Equal(("cancelled", "clone"), (result.Status, result.CreatedFrom));
+        Assert.Same(Assert.Single(creation.Joins), Assert.Single(creation.Prepared));
+        Assert.DoesNotContain($"clone:{workflowId}", _store.Calls);
+        Assert.Empty(store.List(_workspace.Root));
+    }
+
     [Fact]
     public async Task CloneReportsTheWarningsTheDownloadGave()
     {

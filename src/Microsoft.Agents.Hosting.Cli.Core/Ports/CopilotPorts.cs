@@ -361,6 +361,12 @@ public interface ICopilotWorkspaceConnectPort
     /// <param name="cancellationToken">Cancels the connect.</param>
     /// <returns>The agent the folder is connected to, and the collection folders left unconnected.</returns>
     Task<CopilotConnectOutcome> ConnectAsync(CopilotConnectCommand command, CancellationToken cancellationToken);
+
+    /// <summary>Connects the folders and merges Copilot Studio's changes since the base into them.</summary>
+    /// <param name="command">The folders to connect and their files at the base.</param>
+    /// <param name="cancellationToken">Cancels the connect.</param>
+    /// <returns>The connect's outcome, and the paths the merge changed.</returns>
+    Task<CopilotConnectMergeOutcome> ConnectAndMergeAsync(CopilotConnectMergeCommand command, CancellationToken cancellationToken);
 }
 
 /// <summary>The folders to connect, and the schema name of the agent to connect them to.</summary>
@@ -385,6 +391,39 @@ public sealed record CopilotConnectOutcome
     /// <summary>The Copilot Studio agent the agent's folder is connected to.</summary>
     public required string AgentId { get; init; }
 
-    /// <summary>The collection folders left unconnected, because the environment doesn't hold their collections.</summary>
+    /// <summary>The collection folders left unconnected.</summary>
     public IReadOnlyList<string> SkippedCollectionDirectories { get; init; } = [];
+}
+
+/// <summary>The folders to connect, with their files at the commit Copilot Studio was last synced from.</summary>
+/// <param name="Connect">The folders to connect, and the agent to connect them to.</param>
+/// <param name="BaseFiles">The folders' files at the base commit.</param>
+public sealed record CopilotConnectMergeCommand(CopilotConnectCommand Connect, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> BaseFiles);
+
+/// <summary>What a connect with a merge did, by '/'-separated paths relative to the project folder.</summary>
+public sealed record CopilotConnectMergeOutcome
+{
+    /// <summary>The connect's outcome.</summary>
+    public required CopilotConnectOutcome Connected { get; init; }
+
+    /// <summary>The collection folders the connect added beside the agent's folder.</summary>
+    public IReadOnlyList<string> AddedCollectionDirectories { get; init; } = [];
+
+    /// <summary>The files both sides changed, merged without a conflict.</summary>
+    public IReadOnlyList<string> MergedPaths { get; init; } = [];
+
+    /// <summary>The files Copilot Studio added.</summary>
+    public IReadOnlyList<string> AddedPaths { get; init; } = [];
+
+    /// <summary>The files only Copilot Studio changed.</summary>
+    public IReadOnlyList<string> UpdatedPaths { get; init; } = [];
+
+    /// <summary>The files Copilot Studio deleted.</summary>
+    public IReadOnlyList<string> DeletedPaths { get; init; } = [];
+
+    /// <summary>The files both sides changed in conflict.</summary>
+    public IReadOnlyList<string> ConflictedPaths { get; init; } = [];
+
+    /// <summary>The files the text merge can't settle, such as binary files, which took Copilot Studio's version.</summary>
+    public IReadOnlyList<string> ReplacedPaths { get; init; } = [];
 }

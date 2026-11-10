@@ -102,6 +102,31 @@ public sealed class PlaygroundProcessRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_WritesTheStandardInputAndClosesIt_AndCapturesTheOutputByteForByte_UpToTheRequestsLimit()
+    {
+        var node = RequireNode();
+        var result = await new PlaygroundProcessRunner().RunAsync(
+            Request(node, "-e", "const chunks = []; process.stdin.on('data', chunk => chunks.push(chunk)); process.stdin.on('end', () => process.stdout.write(Buffer.concat([...chunks, Buffer.alloc(96 * 1024, 0xff)])))") with { StandardInput = "Café\n", MaximumOutputBytes = 80 * 1024 },
+            CancellationToken.None);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(80 * 1024, result.StandardOutputBytes.Length);
+        Assert.Equal(System.Text.Encoding.UTF8.GetBytes("Café\n"), result.StandardOutputBytes[..6].ToArray());
+        Assert.All(result.StandardOutputBytes[6..].ToArray(), value => Assert.Equal(0xff, value));
+    }
+
+    [Fact]
+    public async Task RunAsync_LeavesTheStandardOutputUndecoded_WhenTheRequestNeedsOnlyItsBytes()
+    {
+        var node = RequireNode();
+
+        var result = await new PlaygroundProcessRunner().RunAsync(Request(node, "-e", "process.stdout.write('Café'); process.stderr.write('Thé')") with { DecodeStandardOutput = false }, CancellationToken.None);
+
+        Assert.Equal((0, string.Empty, "Thé"), (result.ExitCode, result.StandardOutput, result.StandardError));
+        Assert.Equal(System.Text.Encoding.UTF8.GetBytes("Café"), result.StandardOutputBytes.ToArray());
+    }
+
+    [Fact]
     public async Task RunAsync_TimeoutKillsOnlyOwnedProcessTree()
     {
         var node = RequireNode();

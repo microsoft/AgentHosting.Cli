@@ -61,9 +61,25 @@ folder that is already a clone of a GRS repository, msagent takes that repositor
 you create there joins it. Cloning an agent or workflow with `--mcs-clone-agent-id`,
 `--mcs-clone-agent-schemaname`, or `--mcs-clone-workflow-id` does the same AMS and repository work.
 
+A clone of a Copilot Studio agent or flow that another AMS agent already holds joins that agent
+instead of creating one. msagent asks first:
+
+```
+Copilot Studio agent 'NB1' is already in AMS as agent 'NB1', in repository <repository-id> (folder NB1). Clone that repository into C:\work\nb1 and connect NB1 there? [Y/n]
+```
+
+It then clones the holder's repository into the folder, links the folder to it, or, in a clone of
+it, restores the holder there, and restores the agents' records into `.config`. It merges the edits
+Copilot Studio holds that `main` lacks into the holder's folder and its collection folders as
+uncommitted changes, and connects them, so `agent pull` works there once any conflict markers are
+resolved; a collection the agent in Dev links that the folder doesn't declare gets a new folder
+beside it.
+
 ## 3. Join a project someone else registered
 
-One command clones the repository into a new or empty folder and restores the project's records:
+One command clones the repository into a new or empty folder, restores the project's records,
+connects each agent Dev holds, with the edits Copilot Studio holds that `main` lacks merged in as
+uncommitted changes, and takes Copilot Studio's version of each standalone workflow Dev holds:
 
 ```
 msagent agent init --repository-id <repository-id> --mcs-agent-source contoso-agents
@@ -79,6 +95,9 @@ git clone <git-url> contoso-agents
 cd contoso-agents
 msagent agent init
 ```
+
+Cloning one of the project's agents from Copilot Studio with `agent create` joins it the same way
+(section 2), in a new folder or in your clone of the repository.
 
 ## 4. Register a project you already have
 
