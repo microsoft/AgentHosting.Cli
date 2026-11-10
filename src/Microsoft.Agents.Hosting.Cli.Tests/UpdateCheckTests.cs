@@ -254,21 +254,52 @@ public sealed class UpdateCheckTests
 
     [Theory]
     [InlineData("auth", "status", "--json")]
-    [InlineData("auth", "status", "--help")]
+    [InlineData("auth", "status", "--help", "--json")]
+    [InlineData("--help", "--json")]
     [InlineData("--version")]
+    [InlineData("--help", "--version")]
     [InlineData("auth")]
     [InlineData("unknown")]
+    [InlineData("unknown", "--help")]
     [InlineData("auth", "status", "--unknown")]
+    [InlineData("auth", "status", "--unknown", "--help")]
     [InlineData("agent", "eval")]
     [InlineData("auth", "status", "-j")]
-    [InlineData("auth", "status", "-h")]
-    [InlineData()]
     public async Task Host_SkippedPathsMakeNoRequests(params string[] args)
     {
         using var fixture = new UpdateFixture("999.0.0");
         var cli = new AgentHostCli(new FakeOperations(), telemetryFactory: null, updateCheck: fixture.Service("0.9.0"));
         await cli.InvokeAsync(args, new StringWriter(), new StringWriter(), color: false);
         Assert.Empty(fixture.Requests);
+    }
+
+    [Theory]
+    [InlineData("--help")]
+    [InlineData("auth", "--help")]
+    [InlineData("auth", "status", "--help")]
+    [InlineData("auth", "switch", "-h")]
+    [InlineData("-?")]
+    [InlineData()]
+    public async Task Host_HelpShowsNoticeBeforeOutputAndPreservesHelp(params string[] args)
+    {
+        using var fixture = new UpdateFixture("1.0.0");
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+        fixture.BeforeResponse = (_, _) =>
+        {
+            Assert.Empty(stdout.ToString());
+            return Task.CompletedTask;
+        };
+        var expectedOutput = new StringWriter();
+        var baseline = new AgentHostCli(new FakeOperations());
+        Assert.Equal(0, await baseline.InvokeAsync(args, expectedOutput, new StringWriter(), color: false));
+        var cli = new AgentHostCli(new FakeOperations(), telemetryFactory: null, updateCheck: fixture.Service("0.9.0"));
+
+        Assert.Equal(0, await cli.InvokeAsync(args, stdout, stderr, color: false));
+
+        Assert.Contains("dotnet tool update Microsoft.Agents.Hosting.Cli --global", stderr.ToString());
+        Assert.Equal(expectedOutput.ToString(), stdout.ToString());
+        Assert.Contains("Usage:", stdout.ToString());
     }
 
     [Fact]
