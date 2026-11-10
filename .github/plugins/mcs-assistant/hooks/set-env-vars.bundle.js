@@ -103,6 +103,7 @@ function acquireProvisioningLock() {
   const contender = `${directory}-${owner}`;
   fs.mkdirSync(contender);
   let acquired = false;
+  let retained = false;
   let collision;
   try {
     fs.writeFileSync(path.join(contender, owner), "");
@@ -111,13 +112,24 @@ function acquireProvisioningLock() {
         fs.renameSync(contender, directory);
         acquired = true;
         return {
-          release: () => releaseProvisioningLock(directory, owner),
+          release() {
+            if (!retained) releaseProvisioningLock(directory, owner);
+          },
+          beginInstall() {
+            const next = `${owner}.cleanup-pending`;
+            fs.renameSync(path.join(directory, owner), path.join(directory, next));
+            owner = next;
+          },
           trackInstaller(pid) {
             if (pid === void 0) return;
             if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid native dependency installer PID.");
-            const next = `${process.pid}.${pid}-${token}`;
+            const next = `${process.pid}.${pid}-${token}.cleanup-pending`;
             fs.renameSync(path.join(directory, owner), path.join(directory, next));
             owner = next;
+          },
+          retainForCleanup() {
+            retained = true;
+            return directory;
           }
         };
       } catch (error) {
@@ -133,7 +145,7 @@ function acquireProvisioningLock() {
       }
       if (owners.length > 1) throw new Error("Unrecognized native dependency provisioning lock.");
       if (owners.length === 1) {
-        const match = owners[0].match(/^([1-9]\d*)(?:\.([1-9]\d*))?-[\da-f-]{36}$/);
+        const match = owners[0].match(/^([1-9]\d*)(?:\.([1-9]\d*))?-[\da-f-]{36}(\.cleanup-pending)?$/);
         const pid = Number(match?.[1]);
         const installerPid = match?.[2] === void 0 ? null : Number(match[2]);
         if (!Number.isSafeInteger(pid) || pid <= 0 || installerPid !== null && (!Number.isSafeInteger(installerPid) || installerPid <= 0)) {
@@ -141,6 +153,9 @@ function acquireProvisioningLock() {
         }
         if (isProcessRunning(pid) || installerPid !== null && isProcessRunning(process.platform === "win32" ? installerPid : -installerPid)) {
           throw new Error("Native dependency provisioning is already in progress in another session.");
+        }
+        if (match[3] && installerPid === null || process.platform === "win32" && (match[3] || installerPid !== null)) {
+          throw new Error(`Native dependency installer tree cleanup is unconfirmed. Confirm its processes have stopped before removing '${directory}' and retrying.`);
         }
         releaseProvisioningLock(directory, owners[0]);
         continue;
@@ -152,11 +167,12 @@ function acquireProvisioningLock() {
     if (!acquired) fs.rmSync(contender, { recursive: true, force: true });
   }
 }
-function installNativeDependencies(directory, trackInstaller) {
+function installNativeDependencies(directory, lock) {
   return new Promise((resolve, reject) => {
     const windows = process.platform === "win32";
     const taskkill = windows ? path.join(process.env.SystemRoot, "System32", "taskkill.exe") : null;
     const timeoutMs = 15e3;
+    lock.beginInstall();
     const child = cp.spawn("npm ci --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000", {
       cwd: directory,
       shell: true,
@@ -190,8 +206,9 @@ function installNativeDependencies(directory, trackInstaller) {
           process.kill(-child.pid, "SIGKILL");
         }
       } catch (failure2) {
-        if (failure2.code !== "ESRCH") {
-          error = new Error(`${error.message}; process-tree cleanup failed: ${failure2.message}`);
+        if (windows || failure2.code !== "ESRCH") {
+          const directory2 = lock.retainForCleanup();
+          error = new Error(`${error.message}; process-tree cleanup failed: ${failure2.message}; provisioning lock retained at '${directory2}'`);
           try {
             child.kill("SIGKILL");
           } catch (rootFailure) {
@@ -204,7 +221,7 @@ function installNativeDependencies(directory, trackInstaller) {
     };
     timer = setTimeout(() => terminate(new Error(`npm ci timed out after ${timeoutMs} ms`)), timeoutMs);
     try {
-      trackInstaller(child.pid);
+      lock.trackInstaller(child.pid);
     } catch (error) {
       terminate(error);
     }
@@ -228,7 +245,7 @@ async function setup() {
         fs.rmSync(marker, { force: true });
         fs.writeFileSync(path.join(pluginData, "package.json"), manifest);
         fs.writeFileSync(path.join(pluginData, "package-lock.json"), lockfile);
-        await installNativeDependencies(pluginData, lock.trackInstaller);
+        await installNativeDependencies(pluginData, lock);
         fs.writeFileSync(marker, installation);
       }
     } finally {

@@ -78,6 +78,33 @@ function packageHost({ target, output, root = ROOT }) {
         ...manifest,
       });
       fs.rmSync(path.join(stage, ".claude-plugin"), { recursive: true });
+      const copilot = path.join(stage, "com.github.copilot");
+      fs.mkdirSync(copilot);
+      for (const component of ["commands", "agents"]) {
+        const directory = path.join(copilot, component);
+        fs.renameSync(path.join(stage, component), directory);
+        for (const name of fs.readdirSync(directory)) {
+          if (!name.endsWith(".md")) continue;
+          const file = path.join(directory, name);
+          const text = fs.readFileSync(file, "utf8").replace(/\]\(\.\.\//g, "](../../");
+          const destination = component === "agents" ? file.replace(/\.md$/, ".agent.md") : file;
+          fs.writeFileSync(destination, text);
+          if (destination !== file) fs.unlinkSync(file);
+        }
+      }
+      const hookFile = path.join(stage, "hooks", "hooks.json");
+      const startup = JSON.parse(fs.readFileSync(hookFile, "utf8")).hooks?.SessionStart?.[0]?.hooks?.[0];
+      if (typeof startup?.bash !== "string" || typeof startup?.powershell !== "string") {
+        throw new Error("Missing canonical Copilot startup launcher.");
+      }
+      fs.mkdirSync(path.join(copilot, "hooks"));
+      writeJson(path.join(copilot, "hooks", "hooks.json"), {
+        version: 1,
+        hooks: {
+          sessionStart: [{ type: "command", bash: startup.bash, powershell: startup.powershell }],
+        },
+      });
+      fs.unlinkSync(hookFile);
       writeJson(path.join(stage, "agency.json"), {
         $schema: "https://raw.githubusercontent.com/agency-microsoft/.github-private/main/agency.schema.json",
         pluginId: provenance.agencyPluginId,

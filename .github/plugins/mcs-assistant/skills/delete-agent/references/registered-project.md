@@ -45,11 +45,19 @@ registered in `configPath` and return to entrypoint step 2.
      pick-list (`displayName`, `agentId`, `agentType`).
    - If the chosen agent's `agentType` is not `MCSAgent`, stop: this skill deletes only MCS agents.
 2. **Cloud target.** Consider only the deployments whose `agentId` equals the chosen agent's.
-   - **No deployments** - pass no deployment selector. The CLI deletes the cloud agent the
+   First resolve `agentLocation` relative to `projectDir` and retain the canonical workspace path.
+   Check whether that workspace exists **before any deployment-count branch**:
+   - **Workspace absent** - the CLI performs records-only deletion with no cloud target, even
+     when deployments exist or one was selected. No cloud lookup or deletion is performed.
+     Explain this limitation and proceed only if the user explicitly accepts records-only cleanup;
+     otherwise stop so they can restore the workspace before retrying cloud deletion.
+     Pass no deployment selector for records-only cleanup. Treat **all** recorded cloud targets
+     as potentially surviving and becoming untracked, including any originally selected deployment.
+     A recorded `mcsAgentId` is historical identity, not proof of a current cloud target or absence.
+     Skip the deployment-count branches below and use the records-only preview in step 5.
+   - **Workspace present, no deployments** - pass no deployment selector. The CLI deletes the cloud agent the
      workspace's `.mcs` binding names or, when the workspace has none, the agent that has the
      agent's schema name in its home environment. Resolve the actual target before confirmation:
-     - Resolve `agentLocation` relative to `projectDir` and retain the canonical workspace path.
-     - If the workspace is absent, show a records-only deletion with no cloud target.
      - If `.mcs/conn.json` exists, read it without modifying it. Require nonempty `AgentId` and
        `EnvironmentId`; show that bound cloud ID and environment, never the record's home
        environment alongside a bound cloud ID. An unreadable or incomplete binding is an error,
@@ -57,16 +65,22 @@ registered in `configPath` and return to entrypoint step 2.
      - Only when the workspace exists and has no binding, use its known `mcsSchemaName` and the
        record's home `environmentId`. Show this schema-based home-environment target explicitly.
        If the schema or target environment cannot be established, stop before confirmation.
-   - **One deployment** - confirm it with the user and pass its `--deployment-id`, so that the target
+   - **Workspace present, one deployment** - confirm it with the user and pass its `--deployment-id`, so that the target
      is exact.
-   - **Several deployments** - present a numbered pick-list (`deploymentName`, `deploymentType`,
+   - **Workspace present, several deployments** - present a numbered pick-list (`deploymentName`, `deploymentType`,
      environment) and ask which deployment's cloud agent to delete. Pass its `--deployment-id`.
-3. **Orphans.** When a deployment is selected, every **other** deployment of this agent becomes an
-   orphaned target. If there are any, list them (`deploymentName` and environment) and warn:
+3. **Orphans.** For records-only cleanup, list **all** of this agent's deployments as potentially
+   orphaned, including any originally selected deployment. Otherwise, when a deployment is selected,
+   every **other** deployment of this agent becomes an orphaned target.
+   If there are any, list them (`deploymentName` and environment) and warn:
 
-   > These cloud agents will **not** be deleted and will keep running, but their records will be
-   > removed, so msagent will no longer track them. Remove them separately if they should not keep
+   > These cloud agents will **not** be deleted. Any that still exist will keep running, but their
+   > records will be removed, so msagent will no longer track them. Remove them separately if they should not keep
    > running.
+
+   For records-only cleanup, make clear that cloud existence was not checked: any surviving cloud
+   agents will keep running and become untracked. This warning also applies to recorded cloud
+   identities without deployment rows.
 
    Require the user to explicitly acknowledge this before continuing. If they do not, stop; nothing
    is deleted.
@@ -87,7 +101,11 @@ This deletes remote resources and cannot be undone. Local files are not deleted;
 removes this agent's records from <configPath>.
 ```
 
-For a selected deployment, show its name and effective environment. With no deployment, show the
+For records-only cleanup, show `none (records only)` as the cloud target and replace the remote
+deletion warning with: "No cloud lookup or deletion will be performed. Only project records are
+removed; cloud agents may still exist and keep running untracked." Do this regardless of deployment
+count. Retain the canonical workspace path and its absent state in the confirmation.
+Otherwise, for a selected deployment, show its name and effective environment. With no deployment, show the
 bound cloud ID and bound environment, the unbound schema-based home target, or `none (records
 only)` for an absent workspace. Do not print unresolved alternatives or label a bound target with
 the home environment.
@@ -102,11 +120,13 @@ Immediately before deletion, re-run step 3's local projection and resolve step 4
 again, including whether the workspace and binding now exist. Re-read any present binding without
 modifying it. Require the selected record, canonical workspace, schema, deployment selection, and actual
 cloud target to match the confirmed values. A binding appearing, disappearing, or changing cloud
-ID or environment is a target change. Stop and repeat steps 4-5 with fresh typed confirmation
+ID or environment is a target change. A switch between records-only and cloud-deletion scope is
+also a target change. Stop and repeat steps 4-5 with fresh typed confirmation
 before deleting if any identity or the orphan list changed; never replace the approved target
 with newly discovered values.
 
-Run exactly one of these once, and wait for it to complete:
+Run exactly one of these once, and wait for it to complete. Records-only cleanup uses the command
+without `--deployment-id`, so no selected deployment is excluded from orphan reporting:
 
 ```bash
 msagent agent delete --project '<projectDir>' --agent-id '<agentId>' --json --non-interactive

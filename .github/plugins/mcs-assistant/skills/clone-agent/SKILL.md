@@ -78,11 +78,16 @@ Wait for sign-in to finish before continuing.
 
 ### 3. Resolve the source environment
 
-Resolve the environment in this order:
+Treat URL-derived and explicitly supplied source environments as cumulative constraints:
 
 1. If the request contains a supported Copilot Studio URL, extract its environment ID and bot ID.
-2. Otherwise use an explicitly supplied source environment ID.
-3. If no source environment is known, list accessible environments:
+   Retain any explicitly supplied source environment ID separately.
+2. When both are supplied, compare the decoded URL environment ID and the explicit source
+   environment ID case-insensitively as opaque values, not GUIDs. They must agree. On a mismatch,
+   stop before cloning or writing local registration and ask the user to correct or explicitly
+   withdraw a conflicting selector. Never silently prefer the URL or the explicit environment.
+3. If only one source environment is supplied, use that exact value. Only if neither is supplied,
+   list accessible environments:
 
    ```bash
    msagent env list --json --non-interactive
@@ -159,6 +164,8 @@ Success must report `success: true`, `createdFrom: "clone"`, the selected `mcsAg
 Confirm that:
 
 - `configPath` exists beneath the project root;
+- `sourceEnvironmentId` and `environmentId` equal the confirmed source environment ID
+  case-insensitively;
 - every path in `clonedWorkspaces` exists;
 - the workspace whose `kind` is `agent` contains `settings.mcs.yml` or `agent.mcs.yml`;
 - that agent workspace contains `.mcs/conn.json`.

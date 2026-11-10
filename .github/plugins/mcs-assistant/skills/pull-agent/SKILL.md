@@ -127,10 +127,17 @@ msagent agent pull --project '<project-root>' --agent-id '<local-agent-id>' --js
 
 Wait for completion. Do not retry except under the error rules below.
 On failure, retain the snapshot and report possible partial writes; do not automatically roll back.
+On success, read and report every entry in `warnings`, even with `success: true`, `agent-pulled`,
+`up-to-date`, or `changeCount: 0`. Successful status does not prove a conflict-free merge.
+Retain every reported merge conflict for resolution during reconciliation below.
 On success, compare the complete post-pull authored file inventory and hashes against the snapshot,
 including missing and overwritten knowledge payloads. Review differences with the user and reconcile
 local, remote, or merged content only with their explicit choice; do not blindly restore the snapshot.
 Verify that every intended pre-pull edit survived or was explicitly discarded by the user.
+Inspect each reported conflict's file or component, resolve it with the user's explicit choice,
+and verify that every reported merge conflict is resolved. If any remain unresolved, retain the
+snapshot, report the incomplete workflow, and stop before completion or handoff to push/publish.
+Do not automatically rerun pull to try to clear successful-result warnings.
 If comparison or reconciliation cannot complete, report the unresolved local-work risk and do not
 claim that local edits were preserved or hand off to push/publish.
 
@@ -146,6 +153,8 @@ Require JSON output with `success: true` and:
 Confirm that the selected agent workspace and its project markers still exist. Report the project
 root, agent workspace, environment, and change count. State that connected linked component
 collections were included, local files may have changed, and no cloud content was modified.
+Include all warnings and the resolution of any reported conflicts. Non-conflict warnings remain
+advisories; do not hide them or claim completion while a reported merge conflict is unresolved.
 
 ## Error handling
 

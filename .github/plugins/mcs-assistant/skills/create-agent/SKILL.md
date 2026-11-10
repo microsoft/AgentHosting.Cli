@@ -236,6 +236,8 @@ msagent agent pull --project '<project>' --agent-id '<agent-id>' --json --non-in
 ```
 
 Accept `agent-pulled` or `up-to-date` and confirm the authored components remain.
+Read and report every entry in the final pull's `warnings`, even with `success: true`.
+Reported merge conflicts block completion and publication handoff until their resolution is verified.
 
 ### 12. Route an explicit publish request
 

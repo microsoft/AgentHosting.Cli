@@ -311,10 +311,13 @@ test("concurrent native provisioning holds a real exclusive lock and rechecks re
 
 test("native provisioning recovers abandoned locks but preserves live hooks and orphaned installers", async () => {
   const lock = path.join(root, "native-deps.install.lock");
-  for (const state of ["dead", "empty", "permission-denied", "orphan-win32", "orphan-linux", "finished-installer"]) {
-    const hasInstaller = state.startsWith("orphan-") || state === "finished-installer";
-    const owner = `12345${hasInstaller ? ".23456" : ""}-00000000-0000-4000-8000-000000000001`;
-    const busy = state === "permission-denied" || state.startsWith("orphan-");
+  for (const state of ["dead", "empty", "permission-denied", "orphan-win32", "orphan-linux",
+    "finished-installer", "finished-installer-win32", "pending-win32", "pending-linux", "unknown-installer"]) {
+    const hasInstaller = state.startsWith("orphan-") || state.startsWith("finished-installer") || state.startsWith("pending-");
+    const pending = state.startsWith("pending-") || state === "unknown-installer";
+    const owner = `12345${hasInstaller ? ".23456" : ""}-00000000-0000-4000-8000-000000000001${pending ? ".cleanup-pending" : ""}`;
+    const unconfirmed = ["finished-installer-win32", "pending-win32", "unknown-installer"].includes(state);
+    const busy = unconfirmed || state === "permission-denied" || state.startsWith("orphan-");
     const files = new Map([[lock, null]]);
     if (state !== "empty") files.set(path.join(lock, owner), "");
     const child = new EventEmitter();
@@ -322,15 +325,15 @@ test("native provisioning recovers abandoned locks but preserves live hooks and 
     let attempts = 0;
     const result = runHook({
       files,
-      platform: state === "orphan-win32" ? "win32" : "linux",
+      platform: state.endsWith("win32") ? "win32" : "linux",
       childProcess: { spawn() { attempts++; return child; } },
       schedule: () => 1,
       kill(pid, signal) {
         assert.equal(signal, 0);
         if (pid !== 12345) {
-          assert.equal(pid, state === "orphan-win32" ? 23456 : -23456);
+          assert.equal(pid, state.endsWith("win32") ? 23456 : -23456);
           if (state.startsWith("orphan-")) return;
-          assert.equal(state, "finished-installer");
+          assert.ok(hasInstaller);
         }
         throw Object.assign(new Error(state), { code: state === "permission-denied" ? "EPERM" : "ESRCH" });
       },
@@ -339,7 +342,7 @@ test("native provisioning recovers abandoned locks but preserves live hooks and 
     await result.completion;
     if (busy) {
       assert.equal(attempts, 0);
-      assert.match(result.errors[0], /already in progress/);
+      assert.match(result.errors[0], unconfirmed ? /cleanup is unconfirmed/ : /already in progress/);
       assert.ok(files.has(path.join(lock, owner)));
     } else {
       assert.equal(attempts, 1);
@@ -348,6 +351,24 @@ test("native provisioning recovers abandoned locks but preserves live hooks and 
     }
     assert.ok(![...files.keys()].some((file) => file.startsWith(lock + "-")));
   }
+});
+
+test("failure to journal installer cleanup prevents npm from starting", async () => {
+  const lock = path.join(root, "native-deps.install.lock");
+  const result = runHook({
+    childProcess: { spawn: () => assert.fail("Installer must not start without durable cleanup state") },
+    fileSystem: (base) => ({
+      ...base,
+      renameSync(from, to) {
+        if (path.dirname(from) === lock) throw new Error("Cannot journal installer cleanup");
+        base.renameSync(from, to);
+      },
+    }),
+  });
+  await result.completion;
+  assert.match(result.errors[0], /Cannot journal installer cleanup/);
+  assert.ok(!result.writes.has(lock));
+  assert.ok(!result.writes.has(path.join(root, "native-deps.installed.json")));
 });
 
 test("failure to record installer ownership terminates its group before releasing the lock", async () => {
@@ -365,7 +386,7 @@ test("failure to record installer ownership terminates its group before releasin
     fileSystem: (base) => ({
       ...base,
       renameSync(from, to) {
-        if (path.dirname(from) === lock) {
+        if (path.dirname(from) === lock && to.includes(`.${child.pid}-`)) {
           throw Object.assign(new Error("Failed to record installer ownership"), { code: "EIO" });
         }
         base.renameSync(from, to);
@@ -510,6 +531,55 @@ test("optional native install times out the Windows tree or POSIX process group 
   }
 });
 
+test("failed Windows tree cleanup retains a durable lock after the hook and shell exit", async () => {
+  for (const code of ["ETIMEDOUT", "EACCES"]) {
+    const files = new Map();
+    const lock = path.join(root, "native-deps.install.lock");
+    const child = new EventEmitter();
+    child.pid = 23456;
+    child.stderr = new PassThrough();
+    let deadline;
+    let killed = false;
+    let unreferenced = false;
+    child.kill = (signal) => { assert.equal(signal, "SIGKILL"); killed = true; };
+    child.unref = () => { unreferenced = true; };
+    const result = runHook({
+      files, platform: "win32",
+      childProcess: {
+        spawn() {
+          assert.ok([...files.keys()].some((file) => file.endsWith(".cleanup-pending")));
+          return child;
+        },
+        execFileSync() { throw Object.assign(new Error(`Tree cleanup ${code}`), { code }); },
+      },
+      schedule(callback) { deadline = callback; return 1; },
+    });
+    deadline();
+    child.emit("close", 0, null);
+    await result.completion;
+    assert.ok(killed && unreferenced);
+    assert.match(result.errors[0], /process-tree cleanup failed:[\s\S]*provisioning lock retained/);
+    assert.ok(files.has(lock));
+    assert.ok(!files.has(path.join(root, "native-deps.installed.json")));
+    const owners = [...files.keys()].filter((file) => path.dirname(file) === lock);
+    assert.equal(owners.length, 1);
+    assert.match(path.basename(owners[0]), /^.+\.23456-.+\.cleanup-pending$/);
+    const next = runHook({
+      files, platform: "win32",
+      childProcess: { spawn: () => assert.fail("Unconfirmed cleanup must block the next installer") },
+      kill(pid, signal) {
+        assert.equal(signal, 0);
+        assert.ok([process.pid, child.pid].includes(pid));
+        throw Object.assign(new Error("Hook and shell exited"), { code: "ESRCH" });
+      },
+    });
+    await next.completion;
+    assert.match(next.errors[0], /cleanup is unconfirmed[\s\S]*before removing/);
+    assert.ok(files.has(owners[0]));
+    assert.ok(![...files.keys()].some((file) => file.startsWith(lock + "-")));
+  }
+});
+
 test("native install timeout stops a real descendant holding the stderr pipe open", { timeout: 10000 }, async (t) => {
   const ready = Promise.withResolvers();
   let installer;
@@ -573,7 +643,7 @@ for (const target of ["gemini", "agency"]) {
     temporary((directory) => {
       const output = path.join(directory, "one", "mcs-assistant");
       packageHost({ target, output });
-      for (const name of ["skills", "agents", "adapters", "hooks", "scripts", "LICENSE"]) {
+      for (const name of ["skills", "adapters", "hooks", "scripts", "LICENSE"]) {
         assert.ok(fs.existsSync(path.join(output, name)), name);
       }
       assert.ok(!fs.existsSync(path.join(output, "scripts", "node_modules")));
@@ -589,7 +659,50 @@ for (const target of ["gemini", "agency"]) {
         assert.deepEqual(agency.engines, ["copilot"]);
         assert.ok(!agency.source);
         assert.equal(fs.existsSync(path.join(output, ".claude-plugin")), false);
-        assert.equal(JSON.parse(fs.readFileSync(path.join(output, "plugin.json"))).name, "mcs-assistant");
+        const manifest = JSON.parse(fs.readFileSync(path.join(output, "plugin.json")));
+        assert.equal(manifest.name, "mcs-assistant");
+        assert.equal(manifest.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
+        const copilot = path.join(output, "com.github.copilot");
+        for (const component of ["commands", "agents"]) {
+          assert.ok(!fs.existsSync(path.join(output, component)));
+          const names = fs.readdirSync(path.join(root, component)).map((name) =>
+            component === "agents" ? name.replace(/\.md$/, ".agent.md") : name);
+          const generated = path.join(copilot, component);
+          assert.deepEqual(fs.readdirSync(generated).sort(), names.sort());
+          for (const name of names) {
+            const text = fs.readFileSync(path.join(generated, name), "utf8");
+            for (const [, target] of text.matchAll(/\]\((\.\.\/[^)#]+)(?:#[^)]*)?\)/g)) {
+              const resolved = path.resolve(generated, target);
+              assert.ok(resolved.startsWith(output + path.sep), target);
+              assert.ok(fs.existsSync(resolved), target);
+            }
+          }
+        }
+        assert.ok(!fs.existsSync(path.join(output, "hooks", "hooks.json")));
+        const hook = JSON.parse(fs.readFileSync(path.join(copilot, "hooks", "hooks.json"), "utf8"));
+        assert.equal(hook.version, 1);
+        assert.equal(hook.hooks.sessionStart.length, 1);
+        const startup = hook.hooks.sessionStart[0];
+        assert.equal(startup.type, "command");
+        fs.writeFileSync(path.join(output, "hooks", "set-env-vars.bundle.js"),
+          "const paths=require('../scripts/src/plugin-paths').resolvePluginPaths({start:__dirname});" +
+          "console.log(JSON.stringify({paths,environmentFile:process.env.CLAUDE_ENV_FILE}));");
+        for (const shell of ["bash", "powershell"]) {
+          const code = startup[shell].match(/^node -e "(.*)"$/)[1];
+          const run = spawnSync(process.execPath, ["-e", code], {
+            encoding: "utf8", timeout: 5000,
+            env: {
+              ...process.env, COPILOT_PLUGIN_ROOT: output, COPILOT_PLUGIN_DATA: path.join(directory, "data"),
+              CLAUDE_PLUGIN_ROOT: root, CLAUDE_ENV_FILE: "inherited-environment",
+              MCS_ASSISTANT_PLUGIN_ROOT: "", MCS_ASSISTANT_PLUGIN_DATA: "",
+            },
+          });
+          assert.equal(run.status, 0, run.stderr);
+          const actual = JSON.parse(run.stdout);
+          assert.equal(actual.paths.pluginRoot, output);
+          assert.equal(actual.paths.pluginData, path.join(directory, "data"));
+          assert.equal(actual.environmentFile, undefined);
+        }
       } else {
         const command = fs.readFileSync(path.join(output, "commands", "migrate.toml"), "utf8");
         const prompt = JSON.parse(command.split("\nprompt = ")[1].trim());

@@ -176,6 +176,8 @@ After the user confirms this preservation plan and the pull, run:
 msagent agent pull --project '<project-root>' --agent-id '<local-agent-id>' --json --non-interactive
 ```
 
+Read and report every entry in pull's `warnings`, even with `success: true` or `up-to-date`;
+merge-conflict warnings block deployment until their resolution is verified.
 Wait for success. If pull reports a merge conflict or another failure, stop and retain the
 snapshot; do not deploy or automatically roll back partially applied changes.
 Compare the complete post-pull authored file inventory and hashes against the snapshot, including

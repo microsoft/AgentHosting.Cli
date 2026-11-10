@@ -66,6 +66,10 @@ other shell environment variables reach the extension.
 For Agency, generate **into the chosen marketplace checkout's plugin directory**.
 The output contains the real code, root `plugin.json`, stable `pluginId`, and
 Copilot-only `agency.json`; there is no `source` redirect or CLI download.
+The root manifest declares Agent Plugins 1.0: skills remain in `skills/`, while commands,
+`.agent.md` agents, and the native v1 hook configuration are generated under
+`com.github.copilot/`. Relative document links are rebased to the shared root resources.
+The startup bundle stays at `hooks/set-env-vars.bundle.js`; its Copilot-root launcher is unchanged.
 Generation is not onboarding: run that marketplace's metadata/governance checks,
 then use its normal reviewed publication process. No catalog manifests are
 hand-edited, no marketplace is published, and no administrative approval is implied.

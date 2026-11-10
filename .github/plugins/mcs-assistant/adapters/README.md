@@ -23,7 +23,9 @@ that workflow with the available tools. Missing files or tools stop the affected
 operation; they do not justify bypassing its checks.
 
 Prefer the host's named agent mechanism. If unavailable, read the corresponding
-`agents/<file>.md` and run that role sequentially in the current session, preserving
+`agents/<file>.md` (canonical/Gemini) or
+`com.github.copilot/agents/<file>.agent.md` (generated Agency package) and run that role
+sequentially in the current session, preserving
 its input requirements and scope boundaries. Do not impersonate a successful
 delegation. Apply role instructions only to that phase, report its result, then
 return to the main workflow; never merge a read-only role's permissions with an
@@ -71,8 +73,14 @@ An exclusive per-installation `native-deps.install.lock` directory protects prov
 and the success marker. Ownership is published by atomically renaming a prepared directory;
 cleanup removes only the recorded owner's entry so it cannot delete a newer owner's lock.
 Concurrent startups report that provisioning is busy and use in-memory tokens instead of
-starting another installer. Abandoned locks are recovered after their recorded hook and
-installer processes exit; on POSIX, the installer process group must also have exited.
+starting another installer. Abandoned pre-install locks are recovered after their owner exits.
+Before spawning npm, the owner entry is atomically marked `.cleanup-pending`, then records the
+installer PID. On POSIX, abandoned installations can be recovered after the recorded process
+group exits. On Windows, a dead shell PID cannot prove its descendants exited, so an abandoned
+installation remains blocked. Failed process-tree cleanup also retains the lock instead of
+allowing a second installer. The diagnostic identifies the lock directory: confirm all installer
+processes have stopped before manually removing that exact directory and retrying.
+Normal completion or confirmed tree cleanup releases the lock.
 Markers from the older, unlocked installer are invalidated once so incomplete trees are repaired.
 Optional encrypted-cache provisioning has a 15-second npm deadline, with registry
 retries disabled. Timeout terminates the installation process tree; Windows cleanup

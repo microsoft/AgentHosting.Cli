@@ -11,16 +11,21 @@ allowed-tools: Read Glob Grep
 You are a workflow that deletes a Copilot Studio (MCS) agent from the cloud by running the
 **msagent CLI** (`msagent agent delete`). You resolve every input up front, show the user exactly
 what will be deleted, require them to type the agent's name, and only then run the delete. This is a
-destructive, irreversible remote operation. You never invent behavior the CLI does not support.
+destructive, irreversible remote operation when a cloud target can be resolved; the missing-workspace
+records-only exception is described below. You never invent behavior the CLI does not support.
 
 Initial request: $ARGUMENTS
 
 ## Deletion scope
 
-Delete one cloud MCS agent (`agentType: MCSAgent`), its `ManagedAgent` record, and
+Normally delete one cloud MCS agent (`agentType: MCSAgent`), its `ManagedAgent` record, and
 all its `AgentDeployment` records. Other deployments' cloud agents remain running
 as untracked orphans. Never delete local files: only `.config\agent.config.json`
 changes, through the CLI.
+
+If the registered workspace is absent, the CLI removes only project records, regardless of
+deployment count. Cloud existence is not checked and every cloud target may survive untracked.
+Disclose and confirm that records-only scope before deletion; never present it as cloud deletion.
 
 Accept a registered project (`.config\agent.config.json`, created by `agent create`
 or `agent init`) or an unregistered workspace (`settings.mcs.yml` + `.mcs\conn.json`).
@@ -131,14 +136,18 @@ If the reference cannot be read, stop; never improvise this destructive path.
 **Success** - `{ "success": true, "status": "agent-deleted", agentId, displayName, environmentId,
 deploymentId, mcsAgentAlreadyAbsent, removedAgentDeployments, orphanedTargets }`:
 
-- Say `displayName` (`agentId`) was deleted.
-- If `mcsAgentAlreadyAbsent` is `true`, no cloud agent existed, so only the records were removed.
+- Say the project record for `displayName` (`agentId`) was removed.
+- If `mcsAgentAlreadyAbsent` is `true`, no cloud deletion was performed; only the records were removed.
+  This flag alone does **not** prove remote absence. For an absent workspace, state that cloud
+  existence was not checked and all previously recorded cloud targets may still exist untracked.
   Otherwise, say the cloud agent was deleted from `environmentId`.
 - Records removed: 1 ManagedAgent + `removedAgentDeployments` AgentDeployment row(s).
 - List `orphanedTargets` (`deploymentName`, `environmentId`). This is the CLI's authoritative list,
-  so use it even if it differs from the step 4 preview.
-- Remind the user the local workspace is still on disk; they can remove it themselves if they no
-  longer need it. The only local file that changed is `.config\agent.config.json`, which no longer
+  so use it even if it differs from the step 4 preview. It is not a complete inventory of surviving
+  cloud resources; never use an omitted target as proof of deletion or absence.
+- Remind the user no local workspace files were deleted. If the workspace exists, they can remove
+  it themselves if they no longer need it; if it was absent, do not claim it remains on disk.
+  The only local file that changed is `.config\agent.config.json`, which no longer
   holds this agent's records. If this run registered the workspace, also say that the file was created
   by that registration and remains in the workspace.
 
@@ -159,6 +168,7 @@ the missing file. Never claim that a failed or timed-out operation made no chang
 
 ## Final answer
 
-Keep it short and factual: which agent was deleted and from which environment, how many records were
-removed, any orphaned targets, and that no local files were deleted: only `.config\agent.config.json`
+Keep it short and factual: which agent's records were removed, whether cloud deletion occurred and
+its environment if any, how many records were removed, any potentially surviving or orphaned targets,
+and that no local files were deleted: only `.config\agent.config.json`
 changed (or, if the skill registered the workspace, was created), and it remains.

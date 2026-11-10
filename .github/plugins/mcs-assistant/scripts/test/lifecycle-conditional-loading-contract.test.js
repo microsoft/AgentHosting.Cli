@@ -88,6 +88,19 @@ test("clone keeps URL validation, destination protection and local result verifi
   assert.match(skill, /markers are absent, report verification failure rather than claiming success/);
 });
 
+test("clone requires URL and explicit source environments to agree before registration", () => {
+  const skill = read("clone-agent");
+  const resolution = section(skill, "### 3.", "### 4.");
+  assert.match(resolution, /URL-derived and explicitly supplied source environments as cumulative constraints/);
+  assert.match(resolution, /Retain any explicitly supplied source environment ID separately/);
+  assert.match(resolution, /case-insensitively as opaque values, not GUIDs/);
+  assert.match(resolution, /They must agree[\s\S]*stop before cloning or writing local registration/);
+  assert.match(resolution, /correct or explicitly withdraw a conflicting selector/);
+  assert.match(resolution, /Only if neither is supplied, list accessible environments/);
+  assert.doesNotMatch(resolution, /Otherwise use an explicitly supplied/);
+  assert.match(skill, /`sourceEnvironmentId` and `environmentId` equal the confirmed source environment ID/);
+});
+
 for (const skill of ["push-agent", "pull-agent", "publish-agent"]) {
   test(`${skill} defers fallback discovery without changing enclosing-project precedence`, () => {
     const entrypoint = section(read(skill), "### 2.", "### 3.");
@@ -152,6 +165,30 @@ test("pull preserves explicit selection, connected-workspace checks and local-wr
   assert.match(recovery, /merge conflict[\s\S]*Never discard either side/);
   assert.match(recovery, /Never fall back to `msagent agent create`/);
 });
+
+test("successful pull warnings require conflict resolution before completion or handoff", () => {
+  const skill = read("pull-agent");
+  assert.match(skill, /On success, read and report every entry in `warnings`/);
+  assert.match(skill, /`agent-pulled`, `up-to-date`, or `changeCount: 0`/);
+  assert.match(skill, /Inspect each reported conflict's file or component/);
+  assert.match(skill, /verify that every reported merge conflict is resolved/);
+  assert.match(skill, /If any remain unresolved, retain the snapshot[\s\S]*stop before completion or handoff/);
+  assert.match(skill, /Do not automatically rerun pull/);
+  assert.match(skill, /Include all warnings and the resolution of any reported conflicts/);
+});
+
+for (const name of ["push-agent", "publish-agent", "create-agent"]) {
+  test(`${name} inspects successful prerequisite pull warnings before downstream actions`, () => {
+    const skill = read(name);
+    const pull = skill.indexOf("msagent agent pull --project");
+    const warnings = skill.indexOf("Read and report every entry in", pull);
+    const nextPhase = skill.indexOf(name === "create-agent" ? "### 12." : "### 7.", pull);
+    assert.ok(pull >= 0 && warnings > pull && nextPhase > warnings);
+    const gate = skill.slice(warnings, nextPhase);
+    assert.match(gate, /`warnings`, even with `success: true`/);
+    assert.match(gate, /merge.conflict[\s\S]*block[\s\S]*until their resolution is verified/i);
+  });
+}
 
 test("publish retains live-change confirmation, synchronization and partial-side-effect authority", () => {
   const skill = read("publish-agent");

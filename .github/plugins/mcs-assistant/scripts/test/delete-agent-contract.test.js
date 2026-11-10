@@ -93,11 +93,28 @@ test("registered deletion confirms the actual binding rather than the home envir
   assert.match(text, /show that bound cloud ID and environment, never the record's home environment/);
   assert.match(text, /unreadable or incomplete binding is an error, not permission to fall back/);
   assert.match(text, /Only when the workspace exists and has no binding/);
-  assert.match(text, /workspace is absent, show a records-only deletion with no cloud target/);
+  assert.match(text, /Workspace absent[\s\S]*records-only deletion with no cloud target/);
   assert.match(text, /If the schema or target environment cannot be established, stop before confirmation/);
   assert.match(text, /binding appearing, disappearing, or changing cloud ID or environment is a target change/);
   assert.match(text, /Stop and repeat steps 4-5 with fresh typed confirmation/);
   assert.doesNotMatch(text, /home environment and its default deletion target/);
+});
+
+test("missing workspaces take records-only scope before every deployment branch", () => {
+  const text = readRegisteredFlow().replace(/\s+/g, " ");
+  const missing = text.indexOf("**Workspace absent**");
+  const branches = ["**Workspace present, no deployments**", "**Workspace present, one deployment**",
+    "**Workspace present, several deployments**"];
+  for (const heading of branches) assert.ok(missing >= 0 && text.indexOf(heading) > missing);
+  assert.match(text, /even when deployments exist or one was selected/);
+  assert.match(text, /Pass no deployment selector for records-only cleanup/);
+  assert.match(text, /Treat \*\*all\*\* recorded cloud targets as potentially surviving and becoming untracked/);
+  assert.match(text, /including any originally selected deployment/);
+  assert.match(text, /records-only cleanup[\s\S]*replace the remote deletion warning/);
+  assert.match(text, /switch between records-only and cloud-deletion scope[\s\S]*fresh typed confirmation/);
+  assert.match(text, /flag alone does \*\*not\*\* prove remote absence/);
+  assert.match(text, /cloud existence was not checked and all previously recorded cloud targets may still exist/);
+  assert.doesNotMatch(text, /no cloud agent existed|Remind the user the local workspace is still on disk|which agent was deleted and from which environment/);
 });
 
 test("unregistered deletion compares the approved identity before init and after registration", () => {
