@@ -46,7 +46,13 @@ registered in `configPath` and return to entrypoint step 2.
    - If the chosen agent's `agentType` is not `MCSAgent`, stop: this skill deletes only MCS agents.
 2. **Cloud target.** Consider only the deployments whose `agentId` equals the chosen agent's.
    First resolve `agentLocation` relative to `projectDir` and retain the canonical workspace path.
-   Check whether that workspace exists **before any deployment-count branch**:
+   Check for a recognized MCS root **before any deployment-count branch**. Match the CLI's
+   predicate: `settings.mcs.yml` **or** `agent.mcs.yml` must exist directly in that directory.
+   Directory existence alone is insufficient; `.mcs/conn.json` or `collection.mcs.yml` alone
+   does not qualify. If marker presence cannot be checked, stop and report the error rather than
+   assuming records-only scope.
+   In the branches below, "workspace absent" includes an existing directory with neither root
+   marker, and "workspace present" means at least one root marker exists:
    - **Workspace absent** - the CLI performs records-only deletion with no cloud target, even
      when deployments exist or one was selected. No cloud lookup or deletion is performed.
      Explain this limitation and proceed only if the user explicitly accepts records-only cleanup;
@@ -104,7 +110,7 @@ removes this agent's records from <configPath>.
 For records-only cleanup, show `none (records only)` as the cloud target and replace the remote
 deletion warning with: "No cloud lookup or deletion will be performed. Only project records are
 removed; cloud agents may still exist and keep running untracked." Do this regardless of deployment
-count. Retain the canonical workspace path and its absent state in the confirmation.
+count. Retain the canonical workspace path and its recognized-root state in the confirmation.
 Otherwise, for a selected deployment, show its name and effective environment. With no deployment, show the
 bound cloud ID and bound environment, the unbound schema-based home target, or `none (records
 only)` for an absent workspace. Do not print unresolved alternatives or label a bound target with
@@ -116,9 +122,12 @@ nothing was deleted." and stop. An empty answer is a decline; stop.
 
 ### 6. Run the delete
 
-Immediately before deletion, re-run step 3's local projection and resolve step 4's cloud target
-again, including whether the workspace and binding now exist. Re-read any present binding without
-modifying it. Require the selected record, canonical workspace, schema, deployment selection, and actual
+Immediately before deletion, re-run step 3's local projection and repeat step 4's root-marker
+predicate, even if the directory and binding are unchanged. Resolve the cloud target again;
+only for a recognized MCS root, re-read any present binding without modifying it. A connection
+file alone never enables cloud deletion. Losing both root markers or gaining either one changes
+the recognized-root state and requires fresh steps 4-5 consent, including the typed name.
+Require the selected record, canonical workspace, recognized-root state, schema, deployment selection, and actual
 cloud target to match the confirmed values. A binding appearing, disappearing, or changing cloud
 ID or environment is a target change. A switch between records-only and cloud-deletion scope is
 also a target change. Stop and repeat steps 4-5 with fresh typed confirmation

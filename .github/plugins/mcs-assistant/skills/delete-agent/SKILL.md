@@ -23,8 +23,10 @@ all its `AgentDeployment` records. Other deployments' cloud agents remain runnin
 as untracked orphans. Never delete local files: only `.config\agent.config.json`
 changes, through the CLI.
 
-If the registered workspace is absent, the CLI removes only project records, regardless of
-deployment count. Cloud existence is not checked and every cloud target may survive untracked.
+The CLI recognizes an agent workspace only when `settings.mcs.yml` or `agent.mcs.yml` exists at
+its root. If neither exists, the workspace is absent for deletion even when its directory and
+`.mcs/conn.json` remain. The CLI then removes only project records, regardless of deployment count.
+Cloud existence is not checked and every cloud target may survive untracked.
 Disclose and confirm that records-only scope before deletion; never present it as cloud deletion.
 
 Accept a registered project (`.config\agent.config.json`, created by `agent create`
@@ -138,15 +140,15 @@ deploymentId, mcsAgentAlreadyAbsent, removedAgentDeployments, orphanedTargets }`
 
 - Say the project record for `displayName` (`agentId`) was removed.
 - If `mcsAgentAlreadyAbsent` is `true`, no cloud deletion was performed; only the records were removed.
-  This flag alone does **not** prove remote absence. For an absent workspace, state that cloud
+  This flag alone does **not** prove remote absence. For an absent or unrecognized workspace, state that cloud
   existence was not checked and all previously recorded cloud targets may still exist untracked.
   Otherwise, say the cloud agent was deleted from `environmentId`.
 - Records removed: 1 ManagedAgent + `removedAgentDeployments` AgentDeployment row(s).
 - List `orphanedTargets` (`deploymentName`, `environmentId`). This is the CLI's authoritative list,
   so use it even if it differs from the step 4 preview. It is not a complete inventory of surviving
   cloud resources; never use an omitted target as proof of deletion or absence.
-- Remind the user no local workspace files were deleted. If the workspace exists, they can remove
-  it themselves if they no longer need it; if it was absent, do not claim it remains on disk.
+- Remind the user no local workspace files were deleted. If the directory exists, they can remove
+  it themselves if they no longer need it; if the directory was absent, do not claim it remains on disk.
   The only local file that changed is `.config\agent.config.json`, which no longer
   holds this agent's records. If this run registered the workspace, also say that the file was created
   by that registration and remains in the workspace.

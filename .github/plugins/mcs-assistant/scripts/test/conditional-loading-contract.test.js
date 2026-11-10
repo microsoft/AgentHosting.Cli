@@ -162,7 +162,7 @@ test("authoring helpers and deletion retain independent shell approval gates", (
 test("chat and pull preapprovals cannot grant unrelated destructive commands", () => {
   for (const [file, permitted] of [
     ["commands/chat.md", /^msagent (?:test ask|agent (?:show|list)|deployment list|auth status) \*$/],
-    ["skills/pull-agent/SKILL.md", /^msagent (?:agent (?:pull|show)|auth status) \*$/],
+    ["skills/pull-agent/SKILL.md", /^msagent (?:agent (?:pull|show|list)|auth status) \*$/],
   ]) {
     const text = fs.readFileSync(path.join(root, file), "utf8");
     const metadata = yaml.load(text.match(/^---\r?\n([\s\S]*?)\r?\n---/)[1]);

@@ -166,6 +166,64 @@ test("pull preserves explicit selection, connected-workspace checks and local-wr
   assert.match(recovery, /Never fall back to `msagent agent create`/);
 });
 
+test("pull checks explicit cloud and deployment constraints against the actual binding", () => {
+  const skill = read("pull-agent");
+  const selection = section(skill, "### 3.", "### 4.");
+  assert.match(selection, /Retain every supplied[\s\S]*Apply them cumulatively/);
+  assert.match(selection, /cloud-field match is only a local association hint, not proof of the connected source/);
+  assert.match(selection, /Read only that workspace's `\.mcs\/conn\.json` as JSON to extract `AgentId` and `EnvironmentId`/);
+  assert.match(selection, /environment IDs are opaque, not necessarily GUIDs/);
+  assert.match(selection, /Reject unreadable JSON, duplicate or ambiguous identity keys/);
+  assert.match(selection, /Any explicit cloud ID and environment must equal that binding/);
+  assert.match(selection, /only deployments owned by the selected local `agentId`/);
+  assert.match(selection, /every supplied deployment ID, name, and stage/);
+  assert.match(selection, /effective environment[\s\S]*owning agent's home `environmentId`[\s\S]*equal the bound environment/);
+  assert.match(selection, /before confirmation or pull/);
+  assert.match(selection, /Matching cloud-ID requests remain supported/);
+  assert.doesNotMatch(skill, /Do not read, print, or modify `\.config\/agent\.config\.json` or `\.mcs\/conn\.json` directly/);
+  assert.match(skill, /Never print the full connection file/);
+  const commands = [...skill.matchAll(/```bash (msagent agent pull --project [^`]+)```/g)];
+  assert.equal(commands.length, 1);
+  assert.doesNotMatch(commands[0][1], /--deployment-|--environment-id|--mcs-agent-id|--schema-name/);
+});
+
+test("pull verifies a requested schema against the bound cloud ID and environment", () => {
+  const authentication = section(read("pull-agent"), "### 4.", "### 5.");
+  assert.match(authentication, /When a `schemaName` constraint was supplied/);
+  assert.match(authentication, /msagent agent list --environment-id '<bound-environment-id>' --limit 1000 --json --non-interactive/);
+  assert.match(authentication, /exactly one row in `agents\[\]` matching the bound `mcsAgentId`, bound `environmentId`, and supplied `schemaName`/);
+  assert.match(authentication, /stored schema or authored settings value alone does not prove/);
+  assert.match(authentication, /Stop if support is unavailable, the lookup fails, or the match is missing or ambiguous/);
+  assert.match(authentication, /`truncated: true` is inconclusive[\s\S]*never select a different row instead/);
+});
+
+test("pull confirms its source separately from promotion and revalidates before and after writes", () => {
+  const skill = read("pull-agent");
+  const confirmation = section(skill, "### 5.", "### 6.");
+  assert.match(confirmation, /Show the actual bound cloud ID and environment/);
+  assert.match(confirmation, /Retain this identity with the user's confirmation/);
+  const selection = section(skill, "### 3.", "### 4.");
+  const classification = selection.indexOf("first separate explicit pull-source constraints");
+  assert.ok(classification >= 0 && selection.indexOf("Retain every supplied") > classification);
+  assert.match(selection, /Preserve destination selectors for the caller; do not treat them as pull constraints/);
+  assert.match(confirmation, /confirmation must cover the classified pull source[\s\S]*not merely the later deployment destination/);
+  const execution = section(skill, "### 6.", "### 7.");
+  const revalidation = execution.indexOf("Immediately before pull");
+  const command = execution.indexOf("msagent agent pull --project");
+  const after = execution.indexOf("Before accepting success");
+  const compare = execution.indexOf("compare the complete post-pull");
+  assert.ok(revalidation >= 0 && command > revalidation && after > command && compare > after);
+  assert.match(execution, /same canonical project\/workspace, local agent ID, bound cloud ID\/environment, deployment selection, and requested schema as those approved/);
+  assert.match(execution, /Do not rerun fallback selection or silently replace the approved source/);
+  assert.match(execution, /repeat the same read-only identity checks[\s\S]*still match the approved source/);
+  assert.match(execution, /returned `agentId` and `environmentId` to equal the approved local agent ID and bound environment/);
+  assert.match(execution, /canonical `projectDirectory` to equal the approved project root/);
+  assert.match(execution, /retain the snapshot, report possible wrong-target local writes, and stop before completion or handoff/);
+  const recovery = read("pull-agent", "references/error-recovery.md");
+  assert.match(recovery, /Source constraint mismatch, changed binding, or unverifiable identity/);
+  assert.match(recovery, /Do not rewrite sync metadata, substitute another target, or retry automatically/);
+});
+
 test("successful pull warnings require conflict resolution before completion or handoff", () => {
   const skill = read("pull-agent");
   assert.match(skill, /On success, read and report every entry in `warnings`/);

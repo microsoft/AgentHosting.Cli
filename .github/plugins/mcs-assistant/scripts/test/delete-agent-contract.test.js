@@ -117,6 +117,22 @@ test("missing workspaces take records-only scope before every deployment branch"
   assert.doesNotMatch(text, /no cloud agent existed|Remind the user the local workspace is still on disk|which agent was deleted and from which environment/);
 });
 
+test("registered deletion recognizes root markers rather than just a surviving directory", () => {
+  const text = readRegisteredFlow().replace(/\s+/g, " ");
+  const predicate = text.indexOf("Match the CLI's predicate:");
+  const absent = text.indexOf("**Workspace absent**");
+  assert.ok(predicate >= 0 && absent > predicate);
+  assert.match(text, /`settings\.mcs\.yml` \*\*or\*\* `agent\.mcs\.yml` must exist directly in that directory/);
+  assert.match(text, /Directory existence alone is insufficient/);
+  assert.match(text, /`\.mcs\/conn\.json` or `collection\.mcs\.yml` alone does not qualify/);
+  assert.match(text, /"workspace absent" includes an existing directory with neither root marker/);
+  const revalidation = text.slice(text.indexOf("Immediately before deletion"));
+  assert.match(revalidation, /repeat step 4's root-marker predicate, even if the directory and binding are unchanged/);
+  assert.match(revalidation, /only for a recognized MCS root, re-read any present binding/);
+  assert.match(revalidation, /Losing both root markers or gaining either one[\s\S]*fresh steps 4-5 consent, including the typed name/);
+  assert.match(text, /If marker presence cannot be checked, stop and report the error/);
+});
+
 test("unregistered deletion compares the approved identity before init and after registration", () => {
   const text = readWorkspaceReference().replace(/\s+/g, " ");
   const beforeInit = text.indexOf("Immediately before initialization");
