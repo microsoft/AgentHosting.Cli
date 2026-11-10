@@ -119,7 +119,10 @@ public sealed class CommandTreeBuilder
     internal IReadOnlyList<string> UsageLines(Command command) =>
         command is not null && _usageLines.TryGetValue(command, out var lines) ? lines : [];
 
-    internal string SafeParserDiagnostic(ParseResult result, IReadOnlyList<string> args)
+    internal string SafeParserDiagnostic(
+        ParseResult result,
+        IReadOnlyList<string> args,
+        string? commandSpecificDiagnostic = null)
     {
         // A malformed or dash-prefixed secret can become an unmatched token or even an option.
         // Do not use parser message bodies for a credential command or credential-bearing argv.
@@ -127,7 +130,8 @@ public sealed class CommandTreeBuilder
             || args.Any(token => _sensitiveOptions.Any(option => token.StartsWith(option, StringComparison.OrdinalIgnoreCase)));
         return sensitive
             ? "Invalid authentication arguments. Check credential options and mutually exclusive modes with `msagent auth create --help`."
-            : string.Join(" ", result.Errors.Select(error => error.Message)) + " Run `msagent --help` for usage.";
+            : (commandSpecificDiagnostic ?? string.Join(" ", result.Errors.Select(error => error.Message)))
+                + " Run `msagent --help` for usage.";
     }
 
     private Command BuildGroup(

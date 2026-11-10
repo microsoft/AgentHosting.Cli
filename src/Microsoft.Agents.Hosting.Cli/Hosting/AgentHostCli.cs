@@ -14,7 +14,6 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Features;
 using Microsoft.Agents.Hosting.Cli.Rendering;
 using Microsoft.Agents.Hosting.Cli.Telemetry;
-using Microsoft.Agents.Hosting.Cli.Core.Errors;
 
 namespace Microsoft.Agents.Hosting.Cli.Hosting;
 
@@ -267,7 +266,11 @@ public sealed class AgentHostCli
 
         if (parseResult.Errors.Count > 0)
         {
-            var message = treeBuilder.SafeParserDiagnostic(parseResult, args);
+            var message = treeBuilder.SafeParserDiagnostic(
+                parseResult, args,
+                channelMutationCommands.Contains(parseResult.CommandResult.Command)
+                    ? FormatChannelParseErrors(parseResult, channelMutationCommands)
+                    : null);
             int exitCode = renderer.RenderUsageError(message, json);
             telemetry.RecordHost(CommandTelemetryHostCategory.ParserRejection);
             return exitCode;
