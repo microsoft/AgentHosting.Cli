@@ -21,6 +21,7 @@ public sealed class ProfileCredentialProvider : IProfileCredentialProvider, IOwn
     private readonly IAuthProfileStore _profiles;
     private readonly OwnedProfileCredentialInventory _inventory;
     private readonly ConcurrentDictionary<string, Stage> _stages = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _uses = new(StringComparer.Ordinal);
 
     public ProfileCredentialProvider(
         AgentHostAuthOptions options,
@@ -346,6 +347,21 @@ public sealed class ProfileCredentialProvider : IProfileCredentialProvider, IOwn
 
     private async Task<IDisposable> UseAsync(OwnedProfileReferences references, CancellationToken ct)
     {
+        var gate = _uses.GetOrAdd(references.Value, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return new ReferenceUse(await UseReferenceAsync(references, ct).ConfigureAwait(false), gate);
+        }
+        catch
+        {
+            gate.Release();
+            throw;
+        }
+    }
+
+    private async Task<IDisposable> UseReferenceAsync(OwnedProfileReferences references, CancellationToken ct)
+    {
         if (_stages.TryGetValue(references.Value, out var stage))
         {
             await stage.Gate.WaitAsync(ct).ConfigureAwait(false);
@@ -433,6 +449,14 @@ public sealed class ProfileCredentialProvider : IProfileCredentialProvider, IOwn
                 try { if (stage.CompletionRequested) complete(); }
                 finally { stage.Gate.Release(); }
             }
+        }
+    }
+    private sealed class ReferenceUse(IDisposable lease, SemaphoreSlim gate) : IDisposable
+    {
+        public void Dispose()
+        {
+            try { lease.Dispose(); }
+            finally { gate.Release(); }
         }
     }
 }

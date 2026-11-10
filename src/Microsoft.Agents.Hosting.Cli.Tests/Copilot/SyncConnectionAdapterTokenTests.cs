@@ -81,14 +81,17 @@ public sealed class SyncConnectionAdapterTokenTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task CapturedCatalogDoesNotUseTheLegacyCluster(bool connectors)
+    [InlineData(false, CloudInstance.Public, "https://api.bap.microsoft.com//.default", CoreCluster.Prod)]
+    [InlineData(true, CloudInstance.Public, "https://api.bap.microsoft.com//.default", CoreCluster.Prod)]
+    [InlineData(false, CloudInstance.UsGov, "https://gov.service.powerapps.us//.default", CoreCluster.Gov)]
+    [InlineData(true, CloudInstance.UsGov, "https://gov.service.powerapps.us//.default", CoreCluster.Gov)]
+    public async Task CapturedCatalogDoesNotUseTheLegacyCluster(
+        bool connectors, CloudInstance cloud, string expectedScope, CoreCluster expectedCluster)
     {
         var tokens = new ObservingTokens();
         var credentials = new ProfileSyncResourceTests.Credentials();
         using var harness = new OrderingHarness(tokens, () => throw new InvalidOperationException("Legacy resolution is forbidden."), credentials);
-        var target = PowerPlatformApiTargetSelection.TargetFor(CloudInstance.UsGov);
+        var target = PowerPlatformApiTargetSelection.TargetFor(cloud);
         var environment = Environment();
         var profile = new AuthProfile
         {
@@ -105,8 +108,8 @@ public sealed class SyncConnectionAdapterTokenTests
         var acquired = Assert.Single(credentials.Requests);
         Assert.Same(profile, acquired.Profile);
         Assert.Equal(environment.TenantId, acquired.Tenant);
-        Assert.Equal(["https://gov.service.powerapps.us//.default"], acquired.Scopes);
-        Assert.Equal(SyncClusterCategory.For(CoreCluster.Gov), harness.Catalog.LastContext!.ClusterCategory);
+        Assert.Equal([expectedScope], acquired.Scopes);
+        Assert.Equal(SyncClusterCategory.For(expectedCluster), harness.Catalog.LastContext!.ClusterCategory);
         Assert.Empty(tokens.Resources);
     }
 

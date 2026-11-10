@@ -16,13 +16,14 @@ public static class PowerAppsServiceTarget
             throw new CloudRetargetedException("The service target does not match the captured authentication profile.");
     }
 
-    /// <summary>Returns the PAC PowerApps service audience, not the BAP endpoint.</summary>
+    /// <summary>Returns the PowerApps API audience for the captured cloud.</summary>
     public static string AudienceFor(EnvironmentResolutionContext context)
     {
         RequireContext(context);
         return context.Target.Cloud switch
         {
-            CloudInstance.Public => "https://service.powerapps.com/",
+            // msagent is preauthorized for BAP, not PAC's PowerApps service resource.
+            CloudInstance.Public => "https://api.bap.microsoft.com",
             CloudInstance.UsGov => "https://gov.service.powerapps.us/",
             CloudInstance.UsGovHigh => "https://high.service.powerapps.us/",
             CloudInstance.UsGovDod => "https://service.apps.appsplatform.us/",

@@ -480,6 +480,41 @@ public sealed class ProfileCredentialSdkTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BrokerRenewalPreservesInteractionAndThrottlingFailures(bool throttled)
+    {
+        using var h = new Harness();
+        var selected = throttled ? "throttled@example.test" : "consent@example.test";
+        var request = Request(AuthCredentialMethod.Broker, creation: false,
+            home: MsalTokenCacheSeed.HomeAccountId(selected, ProfileCredentialTests.Tenant), cloud: CloudInstance.Public,
+            scope: throttled ? "https://throttling.test//.default" : "https://consent.test//.default");
+        var brokerClient = h.Msal.CreatePublic(request, broker: false);
+        MsalTokenCacheSeed.Seed(brokerClient, ProfileCredentialTests.Tenant, "https://another-resource.test/.default", selected);
+        _ = await brokerClient.GetAccountsAsync();
+        h.Msal.BrokerClient = brokerClient;
+        h.Msal.PublicRequests.Clear();
+        h.Transport.TokenFailure = () => new(throttled ? HttpStatusCode.TooManyRequests : HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                error = throttled ? "temporarily_unavailable" : "invalid_grant",
+                suberror = "consent_required",
+                error_description = "sensitive service details",
+            }), Encoding.UTF8, "application/json"),
+        };
+
+        if (throttled)
+            await Assert.ThrowsAsync<TokenThrottledException>(() => h.Adapter.AcquireAsync(request, default));
+        else
+            await Assert.ThrowsAsync<InteractionRequiredException>(() => h.Adapter.AcquireAsync(request, default));
+
+        Assert.True(Assert.Single(h.Msal.PublicRequests).Broker);
+        Assert.NotEmpty(h.Transport.Posts);
+        Assert.Empty(h.Messages);
+    }
+
+    [Theory]
     [InlineData(AuthCredentialMethod.Broker)]
     [InlineData(AuthCredentialMethod.Browser)]
     [InlineData(AuthCredentialMethod.DeviceCode)]
@@ -607,11 +642,11 @@ public sealed class ProfileCredentialSdkTests
 
     internal static ProfileTokenRequest Request(AuthCredentialMethod method, bool creation = true, bool interaction = true,
         string? reference = null, string? home = null, string? secret = null, ProfileAzureSourceId? source = null, string? certificatePath = null,
-        CloudInstance cloud = CloudInstance.China) => new()
+        CloudInstance cloud = CloudInstance.China, string scope = "https://service.test/.default") => new()
     {
         Method = method, ClientId = Guid.Parse(ProfileCredentialTests.App),
         Authority = AgentHostAuthorityResolver.Resolve(cloud, Guid.Parse(ProfileCredentialTests.Tenant)),
-        Scopes = ["https://service.test/.default"], CacheReference = reference ?? OwnedProfileReferences.New(!ProfileCredentialValidation.IsPublicUser(method)).Value,
+        Scopes = [scope], CacheReference = reference ?? OwnedProfileReferences.New(!ProfileCredentialValidation.IsPublicUser(method)).Value,
         IsCreation = creation, InteractionAllowed = interaction, HomeAccountId = home,
         ClientSecret = method == AuthCredentialMethod.ClientSecret ? secret : null,
         Password = method == AuthCredentialMethod.Password ? secret : null, Username = method == AuthCredentialMethod.Password ? "alice@example.test" : null,
@@ -693,6 +728,7 @@ public sealed class ProfileCredentialSdkTests
         internal List<Uri> RequestUris { get; } = [];
         internal string Audience { get; set; } = "https://service.test";
         internal bool V2Tokens { get; set; }
+        internal Func<HttpResponseMessage>? TokenFailure { get; set; }
         internal OAuthTransport() => _client = new(this, disposeHandler: false);
         public HttpClient GetHttpClient() => _client;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -713,6 +749,7 @@ public sealed class ProfileCredentialSdkTests
                 var body = (await request.Content!.ReadAsStringAsync(ct)).Split('&').Select(p => p.Split('=', 2))
                     .ToDictionary(p => Uri.UnescapeDataString(p[0]), p => Uri.UnescapeDataString(p[1].Replace("+", " ")));
                 Posts.Add(body); TokenUris.Add(request.RequestUri!);
+                if (TokenFailure is { } failure) return failure();
                 if (request.RequestUri!.AbsolutePath.EndsWith("/devicecode", StringComparison.Ordinal))
                     return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new
                     {

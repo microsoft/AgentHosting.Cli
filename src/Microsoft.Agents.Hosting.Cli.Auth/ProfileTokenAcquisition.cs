@@ -134,7 +134,19 @@ public sealed class ProfileTokenAcquisition(
             }
             return Map(result, method);
         }
-        return broker ? await BrokerFailure.TranslateAsync(ExecuteAsync).ConfigureAwait(false) : await ExecuteAsync().ConfigureAwait(false);
+        if (!broker) return await ExecuteAsync().ConfigureAwait(false);
+        return await BrokerFailure.TranslateAsync(async () =>
+        {
+            try { return await ExecuteAsync().ConfigureAwait(false); }
+            catch (MsalUiRequiredException) when (!request.IsCreation && !request.ForceInteractive)
+            {
+                throw new InteractionRequiredException("The profile requires explicit sign-in to renew its token.");
+            }
+            catch (MsalServiceException ex) when (ex.StatusCode == 429 || ex is MsalThrottledServiceException)
+            {
+                throw new TokenThrottledException("Microsoft Entra ID is throttling credential token acquisition.", ex.Headers?.RetryAfter?.Delta);
+            }
+        }).ConfigureAwait(false);
     }
 
     private ProfileAzureSourceId[] AzureSources(ProfileTokenRequest request)

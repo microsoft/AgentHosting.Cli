@@ -286,6 +286,101 @@ public sealed class ProfileCredentialTests
     };
 
     [Theory]
+    [InlineData("renewal", false)]
+    [InlineData("renewal", true)]
+    [InlineData("consent", false)]
+    [InlineData("accounts", false)]
+    public async Task OverlappingProfileUsesWaitForTheActiveAcquisition(string operation, bool acquisitionFails)
+    {
+        using var h = new Harness();
+        var profile = PublicProfile();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        const string firstScope = "https://first.test/.default";
+        h.Acquisition.BeforeAcquire = async request =>
+        {
+            if (!request.Scopes.Contains(firstScope)) return;
+            entered.TrySetResult();
+            await release.Task;
+            if (acquisitionFails) throw new AuthenticationException("synthetic-acquisition-failure");
+        };
+        var first = h.Provider.AcquireAsync(profile, [firstScope], Tenant, default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            Task second = operation switch
+            {
+                "consent" => h.Provider.AcquireConsentAsync(profile, Guid.Parse(App), "http://localhost", ["delegated"], Tenant, default),
+                "accounts" => h.Provider.GetAccountsAsync(profile, default),
+                _ => h.Provider.AcquireAsync(profile, ["https://second.test/.default"], Tenant, default),
+            };
+            await Assert.ThrowsAnyAsync<AgentHostingException>(() => h.NewProvider().RemoveOwnedCredentialAsync(profile, default));
+            Assert.Equal(0, h.Backend.Calls);
+            release.TrySetResult();
+            await second.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (acquisitionFails) await Assert.ThrowsAsync<AuthenticationException>(() => first);
+            else await first;
+        }
+    }
+
+    [Fact]
+    public async Task WaitingProfileUseCanBeCanceledWithoutReleasingTheActiveLease()
+    {
+        using var h = new Harness();
+        var profile = PublicProfile();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Acquisition.BeforeAcquire = _ => { entered.TrySetResult(); return release.Task; };
+        var first = h.Provider.AcquireAsync(profile, ["delegated"], Tenant, default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            using var canceled = new CancellationTokenSource();
+            var waiting = h.Provider.AcquireAsync(profile, ["delegated"], Tenant, canceled.Token);
+            canceled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+            Assert.Single(h.Acquisition.Requests);
+            await Assert.ThrowsAnyAsync<AgentHostingException>(() => h.NewProvider().RemoveOwnedCredentialAsync(profile, default));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await first;
+        }
+        await h.Provider.AcquireAsync(profile, ["delegated"], Tenant, default).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task IndependentProfileReferencesCanAcquireConcurrently()
+    {
+        using var h = new Harness();
+        var profile = PublicProfile();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Acquisition.BeforeAcquire = request =>
+        {
+            if (request.CacheReference != profile.CredentialReference) return Task.CompletedTask;
+            entered.TrySetResult();
+            return release.Task;
+        };
+        var first = h.Provider.AcquireAsync(profile, ["delegated"], Tenant, default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            await h.Provider.AcquireAsync(PublicProfile(), ["delegated"], Tenant, default).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await first;
+        }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task CanceledBusyCompletionAutomaticallyReleasesLeaseWhenUseExits(bool acquisitionFails)

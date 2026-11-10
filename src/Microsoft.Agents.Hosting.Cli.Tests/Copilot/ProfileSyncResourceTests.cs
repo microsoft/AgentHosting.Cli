@@ -157,6 +157,42 @@ public sealed class ProfileSyncResourceTests
         Assert.Contains(handler.Requests, r => r.Host == "b.crm.dynamics.com" && r.Token == "profile-b");
     }
 
+    [Fact]
+    public async Task OverlappingDataverseRequestsShareTheRealProfileProviderWithoutCleanupFailure()
+    {
+        using var h = new ProfileCredentialTests.Harness();
+        var profile = await h.Provider.AuthenticateAsync(new(), default);
+        h.Profiles.Items.Add(profile);
+        await h.Provider.CompleteCreationAsync(profile, default);
+        var environment = Environment() with { Context = new(profile, PowerPlatformApiTargetConfig.Public) };
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Acquisition.BeforeAcquire = _ => { entered.TrySetResult(); return release.Task; };
+        var legacy = new RecordingTokenProvider();
+        using var handler = new TokenHandler();
+        using var accessor = new AgentHostDataverseHttpClientAccessor(new AgentHostSyncAuthProvider(legacy, h.Provider), () => handler);
+        using var scope = DataverseOperationScope.Push(new(environment.DataverseOrganization, Tenant, environment.Context));
+        using var client = accessor.CreateClient();
+        var first = client.GetAsync(environment.DataverseOrganization);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            var second = client.GetAsync(environment.DataverseOrganization);
+            release.TrySetResult();
+            using var secondResponse = await second.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        }
+        finally
+        {
+            release.TrySetResult();
+            using var firstResponse = await first;
+            Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        }
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Empty(legacy.RequestedResources);
+        Assert.Equal(0, h.Backend.Calls);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -319,9 +355,9 @@ public sealed class ProfileSyncResourceTests
     }
 
     [Theory]
-    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Production, "https://service.powerapps.com//.default", "api.powerapps.com")]
-    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Preprod, "https://service.powerapps.com//.default", "api.powerapps.com")]
-    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Test, "https://service.powerapps.com//.default", "api.powerapps.com")]
+    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Production, "https://api.bap.microsoft.com//.default", "api.powerapps.com")]
+    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Preprod, "https://api.bap.microsoft.com//.default", "api.powerapps.com")]
+    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Test, "https://api.bap.microsoft.com//.default", "api.powerapps.com")]
     [InlineData(CloudInstance.UsGov, PowerPlatformApiRing.Production, "https://gov.service.powerapps.us//.default", "gov.api.powerapps.us")]
     [InlineData(CloudInstance.UsGovHigh, PowerPlatformApiRing.Production, "https://high.service.powerapps.us//.default", "high.api.powerapps.us")]
     [InlineData(CloudInstance.UsGovDod, PowerPlatformApiRing.Production, "https://service.apps.appsplatform.us//.default", "api.apps.appsplatform.us")]

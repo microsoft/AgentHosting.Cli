@@ -71,6 +71,37 @@ public sealed class BrokerFallbackTests
             },
             "WAM_provider_error_3399614476");
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TheReasonPreservesOnlyTheEntraCodeFromSensitiveBrokerDetails(bool telemetry)
+    {
+        const string details = "AADSTS500011: synthetic-user@example.test secret-bearing-broker-details";
+        var failure = new MsalServiceException("WAM_provider_error_3399614466", telemetry ? "WAM Error" : details)
+        {
+            AdditionalExceptionData = new Dictionary<string, string>
+            {
+                [MsalException.BrokerErrorStatus] = "IncorrectConfiguration",
+                [MsalException.BrokerTelemetry] = telemetry ? details : "",
+            },
+        };
+
+        await AssertUnavailableAsync(failure,
+            "WAM_provider_error_3399614466, broker status IncorrectConfiguration, Entra error AADSTS500011");
+    }
+
+    [Theory]
+    [InlineData("""{"server_error_code":500011,"silent_message":"synthetic-user@example.test secret-details"}""")]
+    [InlineData("""{"wam_telemetry":"{\"server_error_code\":500011,\"silent_message\":\"synthetic-user@example.test secret-details\"}"}""")]
+    public Task TheReasonPreservesTheEntraCodeWhenBrokerTelemetryRedactsItsMessage(string telemetry) =>
+        AssertUnavailableAsync(new MsalServiceException("WAM_provider_error_3399614466", "(pii)")
+        {
+            AdditionalExceptionData = new Dictionary<string, string>
+            {
+                [MsalException.BrokerTelemetry] = telemetry,
+            },
+        }, "WAM_provider_error_3399614466, Entra error AADSTS500011");
+
     [Fact]
     public async Task AnOperatorCancellation_StopsSignIn_InsteadOfFallingBack()
     {
