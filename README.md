@@ -14,6 +14,13 @@ For repository-specific guides and technical references, start with the
 [documentation index](docs/README.md) and [command reference](src/Microsoft.Agents.Hosting.Cli.Docs/ReadMe.md).
 For building or changing the CLI itself, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Support
+
+This project uses [GitHub issues](https://github.com/microsoft/AgentHosting.Cli/issues)
+to track bugs and feature requests. Please search existing issues before filing
+a new one to avoid duplicates. For a new bug,
+[open an issue in this repository](https://github.com/microsoft/AgentHosting.Cli/issues/new/choose).
+
 ## Repository structure
 
 This repository contains the `msagent` CLI, its documentation, and its tests.
