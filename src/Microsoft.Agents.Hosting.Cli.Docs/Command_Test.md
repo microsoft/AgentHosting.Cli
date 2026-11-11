@@ -2,10 +2,6 @@
 
 [Command reference](ReadMe.md)
 
-The `msagent test` group is a controlled preview, gated by `LiveTestFeatures` and off by default.
-Enable it through the [feature controls](../Microsoft.Agents.Hosting.Cli/agent.md#feature-controls).
-Enabling a command does not grant access to an agent or approve use of a preview.
-
 These commands perform **live operations**, not dry runs. Remote actions are not rolled back
 and may continue after local cancellation. Check remote effects before retrying a failed query.
 The removed `--agent-harness` option is not accepted; endpoint discovery selects the runtime.
