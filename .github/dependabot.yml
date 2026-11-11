@@ -8,6 +8,10 @@ updates:
       - "*"
     schedule:
       interval: daily
+    cooldown:
+      default-days: 7
+      exclude:
+        - "Microsoft.*"
     target-branch: "main"
     labels:
       - 'dependencies'
