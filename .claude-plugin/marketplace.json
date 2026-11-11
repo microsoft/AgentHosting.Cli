@@ -1,17 +1,17 @@
 {
-  "name": "copilot-studio-plugin",
+  "name": "copilot-studio-cli-plugin",
   "owner": {
-    "name": "Microsoft Copilot Studio CAT Team"
+    "name": "CMR Dev Tools Team"
   },
   "metadata": {
     "description": "Microsoft Copilot Studio plugins for AI coding agents"
   },
   "plugins": [
     {
-      "name": "mcs-assistant",
+      "name": "msagent-assistant",
       "description": "Create, edit, validate, and migrate Copilot Studio agents.",
       "version": "1.0.2",
-      "source": "./.github/plugins/mcs-assistant"
+      "source": "./.github/plugins/msagent-assistant"
     }
   ]
 }

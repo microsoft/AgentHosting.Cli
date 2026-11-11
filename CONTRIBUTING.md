@@ -180,18 +180,18 @@ For loading rules, overrides, and metadata-based command/route controls, see the
 ## Authoring plugin
 
 The self-contained Copilot Studio plugin lives in
-`.github/plugins/mcs-assistant`; the repository-root `.claude-plugin` marketplace
+`.github/plugins/msagent-assistant`; the repository-root `.claude-plugin` marketplace
 points to it. Its Node.js >=22 tooling does not depend on the .NET build:
 
 ```powershell
-npm --prefix .github\plugins\mcs-assistant\scripts ci
-npm --prefix .github\plugins\mcs-assistant\scripts run build
-npm --prefix .github\plugins\mcs-assistant\scripts test
+npm --prefix .github\plugins\msagent-assistant\scripts ci
+npm --prefix .github\plugins\msagent-assistant\scripts run build
+npm --prefix .github\plugins\msagent-assistant\scripts test
 ```
 
 Commit regenerated helper bundles with source changes. Host package generation
 and compatibility limits are documented in the plugin's
-[compatibility guide](.github/plugins/mcs-assistant/COMPATIBILITY.md).
+[compatibility guide](.github/plugins/msagent-assistant/COMPATIBILITY.md).
 Offline CI does not run opt-in model evaluations, host installations or live queries.
 
 ## Live-service testing

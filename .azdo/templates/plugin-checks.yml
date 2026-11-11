@@ -8,7 +8,7 @@ steps:
 
 - script: npm ci --no-audit --no-fund
   displayName: Restore plugin tooling
-  workingDirectory: '$(Build.SourcesDirectory)/.github/plugins/mcs-assistant/scripts'
+  workingDirectory: '$(Build.SourcesDirectory)/.github/plugins/msagent-assistant/scripts'
   env:
     ob_restore_phase: true
 
@@ -16,10 +16,10 @@ steps:
   displayName: Build and test authoring plugin
   inputs:
     targetType: inline
-    workingDirectory: '$(Build.SourcesDirectory)/.github/plugins/mcs-assistant/scripts'
+    workingDirectory: '$(Build.SourcesDirectory)/.github/plugins/msagent-assistant/scripts'
     script: |
       npm run build
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       npm test
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      git diff --exit-code -- "$(Build.SourcesDirectory)/.github/plugins/mcs-assistant"
+      git diff --exit-code -- "$(Build.SourcesDirectory)/.github/plugins/msagent-assistant"
