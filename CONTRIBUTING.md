@@ -170,7 +170,7 @@ and verifying that discovery. Use fully qualified, resolvable symbols in XML
 
 The source of shipped defaults is
 [`featureflags.json`](src/Microsoft.Agents.Hosting.Cli/featureflags.json).
-Evaluations ship on; AMS, Azure Bot Service, identity, and live testing ship off.
+Evaluations and live testing ship on; AMS, Azure Bot Service, and identity ship off.
 Do not enable a feature merely to make a documentation example or test work.
 Feature controls are rollout controls, not authorization boundaries.
 

@@ -147,7 +147,7 @@ The source of truth is [featureflags.json](featureflags.json):
 | `AmsFeatures` | `off` | CodeAgent creation, AMS package upload, and package-revision deployment. |
 | `AzureBotServiceFeatures` | `off` | `abs` and resolved CodeAgent deployment routes backed by Azure Bot Service. |
 | `IdentityFeatures` | `off` | The user-facing `identity` command group. |
-| `LiveTestFeatures` | `off` | `test ask` and `test playground`. |
+| `LiveTestFeatures` | `on` | The `test` group: `test ask` and `test playground`. |
 | `EvaluationFeatures` | `on` | `agent eval` and its `testset` subgroup. |
 
 For an explicitly approved developer session, enable only the needed features:
