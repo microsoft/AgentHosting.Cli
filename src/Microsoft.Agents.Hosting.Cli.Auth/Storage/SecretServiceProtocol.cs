@@ -179,13 +179,15 @@ internal sealed class LinuxOwnedProtectedStorage : OwnedProtectedStorageBackend
         using (var reply = GetProperty(transport, item, ItemInterface, "Attributes", ct))
         {
             DbusValue value = VariantValue(Children(reply, 1)[0]);
-            if (value.Signature != "a{ss}") throw new NativeStorageException(NativeStorageFailure.Malformed);
-            var entries = Children(value, 3);
+            if (value.Signature != "a{ss}" || value.Data is not DbusValue[] entries || entries.Length is < 3 or > 4)
+                throw new NativeStorageException(NativeStorageFailure.Malformed);
             var expected = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["application"] = "com.microsoft.msagent.owned.v1",
                 ["kind"] = reference.KindName,
                 ["id"] = reference.OpaqueId,
+                // GNOME Keyring can add this schema without changing the owned coordinates.
+                ["xdg:schema"] = "org.freedesktop.Secret.Generic",
             };
             foreach (var entry in entries)
             {
@@ -194,6 +196,8 @@ internal sealed class LinuxOwnedProtectedStorage : OwnedProtectedStorageBackend
                 if (!expected.Remove(Text(pair[0]), out string? expectedValue) || expectedValue != Text(pair[1]))
                     throw new NativeStorageException(NativeStorageFailure.Malformed);
             }
+            expected.Remove("xdg:schema");
+            if (expected.Count != 0) throw new NativeStorageException(NativeStorageFailure.Malformed);
         }
 
         return (collection, item);

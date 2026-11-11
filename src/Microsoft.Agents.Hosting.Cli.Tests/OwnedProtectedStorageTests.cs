@@ -415,17 +415,106 @@ public sealed class OwnedProtectedStorageTests
     }
 
     [Theory]
-    [InlineData(OwnedProtectedStorageKind.Credential, "text/plain")]
-    [InlineData(OwnedProtectedStorageKind.TokenCache, "text/plain")]
-    [InlineData(OwnedProtectedStorageKind.Credential, "application/octet-stream")]
-    [InlineData(OwnedProtectedStorageKind.TokenCache, "application/octet-stream")]
+    [InlineData(OwnedProtectedStorageKind.Credential, "read")]
+    [InlineData(OwnedProtectedStorageKind.Credential, "write")]
+    [InlineData(OwnedProtectedStorageKind.Credential, "clear")]
+    [InlineData(OwnedProtectedStorageKind.TokenCache, "read")]
+    [InlineData(OwnedProtectedStorageKind.TokenCache, "write")]
+    [InlineData(OwnedProtectedStorageKind.TokenCache, "clear")]
+    public async Task LinuxAcceptsGnomeGenericSchemaWithoutChangingOwnedCoordinates(
+        OwnedProtectedStorageKind kind, string operation)
+    {
+        var bus = new FakeBus { AddGenericSchema = true };
+        var backend = new LinuxOwnedProtectedStorage(bus);
+        if (operation == "read")
+        {
+            Assert.Equal(new byte[] { 7, 8 }, await backend.ReadAsync(Reference(kind), default));
+            Assert.All(bus.ReturnedSecret!, value => Assert.Equal(0, value));
+        }
+        else if (operation == "write")
+        {
+            await backend.WriteAsync(Reference(kind), new byte[] { 7 }, default);
+            Assert.Equal(new byte[] { 7 }, bus.SavedSecret);
+        }
+        else
+        {
+            await backend.ClearAsync(Reference(kind), default);
+            Assert.Contains(bus.Calls, call => call.Method == "Delete");
+        }
+        var search = bus.Calls.Single(call => call.Method == "SearchItems");
+        Assert.Equal(new Dictionary<string, string>
+        {
+            ["application"] = "com.microsoft.msagent.owned.v1",
+            ["kind"] = Reference(kind).KindName,
+            ["id"] = Id,
+        }, ToMap(Children(search.Parameters)[0]));
+        Assert.DoesNotContain(bus.Calls, call => call.Method is "Unlock" or "Prompt" or "CreateItem");
+        Assert.True(bus.Disposed);
+    }
+
+    [Theory]
+    [InlineData("wrong", "application")]
+    [InlineData("wrong", "kind")]
+    [InlineData("wrong", "id")]
+    [InlineData("wrong", "xdg:schema")]
+    [InlineData("missing", "application")]
+    [InlineData("missing", "kind")]
+    [InlineData("missing", "id")]
+    [InlineData("duplicate", "application")]
+    [InlineData("duplicate", "kind")]
+    [InlineData("duplicate", "id")]
+    [InlineData("duplicate", "xdg:schema")]
+    [InlineData("unknown", "xdg:schema")]
+    [InlineData("extra", "unexpected")]
+    public async Task LinuxGenericSchemaCannotBypassOwnedAttributeValidation(string malformed, string key)
+    {
+        foreach (string operation in new[] { "read", "write", "clear" })
+        {
+            var attributes = new List<KeyValuePair<string, string>>
+            {
+                new("application", "com.microsoft.msagent.owned.v1"),
+                new("kind", "credential"),
+                new("id", Id),
+                new("xdg:schema", "org.freedesktop.Secret.Generic"),
+            };
+            int index = attributes.FindIndex(pair => pair.Key == key);
+            if (malformed == "wrong") attributes[index] = new(key, "TOP_SECRET");
+            else if (malformed == "missing") attributes.RemoveAt(index);
+            else if (malformed == "duplicate") attributes[index == attributes.Count - 1 ? 0 : attributes.Count - 1] = attributes[index];
+            else if (malformed == "unknown") attributes[index] = new("unexpected", attributes[index].Value);
+            else attributes.Add(new(key, "TOP_SECRET"));
+            var bus = new FakeBus
+            {
+                Override = request => request.Method == "Get" && (string)Children(request.Parameters)[1].Data == "Attributes"
+                    ? DbusValue.Tuple(DbusValue.Variant(DbusValue.Array("{ss}", attributes.Select(pair =>
+                        DbusValue.Entry(DbusValue.Text(pair.Key), DbusValue.Text(pair.Value))).ToArray())))
+                    : null,
+            };
+            AssertRedacted(await Assert.ThrowsAsync<CacheProtectionUnavailableException>(() =>
+                Execute(new LinuxOwnedProtectedStorage(bus), operation)));
+            Assert.DoesNotContain(bus.Calls, call => call.Method is
+                "OpenSession" or "GetSecret" or "SetSecret" or "CreateItem" or "Delete" or "Unlock" or "Prompt");
+            Assert.True(bus.Disposed);
+        }
+    }
+
+    [Theory]
+    [InlineData(OwnedProtectedStorageKind.Credential, "text/plain", false)]
+    [InlineData(OwnedProtectedStorageKind.TokenCache, "text/plain", false)]
+    [InlineData(OwnedProtectedStorageKind.Credential, "application/octet-stream", false)]
+    [InlineData(OwnedProtectedStorageKind.TokenCache, "application/octet-stream", false)]
+    [InlineData(OwnedProtectedStorageKind.Credential, "text/plain", true)]
+    [InlineData(OwnedProtectedStorageKind.TokenCache, "text/plain", true)]
+    [InlineData(OwnedProtectedStorageKind.Credential, "application/octet-stream", true)]
+    [InlineData(OwnedProtectedStorageKind.TokenCache, "application/octet-stream", true)]
     public async Task LinuxReadsBinarySecretBytesUnchangedWhenGnomeKeyringReportsTextPlain(
-        OwnedProtectedStorageKind kind, string contentType)
+        OwnedProtectedStorageKind kind, string contentType, bool addGenericSchema)
     {
         byte[] expected = [0, 0xff, 0x80, 0xc3, 0x28, 65, 61, 0];
         byte[] providerBytes = expected.ToArray();
         var bus = new FakeBus
         {
+            AddGenericSchema = addGenericSchema,
             Override = request => request.Method == "GetSecret"
                 ? DbusValue.Tuple(DbusValue.Tuple(DbusValue.Path(FakeBus.Session), DbusValue.Bytes([]),
                     DbusValue.Bytes(providerBytes), DbusValue.Text(contentType)))
@@ -753,6 +842,7 @@ public sealed class OwnedProtectedStorageTests
         internal bool MissingDefault;
         internal bool MissingItem;
         internal bool PromptReply;
+        internal bool AddGenericSchema;
         internal byte[]? ReturnedSecret;
         internal byte[]? SavedSecret;
         internal Action? AfterSecretRead;
@@ -775,6 +865,8 @@ public sealed class OwnedProtectedStorageTests
                 if (property == "Attributes")
                 {
                     var copy = ToMap(_attributes!).Select(p => DbusValue.Entry(DbusValue.Text(p.Key), DbusValue.Text(p.Value))).ToArray();
+                    if (AddGenericSchema)
+                        copy = [.. copy, DbusValue.Entry(DbusValue.Text("xdg:schema"), DbusValue.Text("org.freedesktop.Secret.Generic"))];
                     return DbusValue.Tuple(DbusValue.Variant(DbusValue.Array("{ss}", copy)));
                 }
             }
