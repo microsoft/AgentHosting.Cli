@@ -78,6 +78,110 @@ public sealed class AuthProfileCommandHostTests
         }
     }
 
+    [Theory]
+    [InlineData(AuthPrincipalType.ServicePrincipal, "", App)]
+    [InlineData(AuthPrincipalType.ServicePrincipal, " \t ", App)]
+    [InlineData(AuthPrincipalType.ServicePrincipal, "existing-account", "existing-account")]
+    [InlineData(AuthPrincipalType.User, "operator@example.test", "operator@example.test")]
+    [InlineData(AuthPrincipalType.User, "", "")]
+    public void ListDisplaysApplicationIdForMissingNonUserAccountsWithoutChangingJson(
+        AuthPrincipalType principalType, string account, string expectedAccount)
+    {
+        var profile = FakeOperations.SafeAuthProfile with
+        {
+            Account = account, ClientId = App, PrincipalType = principalType,
+        };
+        var result = new AuthProfileListResult([profile]);
+        var output = new StringWriter();
+        var renderer = new CliOutputRenderer(output, TextWriter.Null, color: false);
+
+        renderer.RenderSuccess(result, json: false);
+
+        var lines = output.ToString().Split(System.Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(2, lines.Length);
+        Assert.Contains("User/AppId", lines[0]);
+        var accountColumn = lines[0].IndexOf("User/AppId", StringComparison.Ordinal);
+        var cloudColumn = lines[0].IndexOf("Cloud", StringComparison.Ordinal);
+        Assert.Equal(expectedAccount, lines[1][accountColumn..cloudColumn].TrimEnd());
+        output.GetStringBuilder().Clear();
+
+        renderer.RenderSuccess(result, json: true);
+
+        using var json = JsonDocument.Parse(output.ToString());
+        var metadata = Assert.Single(json.RootElement.GetProperty("profiles").EnumerateArray());
+        Assert.Equal(account, metadata.GetProperty("account").GetString());
+        Assert.Equal(App, metadata.GetProperty("clientId").GetString());
+    }
+
+    [Fact]
+    public void ListRendersAlignedColumnsWithTheActiveMarkerInItsOwnColumn()
+    {
+        var result = new AuthProfileListResult(
+        [
+            FakeOperations.SafeAuthProfile with
+            {
+                Index = 12, IsActive = false, Name = "Dev with spaces",
+                CredentialMethod = AuthCredentialMethod.Browser,
+                ConnectionUrl = "https://api.powerplatform.com",
+            },
+            FakeOperations.SafeAuthProfile with
+            {
+                ProfileId = "workload-profile", Index = 3, IsActive = true, Name = null,
+                Account = "", ClientId = App, Cloud = "UsGovHigh",
+                PrincipalType = AuthPrincipalType.ServicePrincipal,
+                CredentialMethod = AuthCredentialMethod.Certificate,
+                ConnectionUrl = "https://high.api.gov.powerplatform.microsoft.us",
+            },
+        ]);
+        var output = new StringWriter();
+
+        new CliOutputRenderer(output, TextWriter.Null, color: false).RenderSuccess(result, json: false);
+
+        string[] expected =
+        [
+            $"  {"Index",-5}  {"Active",-6}  {"Name",-15}  {"User/AppId",-36}  {"Cloud",-9}  {"Type",-14}  Endpoint",
+            $"  {"12",-5}  {"",-6}  {"Dev with spaces",-15}  {"operator@example.test",-36}  {"Public",-9}  {"User",-14}  https://api.powerplatform.com",
+            $"  {"3",-5}  {"*",-6}  {"(unnamed)",-15}  {App,-36}  {"UsGovHigh",-9}  {"AppCertificate",-14}  https://high.api.gov.powerplatform.microsoft.us",
+        ];
+        Assert.Equal(expected, output.ToString().Split(System.Environment.NewLine, StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    [Theory]
+    [InlineData(AuthCredentialMethod.Broker, "OperatingSystem")]
+    [InlineData(AuthCredentialMethod.Browser, "User")]
+    [InlineData(AuthCredentialMethod.DeviceCode, "User")]
+    [InlineData(AuthCredentialMethod.Password, "User")]
+    [InlineData(AuthCredentialMethod.ClientSecret, "Application")]
+    [InlineData(AuthCredentialMethod.Certificate, "AppCertificate")]
+    [InlineData(AuthCredentialMethod.DefaultAzureCredential, "AzureIdentity")]
+    [InlineData(AuthCredentialMethod.GitHubFederated, "GitHubFederated")]
+    [InlineData(AuthCredentialMethod.AzureDevOpsFederated, "AzureDevOpsFederated")]
+    public void ListUsesPacTypeLabelsForCredentialMethods(AuthCredentialMethod method, string expectedType)
+    {
+        var result = new AuthProfileListResult([FakeOperations.SafeAuthProfile with { CredentialMethod = method }]);
+        var output = new StringWriter();
+
+        new CliOutputRenderer(output, TextWriter.Null, color: false).RenderSuccess(result, json: false);
+
+        var lines = output.ToString().Split(System.Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(2, lines.Length);
+        Assert.Contains("Type", lines[0]);
+        var typeColumn = lines[0].IndexOf("Type", StringComparison.Ordinal);
+        var endpointColumn = lines[0].IndexOf("Endpoint", StringComparison.Ordinal);
+        Assert.Equal(expectedType, lines[1][typeColumn..endpointColumn].TrimEnd());
+    }
+
+    [Fact]
+    public void ListRendersHeadersWithoutProfiles()
+    {
+        var output = new StringWriter();
+
+        new CliOutputRenderer(output, TextWriter.Null, color: false)
+            .RenderSuccess(new AuthProfileListResult([]), json: false);
+
+        Assert.Equal($"  Index  Active  Name  User/AppId  Cloud  Type  Endpoint{System.Environment.NewLine}", output.ToString());
+    }
+
     [Fact]
     public async Task UnexpectedCredentialExceptionNeverEmitsInputsOrInnerExceptions()
     {

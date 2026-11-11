@@ -120,6 +120,14 @@ msagent auth list [--json]
 Lists safe profile/name/cloud/principal/default metadata, an active marker, and **1-based transient**
 positions. Rerun list before using an index after creation or deletion; positions are not persistent IDs.
 
+Human-readable output is an aligned table with `Index`, `Active`, `Name`, `User/AppId`, `Cloud`,
+`Type`, and `Endpoint` columns. `Active` uses `*` for the selected profile. `User/AppId` shows the
+application ID for non-user profiles without an account name.
+
+`Type` uses authentication-method labels, such as `User`, `OperatingSystem`,
+`Application`, `AppCertificate`, and `AzureIdentity`. `Endpoint` is the profile's Power Platform API
+URL, not a Dataverse URL. `--json` keeps the existing metadata fields unchanged.
+
 ## `msagent auth select`
 
 ```text

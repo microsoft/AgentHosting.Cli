@@ -6,6 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Core.Rendering;
 
 namespace Microsoft.Agents.Hosting.Cli.Rendering;
@@ -316,8 +317,19 @@ public sealed class CliOutputRenderer
             $"Active profile at commit: {DescribeAuthProfile(partial.ActiveProfile)}",
         ],
         AuthPartialResult partial => [partial.Guidance],
-        AuthProfileListResult profiles => profiles.Profiles.Select(profile =>
-            $"{profile.Index} {(profile.IsActive ? "*" : " ")} {profile.Name ?? "(unnamed)"} | {profile.Account} | {profile.Cloud} | {profile.ConnectionUrl}").ToList(),
+        AuthProfileListResult profiles => TextGrid.RenderRows(
+            ["Index", "Active", "Name", "User/AppId", "Cloud", "Type", "Endpoint"],
+            profiles.Profiles.Select(profile => new[]
+            {
+                profile.Index?.ToString() ?? string.Empty,
+                profile.IsActive ? "*" : string.Empty,
+                profile.Name ?? "(unnamed)",
+                profile.PrincipalType == AuthPrincipalType.ServicePrincipal && string.IsNullOrWhiteSpace(profile.Account)
+                    ? profile.ClientId ?? string.Empty : profile.Account,
+                profile.Cloud,
+                DescribeAuthProfileType(profile.CredentialMethod),
+                profile.ConnectionUrl ?? string.Empty,
+            }).ToList()),
         AuthProfileOperationResult { Status: "deleted" } result =>
         [
             $"Authentication profile deleted: {DescribeAuthProfile(result.Profile)}",
@@ -345,6 +357,16 @@ public sealed class CliOutputRenderer
     private static string DescribeAuthProfile(AuthProfileInfo? profile) => profile is null
         ? "none"
         : $"{profile.Index} {profile.Name ?? "(unnamed)"} | {profile.Account} | {profile.Cloud} | {profile.ConnectionUrl}";
+
+    private static string DescribeAuthProfileType(AuthCredentialMethod method) => method switch
+    {
+        AuthCredentialMethod.Broker => "OperatingSystem",
+        AuthCredentialMethod.Browser or AuthCredentialMethod.DeviceCode or AuthCredentialMethod.Password => "User",
+        AuthCredentialMethod.ClientSecret => "Application",
+        AuthCredentialMethod.Certificate => "AppCertificate",
+        AuthCredentialMethod.DefaultAzureCredential => "AzureIdentity",
+        _ => method.ToString(),
+    };
 
     private static List<string> DescribeJson(object payload) =>
         (JsonSerializer.SerializeToNode(payload, payload.GetType(), CliJsonContext.Default)
