@@ -13,6 +13,29 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 public sealed class ProfileCredentialTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AuthenticationCreatesMissingConfigurationAncestors(bool nested)
+    {
+        using var h = new Harness();
+        var root = nested ? Path.Combine(h.Directory, "missing-parent", "config") : Path.Combine(h.Directory, "config");
+        var store = new FileAuthProfileStore(Path.Combine(root, "profiles.json"));
+        Assert.Empty(await store.GetProfilesAsync(default));
+        Assert.False(Directory.Exists(root));
+        var provider = new ProfileCredentialProvider(new() { ConfigDirectory = root }, store,
+            h.Backend, h.Acquisition, FakePlatformInfo.Unknown());
+        var profile = await provider.AuthenticateAsync(new() { Target = PowerPlatformApiTargetConfig.Public, Tenant = Tenant }, default);
+        try
+        {
+            Assert.Single(h.Acquisition.Requests);
+            OwnedProfileFiles.CheckPermissions(root, directory: true);
+            OwnedProfileFiles.CheckPermissions(Path.Combine(root, "owned-profile-references-v1"), directory: true);
+            if (nested) OwnedProfileFiles.CheckPermissions(Path.GetDirectoryName(root)!, directory: true);
+        }
+        finally { await provider.RemoveOwnedCredentialAsync(profile, default); }
+    }
+
     [Fact]
     public async Task RegisteredTargetsRemainValidAcrossCredentialAndProfilePersistence()
     {

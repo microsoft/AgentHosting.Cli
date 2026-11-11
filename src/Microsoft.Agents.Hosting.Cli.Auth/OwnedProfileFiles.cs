@@ -18,10 +18,32 @@ internal sealed class OwnedProfileFiles
 
     internal void EnsureDirectory()
     {
-        var parent = Path.GetDirectoryName(_directory)!;
-        CheckAncestors(parent);
-        if (!Directory.Exists(_directory))
+        EnsureDirectory(_directory);
+        CheckPermissions(_directory, directory: true);
+    }
+
+    internal static void EnsureDirectory(string path)
+    {
+        var missing = new Stack<DirectoryInfo>();
+        var current = new DirectoryInfo(path);
+        while (true)
         {
+            try
+            {
+                if ((File.GetAttributes(current.FullName) & FileAttributes.Directory) == 0)
+                    throw new IOException("The credential storage path has a non-directory ancestor.");
+                CheckAncestors(current.FullName);
+                break;
+            }
+            catch (Exception ex) when (ex is DirectoryNotFoundException or FileNotFoundException)
+            {
+                missing.Push(current);
+                current = current.Parent ?? throw new DirectoryNotFoundException();
+            }
+        }
+        while (missing.TryPop(out var directory))
+        {
+            CheckAncestors(directory.Parent!.FullName);
             if (OperatingSystem.IsWindows())
             {
                 using var identity = WindowsIdentity.GetCurrent();
@@ -31,12 +53,12 @@ internal sealed class OwnedProfileFiles
                 acl.SetAccessRuleProtection(true, false);
                 acl.AddAccessRule(new FileSystemAccessRule(owner, FileSystemRights.FullControl,
                     InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-                new DirectoryInfo(_directory).Create(acl);
+                directory.Create(acl);
             }
-            else Directory.CreateDirectory(_directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            else Directory.CreateDirectory(directory.FullName, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            CheckAncestors(directory.FullName);
+            CheckPermissions(directory.FullName, directory: true);
         }
-        CheckAncestors(_directory);
-        CheckPermissions(_directory, directory: true);
     }
 
     internal FileStream OpenLease(string name)

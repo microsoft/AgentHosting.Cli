@@ -1,5 +1,3 @@
-using System.Security.AccessControl;
-using System.Security.Principal;
 using System.Text;
 using Microsoft.Agents.Hosting.Cli.Auth.OwnedStorage;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
@@ -205,49 +203,12 @@ internal sealed class LegacyCacheFiles(string root, bool plaintext)
     internal AgentHostCacheDescriptor Descriptor { get; } = AgentHostCacheDescriptor.Create(Path.GetFullPath(root));
     internal IDisposable Lease()
     {
-        EnsureDirectory(Descriptor.CacheDirectory);
+        OwnedProfileFiles.EnsureDirectory(Descriptor.CacheDirectory);
         var path = Descriptor.CacheFilePath + ".lockfile";
         if (File.Exists(path)) RegularFile(path);
         return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
     }
 
-    private static void EnsureDirectory(string path)
-    {
-        var missing = new Stack<DirectoryInfo>();
-        var current = new DirectoryInfo(path);
-        while (true)
-        {
-            try
-            {
-                if ((File.GetAttributes(current.FullName) & FileAttributes.Directory) == 0)
-                    throw new IOException("The legacy token-cache path has a non-directory ancestor.");
-                OwnedProfileFiles.CheckAncestors(current.FullName);
-                break;
-            }
-            catch (Exception ex) when (ex is DirectoryNotFoundException or FileNotFoundException)
-            {
-                missing.Push(current);
-                current = current.Parent ?? throw new DirectoryNotFoundException();
-            }
-        }
-        while (missing.TryPop(out var directory))
-        {
-            OwnedProfileFiles.CheckAncestors(directory.Parent!.FullName);
-            if (OperatingSystem.IsWindows())
-            {
-                using var identity = WindowsIdentity.GetCurrent();
-                var owner = identity.User ?? throw new UnauthorizedAccessException();
-                var acl = new DirectorySecurity();
-                acl.SetOwner(owner); acl.SetAccessRuleProtection(true, false);
-                acl.AddAccessRule(new FileSystemAccessRule(owner, FileSystemRights.FullControl,
-                    InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-                directory.Create(acl);
-            }
-            else Directory.CreateDirectory(directory.FullName, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            OwnedProfileFiles.CheckAncestors(directory.FullName);
-            OwnedProfileFiles.CheckPermissions(directory.FullName, directory: true);
-        }
-    }
     internal async Task<byte[]?> ReadAsync(CancellationToken ct)
     {
         OwnedProfileFiles.CheckAncestors(Path.GetDirectoryName(Descriptor.CacheFilePath)!);

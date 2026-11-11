@@ -34,24 +34,33 @@ public sealed class ProfileCredentialLegacyCacheTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void LegacyCacheLeaseRejectsNonDirectoryAncestors(bool rootIsFile)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void CredentialFilesRejectNonDirectoryAncestors(bool rootIsFile, bool ownedProfile)
     {
         using var h = new ProfileCredentialTests.Harness();
         var file = Path.Combine(h.Directory, "not-a-directory");
         File.WriteAllText(file, "unchanged");
         var root = rootIsFile ? file : Path.Combine(file, "missing", "config");
-        var backend = LegacyMsalTokenCacheBackendFactory.CreateUnprotectedTokenCache(root);
-        Assert.Throws<CacheProtectionUnavailableException>(() => backend.AcquireLease(default));
+        if (ownedProfile)
+            Assert.Throws<IOException>(() => new OwnedProfileFiles(root).EnsureDirectory());
+        else
+        {
+            var backend = LegacyMsalTokenCacheBackendFactory.CreateUnprotectedTokenCache(root);
+            Assert.Throws<CacheProtectionUnavailableException>(() => backend.AcquireLease(default));
+        }
         Assert.Equal("unchanged", File.ReadAllText(file));
         Assert.Single(Directory.GetFileSystemEntries(h.Directory));
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task LegacyCacheLeaseRejectsReparseAncestorBeforeCreatingMissingDirectories(bool missingChild)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task CredentialFilesRejectReparseAncestorBeforeCreatingMissingDirectories(bool missingChild, bool ownedProfile)
     {
         using var h = new ProfileCredentialTests.Harness();
         var target = Path.Combine(h.Directory, "target");
@@ -76,8 +85,13 @@ public sealed class ProfileCredentialLegacyCacheTests
         try
         {
             var root = missingChild ? Path.Combine(link, "missing", "config") : link;
-            var backend = LegacyMsalTokenCacheBackendFactory.CreateUnprotectedTokenCache(root);
-            Assert.Throws<AuthProfileStateException>(() => backend.AcquireLease(default));
+            if (ownedProfile)
+                Assert.Throws<AuthProfileStateException>(() => new OwnedProfileFiles(root).EnsureDirectory());
+            else
+            {
+                var backend = LegacyMsalTokenCacheBackendFactory.CreateUnprotectedTokenCache(root);
+                Assert.Throws<AuthProfileStateException>(() => backend.AcquireLease(default));
+            }
             Assert.Empty(Directory.GetFileSystemEntries(target));
         }
         finally { Directory.Delete(link); }
