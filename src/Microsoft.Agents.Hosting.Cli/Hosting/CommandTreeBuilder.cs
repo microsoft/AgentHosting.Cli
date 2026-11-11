@@ -225,14 +225,15 @@ public sealed class CommandTreeBuilder
             _telemetrySuppressedCommands.Add(command);
         }
         var symbols = new Dictionary<string, Symbol>(inherited, StringComparer.Ordinal);
-        var declaredSymbols = Visible(metadata.Implementation.Symbols);
-        foreach (var option in declaredSymbols.OfType<CommandOption>().Where(option => option.IsSensitive))
+        var allSymbols = metadata.Implementation.Symbols;
+        foreach (var option in allSymbols.OfType<CommandOption>().Where(option => option.IsSensitive))
         {
             _sensitiveCommands.Add(command);
             _sensitiveOptions.Add(option.Name);
             if (option.ShortAlias is { } alias) _sensitiveOptions.Add(alias);
             foreach (var extra in option.ExtraAliases) _sensitiveOptions.Add(extra);
         }
+        var declaredSymbols = Visible(allSymbols);
         var declaredNames = declaredSymbols.Select(symbol => symbol.Name).ToHashSet(StringComparer.Ordinal);
 
         foreach (var declared in OrderForHelp(declaredSymbols))

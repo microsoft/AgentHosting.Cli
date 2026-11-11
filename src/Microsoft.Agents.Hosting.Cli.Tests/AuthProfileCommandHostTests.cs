@@ -520,6 +520,40 @@ public sealed class AuthProfileCommandHostTests
         { ["auth", "create", "-pw", Canary, "--username", "user", "--githubFederated", "--json"] },
     };
 
+    public static TheoryData<string[]> DefaultFeatureCredentialParseFailures() => new()
+    {
+        { ["auth", "creat", "--clientSecret", Canary] },
+        { ["auth", "creat", "-cs", Canary] },
+        { ["auth", "creat", "--certificatePassword", Canary] },
+        { ["auth", "creat", "-cp", Canary] },
+        { ["auth", "creat", "--password", Canary] },
+        { ["auth", "creat", "-pw", Canary] },
+        { ["AUTH", "CREATE", "--ClientSecret=" + Canary] },
+        { ["AUTH", "CREATE", "--CertificatePassword:" + Canary] },
+    };
+
+    [Theory]
+    [MemberData(nameof(DefaultFeatureCredentialParseFailures))]
+    public async Task MalformedCommandPathsNeverEchoCredentialsWithDefaultFeatures(string[] args)
+    {
+        foreach (bool jsonOutput in new[] { false, true })
+        {
+            var operations = new FakeOperations();
+            var result = await Run(operations,
+                [.. args, "--non-interactive", "--debug", .. jsonOutput ? ["--json"] : Array.Empty<string>()]);
+
+            Assert.Equal(2, result.Exit);
+            Assert.DoesNotContain(Canary, result.Output + result.Error);
+            Assert.Null(operations.LastAuthCreate);
+            if (jsonOutput)
+            {
+                using var json = JsonDocument.Parse(result.Output);
+                Assert.Equal(99002, json.RootElement.GetProperty("errorCode").GetInt32());
+                Assert.Equal(2, json.RootElement.GetProperty("exitCode").GetInt32());
+            }
+        }
+    }
+
     [Fact]
     public async Task HelpWithDashPrefixedCredentialValueNeverEchoesIt()
     {
