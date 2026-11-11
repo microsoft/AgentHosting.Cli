@@ -17,6 +17,99 @@ public sealed class AuthProfileCommandHostTests
     private const string Canary = "FAKE_AUTH_SECRET_CANARY_4A";
     private const string Tenant = "11111111-1111-1111-1111-111111111111";
     private const string App = "22222222-2222-2222-2222-222222222222";
+    private static readonly IFeatureFlags ApplicationSupport = new TestFeatureFlags(FeatureName.AppUserSupport);
+
+    public static TheoryData<string, string, string?> ApplicationOptions() => new()
+    {
+        { "--applicationId", "-id", App },
+        { "--clientSecret", "-cs", Canary },
+        { "--certificateDiskPath", "-cdp", "FAKE_CERTIFICATE.pfx" },
+        { "--certificatePassword", "-cp", Canary },
+        { "--managedIdentity", "-mi", null },
+        { "--githubFederated", "-ghf", null },
+        { "--azureDevOpsFederated", "-adof", null },
+    };
+
+    [Fact]
+    public async Task ApplicationOptionsAreAbsentFromDefaultCreateHelp()
+    {
+        var result = await Run(new(), ["auth", "create", "--help"], featureFlags: new TestFeatureFlags());
+
+        Assert.Equal(0, result.Exit);
+        foreach (var row in ApplicationOptions())
+        {
+            Assert.DoesNotContain((string)row[0], result.Output);
+            Assert.DoesNotMatch($@"(?<!\S){row[1]}(?=[,\s])", result.Output);
+        }
+        foreach (var option in new[] { "--name", "--environment", "--cloud", "--tenant", "--deviceCode", "--username", "--password" })
+            Assert.Contains(option, result.Output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ApplicationOptions))]
+    public async Task DisabledApplicationOptionsAndAliasesCannotDispatch(string option, string alias, string? value)
+    {
+        foreach (var spelling in new[] { option, alias })
+        {
+            var operations = new FakeOperations();
+            var result = await Run(operations, ["auth", "create", .. ApplicationCreationArguments(option, spelling, value), "--json"],
+                featureFlags: new TestFeatureFlags());
+
+            Assert.Equal(2, result.Exit);
+            Assert.Null(operations.LastAuthCreate);
+            Assert.DoesNotContain(Canary, result.Output + result.Error);
+            using var json = JsonDocument.Parse(result.Output);
+            Assert.Equal(99002, json.RootElement.GetProperty("errorCode").GetInt32());
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ApplicationOptions))]
+    public async Task ApplicationOptInRestoresOptionsAliasesAndCreation(string option, string alias, string? value)
+    {
+        var help = await Run(new(), ["auth", "create", "--help"], featureFlags: ApplicationSupport);
+        Assert.Equal(0, help.Exit);
+        Assert.Contains(option, help.Output);
+        Assert.Contains(alias, help.Output);
+        foreach (var spelling in new[] { option, alias })
+        {
+            var operations = new FakeOperations();
+            var result = await Run(operations, ["auth", "create", .. ApplicationCreationArguments(option, spelling, value),
+                "--non-interactive=true", "--json"], featureFlags: ApplicationSupport);
+
+            Assert.Equal(0, result.Exit);
+            Assert.NotNull(operations.LastAuthCreate);
+            Assert.DoesNotContain(Canary, result.Output + result.Error);
+        }
+    }
+
+    private static string[] ApplicationCreationArguments(string option, string spelling, string? value) =>
+    [
+        "--tenant", Tenant,
+        .. option == "--applicationId" ? Array.Empty<string>() : ["--applicationId", App],
+        .. option switch
+        {
+            "--applicationId" => new[] { "--clientSecret", Canary },
+            "--certificatePassword" => ["--certificateDiskPath", "FAKE_CERTIFICATE.pfx"],
+            _ => [],
+        },
+        spelling,
+        .. value is null ? Array.Empty<string>() : [value],
+    ];
+
+    [Theory]
+    [InlineData()]
+    [InlineData("--deviceCode")]
+    [InlineData("--username", "FAKE_USER", "--password", Canary)]
+    public async Task UserCreationRemainsAvailableWithoutApplicationSupport(params string[] options)
+    {
+        var operations = new FakeOperations();
+        var result = await Run(operations, ["auth", "create", "--tenant", Tenant, .. options, "--json"],
+            featureFlags: new TestFeatureFlags());
+
+        Assert.Equal(0, result.Exit);
+        Assert.Equal(Tenant, operations.LastAuthCreate?.Tenant);
+    }
 
     [Fact]
     public async Task LegacyCommandsAreAbsentFromDefaultHelp()
@@ -186,7 +279,7 @@ public sealed class AuthProfileCommandHostTests
     public async Task UnexpectedCredentialExceptionNeverEmitsInputsOrInnerExceptions()
     {
         var result = await Run(new() { OnAuthCreate = (_, _) => throw new InvalidOperationException(Canary,
-            new Exception("inner-" + Canary)) }, ["auth", "create", "-mi", "--json", "--debug"]);
+            new Exception("inner-" + Canary)) }, ["auth", "create", "-mi", "--json", "--debug"], featureFlags: ApplicationSupport);
         Assert.Equal(1, result.Exit);
         Assert.DoesNotContain(Canary, result.Output + result.Error);
         using var json = JsonDocument.Parse(result.Output);
@@ -221,7 +314,7 @@ public sealed class AuthProfileCommandHostTests
     {
         var operations = new FakeOperations();
         var result = await Run(operations, ["auth", "create", "-n", "Dev", "-env", "Environment",
-            "-ci", "China", "-t", Tenant, "-id", App, "-cs", Canary, "--json", "--debug"]);
+            "-ci", "China", "-t", Tenant, "-id", App, "-cs", Canary, "--json", "--debug"], featureFlags: ApplicationSupport);
         Assert.Equal(0, result.Exit);
         var request = Assert.IsType<AuthCreateRequest>(operations.LastAuthCreate);
         Assert.Equal("Dev", request.Name);
@@ -247,7 +340,8 @@ public sealed class AuthProfileCommandHostTests
     {
         var operations = new FakeOperations();
         string[] options = cloud is null ? [] : ["--cloud=" + cloud];
-        var result = await Run(operations, ["auth", "create", "-mi", .. options, "--json", "--non-interactive=true"]);
+        var result = await Run(operations, ["auth", "create", "-mi", .. options, "--json", "--non-interactive=true"],
+            featureFlags: ApplicationSupport);
         Assert.Equal(exit, result.Exit);
         if (exit == 0)
             Assert.Equal(PowerPlatformApiTargetConfig.Public, operations.LastAuthCreate!.Target);
@@ -270,7 +364,7 @@ public sealed class AuthProfileCommandHostTests
     public async Task LocalCredentialAliasesBindToApprovedCoreMethods(string[] options, AuthCredentialMethod method)
     {
         var operations = new FakeOperations();
-        var result = await Run(operations, ["auth", "create", .. options, "--json"]);
+        var result = await Run(operations, ["auth", "create", .. options, "--json"], featureFlags: ApplicationSupport);
         Assert.Equal(0, result.Exit);
         Assert.Equal(method, Auth.ProfileCredentialValidation.Method(operations.LastAuthCreate!, brokerSupported: false, interactionAllowed: true));
         Assert.DoesNotContain(Canary, result.Output + result.Error);
@@ -283,7 +377,7 @@ public sealed class AuthProfileCommandHostTests
     [InlineData("--azureDevOpsFederated", "-adof")]
     public async Task CreateHelpAdvertisesExactLocalSwitch(string option, string alias)
     {
-        var result = await Run(new(), ["auth", "create", "--help"]);
+        var result = await Run(new(), ["auth", "create", "--help"], featureFlags: ApplicationSupport);
         Assert.Equal(0, result.Exit);
         Assert.Contains(option, result.Output);
         Assert.Contains(alias, result.Output);
@@ -456,7 +550,7 @@ public sealed class AuthProfileCommandHostTests
                 new OperationCanceledException(Canary)) };
         var args = new List<string> { "auth", "create", "-mi" };
         if (json) args.Add("--json");
-        var result = await Run(operations, [.. args]);
+        var result = await Run(operations, [.. args], featureFlags: ApplicationSupport);
         Assert.Equal(1, result.Exit);
         Assert.DoesNotContain(Canary, result.Output + result.Error);
         Assert.Contains("committed", result.Output + result.Error, StringComparison.OrdinalIgnoreCase);
@@ -487,7 +581,7 @@ public sealed class AuthProfileCommandHostTests
     [MemberData(nameof(SecretParseFailures))]
     public async Task AllCredentialDiagnosticsAreSafeAndUseUsageEnvelope(string[] args)
     {
-        var result = await Run(new(), args);
+        var result = await Run(new(), args, featureFlags: ApplicationSupport);
         Assert.DoesNotContain(Canary, result.Output + result.Error);
         Assert.Equal(2, result.Exit);
         Assert.Empty(result.Error);
@@ -542,7 +636,7 @@ public sealed class AuthProfileCommandHostTests
         };
         var args = new List<string> { "auth", "create", "-mi" };
         if (json) args.Add("--json");
-        var result = await Run(operations, [.. args], token: cancellation.Token);
+        var result = await Run(operations, [.. args], featureFlags: ApplicationSupport, token: cancellation.Token);
         Assert.Equal(130, result.Exit);
         Assert.DoesNotContain(Canary, result.Output + result.Error);
         Assert.Contains("cleanup", result.Output + result.Error, StringComparison.OrdinalIgnoreCase);
@@ -575,7 +669,7 @@ public sealed class AuthProfileCommandHostTests
                 new CacheProtectionUnavailableException(Canary)) };
         var args = new List<string> { "auth", "create", "-mi" };
         if (json) args.Add("--json");
-        var result = await Run(operations, [.. args]);
+        var result = await Run(operations, [.. args], featureFlags: ApplicationSupport);
         Assert.Equal(1, result.Exit);
         Assert.DoesNotContain(Canary, result.Output + result.Error);
         Assert.Contains("committed", result.Output + result.Error, StringComparison.OrdinalIgnoreCase);

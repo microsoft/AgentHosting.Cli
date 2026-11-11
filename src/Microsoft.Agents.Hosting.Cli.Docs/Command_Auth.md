@@ -63,6 +63,20 @@ msagent auth create [options]
 | `--azureDevOpsFederated` | `-adof` | Azure DevOps workload federation. |
 
 These shortcuts are local to create. Lifecycle selector shortcuts are documented below.
+The seven application-specific options from `--applicationId` through
+`--azureDevOpsFederated`, including their shortcuts, require `appusersupport`
+(off by default). They are absent from help and parsing while disabled, and direct
+command dispatch cannot create an application identity profile without opt-in:
+
+```powershell
+$env:AH_CLI_FEATURES = "appusersupport"
+```
+
+This control gates creation/replacement only. Existing application profiles remain
+available for selection, use, renewal, and cleanup. Shared settings (`--name`,
+`--environment`, `--cloud`, `--tenant`) and user authentication are not gated.
+Enabling `LegacyAuth` does not enable application profile creation.
+
 Credential modes are exclusive. Client secret, certificate, and federation require explicit tenant
 and application IDs. An application ID without an applicable workload method is invalid.
 Names are ordinal case-sensitive and unique: `Dev` and `dev` are distinct.

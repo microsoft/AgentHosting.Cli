@@ -318,6 +318,6 @@ mean a change partially completed or its result is uncertain.
 | Code | Description |
 | --- | --- |
 | [99001](ErrorCodes/99001.md) | An unexpected error occurred without a more specific classification. |
-| [99002](ErrorCodes/99002.md) | The command, arguments, or required context are not valid for this operation. |
+| [99002](ErrorCodes/99002.md) | The command, arguments, or required context are not valid for this operation, including application profile creation options when `appusersupport` is disabled. |
 | [99003](ErrorCodes/99003.md) | This CLI build does not implement the requested operation. |
 | [99004](ErrorCodes/99004.md) | The target did not return a response before the operation timed out. |

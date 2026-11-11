@@ -133,6 +133,7 @@ The source of truth is [featureflags.json](featureflags.json):
 | `AzureBotServiceFeatures` | `off` | `abs` and resolved CodeAgent deployment routes backed by Azure Bot Service. |
 | `IdentityFeatures` | `off` | The user-facing `identity` command group. |
 | `LegacyAuth` | `off` | Only `auth login` and `auth logout`; profile commands and `auth status` remain available. |
+| `appusersupport` | `off` | Application identity profile creation through `auth create`, including secret, certificate, DefaultAzureCredential, and federation options. Existing application profiles remain usable. |
 | `LiveTestFeatures` | `off` | `test ask` and `test playground`. |
 | `EvaluationFeatures` | `on` | `agent eval` and its `testset` subgroup. |
 
@@ -146,6 +147,15 @@ Multiple `[RequiredFeatureFlag]` attributes are ANDed. A disabled parent removes
 all descendants before help, parsing, and dispatch. Feature-controlled options
 are removed too. Mixed commands enforce the resolved route immediately before
 handler dispatch, so a stored CodeAgent record cannot bypass a disabled route.
+
+`appusersupport` hides `--applicationId`, `--clientSecret`, `--certificateDiskPath`,
+`--certificatePassword`, `--managedIdentity`, `--githubFederated`, and
+`--azureDevOpsFederated`, including their aliases, from `auth create` help and
+parsing. Direct command dispatch also rejects these options before authentication
+or profile mutation. Enable it for an approved developer session with
+`$env:AH_CLI_FEATURES = "appusersupport"`. Shared profile settings and user sign-in
+remain available; selection, renewal, and cleanup of existing application profiles
+are unchanged. Core authentication adapters remain registered and embeddable.
 
 The shared MCS, authentication, environment, and local deployment surfaces remain
 available. A bare `agent create` retains the CodeAgent route and reports AMS as

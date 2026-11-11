@@ -146,14 +146,20 @@ public sealed class AuthCreateCommand : CommandBase<AuthCreateRequest, AuthProfi
         AuthOptions.Flag("--deviceCode", "-dc", "Use interactive device-code sign-in; not allowed with --non-interactive."),
         AuthOptions.Value("--username", "-un", "Username for password authentication; requires --password."),
         AuthOptions.Value("--password", "-pw", "Password for password authentication; never persisted. Arguments may be exposed by the shell.", true),
-        AuthOptions.Value("--applicationId", "-id", "Application GUID for a workload credential."),
-        AuthOptions.Value("--clientSecret", "-cs", "Application secret; requires tenant/applicationId. Arguments may be exposed by the shell.", true),
-        AuthOptions.Value("--certificateDiskPath", "-cdp", "PFX file with a private key; requires tenant/applicationId."),
-        AuthOptions.Value("--certificatePassword", "-cp", "PFX password; requires certificateDiskPath. Arguments may be exposed by the shell.", true),
-        AuthOptions.Flag("--managedIdentity", "-mi", "Use configured DefaultAzureCredential sources; managed identity is not guaranteed to win."),
-        AuthOptions.Flag("--githubFederated", "-ghf", "Use GitHub Actions federation; requires tenant/applicationId and Actions OIDC runtime."),
-        AuthOptions.Flag("--azureDevOpsFederated", "-adof", "Use Azure DevOps federation; requires tenant/applicationId and MSAGENT_ADO_* runtime."),
+        AuthOptions.Value("--applicationId", "-id", "Application GUID for a workload credential.") with { RequiredFeatures = [FeatureName.AppUserSupport] },
+        AuthOptions.Value("--clientSecret", "-cs", "Application secret; requires tenant/applicationId. Arguments may be exposed by the shell.", true) with { RequiredFeatures = [FeatureName.AppUserSupport] },
+        AuthOptions.Value("--certificateDiskPath", "-cdp", "PFX file with a private key; requires tenant/applicationId.") with { RequiredFeatures = [FeatureName.AppUserSupport] },
+        AuthOptions.Value("--certificatePassword", "-cp", "PFX password; requires certificateDiskPath. Arguments may be exposed by the shell.", true) with { RequiredFeatures = [FeatureName.AppUserSupport] },
+        AuthOptions.Flag("--managedIdentity", "-mi", "Use configured DefaultAzureCredential sources; managed identity is not guaranteed to win.") with { RequiredFeatures = [FeatureName.AppUserSupport] },
+        AuthOptions.Flag("--githubFederated", "-ghf", "Use GitHub Actions federation; requires tenant/applicationId and Actions OIDC runtime.") with { RequiredFeatures = [FeatureName.AppUserSupport] },
+        AuthOptions.Flag("--azureDevOpsFederated", "-adof", "Use Azure DevOps federation; requires tenant/applicationId and MSAGENT_ADO_* runtime.") with { RequiredFeatures = [FeatureName.AppUserSupport] },
     ];
+
+    protected override void EnsureAvailable(ICommandInput input, IServiceProvider services)
+    {
+        if (Symbols.Any(symbol => symbol.RequiredFeatures.Contains(FeatureName.AppUserSupport) && input.WasProvided(symbol.Name)))
+            FeatureGate.RequireEnabled(services, FeatureName.AppUserSupport, "Application identity profile creation");
+    }
 
     protected override string? Validate(ICommandInput input)
     {

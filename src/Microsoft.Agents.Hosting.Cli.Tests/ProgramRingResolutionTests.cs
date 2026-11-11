@@ -184,10 +184,10 @@ public sealed class ProgramRingResolutionTests : IDisposable
 
     public static TheoryData<string[]> RecoveryCommands() =>
     [
-        ["auth", "create", "-mi", "--cloud", "Preprod"],
+        ["auth", "create", "--cloud", "Preprod"],
         ["auth", "list"],
         ["auth", "select", "--index", "1"],
-        ["auth", "create", "-mi"],
+        ["auth", "create"],
         ["auth", "clear"],
         ["auth", "who"],
         ["auth", "status"],

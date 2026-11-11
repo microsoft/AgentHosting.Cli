@@ -4,5 +4,6 @@
   "identityFeatures": "off",
   "liveTestFeatures": "off",
   "evaluationFeatures": "on",
-  "legacyAuth": "off"
+  "legacyAuth": "off",
+  "appusersupport": "off"
 }

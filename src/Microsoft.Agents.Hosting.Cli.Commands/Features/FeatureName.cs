@@ -20,4 +20,7 @@ public enum FeatureName
 
     /// <summary>Legacy authentication login and logout commands.</summary>
     LegacyAuth,
+
+    /// <summary>Application identity profile creation and workload credential options.</summary>
+    AppUserSupport,
 }
