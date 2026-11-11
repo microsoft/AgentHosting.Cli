@@ -2,6 +2,11 @@
 
 [Back to deployment commands](Command_Deployment.md)
 
+> [!IMPORTANT]
+> **CodeAgent: future state - do not use.** This entire command group is retained
+> as implementation reference, not a supported public-preview workflow. Do not
+> run these examples or use this group to configure Copilot Studio connections.
+
 > **CodeAgent-specific group.** Manages OAuth connection settings on a deployment. Invoking
 > `msagent deployment oauth` without a leaf command returns a usage error that lists the valid
 > subcommands.

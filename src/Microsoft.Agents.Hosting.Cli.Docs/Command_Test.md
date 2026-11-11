@@ -2,9 +2,9 @@
 
 [Command reference](ReadMe.md)
 
-The `msagent test` group is a controlled preview, gated by `LiveTestFeatures` and off by default.
-Enable it through the [feature controls](../Microsoft.Agents.Hosting.Cli/agent.md#feature-controls).
-Enabling a command does not grant access to an agent or approve use of a preview.
+The `msagent test` group sends queries to published Copilot Studio agents or
+launches the M365 Agents Playground. Testing requires no feature-flag opt-in;
+the signed-in account still needs access and the required delegated permissions.
 
 These commands perform **live operations**, not dry runs. Remote actions are not rolled back
 and may continue after local cancellation. Check remote effects before retrying a failed query.
@@ -13,7 +13,7 @@ The removed `--agent-harness` option is not accepted; endpoint discovery selects
 ## Target selection
 
 `test ask` and the default CopilotStudio Client playground use the same selection rules.
-Only public-cloud MCS targets are supported, not CodeAgent/AHRG targets.
+Only public-cloud MCS agent targets are supported.
 
 | Option | Alias | Description |
 | --- | --- | --- |
@@ -171,7 +171,9 @@ server. There is no detach, automatic replay, or transcript feature.
 ## Telemetry and preview limits
 
 Neither command is exempt from [command telemetry controls](Command_Telemetry.md).
-The preview README recommends keeping the feature disabled or setting
-`AH_CLI_TELEMETRY_OPTOUT=1` until its identifier-minimization policy is reviewed.
+Use `msagent telemetry status`, `disable`, or `enable` to inspect or change the
+collection preference. The normal telemetry policy applies; testing does not
+require disabling telemetry. See the [telemetry details](../../docs/developer/Telemetry.md)
+for identifiers, privacy boundaries, and delivery behavior.
 These command descriptions do not claim that live integration, accessibility, or cross-platform
 validation is complete.

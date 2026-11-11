@@ -1,6 +1,6 @@
 # MSAgent CLI command reference
 
-Last updated: 2026-10-21
+Last updated: 2026-11-10
 
 This document describes the MSAgent CLI command surface. The packaged executable is named
 `msagent`, and the CLI project is `Microsoft.Agents.Hosting.Cli`.
@@ -19,6 +19,13 @@ Commands or options labeled **MCS-specific** apply to Microsoft Copilot Studio. 
 `create`, `init`, `list`, `pull`, `delete`, and `deploy` also support standalone workflows
 (`MCSWorkflow`); sharing and evaluation are **MCSAgent-only**. Unlabeled commands either
 apply to all agent types or retain their existing CodeAgent behavior.
+
+> [!IMPORTANT]
+> **CodeAgent: future state - do not use.** CodeAgent-specific commands, options,
+> channels, OAuth, and AMS package routes are retained only as implementation
+> reference. They are not supported public-preview workflows. Do not run these
+> examples or enable feature controls to use them. For current work, select
+> `--agent-type MCSAgent` or `--agent-type MCSWorkflow` explicitly.
 
 For error meanings, causes, and recovery steps, see the [error code reference](ErrorCodes.md).
 
@@ -82,8 +89,8 @@ normal success envelope.
 | [`msagent auth`](Command_Auth.md) | `login`, `status`, `switch`, `logout` | Authenticate operators and manage stored accounts. |
 | [`msagent env`](Command_Env.md) | `list`, `select` | List and select Power Platform environments. |
 | [`msagent agent`](Command_Agent.md) | `create`, `init` (**MCS-specific**), `list` (**MCS-specific**), `show`, `pull` (**MCS-specific**), `delete` (**MCS-specific**), `deploy`, `share` (**MCSAgent-only**), `share show` (**MCSAgent-only**), `unshare` (**MCSAgent-only**), `package upload` (**Gated**), [`eval`](Command_Agent_Eval.md) {`run`, `list`, `show`, `cancel`, `delete`, `generate`, `testset`} (**Gated**, **MCSAgent-only**) | Create, list, inspect, and delete hosted agents or standalone workflows; initialize or pull MCS source; deploy agents and workflows; manage MCS agent sharing; run MCS evaluations; and upload agent packages. |
-| [`msagent deployment`](Command_Deployment.md) | `create`, `list`, `show`, `update`, `delete`, [`channel`](Command_Deployment_Channel.md) {`create`, `update`, `delete`, `show`, `list`} (**CodeAgent-specific**), [`connection`](Command_Deployment_Connection.md) {`list`, `add`, `update`, `remove`, `connectors`} (**MCS-specific**), [`oauth`](Command_Deployment_OAuth.md) {`create`, `delete`, `list`, `list-providers`, `show`, `update`} (**CodeAgent-specific**) | Manage deployment records, CodeAgent channels and OAuth settings, and MCS connections. |
-| [`msagent test`](Command_Test.md) (**Gated**, **MCS-specific**) | `ask`, `playground` | Send a live query or launch the M365 Agents Playground. Actions can have real effects. |
+| [`msagent deployment`](Command_Deployment.md) | `create`, `list`, `show`, `update`, `delete`, [`channel`](Command_Deployment_Channel.md) {`create`, `update`, `delete`, `show`, `list`} (**CodeAgent-specific; future state - do not use**), [`connection`](Command_Deployment_Connection.md) {`list`, `add`, `update`, `remove`, `connectors`} (**MCS-specific**), [`oauth`](Command_Deployment_OAuth.md) {`create`, `delete`, `list`, `list-providers`, `show`, `update`} (**CodeAgent-specific; future state - do not use**) | Manage deployment records and MCS connections. CodeAgent channel/OAuth details are future-state reference only. |
+| [`msagent test`](Command_Test.md) (**MCS-specific**) | `ask`, `playground` | Send a live query or launch the M365 Agents Playground. No feature-flag opt-in is required. Actions can have real effects. |
 | [`msagent abs`](Command_Abs.md) (**Gated**) | `preview`, `apply` | Preview and apply Azure Bot Service configuration. |
 | [`msagent identity`](Command_Identity.md) (**Gated**) | `create blueprint`, `create app` | Create and reconcile agent identities. |
 | [`msagent telemetry`](Command_Telemetry.md) | `enable`, `disable`, `status` | Manage and inspect command telemetry collection preferences. |

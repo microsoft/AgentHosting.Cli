@@ -2,6 +2,12 @@
 
 [Back to command index](ReadMe.md)
 
+> [!IMPORTANT]
+> **CodeAgent: future state - do not use.** CodeAgent creation, AMS package upload,
+> and package-revision deployment below are retained as implementation reference,
+> not supported public-preview workflows. Do not run those examples or enable
+> their feature controls. Use explicit `MCSAgent` or `MCSWorkflow` types for current work.
+
 The command group is described in help as `Agent Hosting agent operations.`
 
 ## Subcommands
@@ -39,8 +45,8 @@ selector identifies its owner. `agent show` instead shows every record.
 
 > **Gated.** Commands, options, and routes tagged **Gated** may or may not be available, depending on
 > the feature gates enabled for a given run. Review `msagent agent --help` (or the help for a
-> specific command) to see what is currently available. CodeAgent/AMS gated items are controlled by
-> `AmsFeatures`, for example through the `AH_CLI_FEATURES` environment variable. Evaluation has the
+> specific command) to see what is currently available. Future-state CodeAgent/AMS items are controlled by
+> `AmsFeatures`; this is implementation detail, not an instruction to enable them. Evaluation has the
 > separate `EvaluationFeatures` gate. When `AmsFeatures` is off:
 >
 > - A gated group or command, such as `agent package` or `agent package upload`, is not listed in
@@ -179,7 +185,8 @@ msagent agent create --agent-type MCSWorkflow --mcs-clone-workflow-id <workflow-
 
 ### Creating a CodeAgent (Gated)
 
-> **Gated.** Available only when `AmsFeatures` is enabled.
+> **Future state - do not use.** The implementation requires `AmsFeatures`;
+> enabling it does not make this a supported public-preview workflow.
 
 Creates a repository-bound CodeAgent in the selected environment and reports its agent ID and
 repository ID. It does not scaffold local code or accept `--project`. Keep the idempotency key
@@ -328,7 +335,7 @@ a `dev` slot). A deployment selector can identify its owning record without an a
 msagent agent deploy (--deployment-id <id> | --deployment-name <name>) \
   [--project <directory>] [--agent-id <id> | --agent-name <name>] [--publish] [--overwrite]
 
-# AMS package revision (Gated)
+# AMS package revision (future-state reference only - do not use)
 msagent agent deploy --agent-id <id> --package-revision <revision-id> \
   --target-environment-id <id> --deployment-name <name> --deployment-type <dev|test|prod> \
   --entra-id <application-id> --entra-id-type <app-reg|blueprint|default> [--environment-id <id>]

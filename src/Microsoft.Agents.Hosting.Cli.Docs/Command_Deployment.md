@@ -2,6 +2,12 @@
 
 [Back to command index](ReadMe.md)
 
+> [!IMPORTANT]
+> **CodeAgent: future state - do not use.** CodeAgent deployment, Azure Bot Service,
+> channel, OAuth, and AMS package-revision details below are implementation
+> reference only. Do not run those examples or enable their feature controls.
+> Copilot Studio deployment records and the MCS connection commands remain current.
+
 ## Subcommands
 
 | Command | Description |
@@ -33,7 +39,8 @@ the `channel` and `oauth` groups are **CodeAgent-specific**. The `connection` gr
 > - The `channel`, `connection`, and `oauth` groups have no feature gate of their own. Channel and
 >   OAuth deployment operations still require an existing local CodeAgent deployment record.
 >
-> Gated features are enabled through the `AH_CLI_FEATURES` environment variable.
+> The implementation reads overrides through `AH_CLI_FEATURES`; this does not
+> make future-state CodeAgent workflows supported or authorize their use.
 
 Deployment records for both agent types are stored locally in the project's `.config\agent.config.json`.
 Environment resolution for MCS create uses the signed-in session; reselecting the environment refreshes older selections.

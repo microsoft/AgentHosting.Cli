@@ -7,6 +7,13 @@ in — creates and deletes billable Azure resources.
 It is a console application rather than a test project, so `dotnet test` never executes it. Nothing
 here runs unless you run it.
 
+> [!IMPORTANT]
+> **CodeAgent: future state - do not use.** CodeAgent scenarios and sample output
+> in this developer reference preserve implementation contracts, not supported
+> public-preview workflows. Do not select `code-agent` or the `azure` pack to run
+> them. Current Copilot Studio checks use the `core`, `eval`, or `swf` packs and
+> still require explicit approval for the intended environment and effects.
+
 > **It writes to the environments you name.** Naming an environment in `e2e.config.json` *is* the
 > grant; there is no second switch. Point it at a disposable environment holding nothing you care
 > about.
@@ -22,7 +29,7 @@ line and asserts on exit code, stdout, and — where it matters — the cloud st
 |---|---|---|---|---|
 | `mcs-agent` | `MA-01`–`MA-85` | 78 | `core` | Environment selection, `agent init/create/show/list/pull/deploy/delete`, deployment slots, connection reporting and binding, workflow activation, dev→test promotion, agent sharing, and the delete-confirmation paths |
 | `mcs-workflow` | `MW-01`–`MW-61` | 14 | `core` | Standalone cloud flows with no agent: scaffold, `agent init`, deploy and publish, clone from cloud, the pull/deploy round trip and its overwrite semantics, cloud-only listing with `--filter`, and the delete-confirmation paths |
-| `code-agent` | `CA-01`–`CA-20` | 20 | `azure` | Unified `deployment` routing between agent types, Azure Bot Service provisioning, update/delete, and option-shape rejection |
+| `code-agent` | `CA-01`–`CA-20` | 20 | `azure` | **Future state - do not use.** Retained reference for unified deployment routing, Azure Bot Service provisioning, update/delete, and option-shape rejection |
 | `abs` | `AB-01`–`AB-09` | 9 | `azure` | `abs preview` planning, `abs apply --force` create/update/no-op, and the refusal paths |
 | `identity` | `ID-01`–`ID-05` | 5 | `azure` | `identity create app/blueprint --dry-run` and argument validation |
 | `mcs-eval` | `EV-01`–`EV-28` | 28 | `eval` | `agent eval` conversation test sets, CSV import and export, generated conversations, project-based agent resolution for both workspace shapes, and the scored runs — start, list, show, cancel, delete and `--watch` |
@@ -96,14 +103,14 @@ msagent auth login
 # Everything that needs no Azure resources and pays for no evaluation
 dotnet run --project . -- run
 
-# Include the pack that creates Azure resources
+# Future-state reference only - do not run the azure pack
 dotnet run --project . -- run --packs core,azure
 
 # Include the pack that spends Copilot Credits on scored evaluations
 dotnet run --project . -- run --packs core,eval
 
-# A fast subset: one deploy per fixture shape, plus the previously-shipped-bug checks
-dotnet run --project . -- run --packs core,azure --smoke
+# A fast Copilot Studio subset: one deploy per fixture shape, plus regression checks
+dotnet run --project . -- run --packs core --smoke
 
 # One feature, or one scenario, or a prefix
 dotnet run --project . -- run --feature mcs-agent
@@ -114,8 +121,8 @@ dotnet run --project . -- run --only MA-2*
 
 | Option | Effect |
 |---|---|
-| `--packs core,azure,eval` | include the scenarios that create Azure resources, that spend Copilot Credits, or both. Default is `core`. `swf` adds the standalone-workflow suite |
-| `--feature <names>` | `mcs-agent`, `mcs-workflow`, `mcs-standaloneworkflow`, `code-agent`, `abs`, `identity`, `mcs-eval` |
+| `--packs core,azure,eval` | Default is `core`; `eval` spends Copilot Credits and `swf` adds the standalone-workflow suite. `azure` is retained future-state reference only; do not use it to run CodeAgent scenarios. |
+| `--feature <names>` | `mcs-agent`, `mcs-workflow`, `mcs-standaloneworkflow`, `mcs-eval`; retained `code-agent`, `abs`, and `identity` entries describe the Azure reference surface. `code-agent` is future state - do not use. |
 | `--only <patterns>` | `MA-18`, `MA-2*`, `AB-07`, `EV-01`, `SW-B0*` |
 | `--smoke` | the fast subset |
 | `--msagent-path <file>` | drive an existing binary instead of packing one (`--ah-path` is still accepted) |

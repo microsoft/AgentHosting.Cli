@@ -3,8 +3,14 @@
 This repository builds `Microsoft.Agents.Hosting.Cli`, a framework-dependent
 .NET tool installed as `msagent`. The default experience supports authentication,
 environment selection, Copilot Studio agents and workflows, deployment slots,
-connections, and evaluations. Code-agent hosting, Azure Bot Service, identity,
-and live testing are implemented behind feature controls.
+connections, evaluations, and live testing. Code-agent hosting, Azure Bot Service,
+and identity implementation details are retained below as technical reference.
+
+> [!IMPORTANT]
+> **CodeAgent: future state - do not use.** CodeAgent/AMS deployment, package,
+> channel, and OAuth details describe retained implementation contracts, not
+> supported public-preview workflows. Do not run those examples or enable their
+> feature controls for product use.
 
 **For contributors and coding agents changing the CLI:** follow the root
 [CONTRIBUTING.md](../../CONTRIBUTING.md), the authoritative guide for architecture
@@ -142,15 +148,22 @@ authorization or security boundaries.
 
 The source of truth is [featureflags.json](featureflags.json):
 
-| Feature | Default | Controlled surface |
+The table records this checkout's implementation defaults, not a request for
+customers to opt in. Public-preview testing is documented without a feature gate.
+The legacy `LiveTestFeatures` default and command attributes still present in
+this source snapshot must be aligned with that release before packaging; do not
+work around the mismatch by asking customers to edit installed configuration.
+
+| Feature | Source default | Implementation surface |
 |---|---|---|
-| `AmsFeatures` | `off` | CodeAgent creation, AMS package upload, and package-revision deployment. |
+| `AmsFeatures` | `off` | Future-state CodeAgent creation, AMS package upload, and package-revision deployment; do not use. |
 | `AzureBotServiceFeatures` | `off` | `abs` and resolved CodeAgent deployment routes backed by Azure Bot Service. |
 | `IdentityFeatures` | `off` | The user-facing `identity` command group. |
-| `LiveTestFeatures` | `off` | `test ask` and `test playground`. |
+| `LiveTestFeatures` | `off` | Legacy source control on `test ask` and `test playground`; release alignment required as described above. |
 | `EvaluationFeatures` | `on` | `agent eval` and its `testset` subgroup. |
 
-For an explicitly approved developer session, enable only the needed features:
+Feature override syntax is shown for implementation reference, not permission
+to enable future-state product workflows:
 
 ```powershell
 $env:AH_CLI_FEATURES = "AmsFeatures;AzureBotServiceFeatures"
@@ -187,6 +200,9 @@ Public documentation and maintenance requirements are defined in
 
 These routes require `AmsFeatures`. Package upload and deployment are separate
 effects; neither is a local CodeAgent build command.
+
+**Future state - do not use.** The following contract and examples are retained
+for implementation reference only.
 
 ```powershell
 msagent agent package upload --agent-id <agent-id> --package <agent.zip> --environment-id <home-environment-id>

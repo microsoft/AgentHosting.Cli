@@ -1,5 +1,11 @@
 # Error code reference
 
+> [!IMPORTANT]
+> **CodeAgent: future state - do not use.** CodeAgent/AMS-specific error entries
+> describe retained implementation contracts, not supported public-preview
+> workflows. Their recovery examples are not instructions to enable or use those
+> routes. Copilot Studio errors and recovery guidance remain current.
+
 Use this directory to look up an MSAgent CLI error code. Each linked page explains what
 happened, why it can happen, how to fix it, and how to avoid it.
 

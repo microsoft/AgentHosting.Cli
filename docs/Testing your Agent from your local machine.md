@@ -2,7 +2,9 @@
 
 Once your agent has been deployed as published and made accessible to the copilot studio runtime you can test it from your local machine.
 
-*Note, at the time of BUG BASH and initial PRIVATE PREVIEW testing may not be available as an ```msagent``` command. Locally testing your agent is still possible, with specific instructions which will be provided to you. 
+Use `msagent test ask` for terminal queries or `msagent test playground` for an
+interactive UI. Testing is available without a feature-flag opt-in. The agent
+runs in Copilot Studio; the CLI and Playground are clients, not local emulators.
 
 ## Billing and channel IDs in usage telemetry
 
@@ -53,8 +55,7 @@ If you want to test it yourself with a UX, you can use the Agent Playground whic
 
 Direct Line supports a published Copilot Studio agent configured for **no
 authentication**, using the global public-cloud Direct Line service.
-Enable `LiveTestFeatures` in the CLI's `featureflags.json` if the test commands
-are not visible. Use Node.js 22.17.1+ LTS and an interactive terminal with input
+Use Node.js 22.17.1+ LTS and an interactive terminal with input
 and output attached.
 
 ```text
@@ -110,14 +111,28 @@ sign-in using delegated access. It may still need user action with
 If you want to test your agent in a terminal, typically using non-interactive with GitHub Copilot, use `msagent test ask`. Non-interactive commands for testing only support direct (using copilot studio client) using Entra ID and does not support directline. The agent will run using the signed in users’ credentials that agree to the interaction. If you require testing the agent in annon mode, directline must be used via the agent playground.
 
 ```
-msagent test ask [--query "<your question>"] [--agent-name <agentname> | --agent-id <agentid> | --schema-name <schemaname>] [--deployment-name <deploymentname> | --deployment-id <deploymentid>]
+msagent test ask --project <project-path> --agent-name <agentname> --deployment-name <deploymentname> --query "<your question>" --non-interactive --json
 ```
 
 - The Copilot Studio client's discovery service resolves the runtime endpoints from the environment and schema name; no harness argument is needed. DirectEngine Playground also discovers its app endpoint automatically, using the selected CLI account before the playground's own sign-in.
-- `--query` (`-q`) is the literal question to send. Omit it to be prompted for it interactively. Live actions the query triggers are not rolled back, and the query may enter your shell history.
-- Select the agent and deployment the same way as other `msagent` commands: `--project`, one of `--agent-id`/`--agent-name`/`--schema-name`, and optionally `--deployment-id`/`--deployment-name` (and `--environment-id`/`--tenant` to assert the destination).
+- `--query` (`-q`) is a required nonblank literal question. Live actions it triggers are not rolled back, and the query may enter your shell history.
+- For a registered project, select an agent and deployment with `--project`, `--agent-id`/`--agent-name`, and `--deployment-id`/`--deployment-name`. A deployment selector can identify its owning agent. An omitted deployment requires exactly one marked default; a single non-default deployment is not automatically selected.
+- The deployment determines the environment. Additional `--schema-name`, `--environment-id`, and `--tenant` values assert that destination, rather than retargeting it.
 - `--conversation-id` continues an existing conversation; omit it to start a new one (the id is not saved automatically, so save it yourself to continue later).
 - `--non-interactive` fails instead of opening a browser/WAM sign-in prompt; `--json` emits machine-readable output; `--plain` prints only the final response, without transient progress.
+
+Sign in interactively with `msagent auth login` before running unattended
+queries. `--json` does not itself prevent authentication prompts, and `--plain`
+cannot be combined with `--json`. The JSON result is one incrementally streamed
+activity/result document, not the ordinary command envelope. Check its final
+status and answer; a completed response does not prove a remote action succeeded.
+
+To target an agent without local project registration, supply the complete
+explicit route. The deployment name here is a label, not a verified local record:
+
+```text
+msagent test ask --schema-name <schema-name> --environment-id <environment-id> --tenant <tenant-id> --deployment-name explicit-target --query "What can you help me with?" --non-interactive --json
+```
 
 Example:
 
@@ -127,7 +142,9 @@ msagent test ask --agent-name agentname --deployment-name develop --query "What 
 
 Expect a browser to open if this is the first time you have used this to agree to using your credentials to run the copilot studio agent.
 
-> **Note:** `msagent test ask` has shipped behind a feature flag in some CLI builds. If `msagent test` is not recognized, check the installed CLI tool's `featureflags.json` for a flag that enables live test features and turn it on.
+Use `--conversation-id <returned-id>` with the same destination to continue a
+conversation. Without it, each command starts a new conversation. The CLI does
+not save the last conversation ID or automatically replay a failed query.
 
 ### How it works
 

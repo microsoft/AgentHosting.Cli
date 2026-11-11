@@ -4,6 +4,13 @@ Microsoft.Agents.Hosting.Cli is a .NET command-line tool for working with Micros
 
 This tool is intended for both humans and coding agents that need a consistent command interface to interact with the Agent Hosting platform.
 
+The CLI is preview software. Obtain the package and review the terms of the preview before installing it.
+
+> [!IMPORTANT]
+>
+> - This is a preview feature.
+> - These features are subject to [supplemental terms of use](https://www.microsoft.com/en-us/business-applications/legal/supp-powerplatform-preview/), and are available before an official release so that customers can get early access and provide feedback.
+
 ## What this tool does
 
 The CLI supports the following core activities:
@@ -12,6 +19,7 @@ The CLI supports the following core activities:
 - List and select Power Platform environments
 - Create, list, show, pull, and delete agent resources
 - Manage deployment lifecycle and connection configuration
+- Evaluate agent quality through Copilot Studio and query published agents from the terminal or Playground
 
 ## Install
 
@@ -61,7 +69,7 @@ preview update command. It never installs an update automatically.
 
 Successful checks are cached for 24 hours. Feed requests share a three-second deadline; failures
 are silent and retried no sooner than one hour later when the cache is writable. Checks are skipped
-for help, version, invalid/navigation-only commands, `--json`, CI, or redirected stdout/stderr.
+for version output, invalid/navigation-only commands, `--json`, CI, or redirected stdout/stderr.
 Set `AH_CLI_SKIP_UPDATE_CHECK=true` (case-insensitive) or `1` to disable checks and notices.
 `--non-interactive` alone does not disable the check.
 
@@ -77,6 +85,8 @@ Common command groups include:
 - `msagent env` — list available environments and select a target environment
 - `msagent agent` — create, initialize, list, show, pull, delete, deploy, and evaluate agents
 - `msagent deployment` — manage deployment records and connection binding
+- `msagent test` — query a published agent or launch the M365 Agents Playground
+- `msagent telemetry` — inspect and change telemetry collection preferences
 
 Global options:
 
@@ -96,6 +106,13 @@ Global options:
 4. Create an MCS deployment and deploy the MCS project to it.
 5. Configure deployment connections as needed.
 6. Evaluate the agent with `msagent agent eval run`, and review the results with `msagent agent eval list` / `show`.
+7. Publish the reviewed conversational-agent changes with `msagent agent deploy --publish`.
+8. Test the published agent with `msagent test ask` or `msagent test playground`.
+
+Creating or initializing source is local registration, not cloud deployment.
+Cloud cloning establishes tracking; initializing files from Git does not restore
+an existing cloud connection. Existing deployment records keep their own target
+environment when the active environment changes.
 
 ## Example usage
 
@@ -128,6 +145,59 @@ msagent env select <environment-id>
 ```bash
 msagent agent create --agent-type MCSAgent --agent-name "Contoso Agent" --description "Contoso helper" --initial-prompt "Help users with Contoso questions."
 ```
+
+### Deploy a draft and publish
+
+From the registered project, create a named local target and upload the working tree:
+
+```bash
+msagent deployment create --deployment-name develop --deployment-type dev
+msagent agent deploy --deployment-name develop
+msagent deployment connection list --deployment-name develop
+```
+
+Resolve connection and workflow diagnostics before publishing. Binding with
+`msagent deployment connection update --deployment-name develop` may be needed
+before an incomplete deployment can fully succeed. Connections and consent are
+environment-specific. Attached workflows can activate during a draft deploy or
+binding; review their effects independently of conversational-agent publication.
+
+After review and evaluation, publish with:
+
+```bash
+msagent agent deploy --deployment-name develop --publish
+```
+
+Publishing does not configure channels or grant user access. Deployment uploads
+the current working tree synchronously; it does not select source by Git commit.
+A development target checks for cloud drift, while test/production targets do not
+provide the same guard. Use `--overwrite` only after deciding to replace cloud
+changes; it is not a merge.
+
+### Query the published agent
+
+```bash
+msagent test ask --deployment-name develop --query "What can you help me with?"
+msagent test playground --deployment-name develop
+```
+
+The signed-in account must be able to access the published agent. Use
+`--conversation-id <returned-id>` with the same destination to continue a
+conversation; otherwise each query starts a new one. `--plain` returns final-only
+human output; `--json` streams one activity/result document, not the ordinary
+success envelope. These options cannot be combined. A completed response is not
+proof that its answer is correct or that a remote action succeeded.
+
+Playground requires Node.js 22.17.1 or newer and the
+`@microsoft/m365agentsplayground` package, version 0.2.29 or newer. It opens a new
+terminal and owns its session authentication, which can still require interaction
+with `--non-interactive`. It rejects `--json`. Direct Line mode
+(`--target directline`) requires an interactive terminal and a published no-auth
+agent; enter credentials only at the native masked prompt.
+
+Live queries and evaluations use Copilot Studio services and can consume Copilot
+Credits or trigger billable actions. Local execution is not a dry run. Coding
+assistants have separate licensing and usage charges.
 
 ### List agents
 
@@ -211,11 +281,21 @@ This is especially useful for coding agents that need to inspect tool output pro
 
 ## Non-interactive mode
 
-Use `--non-interactive` for scripts, CI pipelines, or controlled automation that should not open a browser or interactive sign-in flow:
+Authenticate interactively first, then use an existing session for supported
+scripted commands. `auth login --non-interactive` is always rejected, even when
+cached tokens exist. Non-interactive mode does not provide service-principal
+authentication, new consent, or an unattended CI sign-in mechanism.
 
 ```bash
-msagent auth login --non-interactive
+msagent auth login
+msagent env list --non-interactive --json
+msagent test ask --deployment-name develop --query "What can you help me with?" --non-interactive --json
 ```
+
+Connection commands can still require selections on stdin or manual completion
+of a printed consent link. Playground owns its own interactive authentication.
+Do not treat `--non-interactive` or `--json` as a universal unattended-operation
+guarantee.
 
 ## Selecting a deployment ring
 
@@ -253,8 +333,12 @@ selection is cleared, so switching clouds and back cannot resurrect an old targe
 
 ## Telemetry
 
-The CLI sends usage telemetry (command names and outcomes, never argument values, paths,
-tokens, or other command content). To learn more, see the Privacy Statement below.
+The CLI sends usage telemetry, including command names and outcomes, never argument
+values, paths, tokens, or other command content. When available, telemetry can
+include tenant context and a validated tenant-local account object ID on command
+attempts. These identifiers are not device or installation IDs. See the
+[telemetry details](https://github.com/microsoft/AgentHosting.Cli/blob/main/docs/developer/Telemetry.md)
+and the Privacy Statement below.
 
 To opt out, use either of the following:
 

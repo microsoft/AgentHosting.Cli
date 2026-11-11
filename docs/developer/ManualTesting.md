@@ -28,16 +28,16 @@ or enable shipped-off features without the relevant approval.
 | `msagent test ask --query <text>` | Send one live query to an explicitly selected MCS agent. |
 | `msagent test playground [--target directline\|directengine]` | Launch the M365 Agents Playground in its own terminal. |
 
-### Live agent test (controlled preview)
+### Live agent test
 
-`LiveTestFeatures` ships off. For an approved test, opt in for that process with
-`AH_CLI_FEATURES=LiveTestFeatures`; do not change shipped defaults. Select the
-intended account with `msagent auth login`, and configure `AH_CLI_CLIENT_ID` for
+Testing requires no feature-flag opt-in. For an approved test, select the
+intended account with `msagent auth login`. When testing a custom client configuration,
+configure `AH_CLI_CLIENT_ID` for
 an authorized public/native client with public-client redirect flow and
 delegated Power Platform `CopilotStudio.Copilots.Invoke` consent. The selected
 standard or GitHub Copilot Harness agent must be published, available in the
-specified environment, and shared with that account. Public cloud is supported;
-CodeAgent/AHRG is not.
+specified environment, and shared with that account. Public-cloud Copilot Studio
+agents are supported.
 
 ```text
 msagent test ask --query "Explain this policy" --project <project> --agent-name <agent> --deployment-name <deployment>
@@ -84,7 +84,7 @@ The target is `directengine` (the default) or `directline`.
 Wherever `--tenant` is accepted, `--tenant-id` and `-t` are equivalent aliases.
 DirectEngine uses the same agent selectors as `test ask` and the same resolver.
 Neither mode accepts `--query` or `--conversation-id`.
-The command is gated by `LiveTestFeatures`, with no separate playground flag.
+No separate testing or Playground opt-in is required.
 
 ```text
 msagent test playground --project <project> --agent-name <agent> --deployment-name <deployment>
@@ -194,7 +194,7 @@ of the current launch path.
 | DirectEngine | Exercise discovery for standard and GitHub Copilot agents, connected state, two harmless replies, and discovery failure without fallback. |
 | Direct Line | Verify masked entry, cancellation, credential rejection, connection, and harmless replies; retain no credentials. |
 | Tool resolution | Cover current, missing, and old packages; installation consent/refusal; Node/npm failures; registry/proxy settings; permission and network failures. |
-| Feature and output | Verify default-off behavior, approved opt-in, JSON rejection, plain output, and live-action warnings. |
+| Command availability and output | Verify both testing commands are available without opt-in, Playground JSON rejection, plain output, and live-action warnings. |
 | Terminal lifecycle | On each supported desktop OS, check input/output, survival after caller closure, startup timeout, failure acknowledgment, Ctrl+C, browser survival, and owned-process cleanup. |
 | Streaming query | Verify early activity delivery, final status, malformed/truncated response, caller cancellation, sanitized errors, and no automatic replay. |
 
