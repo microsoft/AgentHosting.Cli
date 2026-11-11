@@ -11,7 +11,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 public sealed class AuthProfileOperationsTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Directory.GetCurrentDirectory(), ".test-auth-operations-" + Guid.NewGuid().ToString("N"));
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), ".test-auth-operations-" + Guid.NewGuid().ToString("N"));
     private readonly FileAuthProfileStore _profiles;
     private readonly Credentials _credentials = new();
     private readonly Selections _selections = new();

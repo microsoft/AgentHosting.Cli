@@ -20,7 +20,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 public sealed class HostProfileCompositionTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Directory.GetCurrentDirectory(), ".host-profile-test-" + Guid.NewGuid().ToString("N"));
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), ".host-profile-test-" + Guid.NewGuid().ToString("N"));
     public void Dispose() { if (Directory.Exists(_directory)) Directory.Delete(_directory, true); }
 
     private IServiceCollection Configure(bool interactive, Func<string, string?>? environment = null, string? configDirectory = null,

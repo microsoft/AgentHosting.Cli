@@ -192,7 +192,7 @@ public sealed class EmbeddabilityTests
     [Fact]
     public async Task EmbeddedProfileDefault_CarriesCapturedDacProfileWithoutConstructingCredentialClient()
     {
-        var directory = Path.Combine(Directory.GetCurrentDirectory(), $".test-embedding-profile-{Guid.NewGuid():N}");
+        var directory = Path.Combine(Path.GetTempPath(), $".test-embedding-profile-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         try
         {

@@ -918,7 +918,7 @@ public sealed class ProfileCredentialTests
 
     internal sealed class Harness : IDisposable
     {
-        internal string Directory { get; } = Path.Combine(System.Environment.CurrentDirectory, "credential-test-" + Guid.NewGuid().ToString("N"));
+        internal string Directory { get; } = Path.Combine(Path.GetTempPath(), "credential-test-" + Guid.NewGuid().ToString("N"));
         internal Backend Backend { get; } = new();
         internal Acquisition Acquisition { get; } = new();
         internal Profiles Profiles { get; } = new();

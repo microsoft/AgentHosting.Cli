@@ -7,7 +7,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 public sealed class ProfileBoundEnvironmentTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Directory.GetCurrentDirectory(), ".test-profile-environments-" + Guid.NewGuid().ToString("N"));
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), ".test-profile-environments-" + Guid.NewGuid().ToString("N"));
     private readonly FileAuthProfileStore _profiles;
     private readonly SelectionStore _selection = new();
 
