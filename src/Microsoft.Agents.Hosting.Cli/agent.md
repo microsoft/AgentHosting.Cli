@@ -134,7 +134,7 @@ The source of truth is [featureflags.json](featureflags.json):
 | `IdentityFeatures` | `off` | The user-facing `identity` command group. |
 | `LegacyAuth` | `off` | Only `auth login` and `auth logout`; profile commands and `auth status` remain available. |
 | `appusersupport` | `off` | Application identity profile creation through `auth create`, including secret, certificate, DefaultAzureCredential, and federation options. Existing application profiles remain usable. |
-| `LiveTestFeatures` | `off` | `test ask` and `test playground`. |
+| `LiveTestFeatures` | `on` | The `test` group: `test ask` and `test playground`. |
 | `EvaluationFeatures` | `on` | `agent eval` and its `testset` subgroup. |
 
 For an explicitly approved developer session, enable only the needed features:

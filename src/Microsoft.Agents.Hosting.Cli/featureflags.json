@@ -2,7 +2,7 @@
   "amsFeatures": "off",
   "azureBotServiceFeatures": "off",
   "identityFeatures": "off",
-  "liveTestFeatures": "off",
+  "liveTestFeatures": "on",
   "evaluationFeatures": "on",
   "legacyAuth": "off",
   "appusersupport": "off"

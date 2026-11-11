@@ -118,8 +118,10 @@ Keep credentials out of source. Do not hand-edit generated registration/sync sta
 ## Testing from Copilot, Claude, or automation
 
 In a pristine 0.2.27-beta installation, `liveTestFeatures` is **off** and
-`evaluationFeatures` is **on**. If `msagent test` is missing, enable live testing
-for the current shell, without editing the installed `featureflags.json`:
+`evaluationFeatures` is **on**. Current CLI builds ship `liveTestFeatures` **on**;
+the following override is only needed with an older installation where `msagent test`
+is missing. It enables live testing for the current shell without editing the
+installed `featureflags.json`:
 
 ```powershell
 $env:AH_CLI_FEATURES = (@($env:AH_CLI_FEATURES, 'liveTestFeatures') | Where-Object { $_ }) -join ';'

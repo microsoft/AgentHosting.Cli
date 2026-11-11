@@ -30,9 +30,10 @@ or enable shipped-off features without the relevant approval.
 
 ### Live agent test (controlled preview)
 
-`LiveTestFeatures` ships off. For an approved test, opt in for that process with
-`AH_CLI_FEATURES=LiveTestFeatures`; do not change shipped defaults. Select the
-intended account with `msagent auth login`, and configure `AH_CLI_CLIENT_ID` for
+`LiveTestFeatures` ships on, so `test ask` and `test playground` are available
+by default. No feature override is needed; availability does not replace the
+required approval. Select the intended account with `msagent auth login`, and
+configure `AH_CLI_CLIENT_ID` for
 an authorized public/native client with public-client redirect flow and
 delegated Power Platform `CopilotStudio.Copilots.Invoke` consent. The selected
 standard or GitHub Copilot Harness agent must be published, available in the
@@ -84,7 +85,8 @@ The target is `directengine` (the default) or `directline`.
 Wherever `--tenant` is accepted, `--tenant-id` and `-t` are equivalent aliases.
 DirectEngine uses the same agent selectors as `test ask` and the same resolver.
 Neither mode accepts `--query` or `--conversation-id`.
-The command is gated by `LiveTestFeatures`, with no separate playground flag.
+The command is part of the `LiveTestFeatures`-controlled `test` group; there is
+no separate playground flag.
 
 ```text
 msagent test playground --project <project> --agent-name <agent> --deployment-name <deployment>
