@@ -6,6 +6,39 @@ The Microsoft.Agents.Hosting.CLI(`msagent`) is a CLI tool that connects local de
 
 The CLI creates a local definition of a Copilot Studio agent as a project that acts as your workspace. This allows you to edit the definition, add functionality to it, commit changes locally, and push to your remote repository. From your remote repository, you and your team can manage changes through pull requests, see what has changed, pull down the definition, or integrate it into your DevOps pipelines to deploy to the same or other environments.
 
+## Documentation
+
+[See the Copilot Studio CLI documentation](https://learn.microsoft.com/en-us/microsoft-365/copilot-managed-runtime/).
+
+For repository-specific guides and technical references, start with the
+[documentation index](docs/README.md) and [command reference](src/Microsoft.Agents.Hosting.Cli.Docs/ReadMe.md).
+For building or changing the CLI itself, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Repository structure
+
+This repository contains the `msagent` CLI, its documentation, and its tests.
+It does not contain the Copilot Studio service or the agent-hosting runtime.
+
+| Folder | Contents |
+|---|---|
+| [`docs/`](docs/) | Guides for creating, editing, deploying, testing, and maintaining agents with the CLI. |
+| [`docs/developer/`](docs/developer/) | Contributor references for telemetry, conformance comparisons, and manual testing. |
+| [`src/`](src/) | CLI projects, the solution, shared build settings, package versions, and versioning configuration. |
+| [`src/Microsoft.Agents.Hosting.Cli/`](src/Microsoft.Agents.Hosting.Cli/) | The `msagent` executable: composition, command hosting, output rendering, configuration, and telemetry. |
+| [`src/Microsoft.Agents.Hosting.Cli.Commands/`](src/Microsoft.Agents.Hosting.Cli.Commands/) | Command definitions, options, validation, and dispatch into Core operations. |
+| [`src/Microsoft.Agents.Hosting.Cli.Core/`](src/Microsoft.Agents.Hosting.Cli.Core/) | Embeddable operations, contracts, ports, and local project/deployment state. |
+| [`src/Microsoft.Agents.Hosting.Cli.Auth/`](src/Microsoft.Agents.Hosting.Cli.Auth/) | Sign-in, broker integration, token caching, and authentication registration. |
+| [`src/Microsoft.Agents.Hosting.Cli.CopilotStudio/`](src/Microsoft.Agents.Hosting.Cli.CopilotStudio/) | Copilot Studio synchronization, Dataverse, workspace, connection, template, and evaluation adapters. |
+| [`src/Microsoft.Agents.Hosting.Cli.Docs/`](src/Microsoft.Agents.Hosting.Cli.Docs/) | Detailed command references and error-code recovery guidance. |
+| [`src/Microsoft.Agents.Hosting.Cli.Tests/`](src/Microsoft.Agents.Hosting.Cli.Tests/) | Offline unit, contract, command-host, and adapter tests. |
+| [`src/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests/`](src/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests/) | Isolated tests for using Core without the CLI host or authentication adapter. |
+| [`src/Microsoft.Agents.Hosting.Cli.E2E/`](src/Microsoft.Agents.Hosting.Cli.E2E/) | Explicitly invoked live-service scenario harness and fixtures. Runs can change cloud resources or incur charges; this is not part of `dotnet test`. |
+| [`src/AgentHostCli.Conformance/`](src/AgentHostCli.Conformance/) | Language-neutral contract fixtures and a TypeScript comparison runner. |
+| [`src/Images/`](src/Images/) | Image assets used by the CLI package. |
+| [`.github/`](.github/) | GitHub workflows, contribution automation, issue templates, and coding-agent instructions. |
+| [`.azdo/`](.azdo/) | OneBranch pull-request/nightly pipeline definitions and build-feed configuration. |
+| [`.config/`](.config/) | Repository-local .NET tool manifest and compliance-tool configuration, not an agent workspace's local registration. |
+
 ## Prerequisites
 
 ### Permissions:
