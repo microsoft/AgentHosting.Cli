@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 
@@ -19,6 +21,7 @@ public static class McsAgentScenarios
     private static readonly Capability[] Dev = [Capability.Auth, Capability.McsDev];
     private static readonly Capability[] DevCli = [Capability.Auth, Capability.McsDev, Capability.WorkspaceCli];
     private static readonly Capability[] DevClassic = [Capability.Auth, Capability.McsDev, Capability.WorkspaceClassic];
+    private static readonly Capability[] DevBoth = [Capability.Auth, Capability.McsDev, Capability.WorkspaceCli, Capability.WorkspaceClassic];
     private static readonly Capability[] Promotion = [Capability.Auth, Capability.McsDev, Capability.McsTest, Capability.WorkspaceCli];
     private static readonly Capability[] WorkspaceCli = [Capability.WorkspaceCli];
     private static readonly Capability[] WorkspaceClassic = [Capability.WorkspaceClassic];
@@ -61,11 +64,11 @@ public static class McsAgentScenarios
 
         yield return Builder.Make("MA-03", "env select a valid environment", Dev, SafetyTier.Reversible, run: async context =>
         {
-            var previous = await ReadSelectedEnvironmentAsync(context).ConfigureAwait(false);
+            var previous = await McsSteps.ReadSelectedEnvironmentAsync(context).ConfigureAwait(false);
             context.Ledger.RecordConfigEdit("env-select", previous, context.ScenarioId);
 
             context.Assert.ExitZero(await McsSteps.SelectEnvironmentAsync(context, context.DevEnvironmentId, "--json").ConfigureAwait(false));
-            await RestoreEnvironmentAsync(context, previous).ConfigureAwait(false);
+            await McsSteps.RestoreEnvironmentAsync(context, previous).ConfigureAwait(false);
         });
 
         yield return Builder.Make("MA-04", "env select a malformed id", Auth, SafetyTier.ReadOnly, run: async context =>
@@ -78,7 +81,7 @@ public static class McsAgentScenarios
 
         yield return Builder.Make("MA-05", "env select persists for later commands", Dev, SafetyTier.Reversible, run: async context =>
         {
-            var previous = await ReadSelectedEnvironmentAsync(context).ConfigureAwait(false);
+            var previous = await McsSteps.ReadSelectedEnvironmentAsync(context).ConfigureAwait(false);
             context.Ledger.RecordConfigEdit("env-select", previous, context.ScenarioId);
 
             context.Assert.ExitZero(
@@ -89,7 +92,7 @@ public static class McsAgentScenarios
                 await context.Msagent.RunAsync(["agent", "list", "--json", "--non-interactive"]).ConfigureAwait(false),
                 "a later command targets the selection with no --environment-id");
 
-            await RestoreEnvironmentAsync(context, previous).ConfigureAwait(false);
+            await McsSteps.RestoreEnvironmentAsync(context, previous).ConfigureAwait(false);
         });
     }
 
@@ -470,6 +473,55 @@ public static class McsAgentScenarios
             var clone = await McsSteps.CloneAsync(context, deployed, "clone").ConfigureAwait(false);
             AssertClonedFileContains(context, clone, "Goodbye.mcs.yml", LocalPrompt(context), "the local version wins");
         });
+
+        yield return Builder.Make("MA-86", "agent deploy refuses another --schema-name for a CLI agent, and a classic agent's interrupted first deploy leaves the agent it created deletable", DevBoth, SafetyTier.Creating, run: async context =>
+        {
+            const string deploymentName = "e2e";
+            var cli = context.Workspaces.CliAgent(context.ScenarioId, "cli");
+            var otherSchemaName = $"{cli.SchemaName}x";
+            await McsSteps.InitAsync(context, cli).ConfigureAwait(false);
+            context.Assert.ExitZero(await McsSteps.CreateSlotAsync(context, cli, deploymentName, context.DevEnvironmentId).ConfigureAwait(false), "deployment create for the CLI agent");
+
+            context.Assert.Refused(await McsSteps.RawDeployAsync(context, cli, deploymentName, "--schema-name", otherSchemaName).ConfigureAwait(false), 2, $"{AgentConfigLocator.ProjectSettingsFileName} declares schema name {cli.SchemaName}", "--schema-name on a CLI agent");
+            context.Assert.False((await context.Cloud.AgentsAsync(context.DevEnvironmentId).ConfigureAwait(false)).Any(listed => string.Equals(listed.SchemaName, otherSchemaName, StringComparison.OrdinalIgnoreCase) || string.Equals(listed.SchemaName, cli.SchemaName, StringComparison.OrdinalIgnoreCase)), "the refused deploy created no agent under either schema name");
+
+            var classic = context.Workspaces.ClassicAgent(context.ScenarioId, "classic");
+            var overridden = classic with { SchemaName = $"{classic.SchemaName}o" };
+            await McsSteps.GuardSchemaNameAsync(context, overridden, context.DevEnvironmentId).ConfigureAwait(false);
+            await McsSteps.InitAsync(context, classic).ConfigureAwait(false);
+            context.Assert.ExitZero(await McsSteps.CreateSlotAsync(context, classic, deploymentName, context.DevEnvironmentId).ConfigureAwait(false), "deployment create for the classic agent");
+            McsSteps.RecordIntent(context, overridden, deploymentName);
+
+            var killed = await McsSteps.DeployCommandAsync(context, classic, deploymentName, new ProcessInterruption(WhenState: () => RecordedAgentId(classic) is not null), ["--schema-name", overridden.SchemaName]).ConfigureAwait(false);
+            var registry = CopySteps.Registry(classic.ConfigPath);
+            var recorded = registry.ManagedAgents.Single();
+            var agentId = recorded.McsAgentId ?? throw new E2EException($"the interrupted deploy of {classic.AgentName} recorded no cloud agent (exit {killed.ExitCode}).");
+            var overshot = !killed.Interrupted || registry.AgentDeployments.Single().LastDeployedTime is not null;
+
+            context.Ledger.ResolveMcsAgent(overridden.SchemaName, agentId);
+            context.Transcript.Note($"killed once the record named {agentId}: interrupted {killed.Interrupted}, exit {killed.ExitCode}, after {killed.Duration.TotalSeconds:N1}s");
+            context.Assert.Equal(overridden.SchemaName, recorded.McsSchemaName, "the record names the schema name the agent was created under");
+            context.Assert.ExitZero(await McsSteps.DeleteDeploymentAsync(context, classic, deploymentName, deleteCloudAgent: true).ConfigureAwait(false), "deployment delete --delete-deployed-mcs-agent");
+            await context.Assert.EventuallyAsync(() => context.Cloud.AgentGoneAsync(context.DevEnvironmentId, agentId), TimeSpan.FromMinutes(3), "the agent the interrupted deploy created is deleted").ConfigureAwait(false);
+            context.Ledger.MarkDeleted(agentId);
+
+            if (overshot)
+            {
+                throw new ScenarioBlockedException($"the first deploy of {classic.AgentName} finished before the kill landed (exit {killed.ExitCode})", "kill before the push not reached");
+            }
+        });
+    }
+
+    private static string? RecordedAgentId(Workspace workspace)
+    {
+        try
+        {
+            return CopySteps.Registry(workspace.ConfigPath).ManagedAgents.SingleOrDefault()?.McsAgentId;
+        }
+        catch (Exception failure) when (failure is IOException or JsonException)
+        {
+            return null;
+        }
     }
 
     private static IEnumerable<Scenario> DeploymentSlots()
@@ -957,24 +1009,6 @@ public static class McsAgentScenarios
 
         document["instruction"] = instruction;
         File.WriteAllText(promptFile, document.ToJsonString(ConfigJson.Options));
-    }
-
-    private static async Task<string?> ReadSelectedEnvironmentAsync(ScenarioContext context)
-    {
-        var result = await context.Msagent.RunAsync(["env", "list", "--json", "--non-interactive"]).ConfigureAwait(false);
-
-        return result.ExitCode != 0
-            ? null
-            : result.Json<EnvironmentListResult>().Environments.FirstOrDefault(environment => environment.IsActive)?.EnvironmentId;
-    }
-
-    private static async Task RestoreEnvironmentAsync(ScenarioContext context, string? previous)
-    {
-        if (previous is { Length: > 0 })
-        {
-            await McsSteps.SelectEnvironmentAsync(context, previous).ConfigureAwait(false);
-            context.Ledger.MarkRestored("env-select");
-        }
     }
 
     private static string CloudPrompt(ScenarioContext context) => $"ahmcs cloud {context.RunSuffix} - {BasePrompt}";

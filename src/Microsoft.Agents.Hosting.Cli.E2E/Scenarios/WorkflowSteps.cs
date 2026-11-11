@@ -31,6 +31,8 @@ public static class WorkflowSteps
     /// <summary>Registers a workflow that already sits on disk.</summary>
     public static async Task<ManagedAgentInitResult> InitAsync(ScenarioContext context, Workspace workspace)
     {
+        await McsSteps.PinEnvironmentAsync(context).ConfigureAwait(false);
+
         var result = await context.Msagent.RunAsync(
             ["agent", "init", .. WorkflowType, "--agent-name", workspace.AgentName, "--json", "--non-interactive"],
             workspace.ProjectDirectory).ConfigureAwait(false);
@@ -71,23 +73,25 @@ public static class WorkflowSteps
     }
 
     /// <summary>Deploys an already-slotted workflow, for the scenarios that deploy twice.</summary>
-    public static async Task<ManagedAgentDeployResult> DeployOnlyAsync(ScenarioContext context, Workspace workspace, string agentId, params string[] extraArguments)
+    public static Task<ManagedAgentDeployResult> DeployOnlyAsync(ScenarioContext context, Workspace workspace, string agentId, params string[] extraArguments) => DeployThroughAsync(context, workspace.ProjectDirectory, agentId, DeploymentName, extraArguments);
+
+    public static Task<ManagedAgentDeployResult> DeployCloneAsync(ScenarioContext context, ManagedAgentCreateResult clone) => DeployThroughAsync(context, clone.ProjectDirectory ?? throw new E2EException($"the clone of {clone.McsWorkflowId} has no project"), clone.AgentId, clone.DeploymentName ?? DeploymentName, []);
+
+    private static async Task<ManagedAgentDeployResult> DeployThroughAsync(ScenarioContext context, string projectDirectory, string agentId, string deploymentName, IReadOnlyList<string> extraArguments)
     {
-        var result = await RawDeployAsync(context, workspace, agentId, extraArguments).ConfigureAwait(false);
+        var result = await RawDeployThroughAsync(context, projectDirectory, agentId, deploymentName, extraArguments).ConfigureAwait(false);
         context.Assert.ExitZero(result, "agent deploy");
 
         var deployed = result.Json<ManagedAgentDeployResult>();
-        Record(context, deployed.McsWorkflowId, agentId, deployed.DisplayName, workspace.ProjectDirectory);
+        Record(context, deployed.McsWorkflowId, agentId, deployed.DisplayName, projectDirectory);
 
         return deployed;
     }
 
     /// <summary>Deploys without asserting, for the scenarios whose point is the failure.</summary>
-    public static Task<MsagentResult> RawDeployAsync(ScenarioContext context, Workspace workspace, string agentId, params string[] extraArguments) =>
-        context.Msagent.RunAsync(
-            ["agent", "deploy", "--deployment-name", DeploymentName, "--agent-id", agentId, "--json", "--non-interactive", .. extraArguments],
-            workspace.ProjectDirectory,
-            timeout: TimeSpan.FromMinutes(10));
+    public static Task<MsagentResult> RawDeployAsync(ScenarioContext context, Workspace workspace, string agentId, params string[] extraArguments) => RawDeployThroughAsync(context, workspace.ProjectDirectory, agentId, DeploymentName, extraArguments);
+
+    private static Task<MsagentResult> RawDeployThroughAsync(ScenarioContext context, string projectDirectory, string agentId, string deploymentName, IReadOnlyList<string> extraArguments) => context.Msagent.RunAsync(["agent", "deploy", "--deployment-name", deploymentName, "--agent-id", agentId, "--json", "--non-interactive", .. extraArguments], projectDirectory, timeout: TimeSpan.FromMinutes(10));
 
     /// <summary>Pulls the published definition, which replaces local edits only when <c>--overwrite</c> is supplied.</summary>
     public static Task<MsagentResult> PullAsync(ScenarioContext context, Workspace workspace, string agentId, params string[] extraArguments) =>

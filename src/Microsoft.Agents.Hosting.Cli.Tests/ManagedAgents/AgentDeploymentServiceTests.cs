@@ -46,6 +46,26 @@ public sealed class AgentDeploymentCreateServiceTests
     }
 
     [Fact]
+    public async Task Create_ForARecordWithNoEnvironment_NamesTheRecord()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent(environmentId: string.Empty));
+        var (resolver, client) = ManagedAgentFixtures.TrackedResolver();
+        var before = client.ListCalls;
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, resolver).CreateAsync(
+            new AgentDeploymentCreateRequest { AgentId = "agent-1", DeploymentType = "dev", DeploymentName = "develop" },
+            CancellationToken.None));
+
+        Assert.Equal("agent-environment-missing", failure.ErrorKind);
+        Assert.Contains("'Contoso Agent' (agent-1)", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(before, client.ListCalls);
+        Assert.Empty(store.Read(workspace.Root).AgentDeployments);
+    }
+
+    [Fact]
     public async Task Create_LeavesTheManagedAgentUntouched()
     {
         using var workspace = new TemporaryWorkspace();
@@ -859,13 +879,13 @@ public sealed class AgentDeploymentUpdateServiceTests
 public sealed class AgentDeploymentDeleteServiceTests
 {
     private static AgentDeploymentDeleteService Create(JsonAgentConfigStore store, FakeCopilotCatalogPort catalog, IConfirmationPrompt confirmations, CopilotEnvironmentResolver? environments = null) =>
-        new(ManagedAgentFixtures.AgentResolver(store), store, store, environments ?? ManagedAgentFixtures.Resolver(), catalog, new CopilotProjectIdentityReader(new AgentConfigLocator()), confirmations, new AgentConfigLocator());
+        new(ManagedAgentFixtures.AgentResolver(store), store, store, environments ?? ManagedAgentFixtures.Resolver(), catalog, ManagedAgentFixtures.Identities(), confirmations, new AgentConfigLocator());
 
-    private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) Registered()
+    private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) Registered(string? mcsAgentId = null)
     {
         var workspace = new TemporaryWorkspace();
         var store = ManagedAgentFixtures.Store();
-        store.Add(workspace.Root, ManagedAgentFixtures.Agent() with { McsSchemaName = "con_agent" });
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent() with { McsSchemaName = "con_agent", McsAgentId = mcsAgentId });
         store.Add(workspace.Root, ManagedAgentFixtures.Deployment());
 
         return (workspace, store);
@@ -1116,7 +1136,7 @@ public sealed class AgentDeploymentDeleteServiceTests
             new UnremovableDeploymentRegistry(store),
             ManagedAgentFixtures.Resolver(),
             catalog,
-            new CopilotProjectIdentityReader(new AgentConfigLocator()),
+            ManagedAgentFixtures.Identities(),
             new ScriptedConfirmationPrompt(),
             new AgentConfigLocator()).DeleteAsync(
                 new AgentDeploymentDeleteRequest { AgentId = "agent-1", DeploymentName = "dev", DeleteDeployedMcsAgent = true },
@@ -1191,10 +1211,12 @@ public sealed class AgentDeploymentDeleteServiceTests
         Assert.Contains("Type Contoso Agent to confirm", prompt.LastDetail, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task Delete_WithOnlyAnAgentSelectorAndTheFlag_DeletesEachEnvironmentsCloudAgent()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("cloud-1")]
+    public async Task Delete_WithOnlyAnAgentSelectorAndTheFlag_DeletesEachEnvironmentsCloudAgentAndForgetsTheRecordedOne(string? recordedMcsAgentId)
     {
-        var (workspace, store) = Registered();
+        var (workspace, store) = Registered(recordedMcsAgentId);
         using var _ = workspace;
         using var scope = new CurrentDirectoryScope(workspace.Root);
         store.Add(workspace.Root, ManagedAgentFixtures.Deployment("slot-2", name: "test", stage: DeploymentStages.Test, environmentId: "env-test"));
@@ -1207,9 +1229,11 @@ public sealed class AgentDeploymentDeleteServiceTests
             new AgentDeploymentDeleteRequest { AgentId = "agent-1", DeleteDeployedMcsAgent = true },
             CancellationToken.None);
 
+        Assert.Equal("deployment-deleted", result.Status);
         Assert.Equal(2, catalog.DeleteCalls);
         Assert.All(result.Deployments, deployment => Assert.Equal("cloud-1", deployment.DeletedMcsAgentId));
         Assert.Empty(store.Read(workspace.Root).AgentDeployments);
+        Assert.Null(Assert.Single(store.List(workspace.Root)).McsAgentId);
     }
 
     [Fact]

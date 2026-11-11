@@ -246,6 +246,24 @@ public sealed class EnvironmentSelectionServiceTests
         Assert.Equal(1, selection.WriteCalls);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ResolveForCommand_WithABlankEnvironmentId_NamesTheOptionRatherThanACommand(string environmentId)
+    {
+        var client = new FakeEnvironmentClient(EnvironmentFixtures.Environment("env-1"));
+        var service = EnvironmentFixtures.Service(
+            client,
+            new InMemoryEnvironmentSelectionStore(),
+            InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant));
+
+        var error = await Assert.ThrowsAsync<UsageException>(() => service.ResolveForCommandAsync(environmentId, CancellationToken.None));
+
+        Assert.StartsWith("--environment-id ", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("agent create", error.Message, StringComparison.Ordinal);
+        Assert.Equal(0, client.ListCalls);
+    }
+
     [Fact]
     public async Task ResolveForCommand_WithCrossTenantEnvironment_RejectsWithoutPersisting()
     {

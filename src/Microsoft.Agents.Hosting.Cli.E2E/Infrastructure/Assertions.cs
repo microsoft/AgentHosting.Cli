@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
+
 namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 
 /// <summary>A named assertion that did not hold, carrying what was expected and what happened.</summary>
@@ -24,7 +27,7 @@ public sealed class AssertionException : Exception
 }
 
 /// <summary>The checks scenarios make, each one named so a batched scenario still reports per edit.</summary>
-public sealed class Assertions
+public sealed partial class Assertions
 {
     private readonly Transcript _transcript;
     private readonly List<string> _passed = [];
@@ -146,6 +149,74 @@ public sealed class Assertions
 
         Pass(check);
     }
+
+    /// <summary>Asserts a command was refused cleanly: its exit code, a message fragment, no stack trace, and the JSON error envelope when JSON was asked for.</summary>
+    public void Refused(MsagentResult result, int expectedExitCode, string fragment, string check)
+    {
+        ExitCode(result, expectedExitCode, $"{check}: exit {expectedExitCode}");
+        Contains(result, fragment, $"{check}: says {Quote(fragment)}");
+        Clean(result, check);
+    }
+
+    /// <summary>Asserts a command failed cleanly, where the exact exit code is not the point.</summary>
+    public void FailedCleanly(MsagentResult result, string check)
+    {
+        NonZero(result, $"{check}: fails");
+        Clean(result, check);
+    }
+
+    private void Clean(MsagentResult result, string check)
+    {
+        NoStackTrace(result, $"{check}: no stack trace");
+        False(AccessToken().IsMatch(result.Output), $"{check}: no access token");
+
+        if (result.Arguments.Contains("--json"))
+        {
+            True(IsErrorEnvelope(result.StdOut, result.ExitCode) || IsErrorEnvelope(result.StdErr, result.ExitCode), $"{check}: JSON error envelope");
+        }
+    }
+
+    /// <summary>Asserts output carries no .NET stack frame.</summary>
+    public void NoStackTrace(MsagentResult result, string check)
+    {
+        if (StackFrame().IsMatch(result.Output))
+        {
+            throw new AssertionException(check, "no stack trace", "a stack trace", Tail(result), result);
+        }
+
+        Pass(check);
+    }
+
+    /// <summary>Asserts a list of differences is empty, naming the first few when it is not.</summary>
+    public void NoDifferences(IReadOnlyList<string> differences, string check)
+    {
+        if (differences.Count > 0)
+        {
+            throw new AssertionException(check, "no differences", $"{differences.Count} difference(s)", string.Join("; ", differences.Take(10)), null);
+        }
+
+        Pass(check);
+    }
+
+    private static bool IsErrorEnvelope(string text, int exitCode)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+
+            return document.RootElement.TryGetProperty("success", out var success) && success.ValueKind == JsonValueKind.False && document.RootElement.TryGetProperty("exitCode", out var code) && code.TryGetInt32(out var value) && value == exitCode;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    [GeneratedRegex(@"^\s+at \S+\(", RegexOptions.Multiline)]
+    private static partial Regex StackFrame();
+
+    [GeneratedRegex(@"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.")]
+    private static partial Regex AccessToken();
 
     /// <summary>Asserts a file exists.</summary>
     public void FileExists(string path, string check)

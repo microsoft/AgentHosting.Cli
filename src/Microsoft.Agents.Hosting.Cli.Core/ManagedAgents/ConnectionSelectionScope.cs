@@ -23,11 +23,12 @@ public static class ConnectionSelectionScope
     /// <summary>Chooses which plan entries a request addresses.</summary>
     /// <param name="plan">Every reference the workspace has.</param>
     /// <param name="request">The command input.</param>
+    /// <param name="agentId">The record the request's agent selector resolved to, or <see langword="null"/> when it is not known.</param>
     /// <param name="workspaceDirectory">The workspace whose references are selected.</param>
     /// <returns>Indexes into <paramref name="plan"/>, in order.</returns>
     /// <exception cref="ManagedAgentException">The named connection reference is not declared.</exception>
     /// <exception cref="UsageException">No selected reference targets the named connector.</exception>
-    public static IReadOnlyList<int> Apply(IReadOnlyList<ConnectionPlanItem> plan, AgentDeploymentConnectionRequest request, string workspaceDirectory)
+    public static IReadOnlyList<int> Apply(IReadOnlyList<ConnectionPlanItem> plan, AgentDeploymentConnectionRequest request, string? agentId, string workspaceDirectory)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(request);
@@ -44,7 +45,7 @@ public static class ConnectionSelectionScope
                     request.ConnectionReference.Trim(),
                     workspaceDirectory,
                     [.. plan.Select(item => item.View.LogicalName)],
-                    ConnectionCommandHints.ListConnections(request));
+                    ConnectionCommandHints.ListConnections(request, agentId));
             }
         }
 

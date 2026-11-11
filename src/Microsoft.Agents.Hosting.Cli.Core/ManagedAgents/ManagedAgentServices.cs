@@ -5,6 +5,7 @@ namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 /// than nine. Registered as a unit, and absent when the host has no Copilot Studio stack composed.
 /// </summary>
 /// <param name="Create">Scaffolds a project and registers it, or records a clone source.</param>
+/// <param name="Copy">Prepares a new agent from an existing one and registers it.</param>
 /// <param name="Init">Registers a project that already exists.</param>
 /// <param name="List">Lists the agents in an environment or across the tenant.</param>
 /// <param name="Show">Reads one cloud agent.</param>
@@ -32,6 +33,7 @@ namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 /// <param name="Resolver">Resolves which agent type a record selector names.</param>
 public sealed record ManagedAgentServices(
     ManagedAgentCreateService Create,
+    ManagedAgentCopyService Copy,
     ManagedAgentInitService Init,
     ManagedAgentListService List,
     ManagedAgentShowService Show,

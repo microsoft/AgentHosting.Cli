@@ -136,6 +136,8 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
 
     public Func<ManagedAgentCreateRequest, ManagedAgentCreateResult>? OnManagedAgentCreate { get; init; }
 
+    public Func<ManagedAgentCopyRequest, ManagedAgentCopyResult>? OnManagedAgentCopy { get; init; }
+
     public Func<ManagedAgentInitRequest, ManagedAgentInitResult>? OnManagedAgentInit { get; init; }
 
     public Func<ManagedAgentListRequest, ManagedAgentListResult>? OnManagedAgentList { get; init; }
@@ -317,6 +319,27 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
             ProjectDirectory = "C:\\src\\agent",
             ConfigPath = "C:\\src\\agent\\.config\\agent.config.json",
             CreatedFrom = "scaffold",
+        }))(request));
+    }
+
+    public ManagedAgentCopyRequest? LastManagedAgentCopyRequest { get; private set; }
+
+    public Task<ManagedAgentCopyResult> CopyManagedAgentAsync(ManagedAgentCopyRequest request, CancellationToken cancellationToken)
+    {
+        LastManagedAgentCopyRequest = request;
+
+        return Task.FromResult((OnManagedAgentCopy ?? (_ => new ManagedAgentCopyResult
+        {
+            AgentId = "agent-2",
+            DisplayName = request.Name ?? "Copy",
+            SchemaName = "cr_copy_abcdef",
+            Source = "cloud",
+            SourceSchemaName = "cr_agent",
+            EnvironmentId = "env-1",
+            TenantId = "tenant-contoso",
+            ProjectDirectory = "C:\\src\\agent",
+            WorkspaceDirectory = "C:\\src\\agent\\Copy",
+            ConfigPath = "C:\\src\\agent\\.config\\agent.config.json",
         }))(request));
     }
 
@@ -504,7 +527,7 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
             EnvironmentId = request.EnvironmentId ?? "env-1",
             ConnectorId = request.Connector ?? "shared_teams",
             ConnectionId = "connection-1",
-            BindCommand = ConnectionCommandHints.BindConnector(request, request.Connector ?? "shared_teams", "connection-1"),
+            BindCommand = ConnectionCommandHints.BindConnector(request, request.AgentId, request.Connector ?? "shared_teams", "connection-1"),
         }))(request));
     }
 
@@ -519,7 +542,7 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
             ConnectorId = request.Connector ?? "shared_teams",
             ConnectionId = request.ConnectionId ?? "connection-1",
             Ready = true,
-            BindCommand = ConnectionCommandHints.BindReference(request, $"cre98_agent.{request.Connector ?? "shared_teams"}.0"),
+            BindCommand = ConnectionCommandHints.BindReference(request, request.AgentId, $"cre98_agent.{request.Connector ?? "shared_teams"}.0"),
         }))(request));
     }
 

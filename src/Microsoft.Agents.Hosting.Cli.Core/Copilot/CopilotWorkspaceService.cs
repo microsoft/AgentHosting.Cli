@@ -67,6 +67,7 @@ public sealed class CopilotWorkspaceService
 
         return PushResult(sentNothing ? "no-local-changes" : "pushed", workspace, pushed.Changes) with
         {
+            ComponentCount = pushed.ComponentCount,
             UploadedFileCount = pushed.UploadedFileNames.Count,
             AuxiliaryChangeCount = pushed.AuxiliaryChangeCount,
             Warnings = pushed.Warnings,

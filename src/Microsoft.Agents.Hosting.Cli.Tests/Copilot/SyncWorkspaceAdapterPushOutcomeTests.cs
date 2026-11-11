@@ -74,6 +74,32 @@ public sealed class SyncWorkspaceAdapterPushOutcomeTests
         Assert.Equal(0, outcome.AuxiliaryChangeCount);
     }
 
+    private static Change Created(string changeKind, string schemaName) => new() { ChangeType = ChangeType.Create, Name = schemaName, SchemaName = schemaName, ChangeKind = changeKind };
+
+    [Fact]
+    public async Task Push_ReportsTheComponentCountExcludingTheAgentSettingsAndIcon()
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+        synchronizer.LocalChanges.AddRange(
+        [
+            Created("DialogComponent", "con_agent.topic.Greeting"),
+            Created("DialogComponent", "con_agent.topic.Goodbye"),
+            Created("BotSettingsComponent", "con_agent.BotSettingsComponent.Default_FeedbackCollectionBotSettings_jsNFOl"),
+            Created("FileAttachmentComponent", "con_agent.file.guide.txt_0Sh"),
+            Created("BotEntity", "entity"),
+            Created("update", "icon"),
+            Created("CloudFlowDefinition", "Escalate"),
+            Created("ConnectionReference", "con_agent.cr.shared_teams"),
+            Created("EnvironmentVariableDefinition", "con_agent_ApiUrl"),
+            Created("BotComponentCollection", "con_collection"),
+        ]);
+
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+
+        Assert.Equal(4, outcome.ComponentCount);
+        Assert.Equal(10, outcome.Changes.Count);
+    }
+
     [Fact]
     public async Task Push_ReportsTheFilesTheUploadSent()
     {

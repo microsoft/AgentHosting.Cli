@@ -271,6 +271,22 @@ public sealed class SyncWorkspaceAdapterPushRetryTests
         Assert.Equal(0, RefreshCount(retarget));
     }
 
+    [Theory]
+    [InlineData("[0x80072013:ExportKeyInvalidCreate] violates a database constraint on cre98_AgentC1.cr.WX3p-EQ4")]
+    [InlineData("[0x80072013:ExportKeyInvalidCreate] Cannot complete the creation of workflow because it violates a database constraint. The violation happens on the key name: Escalate.")]
+    public async Task Push_WhenADuplicateKeyNamesNeitherAConnectionReferenceNorAComponent_KeepsTheServiceFailureWithoutRetrying(string message)
+    {
+        var synchronizer = AlwaysFailing(new InvalidOperationException(message));
+        var retarget = new RecordingRetargetService();
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Create(synchronizer, retarget).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+
+        Assert.Equal(message, failure.Message);
+        Assert.Equal(1, synchronizer.PushLocalChangesCalls);
+        Assert.Equal(0, RefreshCount(retarget));
+    }
+
     [Fact]
     public async Task Push_WhenAMissingConnectionReferenceFollowsARefusedWorkflow_StillHeals()
     {

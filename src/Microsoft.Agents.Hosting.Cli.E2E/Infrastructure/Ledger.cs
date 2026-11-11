@@ -17,15 +17,18 @@ public enum ResourceKind
     StandaloneWorkflow,
 
     StandaloneConnectionReference,
+    McsCopy,
+    McsCopyRow,
 }
 
-/// <summary>Where a resource stands: created and still present, removed, or left behind.</summary>
+/// <summary>Where a resource stands: created and still present, removed, left behind, or deliberately kept because nothing can delete it.</summary>
 public enum ResourceState
 {
     Created,
     Deleted,
     Orphaned,
     Restored,
+    Retained,
 }
 
 /// <summary>How cleanup removes or restores one resource.</summary>
@@ -61,6 +64,8 @@ public sealed record CleanupPlan
     public string? WorkflowId { get; init; }
 
     public string? ConnectorId { get; init; }
+
+    public string? WorkspaceDirectory { get; init; }
 }
 
 /// <summary>One resource the run created or changed, recorded before the call that creates it.</summary>
@@ -217,7 +222,7 @@ public sealed class Ledger
         lock (_gate)
         {
             if (_entries.FirstOrDefault(candidate =>
-                    candidate.Kind == ResourceKind.McsAgent
+                    candidate.Kind is ResourceKind.McsAgent or ResourceKind.McsCopy
                     && string.Equals(candidate.Id, schemaName, StringComparison.OrdinalIgnoreCase)) is not { } intent)
             {
                 return;
@@ -339,6 +344,27 @@ public sealed class Ledger
     public LedgerEntry RecordConfigEdit(string target, string? priorValue, string scenarioId) =>
         Record(ResourceKind.ConfigEdit, target, target, scenarioId, new CleanupPlan { Via = "restore prior value", PriorValue = priorValue });
 
+    /// <summary>Records a copy before a deploy, by its schema name until the deploy names the cloud agent it created.</summary>
+    public LedgerEntry RecordCopy(string schemaName, string displayName, string environmentId, string projectDirectory, string workspaceDirectory, string managedAgentId, string deploymentName, string scenarioId)
+    {
+        lock (_gate)
+        {
+            if (_entries.FirstOrDefault(candidate => candidate.Kind == ResourceKind.McsCopy && string.Equals(candidate.Cleanup.AgentId, managedAgentId, StringComparison.OrdinalIgnoreCase)) is { } tracked)
+            {
+                return tracked;
+            }
+        }
+
+        return Record(ResourceKind.McsCopy, schemaName, displayName, scenarioId, new CleanupPlan { Via = "agent delete --all-resources", ProjectDirectory = projectDirectory, WorkspaceDirectory = workspaceDirectory, DeploymentName = deploymentName, EnvironmentId = environmentId, SchemaName = schemaName, AgentId = managedAgentId }, resolved: false);
+    }
+
+    /// <summary>Records a row a copy left in its environment that no msagent command could delete.</summary>
+    public void RecordRetainedCopyRow(string kind, string identity, string environmentId, string copyAgentId, string scenarioId, string reason)
+    {
+        Record(ResourceKind.McsCopyRow, identity, kind, scenarioId, new CleanupPlan { Via = "none: no copy record that msagent can delete it through", EnvironmentId = environmentId, McsAgentId = copyAgentId, Correlation = kind });
+        SetState(identity, ResourceState.Retained, reason);
+    }
+
     /// <summary>Marks an entry removed once its resource is confirmed gone.</summary>
     public void MarkDeleted(string id) => SetState(id, ResourceState.Deleted, null);
 
@@ -347,6 +373,21 @@ public sealed class Ledger
 
     /// <summary>Marks an entry left behind, with the reason removal failed.</summary>
     public void MarkOrphaned(string id, string failure) => SetState(id, ResourceState.Orphaned, failure);
+
+    /// <summary>Returns every orphaned entry to the outstanding set, so the next cleanup retries it.</summary>
+    public void ReopenOrphans()
+    {
+        lock (_gate)
+        {
+            foreach (var entry in _entries.Where(candidate => candidate.State == ResourceState.Orphaned))
+            {
+                entry.State = ResourceState.Created;
+                entry.Failure = null;
+            }
+
+            FlushLocked();
+        }
+    }
 
     private LedgerEntry Record(ResourceKind kind, string id, string? displayName, string scenarioId, CleanupPlan cleanup, bool resolved = true)
     {

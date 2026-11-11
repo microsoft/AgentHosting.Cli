@@ -24,6 +24,7 @@ namespace Microsoft.Agents.Hosting.Cli.Rendering;
 [JsonSerializable(typeof(BlueprintIdentityReport))]
 [JsonSerializable(typeof(AppRegistrationIdentityReport))]
 [JsonSerializable(typeof(ManagedAgentCreateResult))]
+[JsonSerializable(typeof(ManagedAgentCopyResult))]
 [JsonSerializable(typeof(ManagedAgentInitResult))]
 [JsonSerializable(typeof(ManagedAgentListResult))]
 [JsonSerializable(typeof(ManagedAgentShowResult))]

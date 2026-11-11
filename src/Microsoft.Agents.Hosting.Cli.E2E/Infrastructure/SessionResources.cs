@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
@@ -57,6 +59,44 @@ public sealed class SessionResources
 {
     private readonly SessionCache<SessionAgentKind, SessionAgent> _agents = new();
     private readonly SessionCache<SessionBotKind, SessionBot> _bots = new();
+    private readonly ConcurrentDictionary<string, SessionCache<string, object>> _pools = new(StringComparer.Ordinal);
+
+    /// <summary>Returns a run-scoped value from a named pool, creating it on first use.</summary>
+    public async Task<T> PooledAsync<T>(string pool, string name, Func<Task<T>> create) where T : notnull => (T)await _pools.GetOrAdd(pool, _ => new SessionCache<string, object>()).GetAsync(name, async () => await create().ConfigureAwait(false)).ConfigureAwait(false);
+
+    /// <summary>Forgets a pooled value a scenario destroyed.</summary>
+    public void ConsumePooled(string pool, string name) => _pools.GetOrAdd(pool, _ => new SessionCache<string, object>()).Consume(name);
+
+    /// <summary>Returns a run-scoped value from a named pool, keeping a creation failure so later callers are blocked by it rather than repeating it.</summary>
+    public async Task<T> SettledAsync<T>(string pool, string name, Func<Task<T>> create) where T : notnull
+    {
+        var created = false;
+        var settled = await PooledAsync(pool, name, async () =>
+        {
+            created = true;
+
+            try
+            {
+                return new Settled<T>(await create().ConfigureAwait(false), null);
+            }
+            catch (Exception failure) when (failure is not OperationCanceledException)
+            {
+                return new Settled<T>(default, ExceptionDispatchInfo.Capture(failure));
+            }
+        }).ConfigureAwait(false);
+
+        if (settled.Failure is null)
+        {
+            return settled.Value!;
+        }
+
+        if (created)
+        {
+            settled.Failure.Throw();
+        }
+
+        throw new ScenarioBlockedException($"{name} could not be created earlier in this run: {settled.Failure.SourceException.Message}", $"{pool} {name} unavailable");
+    }
 
     /// <summary>Returns a long-lived Copilot Studio agent, deploying it on first use.</summary>
     public Task<SessionAgent> AgentAsync(SessionAgentKind kind, Func<Task<SessionAgent>> deploy) => _agents.GetAsync(kind, deploy);
@@ -69,4 +109,6 @@ public sealed class SessionResources
 
     /// <summary>Forgets a bot a scenario deleted.</summary>
     public void ConsumeBot(SessionBotKind kind) => _bots.Consume(kind);
+
+    private sealed record Settled<T>(T? Value, ExceptionDispatchInfo? Failure);
 }

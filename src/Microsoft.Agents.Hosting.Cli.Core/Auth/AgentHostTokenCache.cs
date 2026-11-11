@@ -98,6 +98,6 @@ public sealed class AgentHostTokenCache
         throw new CacheProtectionUnavailableException(
             $"Secure token-cache persistence ({protectedKind}) is unavailable and unprotected persistence " +
             "was not enabled, so the AgentHost cache will not silently fall back to a plaintext file.",
-            remediation: $"Install/enable the platform secret store, or set {AllowUnprotectedCacheSettingName}=true to opt into an unprotected cache.");
+            remediation: $"Install or enable the platform secret store, then run the command again. Only on a machine that cannot have one, set {AllowUnprotectedCacheSettingName}=true as a last resort to opt into an unprotected cache.");
     }
 }

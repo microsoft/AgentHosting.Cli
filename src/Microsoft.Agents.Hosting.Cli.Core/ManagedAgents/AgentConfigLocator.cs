@@ -107,7 +107,11 @@ public sealed partial class AgentConfigLocator
         return IsContainedIn(PhysicalPath(located), physicalProjectRoot) ? located : null;
     }
 
-    private static bool IsContainedIn(string candidate, string root) =>
+    /// <summary>Reports whether a normalized path is a folder or lies beneath it.</summary>
+    /// <param name="candidate">The full path to test, without a trailing separator.</param>
+    /// <param name="root">The full folder path, without a trailing separator.</param>
+    /// <returns><see langword="true"/> when the path is the folder or lies beneath it.</returns>
+    public static bool IsContainedIn(string candidate, string root) =>
         string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase) || candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Resolves a path through any symbolic link or junction on the way to it.</summary>

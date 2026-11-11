@@ -151,6 +151,23 @@ public sealed class SyncWorkspaceAdapterIntegrityTests
     }
 
     [Fact]
+    public async Task Push_WhenTheComponentPushRefusesToCreateOneSchemaNameTwice_NamesBothFilesWithoutRetryingOrUploading()
+    {
+        var cause = Invalid(new WorkspaceDiagnostic("knowledge/files/abcmain2.txt", "The component schema name crf9a_agent.file.abcmain2.txt_0Sh is defined by both knowledge/files/abcmain2.txt.mcs.yml and knowledge/files/abcmain2.txt, so a push would create it twice.", 0, 0));
+        var synchronizer = new RecordingWorkspaceSynchronizer { PushLocalChangesThrows = cause };
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
+            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+
+        Assert.Equal(CopilotErrorKinds.WorkspaceFilesUnreadable, failure.ErrorKind);
+        Assert.Contains("defined by both knowledge/files/abcmain2.txt.mcs.yml and knowledge/files/abcmain2.txt", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(failure.Message, char.IsControl);
+        Assert.Same(cause, failure.InnerException);
+        Assert.Equal(1, synchronizer.PushLocalChangesCalls);
+        Assert.Equal(0, synchronizer.UploadKnowledgeFilesCalls);
+    }
+
+    [Fact]
     public async Task GetChanges_WhenTheWorkspaceCannotBeRead_IsTranslated()
     {
         var synchronizer = new RecordingWorkspaceSynchronizer

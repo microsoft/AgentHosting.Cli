@@ -71,7 +71,7 @@ public sealed class AgentDeploymentConnectionService
         var snapshot = await _connections.ReadConnectionsAsync(environment, workspaceDirectory, cancellationToken).ConfigureAwait(false);
         var principal = await _principals.ResolveUsernameAsync(cancellationToken).ConfigureAwait(false);
         var observed = snapshot.References.Select(ConnectionReadinessPlanner.Observe).ToList();
-        var selected = ConnectionSelectionScope.Apply(observed, request, workspaceDirectory);
+        var selected = ConnectionSelectionScope.Apply(observed, request, target.Agent.AgentId, workspaceDirectory);
         var plan = Propose(observed, selected, principal);
         var diagnostics = new List<string>();
         var settlement = new WorkflowSettlement(snapshot.Workflows);

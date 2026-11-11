@@ -20,6 +20,8 @@ public enum Capability
     StandaloneOracle,
 
     StandaloneFlowRuns,
+
+    CopyCorpus,
 }
 
 /// <summary>How much a scenario can disturb, used for scheduling and for the plan summary.</summary>
@@ -64,8 +66,8 @@ public sealed class Capabilities
         Add(Capability.Auth, signedIn, signedInDetail);
 
         var tenant = ConfigValues.Guid(config.TenantId, "tenantId", value => $"tenant {Short(value)}");
-        var devEnvironment = ConfigValues.Guid(config.Mcs.DevEnvironmentId, "mcs.devEnvironmentId", value => $"env {Short(value)}");
-        var testEnvironment = ConfigValues.Guid(config.Mcs.TestEnvironmentId, "mcs.testEnvironmentId", value => $"env {Short(value)}");
+        var devEnvironment = ConfigValues.EnvironmentId(config.Mcs.DevEnvironmentId, "mcs.devEnvironmentId", value => $"env {Short(value)}");
+        var testEnvironment = ConfigValues.EnvironmentId(config.Mcs.TestEnvironmentId, "mcs.testEnvironmentId", value => $"env {Short(value)}");
 
         Add(Capability.McsDev,
             signedIn && tenant.Supplied && devEnvironment.Supplied,
@@ -112,6 +114,16 @@ public sealed class Capabilities
         var ams = ConfigValues.Text(config.Ams.Endpoint, "ams.endpoint", value => value);
         Add(Capability.Ams, ams.Supplied, ams.Detail);
 
+        var corpusRoot = ConfigValues.Text(config.Mcs.Copy.CorpusRoot, "mcs.copy.corpusRoot", value => value);
+        var corpusAgents = corpusRoot.Usable is { } root && Directory.Exists(root) ? Directory.GetDirectories(root).Length : 0;
+
+        Add(Capability.CopyCorpus,
+            states[Capability.McsDev].Available && corpusAgents > 0,
+            !states[Capability.McsDev].Available ? states[Capability.McsDev].Detail
+            : !corpusRoot.Supplied ? corpusRoot.Detail
+            : corpusAgents > 0 ? $"{corpusAgents} agents under {corpusRoot.Value} (read-only)"
+            : $"no agent workspaces under {corpusRoot.Value}");
+
         var standaloneFixtures = Path.Combine(fixturesDirectory, StandaloneFixturesFolder);
         var standaloneFixturesExist = Directory.Exists(standaloneFixtures);
         Add(Capability.StandaloneFixtures, standaloneFixturesExist,
@@ -150,5 +162,5 @@ public sealed class Capabilities
     private static string AzureCliDetail() => AzureCli.Path is { Length: > 0 } path ? path : "resolved";
 
     private static string Short(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? string.Empty : value.Length <= 8 ? value : value[..8] + "…";
+        string.IsNullOrWhiteSpace(value) ? string.Empty : value.Length <= 8 ? value : value[..(value.StartsWith("Default-", StringComparison.OrdinalIgnoreCase) ? 16 : 8)] + "…";
 }

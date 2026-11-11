@@ -34,17 +34,7 @@ public static class FixtureCopies
             throw new E2EException($"The fixture {source} is missing.");
         }
 
-        Directory.CreateDirectory(destination);
-
-        foreach (var relative in Directory.GetDirectories(source, "*", SearchOption.AllDirectories).Select(directory => Path.GetRelativePath(source, directory)).Where(relative => keepLocalState || !IsLocalState(relative)))
-        {
-            Directory.CreateDirectory(Path.Combine(destination, relocate(relative)));
-        }
-
-        foreach (var relative in Directory.GetFiles(source, "*", SearchOption.AllDirectories).Select(file => Path.GetRelativePath(source, file)).Where(relative => keepLocalState || !IsLocalState(relative)))
-        {
-            File.Copy(Path.Combine(source, relative), Path.Combine(destination, relocate(relative)), overwrite: true);
-        }
+        FileTree.CopyTree(source, destination, relative => keepLocalState || !IsLocalState(relative) ? relocate(relative) : null);
     }
 
     private static string Reidentified(string line, string folderName, string displayName, Guid workflowId) =>

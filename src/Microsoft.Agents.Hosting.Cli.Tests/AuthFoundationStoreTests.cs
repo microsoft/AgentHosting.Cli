@@ -210,7 +210,7 @@ public sealed class FileAuthProfileStoreTests
 
         await store.UpsertAsync(Profile("home-1", "a@contoso.com"), default);
 
-        var leftovers = Directory.GetFiles(dir.Path, "*.tmp-*");
+        var leftovers = Directory.GetFiles(dir.Path, "*.tmp");
         Assert.Empty(leftovers);
     }
 
@@ -623,6 +623,7 @@ public sealed class TokenCacheProtectionTests
             () => cache.ResolveProtectionAsync(Descriptor(dir.Path), allowUnprotectedCache: false, default));
 
         Assert.Equal(ExitCodes.Failure, ex.ExitCode);
+        Assert.StartsWith("Install or enable the platform secret store", ex.Remediation, StringComparison.Ordinal);
         Assert.Contains(AgentHostTokenCache.AllowUnprotectedCacheSettingName, ex.Remediation);
     }
 

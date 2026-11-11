@@ -415,6 +415,20 @@ public sealed class JsonAgentConfigStoreTests
     }
 
     [Fact]
+    public void AWriteWhileAnotherCommandIsWritingTheConfigurationFailsAsLockedAndWritesNothing()
+    {
+        using var project = new TemporaryProject();
+        var locator = new AgentConfigLocator();
+        using var holder = HeldNamedMutex.OnAnotherThread(JsonAgentConfigStore.WriteLockNamePrefix, locator.ConfigFilePath(project.Root));
+
+        var failure = Assert.Throws<ManagedAgentException>(() => new JsonAgentConfigStore(locator, new StoreClock(), TimeSpan.Zero).Add(project.Root, StoreFixtures.Agent()));
+
+        Assert.Equal("config-locked", failure.ErrorKind);
+        Assert.Equal(ExitCodes.Failure, failure.ExitCode);
+        Assert.False(File.Exists(project.ConfigPath));
+    }
+
+    [Fact]
     public void ReadWriteRoundTripIsByteIdenticalWhenNothingChanges()
     {
         using var project = new TemporaryProject();

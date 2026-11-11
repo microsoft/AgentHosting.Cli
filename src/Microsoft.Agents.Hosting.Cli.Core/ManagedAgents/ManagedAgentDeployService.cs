@@ -23,6 +23,7 @@ public sealed class ManagedAgentDeployService
     private readonly CopilotCatalogService _catalogService;
     private readonly ManagedAgentPrincipalResolver _principals;
     private readonly WorkflowActivationPass _workflowActivation;
+    private readonly CopilotAgentName _agentNames;
     private readonly IClock _clock;
     private readonly IProgressStatus _progress;
 
@@ -39,9 +40,10 @@ public sealed class ManagedAgentDeployService
     /// <param name="catalogService">Publishes the pushed content.</param>
     /// <param name="principals">Resolves the signed-in operator recorded as the deployer.</param>
     /// <param name="workflowActivation">Activates the workflows the push left as drafts.</param>
+    /// <param name="agentNames">Refuses a display name Copilot Studio would refuse for an agent the deploy may create.</param>
     /// <param name="clock">Timestamps the deploy.</param>
     /// <param name="progress">Shows the deploy's current step while it runs.</param>
-    public ManagedAgentDeployService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, CopilotEnvironmentResolver environmentResolver, CopilotWorkspaceLocator workspaceLocator, CopilotWorkspaceService workspaces, CopilotProjectIdentityReader projectIdentities, ICopilotWorkspaceAttachPort attach, ICopilotCatalogPort catalog, CopilotCatalogService catalogService, ManagedAgentPrincipalResolver principals, WorkflowActivationPass workflowActivation, IClock clock, IProgressStatus? progress = null)
+    public ManagedAgentDeployService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, CopilotEnvironmentResolver environmentResolver, CopilotWorkspaceLocator workspaceLocator, CopilotWorkspaceService workspaces, CopilotProjectIdentityReader projectIdentities, ICopilotWorkspaceAttachPort attach, ICopilotCatalogPort catalog, CopilotCatalogService catalogService, ManagedAgentPrincipalResolver principals, WorkflowActivationPass workflowActivation, CopilotAgentName agentNames, IClock clock, IProgressStatus? progress = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
@@ -55,6 +57,7 @@ public sealed class ManagedAgentDeployService
         _catalogService = catalogService ?? throw new ArgumentNullException(nameof(catalogService));
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
         _workflowActivation = workflowActivation ?? throw new ArgumentNullException(nameof(workflowActivation));
+        _agentNames = agentNames ?? throw new ArgumentNullException(nameof(agentNames));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _progress = progress ?? NoProgressStatus.Instance;
     }
@@ -85,13 +88,19 @@ public sealed class ManagedAgentDeployService
         var componentWarnings = new List<string>();
         var workspaceDirectory = _resolver.ResolveAgentWorkspaceDirectory(projectDirectory, agent);
         var identity = _projectIdentities.Require(workspaceDirectory, agent.AgentId);
+
+        if (identity.AuthoringMode == CopilotAuthoringModes.CliCopilot)
+        {
+            RequireSchemaName(request.SchemaName, identity.SchemaName, $"{AgentConfigLocator.ProjectSettingsFileName} declares schema name {identity.SchemaName}, and Copilot Studio requires a CLI agent to carry the schema name its settings declare. Remove --schema-name, or change schemaName in {AgentConfigLocator.ProjectSettingsFileName}.");
+        }
+
         var schemaName = string.IsNullOrWhiteSpace(request.SchemaName) ? identity.SchemaName : request.SchemaName.Trim();
         var workspace = await _workspaceLocator.FindAsync(workspaceDirectory, cancellationToken).ConfigureAwait(false);
         var action = ChooseAction(workspace, target.EnvironmentId);
 
         if (action == "push")
         {
-            if (await FindTargetAgentAsync(target, workspace!.AgentId, cancellationToken).ConfigureAwait(false) is { } bound)
+            if (await _catalog.FindAgentAsync(target, workspace!.AgentId, cancellationToken).ConfigureAwait(false) is { } bound)
             {
                 RequireBoundAgentMatches(bound, schemaName, target.EnvironmentId, workspaceDirectory);
             }
@@ -112,6 +121,8 @@ public sealed class ManagedAgentDeployService
         }
         else
         {
+            _agentNames.Require(identity.DisplayName, $"The display name in {AgentConfigLocator.ProjectSettingsFileName}");
+
             var adoptable = await RequireAdoptableTargetAsync(target, agent, deployment, schemaName, request.Overwrite, cancellationToken).ConfigureAwait(false);
 
             var attached = await _attach.AttachAsync(
@@ -125,6 +136,11 @@ public sealed class ManagedAgentDeployService
                     ExpectedAgentId = adoptable,
                 },
                 cancellationToken).ConfigureAwait(false);
+
+            if (attached.AgentCreated || !string.Equals(attached.AgentId, agent.McsAgentId, StringComparison.OrdinalIgnoreCase))
+            {
+                agent = RecordDeployedAgent(projectDirectory, agent with { McsAgentId = attached.AgentId, McsSchemaName = attached.SchemaName }, target.EnvironmentId, deployment.DeploymentName, deployedSlot: null);
+            }
 
             targetAgentId = attached.AgentId;
             targetAgentCreated = attached.AgentCreated;
@@ -149,15 +165,7 @@ public sealed class ManagedAgentDeployService
         blockers.AddRange(ExceptSupersededWorkflows(componentWarnings, activation.Reported.Count > 0));
         blockers.AddRange(pushed.CollectionWarnings);
         blockers.AddRange(activation.Warnings);
-        try
-        {
-            _deployments.Update(projectDirectory, deployment with { LastDeployedTime = deployedOn, LastDeployedBy = deployedBy });
-            _agents.Update(projectDirectory, agent with { LastDeployedBy = deployedBy, McsAgentId = targetAgentId, McsSchemaName = schemaName });
-        }
-        catch (Exception failure) when (failure is not OperationCanceledException)
-        {
-            throw ManagedAgentException.DeployRecordedNowhere(schemaName, target.EnvironmentId, targetAgentId, deployment.DeploymentName, failure);
-        }
+        RecordDeployedAgent(projectDirectory, agent with { LastDeployedBy = deployedBy, McsAgentId = targetAgentId, McsSchemaName = schemaName }, target.EnvironmentId, deployment.DeploymentName, deployment with { LastDeployedTime = deployedOn, LastDeployedBy = deployedBy });
 
         var result = new ManagedAgentDeployResult
         {
@@ -186,6 +194,31 @@ public sealed class ManagedAgentDeployService
         return blockers.Count == 0
             ? await PublishAsync(result, target, targetAgentId, cancellationToken).ConfigureAwait(false)
             : throw ManagedAgentException.PublishWithheldAfterIncompletePush(schemaName, target.EnvironmentId, deployment.DeploymentName, [.. blockers.Distinct(StringComparer.Ordinal)]);
+    }
+
+    private static void RequireSchemaName(string? requestedSchemaName, string requiredSchemaName, string reason)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedSchemaName) && !string.Equals(requestedSchemaName.Trim(), requiredSchemaName, StringComparison.Ordinal))
+        {
+            throw new UsageException($"--schema-name {requestedSchemaName.Trim()} cannot be used: {reason}");
+        }
+    }
+
+    private ManagedAgentRecord RecordDeployedAgent(string projectDirectory, ManagedAgentRecord deployedAgent, string environmentId, string deploymentName, AgentDeploymentRecord? deployedSlot)
+    {
+        try
+        {
+            if (deployedSlot is not null)
+            {
+                _deployments.Update(projectDirectory, deployedSlot);
+            }
+
+            return _agents.Update(projectDirectory, deployedAgent);
+        }
+        catch (Exception failure) when (failure is not OperationCanceledException)
+        {
+            throw deployedSlot is null ? ManagedAgentException.DeployRecordedNowhereBeforePush(deployedAgent.McsSchemaName!, environmentId, deployedAgent.McsAgentId!, deploymentName, failure) : ManagedAgentException.DeployRecordedNowhere(deployedAgent.McsSchemaName!, environmentId, deployedAgent.McsAgentId!, deploymentName, failure);
+        }
     }
 
     /// <summary>
@@ -237,7 +270,7 @@ public sealed class ManagedAgentDeployService
                 new CopilotPushRequest { ProjectDirectory = workspaceDirectory, Overwrite = overwrite || stage != DeploymentStages.Dev },
                 cancellationToken).ConfigureAwait(false);
 
-            return (pushed.ChangeCount, pushed.UploadedFileCount, pushed.AuxiliaryChangeCount, pushed.Warnings);
+            return (pushed.ComponentCount, pushed.UploadedFileCount, pushed.AuxiliaryChangeCount, pushed.Warnings);
         }
         catch (CopilotStudioException failure) when (
             failure.ErrorKind is CopilotErrorKinds.PushConflictsRequirePull or CopilotErrorKinds.WorkspaceFilesUnreadable or CopilotErrorKinds.WorkflowToolIdEmpty or CopilotErrorKinds.MissingConnectionReference)
@@ -253,26 +286,6 @@ public sealed class ManagedAgentDeployService
     private static string ChooseAction(CopilotWorkspaceInfo? workspace, string targetEnvironmentId) => workspace is null
         ? "reattach"
         : string.Equals(workspace.EnvironmentId, targetEnvironmentId, StringComparison.OrdinalIgnoreCase) ? "push" : "retarget";
-
-    /// <summary>
-    /// Finds the agent the workspace is bound to, or nothing when it no longer exists.
-    ///
-    /// Only a typed "not found" counts as absence. Treating any failure as absence would let a 401, a
-    /// 403, a timeout or a server error be read as a deleted agent, and the reattach that follows sets
-    /// <c>overwrite</c> — so a transient fault would silently overwrite cloud content the operator never
-    /// asked to overwrite. Every other failure is the caller's to see.
-    /// </summary>
-    private async Task<CopilotAgentSummary?> FindTargetAgentAsync(CopilotEnvironmentContext target, string agentId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await _catalog.GetAgentAsync(target, agentId, cancellationToken).ConfigureAwait(false);
-        }
-        catch (CopilotStudioException failure) when (failure.ErrorKind == CopilotErrorKinds.AgentNotFound)
-        {
-            return null;
-        }
-    }
 
     /// <summary>
     /// Rejects a push whose workspace is bound to an agent that is not the one the workspace describes,
@@ -305,7 +318,7 @@ public sealed class ManagedAgentDeployService
     private async Task<string?> RequireAdoptableTargetAsync(CopilotEnvironmentContext target, ManagedAgentRecord agent, AgentDeploymentRecord deployment, string schemaName, bool acknowledged, CancellationToken cancellationToken)
     {
         if (await _catalog.ResolveAgentIdAsync(target, schemaName, cancellationToken).ConfigureAwait(false) is not { } candidateId
-            || await FindTargetAgentAsync(target, candidateId, cancellationToken).ConfigureAwait(false) is not { } existing)
+            || await _catalog.FindAgentAsync(target, candidateId, cancellationToken).ConfigureAwait(false) is not { } existing)
         {
             return null;
         }
@@ -315,22 +328,10 @@ public sealed class ManagedAgentDeployService
             throw ManagedAgentException.TargetAgentIsReadOnly(schemaName, target.EnvironmentId);
         }
 
-        return acknowledged || ProjectOwns(agent, deployment, schemaName, existing.AgentId)
+        return acknowledged || ManagedAgentResolver.ProjectOwns(agent, deployment, schemaName, existing.AgentId)
             ? existing.AgentId
             : throw ManagedAgentException.UnverifiedAgentInTarget(schemaName, target.EnvironmentId, existing.AgentId);
     }
-
-    /// <summary>
-    /// Whether the project can show the agent carrying the schema name is one it already deploys.
-    /// </summary>
-    /// <param name="agent">The record being deployed.</param>
-    /// <param name="deployment">The slot being deployed.</param>
-    /// <param name="schemaName">The schema name the deploy will use.</param>
-    /// <param name="targetAgentId">The agent that would be adopted.</param>
-    /// <returns>Whether adopting the agent needs no acknowledgement.</returns>
-    private static bool ProjectOwns(ManagedAgentRecord agent, AgentDeploymentRecord deployment, string schemaName, string targetAgentId) =>
-        string.Equals(agent.McsAgentId, targetAgentId, StringComparison.OrdinalIgnoreCase)
-        || (deployment.LastDeployedTime is not null && string.Equals(agent.McsSchemaName, schemaName, StringComparison.OrdinalIgnoreCase));
 
     private static string DescribeTarget(string action, bool agentCreated) => action switch
     {

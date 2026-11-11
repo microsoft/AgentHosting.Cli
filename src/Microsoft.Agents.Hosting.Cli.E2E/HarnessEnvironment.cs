@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core;
 using Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 using Microsoft.Agents.Hosting.Cli.E2E.Scenarios;
 using Microsoft.Agents.Hosting.Cli.E2E.Scenarios.StandaloneWorkflow;
@@ -63,7 +64,7 @@ public sealed class HarnessEnvironment
         }
 
         var binary = await new MsagentCliBuilder(SourceRoot(ProjectDirectory), transcript).AcquireAsync(runDirectory, ToolDirectory(runId), options.MsagentPath, cancellationToken).ConfigureAwait(false);
-        var msagent = new MsagentCli(binary.Path, transcript, CrashDumps.DirectoryFor(runDirectory));
+        var msagent = new MsagentCli(binary.Path, transcript, CrashDumps.DirectoryFor(runDirectory), config.Mcs.ForbiddenEnvironmentIds);
         var azure = new AzureCli(transcript);
         var cloud = new CloudProbe(msagent, azure);
 
@@ -113,6 +114,7 @@ public sealed class HarnessEnvironment
             Transcript = transcript,
             Reporter = new Reporter(!options.NoColour),
             Standalone = standalone,
+            CorpusSnapshot = capabilities.Has(Capability.CopyCorpus) && scheduled.Any(scenario => scenario.Requires.Contains(Capability.CopyCorpus)) ? TreeSnapshot.Take(config.Mcs.Copy.CorpusRoot!) : null,
         };
 
         return new HarnessEnvironment(run, scheduled);
@@ -132,12 +134,19 @@ public sealed class HarnessEnvironment
         Console.WriteLine();
     }
 
-    private static bool ValidateEnvironments(E2EConfig config)    {
+    private static bool ValidateEnvironments(E2EConfig config)
+    {
         if (config.Mcs.DevEnvironmentId is { Length: > 0 } dev
             && config.Mcs.TestEnvironmentId is { Length: > 0 } test
             && string.Equals(dev, test, StringComparison.OrdinalIgnoreCase))
         {
             Console.Error.WriteLine("mcs.devEnvironmentId and mcs.testEnvironmentId are the same; promotion needs two environments.");
+            return false;
+        }
+
+        if (new[] { config.Mcs.DevEnvironmentId, config.Mcs.TestEnvironmentId }.FirstOrDefault(environment => config.Mcs.ForbiddenEnvironmentIds.Contains(environment?.Trim(), StringComparer.OrdinalIgnoreCase)) is { } forbidden)
+        {
+            Console.Error.WriteLine($"{forbidden} is listed in mcs.forbiddenEnvironmentIds, so no scenario may target it. Point mcs.devEnvironmentId and mcs.testEnvironmentId elsewhere.");
             return false;
         }
 
@@ -201,7 +210,7 @@ public sealed class HarnessEnvironment
         Console.WriteLine("scenario will be skipped. Grant it the same way a normal user does — run one `abs`");
         Console.WriteLine("command interactively and complete the browser prompt, once:");
         Console.WriteLine();
-        Console.WriteLine("    msagent " + string.Join(' ', probe.Select(Quote)));
+        Console.WriteLine("    msagent " + string.Join(' ', probe.Select(CommandLineArgument.Quote)));
         Console.WriteLine();
         Console.WriteLine("That plans a bot and changes nothing. Every later run then works non-interactively.");
         Console.WriteLine();
@@ -220,8 +229,6 @@ public sealed class HarnessEnvironment
         "--endpoint", "https://msagent-e2e-consent-probe.example.invalid/api/messages",
         "--msa-app-id", "00000000-0000-0000-0000-000000000000",
     ];
-
-    private static string Quote(string argument) => argument.Contains(' ', StringComparison.Ordinal) ? $"\"{argument}\"" : argument;
 
     private const int ExitNotSignedIn = 3;
 
@@ -278,18 +285,7 @@ public sealed class HarnessEnvironment
     /// <returns>The source root directory.</returns>
     public static string SourceRoot(string startDirectory) => FindAncestorHolding(startDirectory, Path.Combine("Microsoft.Agents.Hosting.Cli", "Microsoft.Agents.Hosting.Cli.csproj")) ?? throw new E2EException("Could not locate the source root; Microsoft.Agents.Hosting.Cli.csproj was not found above the harness project.");
 
-    private static string? FindAncestorHolding(string startDirectory, string relativeFilePath)
-    {
-        for (var directory = new DirectoryInfo(startDirectory); directory is not null; directory = directory.Parent)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, relativeFilePath)))
-            {
-                return directory.FullName;
-            }
-        }
-
-        return null;
-    }
+    private static string? FindAncestorHolding(string startDirectory, string relativeFilePath) => FileTree.FindAncestor(startDirectory, directory => File.Exists(Path.Combine(directory, relativeFilePath)));
 
     private static string Summarize(string value) =>
         value.ReplaceLineEndings(" ") is { Length: > 160 } long_ ? long_[..160] + "…" : value.ReplaceLineEndings(" ");

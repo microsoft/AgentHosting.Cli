@@ -77,6 +77,9 @@ public static class CopilotErrorKinds
     /// <summary>The service refused a connection reference it already holds, so the push did not land.</summary>
     public const string DuplicateConnectionReference = "duplicate-connection-reference";
 
+    /// <summary>The service refused to create a component it already holds, so the push did not land.</summary>
+    public const string DuplicateComponent = "duplicate-component";
+
     /// <summary>The push names a connection reference the environment does not hold, even after the baseline was re-read.</summary>
     public const string MissingConnectionReference = "missing-connection-reference";
 
@@ -523,6 +526,13 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The service's refusal.</param>
     /// <returns>The exception to throw.</returns>
     public static CopilotStudioException DuplicateConnectionReference(string environmentId, IReadOnlyList<string> refusals, Exception innerException) => ComponentPushNotCompleted(ErrorCodes.CopilotStudio.DuplicateConnectionReference, $"A connection reference this push declares already exists in {environmentId}", CopilotErrorKinds.DuplicateConnectionReference, "Delete or rename the conflicting connection reference, or run `msagent deployment connection update` to bind it, then deploy again.", refusals, innerException);
+
+    /// <summary>The service refused to create a component it already holds, after the baseline was re-read.</summary>
+    /// <param name="environmentId">The environment that was pushed to.</param>
+    /// <param name="schemaName">The refused component's schema name, when the service named it.</param>
+    /// <param name="failure">The service's refusal.</param>
+    /// <returns>The exception to throw.</returns>
+    public static CopilotStudioException DuplicateComponent(string environmentId, string? schemaName, Exception failure) => ComponentPushNotCompleted(ErrorCodes.CopilotStudio.DuplicateComponent, schemaName is null ? $"A component this push creates already exists in {environmentId}" : $"A component this push creates, {schemaName}, already exists in {environmentId}", CopilotErrorKinds.DuplicateComponent, "Run `msagent agent pull` to bring the cloud copy into the workspace, or rename the local component.", [], failure);
 
     /// <summary>The service reported a connection reference missing after the baseline was re-read from the environment.</summary>
     /// <param name="environmentId">The environment that was pushed to.</param>

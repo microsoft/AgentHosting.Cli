@@ -121,6 +121,10 @@ mean a change partially completed or its result is uncertain.
 | [11055](ErrorCodes/11055.md) | The workflow name would be refused by Dataverse or cannot be used as a folder name. |
 | [11056](ErrorCodes/11056.md) | Deploying would overwrite workflow changes made in the environment. |
 | [11057](ErrorCodes/11057.md) | An unpublished draft saved in Copilot Studio blocks deploying the workflow. |
+| [11058](ErrorCodes/11058.md) | The agent's record names no environment, so the command cannot choose a target. |
+| [11059](ErrorCodes/11059.md) | Preparing the copy found blockers, so nothing was written or sent. |
+| [11067](ErrorCodes/11067.md) | Another copy into the same project is running. |
+| [11069](ErrorCodes/11069.md) | The agent was deleted, but some of the resources `--all-resources` deletes were not. |
 
 ## Authentication
 
@@ -213,6 +217,7 @@ mean a change partially completed or its result is uncertain.
 | [14045](ErrorCodes/14045.md) | An update explicitly requested an empty value for a required setting. |
 | [14046](ErrorCodes/14046.md) | A Boolean provider or channel setting is not expressed as true or false. |
 | [14047](ErrorCodes/14047.md) | The channel response does not contain a usable configuration. |
+| [14050](ErrorCodes/14050.md) | The agent was created or connected, but its record could not be updated before the push. |
 
 ## Package
 
@@ -288,6 +293,7 @@ mean a change partially completed or its result is uncertain.
 | [17030](ErrorCodes/17030.md) | A workflow tool has a missing or all-zero workflowId. |
 | [17031](ErrorCodes/17031.md) | A persistent duplicate-reference refusal stopped the component push. |
 | [17032](ErrorCodes/17032.md) | A persistent missing-reference refusal stopped the component push. |
+| [17033](ErrorCodes/17033.md) | A persistent duplicate-component refusal stopped the component push. |
 
 ## Evaluation
 

@@ -753,10 +753,10 @@ public sealed class WorkflowDeleteServiceTests : IDisposable
 
     public void Dispose() => _workspace.Dispose();
 
-    private WorkflowDeleteService Service(IConfirmationPrompt? prompt = null) => new(
+    private WorkflowDeleteService Service(IConfirmationPrompt? prompt = null, IManagedAgentRegistry? agents = null) => new(
         ManagedAgentFixtures.AgentResolver(_config),
         new WorkflowProjectResolver(ManagedAgentFixtures.AgentResolver(_config), new AgentConfigLocator(), Environments(), new FakeWorkflowWorkspacePort()),
-        _config,
+        agents ?? _config,
         Environments(),
         _store,
         prompt ?? new ScriptedConfirmationPrompt { Answer = true });
@@ -833,11 +833,13 @@ public sealed class WorkflowDeleteServiceTests : IDisposable
     public async Task OtherDeploymentsAreReportedAsOrphaned()
     {
         Register();
-        ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment(deploymentName: "prodwf", deploymentId: "dep-2", environmentId: "env-2"));
+        AddProductionDeployment();
 
         var result = await Service().DeleteAsync(Request(), CancellationToken.None);
 
         Assert.Equal("env-2", Assert.Single(result.OrphanedTargets).EnvironmentId);
+        Assert.Equal(["env-1"], _store.DeletedIn);
+        Assert.Empty(_config.List(_workspace.Root));
     }
 
     [Fact]
@@ -861,6 +863,19 @@ public sealed class WorkflowDeleteServiceTests : IDisposable
         Assert.Equal("cancelled", result.Status);
         Assert.Single(_config.List(_workspace.Root));
         Assert.Single(_store.Cloud);
+    }
+
+    [Fact]
+    public async Task ARecordWithNoEnvironmentIsNamedAndNothingIsDeleted()
+    {
+        _config.Add(_workspace.Root, WorkflowFixtures.Record(environmentId: string.Empty));
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service(new ScriptedConfirmationPrompt { Throws = true }).DeleteAsync(Request(), CancellationToken.None));
+
+        Assert.Equal("agent-environment-missing", failure.ErrorKind);
+        Assert.Contains("'WF Hook 2' (wf-1)", failure.Message, StringComparison.Ordinal);
+        Assert.Empty(_store.Calls);
+        Assert.Single(_config.List(_workspace.Root));
     }
 
     [Fact]
@@ -904,7 +919,7 @@ public sealed class WorkflowDeleteServiceTests : IDisposable
     public async Task AnEnvironmentTheHomeAndADeploymentShareIsReportedOnce()
     {
         Register();
-        ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment(deploymentName: "prodwf", deploymentId: "dep-2", environmentId: "env-2"));
+        AddProductionDeployment();
 
         var result = await Service().DeleteAsync(Request() with { DeploymentName = "prodwf" }, CancellationToken.None);
 
@@ -972,12 +987,49 @@ public sealed class WorkflowDeleteServiceTests : IDisposable
         Assert.Single(_config.List(_workspace.Root));
     }
 
+    [Fact]
+    public async Task WhenTheRecordsCannotBeRemovedAfterTheFlowIsDeletedTheErrorNamesItsEnvironment()
+    {
+        Register();
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Service(agents: new RefusingAgentRegistry(_config)).DeleteAsync(Request(), CancellationToken.None));
+
+        Assert.Equal("records-survived-cloud-delete", failure.ErrorKind);
+        Assert.StartsWith("The cloud agent in env-1 was deleted, but the records for 'wf-1' could not be removed: ", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(["env-1"], _store.DeletedIn);
+        Assert.Single(_config.List(_workspace.Root));
+    }
+
+    [Fact]
+    public async Task WhenTheRecordsCannotBeRemovedAndTheFlowWasAlreadyAbsentTheRecordFailureIsReported()
+    {
+        Register(inCloud: false);
+
+        await Assert.ThrowsAsync<IOException>(() => Service(agents: new RefusingAgentRegistry(_config)).DeleteAsync(Request(), CancellationToken.None));
+
+        Assert.Empty(_store.DeletedIn);
+        Assert.Single(_config.List(_workspace.Root));
+    }
+
+    [Fact]
+    public async Task Delete_WithAllResources_IsAUsageError()
+    {
+        Register();
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Service(new ScriptedConfirmationPrompt { Throws = true }).DeleteAsync(Request() with { AllResources = true }, CancellationToken.None));
+
+        Assert.Contains("--all-resources", failure.Message, StringComparison.Ordinal);
+        Assert.Empty(_store.Calls);
+        Assert.Single(_config.List(_workspace.Root));
+    }
+
+    private void AddProductionDeployment() => ((IAgentDeploymentRegistry)_config).Add(_workspace.Root, WorkflowFixtures.Deployment(deploymentName: "prodwf", deploymentId: "dep-2", environmentId: "env-2"));
+
     private void RemoveHomeDeployment()
     {
+        AddProductionDeployment();
+
         var deployments = (IAgentDeploymentRegistry)_config;
-
-        deployments.Add(_workspace.Root, WorkflowFixtures.Deployment(deploymentName: "prodwf", deploymentId: "dep-2", environmentId: "env-2"));
-
         var home = deployments.List(_workspace.Root).Single(deployment => deployment.DeploymentId == "dep-1");
 
         deployments.Remove(_workspace.Root, home.DeploymentId, home.EntityTag);

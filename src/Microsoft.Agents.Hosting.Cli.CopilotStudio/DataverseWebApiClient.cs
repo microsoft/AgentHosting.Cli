@@ -30,6 +30,29 @@ public sealed class DataverseWebApiClient
     /// <param name="environment">The environment to target.</param>
     public void Connect(CopilotEnvironmentContext environment) => DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, environment);
 
+    /// <summary>Deletes the connection reference with a logical name, reporting whether the environment held one.</summary>
+    /// <param name="environment">The environment whose organization is addressed.</param>
+    /// <param name="logicalName">The connection reference's logical name.</param>
+    /// <param name="cancellationToken">Cancels the requests.</param>
+    /// <returns><see langword="true"/> when a connection reference was deleted.</returns>
+    public async Task<bool> DeleteConnectionReferenceAsync(CopilotEnvironmentContext environment, string logicalName, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(logicalName);
+
+        Connect(environment);
+
+        var recordId = (await _dataverseClient.GetConnectionReferencesByLogicalNamesAsync([logicalName], cancellationToken).ConfigureAwait(false)).Where(row => logicalName.Equals(row.ConnectionReferenceLogicalName, StringComparison.OrdinalIgnoreCase)).Select(row => row.ConnectionReferenceId).FirstOrDefault();
+
+        if (recordId == Guid.Empty)
+        {
+            return false;
+        }
+
+        (await SendAsync(environment, HttpMethod.Delete, $"api/data/v9.2/connectionreferences({recordId})", cancellationToken).ConfigureAwait(false))?.Dispose();
+
+        return true;
+    }
+
     /// <summary>Sends one request against the environment's organization.</summary>
     /// <param name="environment">The environment whose organization is addressed.</param>
     /// <param name="method">The HTTP method.</param>

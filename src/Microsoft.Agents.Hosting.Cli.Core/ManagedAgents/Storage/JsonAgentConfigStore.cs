@@ -9,18 +9,26 @@ namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 /// </summary>
 public sealed class JsonAgentConfigStore : IManagedAgentRegistry, IAgentDeploymentRegistry
 {
+    internal const string WriteLockNamePrefix = "Global\\ah-agent-config-";
+
     private const string InitialETag = "1";
 
     private readonly AgentConfigLocator _locator;
     private readonly IClock _clock;
+    private readonly TimeSpan _writeLockPatience;
 
     /// <summary>Creates the store.</summary>
     /// <param name="locator">Resolves the configuration path for a project directory.</param>
     /// <param name="clock">Supplies creation and change timestamps.</param>
-    public JsonAgentConfigStore(AgentConfigLocator locator, IClock clock)
+    public JsonAgentConfigStore(AgentConfigLocator locator, IClock clock) : this(locator, clock, TimeSpan.FromSeconds(30))
+    {
+    }
+
+    internal JsonAgentConfigStore(AgentConfigLocator locator, IClock clock, TimeSpan writeLockPatience)
     {
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _writeLockPatience = writeLockPatience;
     }
 
     /// <summary>Reads the whole document, or an empty one when no configuration exists.</summary>
@@ -35,7 +43,7 @@ public sealed class JsonAgentConfigStore : IManagedAgentRegistry, IAgentDeployme
             return new AgentConfigDocument();
         }
 
-        var text = File.ReadAllText(path);
+        var text = AtomicFile.ReadAllText(path);
         AgentConfigDocument? document;
 
         try
@@ -201,68 +209,19 @@ public sealed class JsonAgentConfigStore : IManagedAgentRegistry, IAgentDeployme
         Write(projectDirectory, mutated);
     }
 
-    private ConfigWriteLock AcquireWriteLock(string projectDirectory) => new(_locator.ConfigFilePath(projectDirectory));
-
-    private sealed class ConfigWriteLock : IDisposable
+    private NamedMutexLock AcquireWriteLock(string projectDirectory)
     {
-        private readonly Mutex _mutex;
-        private readonly bool _held;
+        var configPath = _locator.ConfigFilePath(projectDirectory);
 
-        public ConfigWriteLock(string configPath)
-        {
-            _mutex = new Mutex(initiallyOwned: false, NameFor(configPath));
-
-            try
-            {
-                _held = _mutex.WaitOne(TimeSpan.FromSeconds(30));
-            }
-            catch (AbandonedMutexException)
-            {
-                _held = true;
-            }
-
-            if (!_held)
-            {
-                _mutex.Dispose();
-                throw ManagedAgentException.ConfigLocked(configPath);
-            }
-        }
-
-        public void Dispose()
-        {
-            if (_held)
-            {
-                _mutex.ReleaseMutex();
-            }
-
-            _mutex.Dispose();
-        }
-
-        private static string NameFor(string configPath) =>
-            $"Global\\ah-agent-config-{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(configPath.ToUpperInvariant())))[..32]}";
+        return NamedMutexLock.TryAcquire(WriteLockNamePrefix, configPath, _writeLockPatience) ?? throw ManagedAgentException.ConfigLocked(configPath);
     }
 
     private void Write(string projectDirectory, AgentConfigDocument document)
     {
         var path = _locator.ConfigFilePath(projectDirectory);
-        var directory = Path.GetDirectoryName(path)!;
 
-        Directory.CreateDirectory(directory);
-
-        var temporaryPath = Path.Combine(directory, $"{AgentConfigLocator.ConfigFileName}.{Guid.NewGuid():N}.tmp");
-
-        try
-        {
-            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(document, AgentConfigJsonContext.Default.AgentConfigDocument));
-            File.Move(temporaryPath, path, overwrite: true);
-        }
-        finally
-        {
-            if (File.Exists(temporaryPath))
-            {
-                File.Delete(temporaryPath);
-            }
-        }
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        AtomicFile.WriteAllText(path, JsonSerializer.Serialize(document, AgentConfigJsonContext.Default.AgentConfigDocument));
     }
 
     private static void RequireUniqueWorkflows(AgentConfigDocument document, string path)

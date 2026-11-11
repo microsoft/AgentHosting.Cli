@@ -9,6 +9,7 @@ The command group is described in help as `Agent Hosting agent operations.`
 | Command | Description |
 | --- | --- |
 | [`msagent agent create`](#msagent-agent-create) | Create an agent project or standalone workflow. Creating a CodeAgent is **Gated**; MCS agents and workflows are available by default. |
+| [`msagent agent copy`](#msagent-agent-copy---mcs-specific) | **MCS-specific.** Create a new agent from an existing one. Prepares local content only; the first deploy creates the new agent. |
 | [`msagent agent init`](#msagent-agent-init---mcs-specific) | **MCS-specific.** Register an MCS project or standalone workflow that already exists on disk. |
 | [`msagent agent list`](#msagent-agent-list---mcs-specific) | **MCS-specific.** List MCS agents or standalone workflows in an environment or across the tenant. |
 | [`msagent agent show`](#msagent-agent-show) | Show the managed-agent records held by a project. Reads local configuration only. |
@@ -78,12 +79,12 @@ msagent agent create --agent-type CodeAgent --agent-name <name> \
 
 | Option | Shortcut | Value | Applies to | Description |
 | --- | --- | --- | --- | --- |
-| `--agent-name` | `-an`, `--name`, `-n` | String | All agents | Agent or workflow display name. Required unless cloning, which inherits the source name. |
+| `--agent-name` | `-an`, `--name`, `-n` | String | All agents | Agent or workflow display name. Required unless cloning, which inherits the source name. A new MCS agent's name is at most 42 characters, without `<` or `>`. |
 | `--description` | `-d` | String | All agents | Agent description. Required for a new MCS agent. |
 | `--agent-type` | `-at` | `MCSAgent` (alias `mcs`), `MCSWorkflow`, or `CodeAgent` | All agents | Agent type, matched case-insensitively. Defaults to `MCSAgent` when `--mcs-clone-agent-id`, `--mcs-clone-agent-schemaname`, or `--mcs-clone-environment-id` is supplied without a CodeAgent-only option; otherwise defaults to `CodeAgent`, which is **Gated**. A workflow always needs explicit `MCSWorkflow`. |
 | `--environment-id` | `-eid` | String | All agents | Target/home environment id. Defaults to the active environment for a scaffold, or the source environment for a clone. |
 | `--project` | `-p` | Directory path | **MCS-specific** | The project directory to initialize. Defaults to the enclosing project, else the current directory; a missing directory is created. |
-| `--schema-name` | `-sn` | String | MCSAgent only | MCS schema name. Derived from `--agent-name` when omitted. Not accepted when cloning. |
+| `--schema-name` | `-sn` | String | MCSAgent only | MCS schema name. Derived from the ASCII letters and digits of `--agent-name` when omitted. Not accepted when cloning. |
 | `--mcs-agent-type` | `-mat` | `CLI` or `Classic` | MCSAgent only | Scaffold shape, matched case-insensitively. Defaults to `CLI`; also accepts `cli-copilot` and `clicopilot` for CLI. |
 | `--init-template` | `-it` | String | MCSAgent only | Scaffold template name. Valid only with `--mcs-agent-type Classic`, whose only shipped template is `default`. |
 | `--initial-prompt` | `-ip` | String | MCSAgent only | Instructions scaffolded into the project. Required for a new MCS agent. |
@@ -116,7 +117,7 @@ Creating an MCS agent from scratch requires `--agent-name`, `--description`, `--
 `--initial-prompt`. `--mcs-agent-type` selects the scaffold: `CLI` (the default) or `Classic`.
 `--init-template` selects a template and is valid only with `Classic`.
 
-The display name is limited to 256 characters and the description to 2000. Creation writes a
+The display name is limited to 42 characters, without `<` or `>`, and the description to 2000. Creation writes a
 named workspace beneath the project and registers it in `.config\agent.config.json`; it does not
 create a cloud agent. Create a deployment with `msagent deployment create`, then use `agent deploy`
 to upload it.
@@ -190,6 +191,92 @@ msagent agent create --agent-name "Support agent" --description "Answers support
   --language dotnet --language-version <version>
 ```
 
+## `msagent agent copy` - MCS-specific
+
+Creates a new agent from an existing MCS agent: a local agent, or the agent as it is in its
+environment (`--mcs-clone-agent-id`). Copying only prepares and registers a new local project. Nothing
+is sent to Copilot Studio and the source is never changed. The copy is an agent of its own from the
+start: work on it like any other agent, and its first deploy creates it in the cloud.
+
+```text
+# Copy a local agent project
+msagent agent copy --agent-name <agent-name> [options]
+
+# Copy an agent as it is in its environment
+msagent agent copy --mcs-clone-agent-id <mcs-clone-agent-id> --agent-name <agent-name> [options]
+```
+
+| Option | Shortcut | Value | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--agent-name` | `-an` | String | Required | The new agent's display name: at most 42 characters, without `<` or `>`. It must differ, ignoring case, from the source's name and from the name of every agent in the environment. |
+| `--mcs-clone-agent-id` | `-mcaid` | String | None | The cloud agent to copy as it is in its environment, instead of a local agent. |
+| `--project` | `-p` | Directory path | Current directory | The local agent to copy: its folder, or a project holding only that agent. With `--mcs-clone-agent-id`, the project to register the new agent in. |
+| `--environment-id` | `-eid` | String | Active environment | The environment holding the `--mcs-clone-agent-id` agent, or the environment to copy a local agent in when it names none. |
+| `--schema-name` | `-sn` | String | Generated from `--agent-name`, short enough for the agent's longest component | The new agent's schema name. |
+
+A local copy is made from the agent whose folder `--project`, or the current directory, is in.
+Elsewhere in a project it is made from the project's only agent; a project holding several agents
+fails with `agent-ambiguous` until `--project` names the folder of the agent to copy. The copy lands
+beside its source: in the source's project, or in a sibling project when the source fills its own
+project. A copy of a cloud agent is registered in `--project`, or in the current project.
+
+The new agent gets new identities for itself and for everything it owns: topics, tools, knowledge,
+and its other components. It also gets its own copies of the source's workflows, prompts, and custom
+connectors:
+
+| Resource | The new agent |
+| --- | --- |
+| Workflows | Gets its own copies, created as drafts |
+| AI Builder prompts | Gets its own copies |
+| Custom connectors | Gets its own copies |
+| Connection references of tools | Gets its own |
+| Connection references inside workflows | Gets its own, with the copied workflows rewritten to use them |
+| Environment variables, component collections, connected agents | Stay linked |
+
+Copied workflows and prompts are named `<new name> - <source name>`. A tool that still has the name of
+the workflow or prompt it calls takes the name of the copied one, while a tool renamed since it was
+added keeps its own.
+
+A copied custom connector keeps its display name followed by a short marker, such as `Weather 1a2b3c`.
+A tool still named `<connector> - <operation>` takes the copied connector's display name in place of the
+source connector's, and a connection reference named after the connector is named after the copied one.
+When several of the source's custom connectors share one internal identifier, only the one saved last
+is copied.
+
+No file links the copy to its source. It deploys, pulls, and is deleted like any other agent, and
+components added to it or removed from it later are deployed the way any agent's are.
+
+Before writing anything, copying reads the source's environment and stops, with nothing written,
+when an agent there already carries the copy's schema name, or when a workflow, prompt, custom
+connector, or connection reference the copy would create already exists there. Copy again, with
+another `--schema-name` when the schema name is taken.
+
+Copying stops, with nothing written, when the source holds something the copy could not own safely.
+For example, a custom connector can be copied only when the environment derives its internal
+identifier from its name prefix and display name.
+A copied custom connector's internal identifier ends with a suffix that belongs to its environment.
+Unless the source is a cloud agent or a local workspace connected to the copy's environment, the copy
+reads that suffix from the unmanaged custom connectors the environment already holds; in an
+environment without one, copy from a workspace connected to that environment.
+
+A copy stages its work under the project's `.config\copy` folder and keeps nothing there once it
+finishes. A copy into a project first removes what earlier interrupted copies left there, and only one
+copy into a project runs at a time: another one started meanwhile fails with `copy-busy` and writes
+nothing. The `copy.lock` file those copies take, and the `.gitignore` that keeps `.config\copy` out of
+source control, stay in the project.
+
+```text
+# Copy the local agent in a folder
+msagent agent copy --project <agent-folder> --agent-name "Support agent copy"
+
+# Copy an agent and everything it depends on, then deploy the copy
+msagent agent copy --mcs-clone-agent-id <mcs-clone-agent-id> --environment-id <environment-id> \
+  --agent-name "Support agent copy" --project <directory>
+msagent deployment create --project <directory> --agent-name "Support agent copy" \
+  --deployment-name "Development" --deployment-type dev
+msagent agent deploy --project <directory> --agent-name "Support agent copy" --deployment-name "Development"
+```
+
 ## `msagent agent init` - MCS-specific
 
 Registers an MCS project or standalone workflow that already exists on disk. It writes a local
@@ -258,7 +345,9 @@ msagent agent show [--project <directory>] [--agent-id <id> | --agent-name <name
 
 ## `msagent agent pull` - MCS-specific
 
-Brings remote content into a registered project's workspace.
+Brings remote content into a registered project's workspace. Knowledge files and skill files are
+refreshed from the environment, except a file edited locally since its last sync, which is kept for the
+next deploy to send.
 
 ```text
 msagent agent pull [--project <directory>] [--agent-id <id> | --agent-name <name>]
@@ -292,11 +381,13 @@ The result reports the environment, changes, and whether the workspace was alrea
 
 Deletes one cloud MCS agent or standalone workflow and removes its managed-agent record and all its
 deployment records. Local workspace files are never touched. Cloud copies in other environments
-are not deleted; the result reports the targets left orphaned.
+are not deleted; the result reports the targets left orphaned. The flows, AI prompts, connection
+references, and custom connectors an agent uses stay in the environment unless `--all-resources`
+deletes them too.
 
 ```text
 msagent agent delete [--project <directory>] [--agent-id <id> | --agent-name <name>] \
-  [--deployment-id <id> | --deployment-name <name>]
+  [--deployment-id <id> | --deployment-name <name>] [--all-resources]
 ```
 
 | Option | Shortcut | Value | Default | Description |
@@ -306,15 +397,40 @@ msagent agent delete [--project <directory>] [--agent-id <id> | --agent-name <na
 | `--agent-name` | `-an` | String | None | The record to delete, by name. |
 | `--deployment-id` | `-did` | String | None | Chooses which cloud agent is deleted. Wins over `--deployment-name`. |
 | `--deployment-name` | `-dn` | String | None | Chooses which cloud agent is deleted, by name. |
+| `--all-resources` | `-alr` | Flag | Off | MCSAgent only. Also delete the flows, AI prompts, connection references, and custom connectors the agent uses. |
+
+The delete removes one cloud agent or flow: the one the workspace is bound to, the selected
+deployment's, or the one in the record's home environment. The confirmation and `orphanedTargets` list
+each copy it leaves in another environment that a deployment names (for a workflow, also its home
+environment when no deployment names it). Once the records are gone, no `msagent` command can reach
+those copies, so to remove an MCSAgent's copy in another environment, run
+`msagent deployment delete --delete-deployed-mcs-agent` for that deployment first.
+
+`--all-resources` also deletes what the agent uses: every flow, AI prompt, connection reference, and
+custom connector its workspace holds. It deletes them after the agent, in the
+environment the delete targets: AI prompts, flows (turned off first), connection references, then
+custom connectors. A resource that environment does not hold is skipped. It does not check whether
+anything else uses a resource: Dataverse refuses to delete some while something depends on them, such
+as a connection reference a flow uses, but a flow that another agent calls is deleted anyway. When a
+resource cannot be deleted, the command fails with `resource-delete-incomplete`, lists each resource
+left and why, and keeps the records, so the same command can be run again. The result lists the
+deleted resources in `resources`. The agent's workspace must be on disk, and a standalone workflow
+refuses the option.
 
 For an MCSAgent, an omitted deployment uses the workspace's connection when present, otherwise its
 home environment and schema name. If its workspace is gone, only the records are removed. For a
 standalone workflow, an omitted deployment uses its home environment; an explicit deployment
 selects that environment's copy of the workflow.
 
-The command asks the operator to type the managed record's display name before deleting. Global
-`--non-interactive` supplies consent; there is no command-specific `--force`. A mismatch reports
-`name-mismatch`, and declining reports `cancelled`; neither deletes anything or counts as an error.
+Before deleting, the command lists everything it will delete, including each resource `--all-resources`
+selects, and asks the operator to type the managed record's display name. Global `--non-interactive`
+supplies consent; there is no command-specific `--force`. A mismatch reports `name-mismatch`, and
+declining reports `cancelled`; neither deletes anything or counts as an error.
+
+```text
+# Delete a copy with everything it created: it lists what it will delete and asks first
+msagent agent delete --agent-name "Support agent copy" --all-resources
+```
 
 ## `msagent agent deploy`
 
@@ -341,7 +457,7 @@ msagent agent deploy --agent-id <id> --package-revision <revision-id> \
 | `--agent-name` | `-an` | String | **MCS-specific** | The record to deploy, by name. |
 | `--deployment-id` | `-did` | String | **MCS-specific** | The deployment to target. Wins over `--deployment-name`. |
 | `--deployment-name` | `-dn` | String | MCS and AMS routes | The deployment to target, by name. Required for AMS package-revision deployment. |
-| `--schema-name` | `-sn` | String | **MCS-specific** | Overrides the project's schema name for this deploy. A workflow is addressed by its workflow id, so a workflow deploy rejects this option before anything is uploaded. |
+| `--schema-name` | `-sn` | String | **MCS-specific** | Overrides the project's schema name for this deploy. Valid only for a classic-layout agent: a CLI agent always deploys under the schema name in its `settings.mcs.yml`. A workflow is addressed by its workflow id, so a workflow deploy rejects this option before anything is uploaded. |
 | `--publish` | `-pub` | Flag | **MCS-specific** | Publish an agent after a push that fully landed, or request activation of a standalone workflow. Off by default. |
 | `--overwrite` | `-ow` | Flag | **MCS-specific** | Overwrite cloud content that changed since the last sync, and accept replacing an existing agent this project cannot show is its own. Only a dev deployment refuses drift without it. A workflow deploy always replaces the cloud copy, so the flag is accepted there and changes nothing. |
 | `--commit-id` | `-cid` | String | Not supported | This build has no Git Repository Service, so deploy always uploads the current working tree. Supplying it is a usage error. |
@@ -387,6 +503,27 @@ Gated behavior:
   `appreg` is also accepted for `app-reg`.
 - The AMS route creates desired deployment state using an existing package revision and waits for
   its deployment projection acknowledgement. It does not upload bytes or promise runtime readiness.
+
+A deploy that creates the Copilot Studio agent, or connects the project to another one, records it in
+`agent.config.json` before it sends any content. So when the deploy fails after that, `agent show`
+names the agent, and `msagent deployment delete --delete-deployed-mcs-agent` deletes it. A deploy that
+may create the agent first checks the display name in `settings.mcs.yml`: at most 42 characters,
+without `<` or `>`.
+
+In the JSON result, `pushedComponentCount` counts only the component changes the push sent and the
+service stored. It leaves out changes to the agent's settings and icon, its component collection
+links, connection references, and environment variables. Earlier builds also counted the settings and
+icon changes, so the same push can now report a lower number. `auxiliaryChangeCount` counts the
+workflows sent that the reported changes do not already include, and `uploadedFileCount` the knowledge
+and attachment files.
+
+### Deploying a copied agent - MCS-specific
+
+A copy deploys like any other agent. Its first deploy creates its agent in the deployment's
+environment, together with its own workflows, prompts, custom connectors, and connection references.
+Its workflows were copied as drafts: the deploy warns how many workflows are not running and how many
+connection references are not bound, the way any agent's deploy does; run
+`msagent deployment connection update` to bind them and turn the workflows on.
 
 ## `msagent agent share` - MCS-specific
 

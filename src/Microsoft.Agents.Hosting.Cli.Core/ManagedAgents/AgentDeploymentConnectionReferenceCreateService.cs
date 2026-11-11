@@ -45,12 +45,12 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
 
         if (string.IsNullOrWhiteSpace(request.Connector))
         {
-            throw new UsageException($"`{Verb}` requires --connector. Run `{ConnectionCommandHints.ListConnectors(request, environmentId: null)}` to find one.");
+            throw new UsageException($"`{Verb}` requires --connector. Run `{ConnectionCommandHints.ListConnectors(request, _targets.FindAgentId(request), environmentId: null)}` to find one.");
         }
 
         var target = await _targets.ResolveAsync(request, Verb, cancellationToken).ConfigureAwait(false);
         var environment = target.Environment;
-        var resolution = await _connectorResolver.RequireAsync(environment, request.Connector, ConnectionCommandHints.ListConnectors(request, environmentId: null), cancellationToken).ConfigureAwait(false);
+        var resolution = await _connectorResolver.RequireAsync(environment, request.Connector, ConnectionCommandHints.ListConnectors(request, target.Agent.AgentId, environmentId: null), cancellationToken).ConfigureAwait(false);
         var connector = resolution.Connector;
 
         var explicitConnectionId = string.IsNullOrWhiteSpace(request.ConnectionId)
@@ -68,7 +68,7 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
         }
         catch (Exception failure) when (failure is not OperationCanceledException)
         {
-            throw ManagedAgentException.ConnectionReferenceNotBound(logicalName, connector.InternalId, failure, ConnectionCommandHints.BindReference(request, logicalName));
+            throw ManagedAgentException.ConnectionReferenceNotBound(logicalName, connector.InternalId, failure, ConnectionCommandHints.BindReference(request, target.Agent.AgentId, logicalName));
         }
     }
 
@@ -80,7 +80,7 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
         }
         catch (Exception failure) when (failure is not OperationCanceledException)
         {
-            throw ManagedAgentException.ConnectionReferenceNotDeclared(connector.InternalId, target.Environment.EnvironmentId, failure, ConnectionCommandHints.ListConnections(request));
+            throw ManagedAgentException.ConnectionReferenceNotDeclared(connector.InternalId, target.Environment.EnvironmentId, failure, ConnectionCommandHints.ListConnections(request, target.Agent.AgentId));
         }
     }
 
@@ -94,7 +94,7 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
 
         if (index < 0)
         {
-            return Describe(request, logicalName, connector.InternalId, environment.EnvironmentId, null, null, ready: false, [$"The reference was declared, but the service did not report it, so nothing was bound. Run `{ConnectionCommandHints.BindReference(request, logicalName)}` once it appears."]);
+            return Describe(request, target, logicalName, connector.InternalId, null, null, ready: false, [$"The reference was declared, but the service did not report it, so nothing was bound. Run `{ConnectionCommandHints.BindReference(request, target.Agent.AgentId, logicalName)}` once it appears."]);
         }
 
         plan[index] = ConnectionReadinessPlanner.Plan(plan[index].View, await _principals.ResolveUsernameAsync(cancellationToken).ConfigureAwait(false));
@@ -108,7 +108,7 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
         }
         else
         {
-            await ResolveConnectionAsync(request, plan, group, index, environment, resolution, diagnostics, cancellationToken).ConfigureAwait(false);
+            await ResolveConnectionAsync(request, plan, group, index, target, resolution, diagnostics, cancellationToken).ConfigureAwait(false);
         }
 
         var item = plan[index];
@@ -122,10 +122,10 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
 
         var reported = ConnectionReadinessPlanner.ToResultItem(item, null, ConnectionSelectionScope.Status(plan, group));
 
-        return Describe(request, logicalName, connector.InternalId, environment.EnvironmentId, reported.ConnectionId, reported.ConnectionOwner, ConnectionReadinessPlanner.IsResolved(item), diagnostics);
+        return Describe(request, target, logicalName, connector.InternalId, reported.ConnectionId, reported.ConnectionOwner, ConnectionReadinessPlanner.IsResolved(item), diagnostics);
     }
 
-    private async Task ResolveConnectionAsync(AgentDeploymentConnectionReferenceCreateRequest request, List<ConnectionPlanItem> plan, ConnectorGroup group, int index, CopilotEnvironmentContext environment, ConnectorResolution resolution, List<string> diagnostics, CancellationToken cancellationToken)
+    private async Task ResolveConnectionAsync(AgentDeploymentConnectionReferenceCreateRequest request, List<ConnectionPlanItem> plan, ConnectorGroup group, int index, AgentDeploymentConnectionTarget target, ConnectorResolution resolution, List<string> diagnostics, CancellationToken cancellationToken)
     {
         if (ConnectionReadinessPlanner.IsResolved(plan[index]))
         {
@@ -134,34 +134,34 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
 
         if (!request.NonInteractive)
         {
-            await _bindings.ResolveConnectorAsync(plan, group, environment, resolution, openBrowser: true, diagnostics, cancellationToken).ConfigureAwait(false);
+            await _bindings.ResolveConnectorAsync(plan, group, target.Environment, resolution, openBrowser: true, diagnostics, cancellationToken).ConfigureAwait(false);
 
             return;
         }
 
         if (ConnectionReadinessPlanner.IsProvablyWithoutAConnection(plan[index]))
         {
-            await _bindings.CreateForConnectorAsync(plan, [index], environment, resolution, openBrowser: false, diagnostics, cancellationToken).ConfigureAwait(false);
+            await _bindings.CreateForConnectorAsync(plan, [index], target.Environment, resolution, openBrowser: false, diagnostics, cancellationToken).ConfigureAwait(false);
 
             return;
         }
 
         if (plan[index].View.CatalogUnavailable)
         {
-            diagnostics.Add(ConnectionReport.UnreadableCatalog(plan[index].View.LogicalName, ConnectionCommandHints.BindReference(request, plan[index].View.LogicalName)));
+            diagnostics.Add(ConnectionReport.UnreadableCatalog(plan[index].View.LogicalName, ConnectionCommandHints.BindReference(request, target.Agent.AgentId, plan[index].View.LogicalName)));
         }
     }
 
-    private static AgentDeploymentConnectionReferenceCreateResult Describe(AgentDeploymentConnectionReferenceCreateRequest request, string logicalName, string connectorId, string environmentId, string? connectionId, string? owner, bool ready, IReadOnlyList<string> diagnostics) => new()
+    private static AgentDeploymentConnectionReferenceCreateResult Describe(AgentDeploymentConnectionReferenceCreateRequest request, AgentDeploymentConnectionTarget target, string logicalName, string connectorId, string? connectionId, string? owner, bool ready, IReadOnlyList<string> diagnostics) => new()
     {
         Status = ready ? "connection-reference-bound" : "connection-reference-declared",
-        EnvironmentId = environmentId,
+        EnvironmentId = target.Environment.EnvironmentId,
         ConnectionReference = logicalName,
         ConnectorId = connectorId,
         ConnectionId = connectionId,
         ConnectionOwner = owner,
         Ready = ready,
-        BindCommand = ConnectionCommandHints.BindReference(request, logicalName),
+        BindCommand = ConnectionCommandHints.BindReference(request, target.Agent.AgentId, logicalName),
         Diagnostics = diagnostics,
     };
 }

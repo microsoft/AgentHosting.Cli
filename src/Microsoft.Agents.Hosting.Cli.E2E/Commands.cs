@@ -67,10 +67,38 @@ public static class Commands
             await standalone.FinishAsync(environment.Run.RunSuffix, cancellationToken).ConfigureAwait(false);
         }
 
+        var corpusIntact = CorpusIntact(environment.Run);
+        var exitCode = report.ExitCode(orphans.Count > 0);
+
         Console.WriteLine();
         Console.WriteLine($"  {environment.Run.RunDirectory}");
 
-        return report.ExitCode(orphans.Count > 0);
+        return exitCode == 0 && !corpusIntact ? 1 : exitCode;
+    }
+
+    private static bool CorpusIntact(RunContext run)
+    {
+        if (run.CorpusSnapshot is not { } before || run.Config.Mcs.Copy.CorpusRoot is not { } root)
+        {
+            return true;
+        }
+
+        var differences = TreeSnapshot.Take(root).DifferencesFrom(before);
+
+        if (differences.Count == 0)
+        {
+            return true;
+        }
+
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"DATA LOSS: the read-only copy corpus {root} changed during the run ({differences.Count} file(s)):");
+
+        foreach (var difference in differences.Take(20))
+        {
+            Console.Error.WriteLine($"  {difference}");
+        }
+
+        return false;
     }
 
     /// <summary>Releases everything the run created, reporting whatever could not be removed.</summary>
@@ -104,17 +132,17 @@ public static class Commands
             return ExitConfiguration;
         }
 
-        var msagent = new MsagentCli(binary, transcript, CrashDumps.DirectoryFor(runDirectory));
+        var msagent = new MsagentCli(binary, transcript, CrashDumps.DirectoryFor(runDirectory), config.Mcs.ForbiddenEnvironmentIds);
         var azure = new AzureCli(transcript);
         var standalone = await StandaloneForCleanupAsync(ledger, config, runDirectory, transcript, cancellationToken).ConfigureAwait(false);
         var cleanup = new Cleanup(msagent, azure, new CloudProbe(msagent, azure), transcript, standalone);
+        ledger.ReopenOrphans();
         var orphans = await cleanup.RunAsync(ledger, cancellationToken).ConfigureAwait(false);
 
         new Reporter(!options.NoColour).Summary(
             RunReport.From(runId, DateTimeOffset.UtcNow, TimeSpan.Zero, new MsagentBinary(binary, "cleanup", "unknown"), [], ledger.Entries),
             ledger.Entries);
 
-        _ = config;
         return orphans.Count > 0 ? 3 : 0;
     }
 
@@ -231,34 +259,14 @@ public static class Commands
         {
             var directory = Path.Combine(run.WorkspaceRoot, result.Scenario.Id);
 
-            foreach (var candidate in EnumerateScenarioDirectories(run.WorkspaceRoot, result.Scenario.Id, directory))
+            foreach (var candidate in EnumerateScenarioDirectories(run.WorkspaceRoot, result.Scenario.Id, directory).Where(candidate => !Cleanup.HoldsOrphan(run.Ledger, candidate)))
             {
-                TryDelete(candidate);
+                FileTree.TryDeleteDirectory(candidate);
             }
         }
     }
 
-    private static IEnumerable<string> EnumerateScenarioDirectories(string workspaceRoot, string scenarioId, string exact) =>
-        Directory.Exists(workspaceRoot)
-            ? Directory.EnumerateDirectories(workspaceRoot, $"{scenarioId}*", SearchOption.TopDirectoryOnly)
-            : [exact];
-
-    private static void TryDelete(string directory)
-    {
-        try
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-    }
+    private static IEnumerable<string> EnumerateScenarioDirectories(string workspaceRoot, string scenarioId, string exact) => Directory.Exists(workspaceRoot) ? Directory.EnumerateDirectories(workspaceRoot, $"{scenarioId}*", SearchOption.TopDirectoryOnly).Where(directory => Path.GetFileName(directory) is var name && (name.Length == scenarioId.Length || name[scenarioId.Length] == '-')) : [exact];
 
     private static int Count(IReadOnlyList<Scenario> scenarios, SafetyTier tier) => scenarios.Count(scenario => scenario.Tier == tier);
 
@@ -276,6 +284,7 @@ public static class Commands
         Capability.StandaloneFixtures => "sw.fixtures",
         Capability.StandaloneOracle => "sw.oracle",
         Capability.StandaloneFlowRuns => "sw.flowRuns",
+        Capability.CopyCorpus => "copy.corpus",
         _ => capability.ToString().ToLowerInvariant(),
     };
 

@@ -220,20 +220,7 @@ public sealed class FileAuthProfileStore :
         string json;
         try
         {
-            if (optionalSnapshot)
-            {
-                using var stream = new FileStream(
-                    _profilesFilePath,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.Read | FileShare.Delete);
-                using var reader = new StreamReader(stream);
-                json = reader.ReadToEnd();
-            }
-            else
-            {
-                json = File.ReadAllText(_profilesFilePath);
-            }
+            json = AtomicFile.ReadAllText(_profilesFilePath);
         }
         catch (FileNotFoundException) when (optionalSnapshot)
         {
@@ -311,35 +298,15 @@ public sealed class FileAuthProfileStore :
 
         var json = JsonSerializer.Serialize(document, AuthProfileJsonContext.Default.AuthProfilesDocument);
 
-        // Atomic replace: write a sibling temp file, then move it over the target so a crash mid-write
-        // can never leave a partially written profile store (PAC writes in place).
-        var tempPath = _profilesFilePath + ".tmp-" + Guid.NewGuid().ToString("N");
         try
         {
-            File.WriteAllText(tempPath, json);
-            File.Move(tempPath, _profilesFilePath, overwrite: true);
+            AtomicFile.WriteAllText(_profilesFilePath, json);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            TryDeleteTemp(tempPath);
             throw new AuthProfileStateException(
                 $"The AgentHost auth profile store could not be written: {ex.Message}",
                 remediation: "Verify the AgentHost config directory is writable, then retry.");
-        }
-    }
-
-    private static void TryDeleteTemp(string tempPath)
-    {
-        try
-        {
-            if (File.Exists(tempPath))
-            {
-                File.Delete(tempPath);
-            }
-        }
-        catch (IOException)
-        {
-            // Best-effort cleanup; the failure to write is already being reported.
         }
     }
 

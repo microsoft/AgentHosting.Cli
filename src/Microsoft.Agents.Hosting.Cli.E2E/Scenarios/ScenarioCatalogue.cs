@@ -8,7 +8,7 @@ namespace Microsoft.Agents.Hosting.Cli.E2E.Scenarios;
 public static class ScenarioCatalogue
 {
     /// <summary>The features a run can be scoped to.</summary>
-    public static IReadOnlyList<string> Features => ["mcs-agent", "mcs-workflow", StandaloneWorkflowScenarios.Feature, "code-agent", "abs", "identity", "mcs-eval"];
+    public static IReadOnlyList<string> Features => ["mcs-agent", "mcs-workflow", StandaloneWorkflowScenarios.Feature, "code-agent", "abs", "identity", "mcs-eval", "mcs-copy"];
 
     /// <summary>The features whose scenarios create Azure resources.</summary>
     public static IReadOnlyList<string> AzurePack => ["code-agent", "abs", "identity"];
@@ -18,6 +18,9 @@ public static class ScenarioCatalogue
 
     public static IReadOnlyList<string> StandaloneWorkflowPack => [StandaloneWorkflowScenarios.Feature];
 
+    /// <summary>The features that copy agents, whose every deployed copy is a new agent with flows, prompts, connectors, and connection references of its own.</summary>
+    public static IReadOnlyList<string> CopyPack => ["mcs-copy"];
+
     /// <summary>The packs a run opts into by name; a feature no pack names belongs to core.</summary>
     public static IReadOnlyDictionary<string, IReadOnlyList<string>> OptionalPacks { get; } =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
@@ -26,6 +29,7 @@ public static class ScenarioCatalogue
             ["eval"] = EvalPack,
             ["swf"] = StandaloneWorkflowPack,
             [StandaloneWorkflowScenarios.ChaosPack] = [],
+            ["copy"] = CopyPack,
         };
 
     /// <summary>All scenarios, in the order a full run executes them.</summary>
@@ -38,6 +42,7 @@ public static class ScenarioCatalogue
         .. AbsScenarios.All(),
         .. IdentityScenarios.All(),
         .. McsEvalScenarios.All(),
+        .. McsCopyScenarios.All(),
     ];
 
     /// <summary>Applies the pack, feature, scenario, and smoke filters in that order.</summary>

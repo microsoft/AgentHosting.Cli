@@ -12,7 +12,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 public sealed class ManagedAgentInitServiceTests
 {
     private static ManagedAgentInitService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces) =>
-        new(store, new AgentConfigLocator(), CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem()), ManagedAgentFixtures.Resolver(), new CopilotProjectIdentityReader(new AgentConfigLocator()));
+        new(store, new AgentConfigLocator(), CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem()), ManagedAgentFixtures.Resolver(), ManagedAgentFixtures.Identities());
 
     [Fact]
     public async Task Init_RegistersAnUnconnectedProject()

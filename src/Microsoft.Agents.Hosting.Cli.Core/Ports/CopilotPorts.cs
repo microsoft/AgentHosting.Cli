@@ -118,17 +118,14 @@ public sealed record CopilotPullOutcome
     public IReadOnlyList<string> Warnings { get; init; } = [];
 }
 
-/// <summary>
-/// What a push sent, and anything the service declined along the way.
-///
-/// A declined workflow or AI prompt does not fail the push: the sync library keeps it out of the cloud
-/// cache and continues, because a flow whose connection reference is not yet bound in the target
-/// environment is the expected state during a promotion.
-/// </summary>
+/// <summary>What a push sent, and anything the service declined along the way.</summary>
 public sealed record CopilotPushOutcome
 {
     /// <summary>The components that were uploaded.</summary>
     public required IReadOnlyList<CopilotChange> Changes { get; init; }
+
+    /// <summary>How many of the sent component changes the service stored, excluding the agent's settings and icon.</summary>
+    public int ComponentCount { get; init; }
 
     /// <summary>How many workflows the service was asked to store that <see cref="Changes"/> does not already report.</summary>
     public int AuxiliaryChangeCount { get; init; }

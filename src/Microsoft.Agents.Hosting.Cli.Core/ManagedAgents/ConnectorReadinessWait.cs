@@ -1,28 +1,28 @@
-using System.Text.RegularExpressions;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 
-/// <summary>
-/// Waits for a custom connector to become servable before the consent experience is opened for it.
-/// </summary>
-public sealed partial class ConnectorReadinessWait
+/// <summary>Waits for a custom connector to become servable before the consent experience is opened for it.</summary>
+public sealed class ConnectorReadinessWait
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan InitialPollDelay = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan MaximumPollDelay = TimeSpan.FromSeconds(3);
 
     private readonly IConnectorCatalogPort _connectors;
+    private readonly ICopilotNamingRules _namingRules;
     private readonly TimeSpan _timeout;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
     /// <summary>Creates the wait.</summary>
     /// <param name="connectors">Lists the connectors the environment serves.</param>
+    /// <param name="namingRules">Recognises a custom connector by its internal id.</param>
     /// <param name="timeout">How long to wait for one connector. Defaults to thirty seconds.</param>
     /// <param name="delay">Waits between polls. Defaults to <see cref="Task.Delay(TimeSpan, CancellationToken)"/>.</param>
-    public ConnectorReadinessWait(IConnectorCatalogPort connectors, TimeSpan? timeout = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
+    public ConnectorReadinessWait(IConnectorCatalogPort connectors, ICopilotNamingRules namingRules, TimeSpan? timeout = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         _connectors = connectors ?? throw new ArgumentNullException(nameof(connectors));
+        _namingRules = namingRules ?? throw new ArgumentNullException(nameof(namingRules));
         _timeout = timeout ?? DefaultTimeout;
         _delay = delay ?? Task.Delay;
     }
@@ -30,8 +30,7 @@ public sealed partial class ConnectorReadinessWait
     /// <summary>Whether a connector id names a custom connector rather than a shared one.</summary>
     /// <param name="connectorId">The connector, as an internal id or a full provider path.</param>
     /// <returns><see langword="true"/> when the id carries the custom-connector suffix.</returns>
-    public static bool IsCustomConnector(string connectorId) =>
-        !string.IsNullOrWhiteSpace(connectorId) && CustomConnectorSuffix().IsMatch(ConnectionConsentLink.NormalizeResourceId(connectorId));
+    public bool IsCustomConnector(string connectorId) => !string.IsNullOrWhiteSpace(connectorId) && _namingRules.IsCustomConnectorInternalId(ConnectionConsentLink.NormalizeResourceId(connectorId));
 
     /// <summary>Waits until a custom connector appears in the environment's catalog.</summary>
     /// <param name="environment">The environment whose catalog is polled.</param>
@@ -97,7 +96,4 @@ public sealed partial class ConnectorReadinessWait
             return false;
         }
     }
-
-    [GeneratedRegex("-5f[0-9a-f]{16}$", RegexOptions.IgnoreCase)]
-    private static partial Regex CustomConnectorSuffix();
 }

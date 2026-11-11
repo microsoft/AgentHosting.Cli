@@ -30,9 +30,11 @@ internal static class WorkspaceDefinitionReader
         }
         catch (WorkspaceValidationException failure)
         {
-            throw CopilotStudioException.WorkspaceFilesUnreadable(SingleLine(failure.Message), failure);
+            throw FilesUnreadable(failure);
         }
     }
+
+    internal static CopilotStudioException FilesUnreadable(WorkspaceValidationException failure) => CopilotStudioException.WorkspaceFilesUnreadable(SingleLine(failure.Message), failure);
 
     private static string SingleLine(string summary) =>
         string.Join(' ', summary.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));

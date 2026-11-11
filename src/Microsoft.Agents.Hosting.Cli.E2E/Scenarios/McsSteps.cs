@@ -29,9 +29,9 @@ public static class McsSteps
     }
 
     /// <summary>Creates a deployment slot pointing at an environment.</summary>
-    public static Task<MsagentResult> CreateSlotAsync(ScenarioContext context, Workspace workspace, string deploymentName, string environmentId, string deploymentType = "dev") =>
+    public static Task<MsagentResult> CreateSlotAsync(ScenarioContext context, Workspace workspace, string deploymentName, string environmentId, string deploymentType = "dev", params string[] extraArguments) =>
         context.Msagent.RunAsync(
-            ["deployment", "create", "--deployment-name", deploymentName, "--deployment-type", deploymentType, "--environment-id", environmentId, "--json", "--non-interactive"],
+            ["deployment", "create", "--deployment-name", deploymentName, "--deployment-type", deploymentType, "--environment-id", environmentId, "--json", "--non-interactive", .. extraArguments],
             workspace.ProjectDirectory);
 
     /// <summary>Deploys, records the created agent, and returns the parsed result.</summary>
@@ -57,10 +57,16 @@ public static class McsSteps
 
     /// <summary>Deploys without asserting, for the scenarios whose point is the failure.</summary>
     public static Task<MsagentResult> RawDeployAsync(ScenarioContext context, Workspace workspace, string deploymentName, params string[] extraArguments) =>
-        context.Msagent.RunAsync(
-            ["agent", "deploy", "--deployment-name", deploymentName, "--json", "--non-interactive", .. extraArguments],
-            workspace.ProjectDirectory,
-            timeout: TimeSpan.FromMinutes(10));
+        DeployCommandAsync(context, workspace, deploymentName, null, extraArguments);
+
+    public static Task<MsagentResult> DeployCommandAsync(ScenarioContext context, Workspace workspace, string deploymentName, ProcessInterruption? interruption, IReadOnlyList<string> extraArguments, TimeSpan? timeout = null) =>
+        workspace.DeployForbidden
+            ? throw new E2EException($"{workspace.ProjectDirectory} is a read-only corpus copy; only copies of it may be deployed.")
+            : context.Msagent.RunAsync(
+                ["agent", "deploy", "--deployment-name", deploymentName, "--json", "--non-interactive", .. extraArguments],
+                workspace.ProjectDirectory,
+                timeout: timeout ?? TimeSpan.FromMinutes(10),
+                interruption: interruption);
 
     /// <summary>Enters a deployed agent in the ledger the instant its service-assigned id exists.</summary>
     public static void RecordDeployed(ScenarioContext context, Workspace workspace, string deploymentName, ManagedAgentDeployResult deployed)
@@ -101,18 +107,33 @@ public static class McsSteps
     }
 
     /// <summary>Clones a deployed agent into a fresh directory, which is how content is proved to have landed.</summary>
-    public static async Task<string> CloneAsync(ScenarioContext context, ManagedAgentDeployResult deployed, string label)
+    public static Task<string> CloneAsync(ScenarioContext context, ManagedAgentDeployResult deployed, string label) =>
+        CloneAsync(context, deployed.TargetMcsAgentId!, deployed.TargetEnvironmentId, label);
+
+    public static async Task<string> CloneAsync(ScenarioContext context, string agentId, string environmentId, string label) => (await ClonedAsync(context, agentId, environmentId, label).ConfigureAwait(false)).Directory;
+
+    public static async Task<(string Directory, ManagedAgentCreateResult Created)> ClonedAsync(ScenarioContext context, string agentId, string environmentId, string label)
     {
         var directory = context.Workspaces.EmptyDirectory(context.ScenarioId, label);
 
         var result = await context.Msagent.RunAsync(
-            ["agent", "create", "--agent-type", "MCSAgent", "--mcs-clone-agent-id", deployed.TargetMcsAgentId!, "--mcs-clone-environment-id", deployed.TargetEnvironmentId, "--json", "--non-interactive"],
+            ["agent", "create", "--agent-type", "MCSAgent", "--mcs-clone-agent-id", agentId, "--mcs-clone-environment-id", environmentId, "--json", "--non-interactive"],
             directory,
             timeout: TimeSpan.FromMinutes(10)).ConfigureAwait(false);
 
         context.Assert.ExitZero(result, $"clone back ({label})");
-        return directory;
+        return (directory, result.Json<ManagedAgentCreateResult>());
     }
+
+    public static Workspace CreatedWorkspace(string scenarioId, string root, ManagedAgentCreateResult created, string schemaName) => new()
+    {
+        ScenarioId = scenarioId,
+        Root = root,
+        ProjectDirectory = created.ProjectDirectory is { Length: > 0 } project && Directory.Exists(project) ? project : root,
+        AgentName = created.DisplayName,
+        SchemaName = created.SchemaName ?? schemaName,
+        RecordId = created.AgentId,
+    };
 
     /// <summary>Finds a file under a cloned directory, whose layout the service decides.</summary>
     public static string? FindFile(string root, string fileName) =>
@@ -174,16 +195,7 @@ public static class McsSteps
         context.Assert.ExitZero(result, $"scaffold a {shape} agent");
         context.Ledger.RecordLocalWorkspace(root, context.ScenarioId);
 
-        var created = result.Json<ManagedAgentCreateResult>();
-
-        return new Workspace
-        {
-            ScenarioId = label,
-            Root = root,
-            ProjectDirectory = created.ProjectDirectory is { Length: > 0 } project && Directory.Exists(project) ? project : root,
-            AgentName = created.DisplayName,
-            SchemaName = created.SchemaName ?? string.Empty,
-        };
+        return CreatedWorkspace(label, root, result.Json<ManagedAgentCreateResult>(), string.Empty);
     }
 
     /// <summary>The deployment slot every session agent uses.</summary>
@@ -201,6 +213,43 @@ public static class McsSteps
     public static Task<MsagentResult> SelectEnvironmentAsync(ScenarioContext context, string environmentId, params string[] extraArguments) =>
         context.Msagent.RunAsync(["env", "select", environmentId, "--non-interactive", .. extraArguments]);
 
+    public static async Task<string?> ReadSelectedEnvironmentAsync(ScenarioContext context)
+    {
+        var result = await context.Msagent.RunAsync(["env", "list", "--json", "--non-interactive"]).ConfigureAwait(false);
+
+        return result.ExitCode != 0
+            ? null
+            : result.Json<EnvironmentListResult>().Environments.FirstOrDefault(environment => environment.IsActive)?.EnvironmentId;
+    }
+
+    public static async Task RestoreEnvironmentAsync(ScenarioContext context, string? previous)
+    {
+        if (previous is { Length: > 0 })
+        {
+            await SelectEnvironmentAsync(context, previous).ConfigureAwait(false);
+            context.Ledger.MarkRestored("env-select");
+        }
+    }
+
+    private const string EnvironmentPinPool = "dev-environment-pin";
+    private const string EnvironmentPinTarget = "env-select-dev";
+
+    public static Task PinEnvironmentAsync(ScenarioContext context) =>
+        context.Session.PooledAsync(EnvironmentPinPool, context.DevEnvironmentId, async () =>
+        {
+            var previous = await ReadSelectedEnvironmentAsync(context).ConfigureAwait(false);
+
+            if (!string.Equals(previous, context.DevEnvironmentId, StringComparison.OrdinalIgnoreCase))
+            {
+                context.Ledger.RecordConfigEdit(EnvironmentPinTarget, previous, context.ScenarioId);
+                context.Assert.ExitZero(await SelectEnvironmentAsync(context, context.DevEnvironmentId).ConfigureAwait(false), "select the dev environment");
+            }
+
+            return context.DevEnvironmentId;
+        });
+
+    private static readonly string[] DeleteCloudAgent = ["--delete-deployed-mcs-agent"];
+
     /// <summary>Deletes an agent by name, piping the typed confirmation token.</summary>
     public static Task<MsagentResult> DeleteAgentAsync(ScenarioContext context, Workspace workspace, string deploymentName, string? confirmation = null) =>
         context.Msagent.RunAsync(
@@ -212,9 +261,7 @@ public static class McsSteps
     /// <summary>Deletes a deployment slot, optionally taking the cloud agent with it.</summary>
     public static Task<MsagentResult> DeleteDeploymentAsync(ScenarioContext context, Workspace workspace, string deploymentName, bool deleteCloudAgent, string? confirmation = null) =>
         context.Msagent.RunAsync(
-            deleteCloudAgent
-                ? ["deployment", "delete", "--deployment-name", deploymentName, "--delete-deployed-mcs-agent", "--json"]
-                : ["deployment", "delete", "--deployment-name", deploymentName, "--json"],
+            ["deployment", "delete", "--deployment-name", deploymentName, .. (deleteCloudAgent ? DeleteCloudAgent : []), "--json"],
             workspace.ProjectDirectory,
             stdin: confirmation ?? deploymentName,
             timeout: TimeSpan.FromMinutes(5));

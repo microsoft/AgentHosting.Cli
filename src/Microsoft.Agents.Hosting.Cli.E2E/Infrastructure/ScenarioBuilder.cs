@@ -8,22 +8,16 @@ public sealed class ScenarioBuilder
     public ScenarioBuilder(string feature) => _feature = feature;
 
     /// <summary>Declares one scenario.</summary>
-    public Scenario Make(
-        string id,
-        string title,
-        IReadOnlyList<Capability> requires,
-        SafetyTier tier,
-        Func<ScenarioContext, Task> run,
-        bool smoke = false,
-        string? pack = null) => new()
-        {
-            Id = id,
-            Title = title,
-            Feature = _feature,
-            Requires = requires,
-            Tier = tier,
-            Smoke = smoke,
-            Pack = pack,
-            Run = run,
-        };
+    public Scenario Make(string id, string title, IReadOnlyList<Capability> requires, SafetyTier tier, Func<ScenarioContext, Task> run, bool smoke = false, string? pack = null, TimeSpan? timeout = null) => new()
+    {
+        Id = id,
+        Title = title,
+        Feature = _feature,
+        Requires = requires,
+        Tier = tier,
+        Smoke = smoke,
+        Pack = pack,
+        Timeout = timeout,
+        Run = run,
+    };
 }

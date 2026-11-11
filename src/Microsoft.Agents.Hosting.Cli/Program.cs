@@ -195,6 +195,7 @@ internal static class Program
                 sp.GetRequiredService<PpapiTokenClaimsValidator>()));
 
         services.AddSingleton<CopilotSchemaName>();
+        services.AddSingleton<CopilotAgentName>();
         services.AddSingleton<CopilotEnvironmentResolver>();
         services.AddSingleton<CopilotWorkspaceLocator>();
         services.AddSingleton<CopilotCatalogService>();
@@ -250,6 +251,7 @@ internal static class Program
         services.AddSingleton<ManagedAgentCloneMaterialiser>();
         services.AddSingleton<HomeDeploymentRegistrar>();
         services.AddSingleton<ManagedAgentCreateService>();
+        services.AddSingleton<ManagedAgentCopyService>();
         services.AddSingleton<ManagedAgentInitService>();
         services.AddSingleton<ManagedAgentListService>();
         services.AddSingleton<ManagedAgentShowService>();
@@ -286,7 +288,7 @@ internal static class Program
                     sp.GetRequiredService<IOperatorInterrupt>(),
                     confirmations: sp.GetRequiredService<IConfirmationPrompt>()),
             ]));
-        services.AddSingleton(sp => new ConnectorReadinessWait(sp.GetRequiredService<IConnectorCatalogPort>()));
+        services.AddSingleton(serviceProvider => new ConnectorReadinessWait(serviceProvider.GetRequiredService<IConnectorCatalogPort>(), serviceProvider.GetRequiredService<ICopilotNamingRules>()));
         services.AddSingleton<AgentDeploymentConnectionResolver>();
         services.AddSingleton<ConnectionTargetResolver>();
         services.AddSingleton<ConnectorResolver>();

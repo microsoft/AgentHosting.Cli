@@ -53,10 +53,17 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
         {
             UploadKnowledgeFilesThrows = new InvalidOperationException("Improper response, not implemented"),
         };
+        synchronizer.LocalChanges.AddRange(
+        [
+            new Change { ChangeType = ChangeType.Create, Name = "con_agent.file.guide.txt_0Sh", SchemaName = "con_agent.file.guide.txt_0Sh", ChangeKind = "FileAttachmentComponent" },
+            new Change { ChangeType = ChangeType.Update, Name = "Settings", SchemaName = "entity", ChangeKind = "BotEntity" },
+            new Change { ChangeType = ChangeType.Update, Name = "Icon", SchemaName = "icon", ChangeKind = "update" },
+        ]);
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.KnowledgeUploadFailed, failure.ErrorKind);
+        Assert.StartsWith("1 component(s) were pushed", failure.Message, StringComparison.Ordinal);
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
     }
 

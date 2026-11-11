@@ -76,7 +76,7 @@ public sealed class ManagedAgentCommandHostTests
             operations,
             "agent", "create",
             "--agent-type", "MCSAgent",
-            "--agent-name", "Fork",
+            "--agent-name", "Copy",
             "--mcs-clone-agent-schemaname", "src_agent",
             "--mcs-clone-environment-id", "env-src");
 
@@ -654,6 +654,37 @@ public sealed class ManagedAgentCommandHostTests
 
         Assert.Equal("Contoso Agent", operations.LastManagedAgentDeleteRequest!.AgentName);
         Assert.Equal("prod", operations.LastManagedAgentDeleteRequest.DeploymentName);
+        Assert.False(operations.LastManagedAgentDeleteRequest.AllResources);
+    }
+
+    [Theory]
+    [InlineData("--all-resources")]
+    [InlineData("-alr")]
+    public void Delete_BindsAllResources(string allResources)
+    {
+        var operations = new FakeOperations();
+
+        var (exitCode, _, _) = Run(operations, "agent", "delete", "--agent-id", "agent-1", allResources);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.True(operations.LastManagedAgentDeleteRequest!.AllResources);
+    }
+
+    [Theory]
+    [InlineData("--preview")]
+    [InlineData("--all-targets")]
+    [InlineData("-alt")]
+    [InlineData("--force")]
+    [InlineData("-f")]
+    public void Delete_WithARemovedSwitch_IsAUsageError(string removedSwitch)
+    {
+        var operations = new FakeOperations();
+
+        var (exitCode, _, stderr) = Run(operations, "agent", "delete", "--agent-id", "agent-1", "--all-resources", removedSwitch);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains($"Unrecognized command or argument '{removedSwitch}'", stderr, StringComparison.Ordinal);
+        Assert.Null(operations.LastManagedAgentDeleteRequest);
     }
 
     [Fact]

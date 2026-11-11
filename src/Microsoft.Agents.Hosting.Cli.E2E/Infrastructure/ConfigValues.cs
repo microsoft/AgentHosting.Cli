@@ -15,6 +15,21 @@ public static class ConfigValues
 {
     private const string PlaceholderGuid = "00000000-0000-0000-0000-000000000000";
 
+    private const string DefaultEnvironmentPrefix = "Default-";
+
+    /// <summary>Accepts an environment id, which is a GUID or a tenant default environment's <c>Default-</c> GUID.</summary>
+    public static ConfigValue EnvironmentId(string? value, string settingName, Func<string, string> describe)
+    {
+        if (value?.Trim() is not { } trimmed || !trimmed.StartsWith(DefaultEnvironmentPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return Guid(value, settingName, describe);
+        }
+
+        var tenant = Guid(trimmed[DefaultEnvironmentPrefix.Length..], settingName, describe);
+
+        return tenant.Supplied ? new ConfigValue(trimmed, true, describe(trimmed)) : tenant;
+    }
+
     /// <summary>Accepts a real GUID, rejecting the template placeholder and anything malformed.</summary>
     public static ConfigValue Guid(string? value, string settingName, Func<string, string> describe)
     {

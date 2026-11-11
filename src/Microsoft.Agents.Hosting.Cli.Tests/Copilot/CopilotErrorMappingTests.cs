@@ -20,6 +20,7 @@ public sealed class CopilotErrorMappingTests
         { CopilotStudioException.StatusTimeout("agent-1", TimeSpan.FromMinutes(60)), ExitCodes.Failure, CopilotErrorKinds.StatusTimeout },
         { CopilotStudioException.ServiceError("clone"), ExitCodes.Failure, CopilotErrorKinds.ServiceError },
         { CopilotStudioException.MissingConnectionReference("env-1", [], new InvalidOperationException("boom")), ExitCodes.Failure, CopilotErrorKinds.MissingConnectionReference },
+        { CopilotStudioException.DuplicateComponent("env-1", "crf9a_agentD1.file.abcmain2.txt_0Sh", new InvalidOperationException("boom")), ExitCodes.Failure, CopilotErrorKinds.DuplicateComponent },
     };
 
     [Theory]
@@ -104,6 +105,8 @@ public sealed class CopilotErrorMappingTests
             CopilotStudioException.DuplicateConnectionReference("env-1", [], serviceFailure),
             CopilotStudioException.MissingConnectionReference("env-1", refusals, serviceFailure),
             CopilotStudioException.MissingConnectionReference("env-1", [], serviceFailure),
+            CopilotStudioException.DuplicateComponent("env-1", "crf9a_agentD1.file.abcmain2.txt_0Sh", serviceFailure),
+            CopilotStudioException.DuplicateComponent("env-1", null, serviceFailure),
         };
     }
 
@@ -215,6 +218,21 @@ public sealed class CopilotErrorMappingTests
         Assert.Equal(
             "A connection reference this push names does not exist in env-1, even after the baseline was re-read from the environment, so the component push did not complete and the agent definition was left as it is. The service had also refused 1 component earlier in this push.",
             CopilotStudioException.MissingConnectionReference("env-1", ["Flow0 was refused"], new InvalidOperationException("boom")).Message);
+    }
+
+    [Fact]
+    public void ADuplicateComponent_NamesTheComponentOnlyWhenTheServiceDid()
+    {
+        var named = CopilotStudioException.DuplicateComponent("env-1", "crf9a_agentD1.file.abcmain2.txt_0Sh", new InvalidOperationException("boom"));
+        var unnamed = CopilotStudioException.DuplicateComponent("env-1", null, new InvalidOperationException("boom"));
+
+        Assert.Equal(
+            "A component this push creates, crf9a_agentD1.file.abcmain2.txt_0Sh, already exists in env-1, so the component push did not complete and the agent definition was left as it is.",
+            named.Message);
+        Assert.Equal(
+            "A component this push creates already exists in env-1, so the component push did not complete and the agent definition was left as it is.",
+            unnamed.Message);
+        Assert.Equal("Run `msagent agent pull` to bring the cloud copy into the workspace, or rename the local component.", named.Remediation);
     }
 
     [Fact]

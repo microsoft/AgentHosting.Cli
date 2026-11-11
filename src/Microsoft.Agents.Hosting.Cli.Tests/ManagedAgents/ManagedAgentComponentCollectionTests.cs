@@ -33,6 +33,7 @@ public sealed class ManagedAgentComponentCollectionTests
             new CopilotCatalogService(catalog, environments, locator, new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
             ManagedAgentFixtures.Principals(),
             ManagedAgentFixtures.ActivationPass(),
+            ManagedAgentFixtures.AgentNames(),
             new FixedClock(ManagedAgentFixtures.Now));
     }
 

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Core;
 
 namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 
@@ -13,10 +14,10 @@ public sealed class E2EException : Exception
 }
 
 /// <summary>One completed <c>msagent</c> invocation, with its streams kept separate.</summary>
-public sealed record MsagentResult(IReadOnlyList<string> Arguments, int ExitCode, string StdOut, string StdErr, TimeSpan Duration)
+public sealed record MsagentResult(IReadOnlyList<string> Arguments, int ExitCode, string StdOut, string StdErr, TimeSpan Duration, bool Interrupted = false)
 {
     /// <summary>The command line as typed, for a failure report the operator can paste back.</summary>
-    public string CommandLine => "msagent " + string.Join(' ', Arguments.Select(Quote));
+    public string CommandLine => "msagent " + string.Join(' ', Arguments.Select(CommandLineArgument.Quote));
 
     /// <summary>Deserializes stdout into one of the CLI's own result records.</summary>
     public T Json<T>()
@@ -53,8 +54,6 @@ public sealed record MsagentResult(IReadOnlyList<string> Arguments, int ExitCode
     /// <summary>Both streams together, for assertions about a message without caring where it was written.</summary>
     public string Output => StdOut + StdErr;
 
-    private static string Quote(string argument) => argument.Contains(' ', StringComparison.Ordinal) ? $"\"{argument}\"" : argument;
-
     private static string Truncate(string value) => value.Length <= 2000 ? value : value[..2000] + "…";
 }
 
@@ -64,6 +63,9 @@ public static class MsagentJson
     public static JsonSerializerOptions Options { get; } = new() { PropertyNameCaseInsensitive = true };
 }
 
+/// <summary>When to kill a running process on purpose, to simulate an interruption: on an output line, after a delay, once a polled condition holds, or any of them.</summary>
+public sealed record ProcessInterruption(Func<string, bool>? WhenOutput = null, TimeSpan? After = null, Func<bool>? WhenState = null);
+
 /// <summary>Starts the <c>msagent</c> process; no scenario starts one itself.</summary>
 public sealed class MsagentCli
 {
@@ -72,12 +74,14 @@ public sealed class MsagentCli
     private readonly string _binaryPath;
     private readonly Transcript _transcript;
     private readonly string _crashDumpDirectory;
+    private readonly IReadOnlyCollection<string> _forbiddenEnvironmentIds;
 
-    public MsagentCli(string binaryPath, Transcript transcript, string crashDumpDirectory)
+    public MsagentCli(string binaryPath, Transcript transcript, string crashDumpDirectory, IReadOnlyCollection<string>? forbiddenEnvironmentIds = null)
     {
         _binaryPath = binaryPath;
         _transcript = transcript;
         _crashDumpDirectory = crashDumpDirectory;
+        _forbiddenEnvironmentIds = forbiddenEnvironmentIds ?? [];
 
         Directory.CreateDirectory(crashDumpDirectory);
     }
@@ -85,14 +89,30 @@ public sealed class MsagentCli
     /// <summary>The binary every scenario in this run drives.</summary>
     public string BinaryPath => _binaryPath;
 
-    /// <summary>Runs <c>msagent</c> and captures both streams separately.</summary>
-    public async Task<MsagentResult> RunAsync(
-        IReadOnlyList<string> arguments,
-        string? workingDirectory = null,
-        string? stdin = null,
-        TimeSpan? timeout = null,
-        CancellationToken cancellationToken = default)
+    /// <summary>Runs a command until it settles or the attempts run out, waiting between attempts; returns the last result and whether it settled.</summary>
+    public static async Task<(MsagentResult Result, bool Settled)> RetriedAsync(Func<Task<MsagentResult>> run, Func<MsagentResult, Task<bool>> settled, int attempts, TimeSpan delay, CancellationToken cancellationToken)
     {
+        var result = await run().ConfigureAwait(false);
+
+        for (var attempt = 1; attempt < attempts; attempt++)
+        {
+            if (await settled(result).ConfigureAwait(false))
+            {
+                return (result, true);
+            }
+
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            result = await run().ConfigureAwait(false);
+        }
+
+        return (result, await settled(result).ConfigureAwait(false));
+    }
+
+    /// <summary>Runs <c>msagent</c> and captures both streams separately, refusing any command that names a forbidden environment.</summary>
+    public async Task<MsagentResult> RunAsync(IReadOnlyList<string> arguments, string? workingDirectory = null, string? stdin = null, TimeSpan? timeout = null, ProcessInterruption? interruption = null, CancellationToken cancellationToken = default)
+    {
+        RefuseForbiddenEnvironment(arguments);
+
         var startInfo = new ProcessStartInfo(_binaryPath)
         {
             RedirectStandardOutput = true,
@@ -110,9 +130,15 @@ public sealed class MsagentCli
             startInfo.ArgumentList.Add(argument);
         }
 
-        return await ProcessRunner
-            .RunAsync(startInfo, arguments, stdin, timeout ?? DefaultTimeout, _transcript, cancellationToken)
-            .ConfigureAwait(false);
+        return await ProcessRunner.RunAsync(startInfo, arguments, stdin, timeout ?? DefaultTimeout, _transcript, interruption, cancellationToken).ConfigureAwait(false);
+    }
+
+    private void RefuseForbiddenEnvironment(IReadOnlyList<string> arguments)
+    {
+        if (_forbiddenEnvironmentIds.FirstOrDefault(forbidden => arguments.Any(argument => argument.Contains(forbidden, StringComparison.OrdinalIgnoreCase))) is { } environmentId)
+        {
+            throw new E2EException($"Refused to run `msagent {string.Join(' ', arguments)}`: it names {environmentId}, which mcs.forbiddenEnvironmentIds protects.");
+        }
     }
 
     private static void ArmCrashDumps(ProcessStartInfo startInfo, string directory)
@@ -134,21 +160,26 @@ public static class CrashDumps
 /// <summary>Runs a subprocess with separated streams, a timeout, and transcript capture.</summary>
 public static class ProcessRunner
 {
-    /// <summary>Runs any executable under the same rules the <c>msagent</c> wrapper uses.</summary>
-    public static async Task<MsagentResult> RunAsync(
-        ProcessStartInfo startInfo,
-        IReadOnlyList<string> arguments,
-        string? stdin,
-        TimeSpan timeout,
-        Transcript? transcript,
-        CancellationToken cancellationToken)
+    private static readonly TimeSpan StatePollInterval = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>Runs any executable under the same rules the <c>msagent</c> wrapper uses, killing it early when an interruption asks for it.</summary>
+    public static async Task<MsagentResult> RunAsync(ProcessStartInfo startInfo, IReadOnlyList<string> arguments, string? stdin, TimeSpan timeout, Transcript? transcript, ProcessInterruption? interruption = null, CancellationToken cancellationToken = default)
     {
         using var process = new Process { StartInfo = startInfo };
         var standardOutput = new StringBuilder();
         var standardError = new StringBuilder();
+        var interrupted = 0;
 
-        process.OutputDataReceived += (_, eventArgs) => { if (eventArgs.Data is not null) { standardOutput.AppendLine(eventArgs.Data); } };
-        process.ErrorDataReceived += (_, eventArgs) => { if (eventArgs.Data is not null) { standardError.AppendLine(eventArgs.Data); } };
+        void Interrupt()
+        {
+            if (Interlocked.Exchange(ref interrupted, 1) == 0)
+            {
+                TryKill(process);
+            }
+        }
+
+        process.OutputDataReceived += (_, eventArgs) => Capture(standardOutput, eventArgs.Data, interruption, Interrupt);
+        process.ErrorDataReceived += (_, eventArgs) => Capture(standardError, eventArgs.Data, interruption, Interrupt);
 
         var stopwatch = Stopwatch.StartNew();
         process.Start();
@@ -159,6 +190,10 @@ public static class ProcessRunner
 
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(timeout);
+        using var interruptionTimer = interruption?.After is { } after ? new CancellationTokenSource(after) : null;
+        using var interruptionRegistration = interruptionTimer?.Token.Register(Interrupt) ?? default;
+        using var watching = new CancellationTokenSource();
+        var watcher = interruption?.WhenState is { } condition ? WatchAsync(condition, Interrupt, watching.Token) : Task.CompletedTask;
 
         try
         {
@@ -175,12 +210,52 @@ public static class ProcessRunner
 
             throw new E2EException($"Timed out after {timeout.TotalSeconds:N0}s: {startInfo.FileName} {string.Join(' ', arguments)}");
         }
+        finally
+        {
+            await watching.CancelAsync().ConfigureAwait(false);
+            await watcher.ConfigureAwait(false);
+        }
 
         stopwatch.Stop();
 
-        var result = new MsagentResult(arguments, process.ExitCode, standardOutput.ToString(), standardError.ToString(), stopwatch.Elapsed);
+        var result = new MsagentResult(arguments, process.ExitCode, standardOutput.ToString(), standardError.ToString(), stopwatch.Elapsed, interrupted == 1);
         transcript?.Record(startInfo.FileName, result);
         return result;
+    }
+
+    private static async Task WatchAsync(Func<bool> condition, Action interrupt, CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(StatePollInterval);
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (condition())
+                {
+                    interrupt();
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static void Capture(StringBuilder buffer, string? line, ProcessInterruption? interruption, Action interrupt)
+    {
+        if (line is null)
+        {
+            return;
+        }
+
+        buffer.AppendLine(line);
+
+        if (interruption?.WhenOutput?.Invoke(line) == true)
+        {
+            interrupt();
+        }
     }
 
     private static async Task WriteStandardInputAsync(Process process, string? stdin)

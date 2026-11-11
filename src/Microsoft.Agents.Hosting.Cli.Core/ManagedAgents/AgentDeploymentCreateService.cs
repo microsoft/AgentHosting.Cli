@@ -60,7 +60,7 @@ public sealed class AgentDeploymentCreateService
             throw new UsageException($"A {stage} deployment requires --environment-id.");
         }
 
-        var targetEnvironmentId = string.IsNullOrWhiteSpace(request.EnvironmentId) ? agent.EnvironmentId : request.EnvironmentId.Trim();
+        var targetEnvironmentId = string.IsNullOrWhiteSpace(request.EnvironmentId) ? ManagedAgentResolver.TargetEnvironmentId(agent, null) : request.EnvironmentId.Trim();
         var target = await _environmentResolver.ResolveAsync(targetEnvironmentId, cancellationToken).ConfigureAwait(false);
         var schemaName = ResolveSchemaName(projectDirectory, agent);
 

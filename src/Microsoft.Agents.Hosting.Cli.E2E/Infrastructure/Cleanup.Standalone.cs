@@ -84,14 +84,14 @@ public sealed partial class Cleanup
             ? ["agent", "delete", "--agent-id", agentId, "--deployment-name", deploymentName, "--json"]
             : ["agent", "delete", "--agent-id", agentId, "--json"];
 
-        var typed = await _msagent.RunAsync(selector, project, stdin: recordName.Length > 0 ? recordName : typedName ?? agentId, TimeSpan.FromMinutes(5), cancellationToken).ConfigureAwait(false);
+        var typed = await _msagent.RunAsync(selector, project, stdin: recordName.Length > 0 ? recordName : typedName ?? agentId, TimeSpan.FromMinutes(5), cancellationToken: cancellationToken).ConfigureAwait(false);
 
         if (typed.ExitCode == 0 && typed.StdOut.Contains("agent-deleted", StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
 
-        var forced = await _msagent.RunAsync([.. selector, "--non-interactive"], project, stdin: null, TimeSpan.FromMinutes(5), cancellationToken).ConfigureAwait(false);
+        var forced = await _msagent.RunAsync([.. selector, "--non-interactive"], project, stdin: null, TimeSpan.FromMinutes(5), cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return forced.ExitCode == 0 ? null : $"agent delete exited {forced.ExitCode}: {Summarize(forced)}";
     }
@@ -158,7 +158,7 @@ public sealed partial class Cleanup
                 ? ["agent", "delete", "--agent-id", agentId, "--deployment-name", deploymentName, "--json", "--non-interactive"]
                 : ["agent", "delete", "--agent-id", agentId, "--json", "--non-interactive"];
 
-            var deleted = await _msagent.RunAsync(selector, projectDirectory, stdin: name, TimeSpan.FromMinutes(5), cancellationToken).ConfigureAwait(false);
+            var deleted = await _msagent.RunAsync(selector, projectDirectory, stdin: name, TimeSpan.FromMinutes(5), cancellationToken: cancellationToken).ConfigureAwait(false);
 
             return deleted.ExitCode == 0 ? null : $"agent delete through a clone exited {deleted.ExitCode}: {Summarize(deleted)}";
         }

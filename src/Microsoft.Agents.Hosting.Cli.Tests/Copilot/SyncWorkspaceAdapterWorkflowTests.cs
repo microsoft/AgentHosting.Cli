@@ -229,6 +229,25 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
 
     private const string DuplicateConnectionReference = CopilotTestFixtures.DuplicateConnectionReferenceMessage;
 
+    private const string DuplicateComponent = "[0x80072013:ExportKeyInvalidCreate] Cannot complete the creation of botcomponent because it violates a database constraint. The violation happens on the key schemaname: crf9a_agentD1.file.abcmain2.txt_0Sh.";
+
+    [Fact]
+    public async Task Push_WhenAComponentStillCollidesAfterTheRetry_NamesTheComponentRatherThanAConnectionReference()
+    {
+        var synchronizer = Failing(DuplicateComponent);
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
+            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+
+        Assert.Equal(CopilotErrorKinds.DuplicateComponent, failure.ErrorKind);
+        Assert.Contains("crf9a_agentD1.file.abcmain2.txt_0Sh", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("env-1", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("connection reference", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("msagent agent pull", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains("ExportKeyInvalidCreate", failure.InnerException!.Message, StringComparison.Ordinal);
+        Assert.Equal(2, synchronizer.PushLocalChangesCalls);
+    }
+
     [Fact]
     public async Task Push_WhenAComponentFailsAfterAWorkflowWasRefused_ReportsTheRefusalAsTheCause()
     {

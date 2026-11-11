@@ -17,6 +17,7 @@ public sealed class AgentDeleteCommand : CommandBase<ManagedAgentDeleteRequest, 
         OptionCatalog.Value("--agent-name", "Record to delete, by name."),
         OptionCatalog.Value("--deployment-id", "Deployment whose cloud agent is deleted. Wins over --deployment-name."),
         OptionCatalog.Value("--deployment-name", "Deployment whose cloud agent is deleted, by name."),
+        OptionCatalog.Switch("--all-resources", "Also delete the flows, AI prompts, connection references, and custom connectors the agent uses. MCS agents only."),
     ];
 
     /// <inheritdoc />
@@ -31,6 +32,7 @@ public sealed class AgentDeleteCommand : CommandBase<ManagedAgentDeleteRequest, 
             AgentName = input.GetString("--agent-name"),
             DeploymentId = input.GetString("--deployment-id"),
             DeploymentName = input.GetString("--deployment-name"),
+            AllResources = input.GetSwitch("--all-resources"),
             NonInteractive = input.NonInteractive,
         };
     }

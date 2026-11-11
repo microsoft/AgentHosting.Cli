@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
 public sealed class CopilotSchemaNameTests
 {
-    private readonly CopilotSchemaName _schemaNames = new();
+    private readonly CopilotSchemaName _schemaNames = new(new SyncNamingRulesAdapter());
 
     [Fact]
     public void Derive_BuildsThePrefixedName()
@@ -52,6 +52,22 @@ public sealed class CopilotSchemaNameTests
     }
 
     [Fact]
+    public void Derive_KeepsOnlyTheAsciiLettersAndDigitsOfTheName()
+    {
+        Assert.Equal("con_cafagent2", _schemaNames.Derive("Caf\u00E9 Agent 2", "con", null));
+    }
+
+    [Fact]
+    public void Derive_WithANameCarryingNoAsciiLettersOrDigits_AsksForASchemaName()
+    {
+        var name = "\u65E5\u672C\u8A9E";
+
+        var failure = Assert.Throws<UsageException>(() => _schemaNames.Derive(name, "con", null));
+
+        Assert.Equal($"The name '{name}' contains no ASCII letters or digits, so no schema name can be derived. Supply --schema-name.", failure.Message);
+    }
+
+    [Fact]
     public void Validate_RejectsANameLongerThanOneHundredCharacters()
     {
         Assert.Throws<UsageException>(() => _schemaNames.Validate(new string('a', 101)));
@@ -78,7 +94,7 @@ public sealed class CopilotScaffoldServiceTests
     {
         return new CopilotScaffoldService(
             scaffolder,
-            new CopilotSchemaName(),
+            new CopilotSchemaName(new SyncNamingRulesAdapter()),
             fileSystem ?? new FakeCopilotFileSystem());
     }
 

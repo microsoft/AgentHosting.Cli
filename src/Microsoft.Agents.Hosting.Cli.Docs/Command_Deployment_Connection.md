@@ -40,6 +40,8 @@ the loopback callback. `connection update` still reads menu answers from stdin; 
 the selection flow after any automatic bindings already made. Use `--connection-id` with a scope
 resolving exactly one connector for an explicit update without a selection menu.
 
+The follow-up commands these commands print select the agent by `--agent-id`, whichever selector named it.
+
 ## `msagent deployment connection list` - MCS-specific
 
 Reports the agent's connection references and the connection behind each. Changes nothing.

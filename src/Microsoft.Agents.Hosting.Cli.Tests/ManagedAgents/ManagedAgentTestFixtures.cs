@@ -4,6 +4,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
@@ -77,8 +78,11 @@ internal sealed class FakeConnectionPort : ICopilotConnectionPort
         BindCalls++;
         Directories.Add(projectDirectory);
         Bound.AddRange(bindings);
+        OnBind?.Invoke();
         return Task.CompletedTask;
     }
+
+    public Action? OnBind { get; set; }
 
     public List<CopilotWorkflowStateChange> StateChanges { get; } = [];
 
@@ -341,6 +345,95 @@ internal sealed class ScriptedConfirmationPrompt : IConfirmationPrompt
     }
 }
 
+internal sealed class FakeCopyPort : ICopilotCopyPort
+{
+    public List<CopilotCopyPrepareCommand> Prepared { get; } = [];
+
+    public List<IReadOnlyList<string>> StagedEntries { get; } = [];
+
+    public List<string?> SourceDefinitions { get; } = [];
+
+    public IReadOnlyList<CopilotCopyFinding> PreparationBlockers { get; init; } = [];
+
+    public IReadOnlyList<CopilotCopyFinding> PreparedNotices { get; init; } = [];
+
+    public IReadOnlyList<CopilotCopyIdentity> PreparedIdentities { get; init; } = [];
+
+    public IReadOnlyList<string> PreparedDraftWorkflows { get; init; } = [];
+
+    public string? ProposedSchemaName { get; init; } = "con_copyagent_AbCdEf";
+
+    public Action? OnPrepare { get; init; }
+
+    public List<(string WorkspaceDirectory, string SourceSchemaName, string DisplayName, IReadOnlyList<string> StagedEntries)> Proposals { get; } = [];
+
+    public Task<CopilotCopyPreparation> PrepareAsync(CopilotCopyPrepareCommand command, CancellationToken cancellationToken)
+    {
+        Prepared.Add(command);
+        StagedEntries.Add(Entries(command.WorkspaceDirectory));
+        SourceDefinitions.Add(command.SourceDefinitionPath is { } definition && File.Exists(definition) ? File.ReadAllText(definition) : null);
+        OnPrepare?.Invoke();
+
+        return Task.FromResult(PreparationBlockers.Count > 0 ? new CopilotCopyPreparation { Blockers = PreparationBlockers } : new CopilotCopyPreparation
+        {
+            Identities = PreparedIdentities,
+            RewrittenFiles = [AgentConfigLocator.ProjectSettingsFileName],
+            DraftWorkflows = PreparedDraftWorkflows,
+            Notices = PreparedNotices,
+        });
+    }
+
+    public Task<string?> ProposeSchemaNameAsync(string workspaceDirectory, string sourceSchemaName, string displayName, CancellationToken cancellationToken)
+    {
+        Proposals.Add((workspaceDirectory, sourceSchemaName, displayName, Entries(workspaceDirectory)));
+
+        return Task.FromResult(ProposedSchemaName);
+    }
+
+    private static IReadOnlyList<string> Entries(string directory) => [.. Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.AllDirectories).Select(entry => Path.GetRelativePath(directory, entry))];
+}
+
+internal sealed class FakeAgentResourcePort : ICopilotAgentResourcePort
+{
+    public IReadOnlyList<CopilotCopyLink> Listed { get; init; } = [];
+
+    public HashSet<string> Missing { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, Exception> DeleteThrowsFor { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public int ListCalls { get; private set; }
+
+    public List<(string EnvironmentId, IReadOnlyList<CopilotCopyLink> Resources)> Searches { get; } = [];
+
+    public List<(string EnvironmentId, CopilotCopyLink Resource)> Deleted { get; } = [];
+
+    public IReadOnlyList<CopilotCopyLink> List(string workspaceDirectory)
+    {
+        ListCalls++;
+
+        return Listed;
+    }
+
+    public Task<IReadOnlyList<CopilotCopyLink>> FindExistingAsync(CopilotEnvironmentContext environment, IReadOnlyList<CopilotCopyLink> resources, CancellationToken cancellationToken)
+    {
+        Searches.Add((environment.EnvironmentId, resources));
+
+        return Task.FromResult<IReadOnlyList<CopilotCopyLink>>([.. resources.Where(resource => !Missing.Contains(resource.Identity))]);
+    }
+
+    public Task DeleteAsync(CopilotEnvironmentContext environment, CopilotCopyLink resource, CancellationToken cancellationToken)
+    {
+        if (DeleteThrowsFor.TryGetValue(resource.Identity, out var failure))
+        {
+            return Task.FromException(failure);
+        }
+
+        Deleted.Add((environment.EnvironmentId, resource));
+
+        return Task.CompletedTask;
+    }
+}
+
 internal sealed class TemporaryWorkspace : IDisposable
 {
     public TemporaryWorkspace(bool withProjectFile = true, string schemaName = "con_agent", string displayName = "Contoso Agent")
@@ -357,6 +450,15 @@ internal sealed class TemporaryWorkspace : IDisposable
     public string Root { get; }
 
     public string ConfigPath => Path.Combine(Root, ".config", "agent.config.json");
+
+    public static TemporaryWorkspace Classic(string schemaName = "con_agent", string displayName = "Contoso Agent")
+    {
+        var workspace = new TemporaryWorkspace(withProjectFile: false);
+        workspace.AddFile(AgentConfigLocator.ProjectSettingsFileName, $"displayName: \"{displayName}\"\nschemaName: \"{schemaName}\"\naccessControlPolicy: GroupMembership\nauthenticationMode: Integrated\nauthenticationTrigger: Always\nconfiguration:\n  gPTSettings:\n    defaultSchemaName: {schemaName}.gpt.default\n\n  recognizer:\n    kind: GenerativeAIRecognizer\n\ntemplate: default-2.1.0\nlanguage: 1033\n");
+        workspace.AddFile(AgentConfigLocator.ClassicProjectFileName, $"mcs.metadata:\n  componentName: \"{displayName}\"\nkind: GptComponentMetadata\ninstructions:\ngptCapabilities: {{}}\n");
+
+        return workspace;
+    }
 
     public void AddFile(string relativePath, string content)
     {
@@ -389,7 +491,7 @@ internal static class ManagedAgentFixtures
             PowerPlatformCloudMap.ForCloud(CloudInstance.Public));
 
     public static ConnectorReadinessWait ConnectorReadiness(IConnectorCatalogPort? connectors = null) =>
-        new(connectors ?? new FakeConnectorCatalogPort(), TimeSpan.Zero, (_, _) => Task.CompletedTask);
+        new(connectors ?? new FakeConnectorCatalogPort(), new SyncNamingRulesAdapter(), TimeSpan.Zero, (_, _) => Task.CompletedTask);
 
     public static WorkflowStateCache WorkflowStates(ICopilotFileSystem? fileSystem = null) =>
         new(fileSystem ?? new FakeCopilotFileSystem());
@@ -412,7 +514,9 @@ internal static class ManagedAgentFixtures
 
     public static ManagedAgentResolver AgentResolver(JsonAgentConfigStore store) => new(store, store, new AgentConfigLocator());
 
-    public static CopilotProjectIdentityReader Identities() => new(new AgentConfigLocator());
+    public static CopilotProjectIdentityReader Identities() => new(new AgentConfigLocator(), new SyncProjectIdentityAdapter());
+
+    public static CopilotAgentName AgentNames() => new(new SyncNamingRulesAdapter());
 
     public static IWorkflowWorkspacePort WorkflowWorkspace() => new FakeWorkflowWorkspacePort();
 
@@ -463,6 +567,10 @@ internal static class ManagedAgentFixtures
         };
 
     public const string Principal = "op@contoso.com";
+
+    public const string CopyAgentId = "f0f0f0f0-1111-2222-3333-444444444444";
+
+    public const string CopyWorkflowId = "b0b0b0b0-1111-2222-3333-444444444444";
 
     public static ConnectionPlanItem Plan(CopilotConnectionView view) => ConnectionReadinessPlanner.Plan(view, Principal);
 

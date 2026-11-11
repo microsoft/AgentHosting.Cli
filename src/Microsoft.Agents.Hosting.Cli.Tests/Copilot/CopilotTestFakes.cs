@@ -107,10 +107,22 @@ internal sealed class FakeCopilotCatalogPort : ICopilotCatalogPort
     {
         DeleteCalls++;
 
-        return DeleteThrows is not null ? Task.FromException(DeleteThrows) : Task.CompletedTask;
+        if (DeleteThrows is not null)
+        {
+            return Task.FromException(DeleteThrows);
+        }
+
+        DeletedIn.Add(environment.EnvironmentId);
+        DeletedAgentIds.Add(agentId);
+
+        return Task.CompletedTask;
     }
 
     public Exception? DeleteThrows { get; set; }
+
+    public List<string> DeletedIn { get; } = [];
+
+    public List<string> DeletedAgentIds { get; } = [];
 
     public Task<DateTimeOffset?> GetPublishedOnAsync(CopilotEnvironmentContext environment, string agentId, CancellationToken cancellationToken) =>
         Task.FromResult(PublishedOnSequence.Count > 0 ? PublishedOnSequence.Dequeue() : PublishedOn);
@@ -237,6 +249,8 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
 
     public int AuxiliaryChangeCountReturns { get; init; }
 
+    public int? ComponentCountReturns { get; init; }
+
     public IReadOnlyList<string> UploadedFileNamesReturns { get; init; } = [];
 
     public Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
@@ -255,7 +269,7 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
             throw PushThrowsSequence.Dequeue();
         }
 
-        return Task.FromResult(new CopilotPushOutcome { Changes = LocalChanges, AuxiliaryChangeCount = AuxiliaryChangeCountReturns, UploadedFileNames = UploadedFileNamesReturns, Warnings = PushWarnings });
+        return Task.FromResult(new CopilotPushOutcome { Changes = LocalChanges, ComponentCount = ComponentCountReturns ?? LocalChanges.Count, AuxiliaryChangeCount = AuxiliaryChangeCountReturns, UploadedFileNames = UploadedFileNamesReturns, Warnings = PushWarnings });
     }
 }
 
@@ -377,7 +391,7 @@ internal static class CopilotTestFixtures
     public static CopilotChange Change(string schemaName, string kind = "updated", string componentType = "topic") =>
         new() { Kind = kind, ComponentType = componentType, SchemaName = schemaName };
 
-    public const string DuplicateConnectionReferenceMessage = "[0x80072013:ExportKeyInvalidCreate] violates a database constraint on cre98_AgentC1.cr.WX3p-EQ4";
+    public const string DuplicateConnectionReferenceMessage = "[0x80072013:ExportKeyInvalidCreate] Cannot complete the creation of connectionreference because it violates a database constraint. The violation happens on the key connectionreferencelogicalname: cre98_AgentC1.cr.WX3p-EQ4.";
 
     public static DataverseNotFoundException MissingEntity(string entityName = "connectionreference") =>
         new("ObjectDoesNotExist", "0x80040217", "service-request-1", $"Entity '{entityName}' With Id = 2a5f0c1e-0000-0000-0000-000000000001 Does Not Exist", null);

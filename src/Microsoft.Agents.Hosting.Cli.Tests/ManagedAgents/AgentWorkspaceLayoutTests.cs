@@ -233,7 +233,7 @@ public sealed class AgentWorkspaceLayoutTests : IDisposable
         Directory.CreateDirectory(agent);
         File.WriteAllText(Path.Combine(agent, AgentConfigLocator.ProjectSettingsFileName), "displayName: Contoso Helpdesk\nschemaName: con_helpdesk\n");
 
-        var identity = new CopilotProjectIdentityReader(_locator).Find(agent);
+        var identity = new CopilotProjectIdentityReader(_locator, new SyncProjectIdentityAdapter()).Find(agent);
 
         Assert.Equal("con_helpdesk", identity?.SchemaName);
         Assert.Equal("Contoso Helpdesk", identity?.DisplayName);

@@ -47,7 +47,7 @@ public sealed class AzTokens
         }
 
         var result = await ProcessRunner
-            .RunAsync(startInfo, arguments, stdin: null, TimeSpan.FromMinutes(2), transcript: null, cancellationToken)
+            .RunAsync(startInfo, arguments, stdin: null, TimeSpan.FromMinutes(2), transcript: null, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
         if (result.ExitCode != 0)

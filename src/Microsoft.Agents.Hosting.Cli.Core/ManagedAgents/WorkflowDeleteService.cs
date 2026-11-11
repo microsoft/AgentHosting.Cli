@@ -36,7 +36,7 @@ public sealed class WorkflowDeleteService
         _confirmations = confirmations ?? throw new ArgumentNullException(nameof(confirmations));
     }
 
-    /// <summary>Deletes the cloud workflow and every record for it.</summary>
+    /// <summary>Deletes the cloud workflow and every record for it, or reports what that would delete.</summary>
     /// <param name="request">The command input.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>What was deleted, and what was left behind.</returns>
@@ -44,60 +44,42 @@ public sealed class WorkflowDeleteService
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (request.AllResources)
+        {
+            throw new UsageException("--all-resources deletes the flows, AI prompts, connection references, and custom connectors of an MCS agent; a standalone workflow has none of its own. Remove --all-resources.");
+        }
+
         var projectDirectory = _workflowResolver.ResolveProjectDirectory(request.Project);
-        var (owner, selected) = ResolveTarget(projectDirectory, request);
+        var (owner, deployment) = ResolveTarget(projectDirectory, request);
         var agent = ManagedAgentResolver.RequireMcsWorkflow(owner, "msagent agent delete");
         var workflowId = ManagedAgentResolver.RequireWorkflowId(agent);
-        var deployment = selected;
         var deployments = _resolver.ListDeployments(projectDirectory, agent.AgentId);
         var environment = await _environmentResolver.ResolveAsync(ManagedAgentResolver.TargetEnvironmentId(agent, deployment), cancellationToken).ConfigureAwait(false);
-
-        var orphaned = OrphanedBy(agent, deployments, environment.EnvironmentId);
         var agentUseWarning = await _workflows.GetAgentUseWarningAsync(environment, workflowId, cancellationToken).ConfigureAwait(false);
-
-        var outcome = await ConfirmationPolicy.ConfirmAsync(_confirmations, request.NonInteractive, Describe(agent, workflowId, environment.EnvironmentId, deployments.Count, orphaned, agentUseWarning), agent.DisplayName, cancellationToken).ConfigureAwait(false);
-
-        if (outcome != ConfirmationOutcome.Confirmed)
+        var planned = new ManagedAgentDeleteResult
         {
-            return new ManagedAgentDeleteResult
-            {
-                Status = outcome == ConfirmationOutcome.Mismatched ? "name-mismatch" : "cancelled",
-                AgentId = agent.AgentId,
-                DisplayName = agent.DisplayName,
-                McsWorkflowId = workflowId.ToString(),
-                EnvironmentId = environment.EnvironmentId,
-                DeploymentId = deployment?.DeploymentId,
-                OrphanedTargets = orphaned,
-            };
-        }
-
-        var deleted = await _workflows.DeleteAsync(environment, workflowId, cancellationToken).ConfigureAwait(false);
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        int removed;
-
-        try
-        {
-            removed = _agents.RemoveWithDeployments(projectDirectory, agent.AgentId, agent.EntityTag);
-        }
-        catch (Exception failure) when (deleted && failure is not OperationCanceledException)
-        {
-            throw ManagedAgentException.RecordsSurvivedCloudDelete(agent.AgentId, environment.EnvironmentId, failure.Message);
-        }
-
-        return new ManagedAgentDeleteResult
-        {
-            Status = "agent-deleted",
+            Status = ManagedAgentDeleteTargets.DeletedStatus,
             AgentId = agent.AgentId,
             DisplayName = agent.DisplayName,
             McsWorkflowId = workflowId.ToString(),
             EnvironmentId = environment.EnvironmentId,
             DeploymentId = deployment?.DeploymentId,
-            McsAgentAlreadyAbsent = !deleted,
-            RemovedAgentDeployments = removed,
-            OrphanedTargets = orphaned,
+            RemovedAgentDeployments = deployments.Count,
+            OrphanedTargets = ManagedAgentDeleteTargets.OrphanedBy(agent, deployments, environment.EnvironmentId, includeHome: true),
             Warnings = agentUseWarning.Length == 0 ? [] : [agentUseWarning],
+        };
+
+        if (await ManagedAgentDeleteTargets.StopBeforeDeletingAsync(_confirmations, request, planned, cancellationToken).ConfigureAwait(false) is { } stopped)
+        {
+            return stopped;
+        }
+
+        var deleted = await _workflows.DeleteAsync(environment, workflowId, cancellationToken).ConfigureAwait(false);
+
+        return planned with
+        {
+            McsAgentAlreadyAbsent = !deleted,
+            RemovedAgentDeployments = ManagedAgentDeleteTargets.RemoveRecords(_agents, projectDirectory, agent, deleted ? environment.EnvironmentId : null, cancellationToken),
         };
     }
 
@@ -117,69 +99,5 @@ public sealed class WorkflowDeleteService
         var (owner, deployment) = _resolver.ResolveAgentDeployment(projectDirectory, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName);
 
         return (owner, deployment);
-    }
-
-    /// <summary>
-    /// Names every environment this delete abandons a cloud flow in.
-    ///
-    /// The deployment rows are not the whole picture: deleting a deployment keeps its cloud flow, so an
-    /// agent whose home slot was removed earlier still has a flow in its home environment that no row
-    /// names. Dropping the record without reporting it would leave a flow nothing can find again.
-    /// </summary>
-    /// <param name="agent">The record being deleted.</param>
-    /// <param name="deployments">Every deployment the record still has.</param>
-    /// <param name="deletedEnvironmentId">The environment this run deletes the flow from.</param>
-    /// <returns>One target per abandoned environment, in promotion order with the home slot last.</returns>
-    private static ManagedAgentOrphanedTarget[] OrphanedBy(ManagedAgentRecord agent, IReadOnlyList<AgentDeploymentRecord> deployments, string deletedEnvironmentId)
-    {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { deletedEnvironmentId };
-        var orphaned = new List<ManagedAgentOrphanedTarget>();
-
-        foreach (var candidate in deployments)
-        {
-            var environmentId = ManagedAgentResolver.TargetEnvironmentId(agent, candidate);
-
-            if (seen.Add(environmentId))
-            {
-                orphaned.Add(new ManagedAgentOrphanedTarget { DeploymentName = candidate.DeploymentName, EnvironmentId = environmentId });
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(agent.EnvironmentId) && seen.Add(agent.EnvironmentId))
-        {
-            orphaned.Add(new ManagedAgentOrphanedTarget { DeploymentName = HomeTargetName, EnvironmentId = agent.EnvironmentId });
-        }
-
-        return [.. orphaned];
-    }
-
-    private static string Describe(ManagedAgentRecord agent, Guid workflowId, string environmentId, int deploymentCount, ManagedAgentOrphanedTarget[] orphaned, string agentUseWarning)
-    {
-        var lines = new List<string>
-        {
-            "About to delete:",
-            $"  workflow     {agent.DisplayName} ({agent.AgentId})",
-            $"  cloud flow   {workflowId} in {environmentId}",
-            $"  records      1 ManagedAgent + {deploymentCount} AgentDeployment row(s)",
-        };
-
-        if (agentUseWarning.Length > 0)
-        {
-            lines.Add(TextGrid.WarningLine("  ", agentUseWarning));
-        }
-
-        if (orphaned.Length > 0)
-        {
-            lines.Add(string.Empty);
-            lines.Add("  orphaned by this delete:");
-            lines.AddRange(orphaned.Select(orphan => orphan.DeploymentName == HomeTargetName
-                ? $"    {orphan.EnvironmentId}   (the agent's home environment, which no deployment names)"
-                : $"    {orphan.EnvironmentId}   (deployment \"{orphan.DeploymentName}\")"));
-        }
-
-        lines.Add(string.Empty);
-        lines.Add("This deletes remote resources. Local files are not touched.");
-
-        return string.Join(Environment.NewLine, lines);
     }
 }

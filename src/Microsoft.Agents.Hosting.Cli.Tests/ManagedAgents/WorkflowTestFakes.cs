@@ -236,6 +236,8 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
 
     public void WriteConnectionReferenceDeclaration(string workspaceRoot) => DeclarationWrites.Add($"{workspaceRoot}|{Single(workspaceRoot).WorkflowId}");
 
+    public List<string> DeletedIn { get; } = [];
+
     public Task<bool> DeleteAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken)
     {
         if (!Cloud.TryGetValue(workflowId, out var document))
@@ -250,6 +252,7 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
         Calls.Add($"delete:{workflowId}");
         Cloud.Remove(workflowId);
         CloudDefinition.Remove(workflowId);
+        DeletedIn.Add(environment.EnvironmentId);
 
         return Task.FromResult(true);
     }

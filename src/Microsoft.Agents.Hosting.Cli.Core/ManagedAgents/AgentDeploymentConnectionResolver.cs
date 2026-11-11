@@ -109,6 +109,16 @@ public sealed class AgentDeploymentConnectionResolver
         return new AgentDeploymentWorkspaceTarget(agent, deployment, environment, workspaceDirectory);
     }
 
+    /// <summary>Finds the record identifier a request's agent selector stands for, looking a name up in the project without resolving anything else.</summary>
+    /// <param name="request">The command input.</param>
+    /// <returns>The identifier the request supplied or its name resolves to, or <see langword="null"/> when there is neither.</returns>
+    public string? FindAgentId(IAgentDeploymentConnectionSelector request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return string.IsNullOrWhiteSpace(request.AgentName) ? request.AgentId : _resolver.FindAgent(_resolver.ResolveProjectDirectory(request.Project), request.AgentId, request.AgentName)?.AgentId;
+    }
+
     /// <summary>
     /// Distinguishes an agent that was never deployed from one whose schema no longer resolves.
     /// </summary>

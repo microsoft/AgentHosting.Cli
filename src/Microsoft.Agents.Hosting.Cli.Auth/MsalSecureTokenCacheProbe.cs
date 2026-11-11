@@ -1,40 +1,72 @@
+using Microsoft.Agents.Hosting.Cli.Core;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Identity.Client.Extensions.Msal;
 
 namespace Microsoft.Agents.Hosting.Cli.Auth;
 
-/// <summary>
-/// The live <see cref="ISecureTokenCacheProbe"/>. It performs the one side-effecting availability check
-/// PAC's <c>MsalExtensionCache</c> relies on — <see cref="Storage.VerifyPersistence"/>, which round-trips
-/// a probe blob through the OS secret store and throws <see cref="MsalCachePersistenceException"/> when
-/// the store is unavailable (the libsecret keyring case on Linux). Windows DPAPI and macOS Keychain are
-/// treated as available (verification succeeds without a prompt in the CLI context).
-///
-/// It exists only so <see cref="AgentHostTokenCache"/> can enforce the no-silent-fallback policy
-/// against a real platform at runtime; every offline test uses a fake probe instead.
-/// </summary>
+/// <summary>The live <see cref="ISecureTokenCacheProbe"/>, which round-trips a probe item through the platform secret store.</summary>
 public sealed class MsalSecureTokenCacheProbe : ISecureTokenCacheProbe
 {
+    private const int MaximumAttempts = 3;
+
+    private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan RetryWait = TimeSpan.FromMilliseconds(100);
+
+    private readonly Action<StorageCreationProperties> _verifyPersistence;
+    private readonly Func<string, CancellationToken, Task<IDisposable>> _acquireLock;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+
+    /// <summary>Creates the probe over the platform secret store.</summary>
+    public MsalSecureTokenCacheProbe() : this(VerifyPersistence, AcquireLockAsync, Task.Delay)
+    {
+    }
+
+    internal MsalSecureTokenCacheProbe(Action<StorageCreationProperties> verifyPersistence, Func<string, CancellationToken, Task<IDisposable>> acquireLock, Func<TimeSpan, CancellationToken, Task> delay)
+    {
+        _verifyPersistence = verifyPersistence;
+        _acquireLock = acquireLock;
+        _delay = delay;
+    }
+
     /// <inheritdoc />
-    public Task<bool> IsProtectedPersistenceAvailableAsync(
-        AgentHostCacheDescriptor descriptor,
-        CancellationToken cancellationToken)
+    public async Task<bool> IsProtectedPersistenceAvailableAsync(AgentHostCacheDescriptor descriptor, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
 
+        Directory.CreateDirectory(descriptor.CacheDirectory);
+        var properties = MsalCacheStorage.Build(descriptor, useUnprotectedFile: false);
+
+        using var validationLock = await _acquireLock($"{descriptor.CacheFilePath}.test.lock", cancellationToken).ConfigureAwait(false);
+
+        for (var attempt = 1; !TryVerifyPersistence(properties); attempt++)
+        {
+            if (attempt == MaximumAttempts)
+            {
+                return false;
+            }
+
+            await _delay(RetryWait * attempt, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    private static void VerifyPersistence(StorageCreationProperties properties) => Storage.Create(properties).VerifyPersistence();
+
+    private static async Task<IDisposable> AcquireLockAsync(string path, CancellationToken cancellationToken) => await ExclusiveFileLock.AcquireAsync(path, LockTimeout, cancellationToken).ConfigureAwait(false);
+
+    private bool TryVerifyPersistence(StorageCreationProperties properties)
+    {
         try
         {
-            Directory.CreateDirectory(descriptor.CacheDirectory);
-            var properties = MsalCacheStorage.Build(descriptor, useUnprotectedFile: false);
-            Storage.Create(properties).VerifyPersistence();
-            return Task.FromResult(true);
+            _verifyPersistence(properties);
+
+            return true;
         }
         catch (MsalCachePersistenceException)
         {
-            // The platform secret store (libsecret keyring) is unavailable; protected persistence is not
-            // possible. The caller (AgentHostTokenCache) decides whether the unprotected opt-in applies.
-            return Task.FromResult(false);
+            return false;
         }
     }
 }

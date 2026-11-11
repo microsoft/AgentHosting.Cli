@@ -71,12 +71,6 @@ public sealed class ManagedAgentResolver
     /// <returns>The collection directories that exist, and the declarations that resolve to nothing.</returns>
     public (IReadOnlyList<string> Found, IReadOnlyList<string> Missing) ResolveComponentCollectionDirectories(string? projectDirectory, string agentWorkspaceDirectory) => _locator.ComponentCollectionDirectories(agentWorkspaceDirectory, projectDirectory);
 
-    /// <summary>The schema name an agent deploys under, preferring the value the record carries.</summary>
-    /// <param name="agent">The agent record.</param>
-    /// <param name="projectSchemaName">The schema name the workspace declares, when it is available.</param>
-    /// <returns>The schema name, or <see langword="null"/> when neither source has one.</returns>
-    public static string? McsSchemaNameOf(ManagedAgentRecord agent, string? projectSchemaName) => string.IsNullOrWhiteSpace(agent.McsSchemaName) ? projectSchemaName : agent.McsSchemaName;
-
     /// <summary>Resolves an agent by identifier, then by name.</summary>
     /// <param name="projectDirectory">The project directory holding the configuration.</param>
     /// <param name="agentId">An explicit record identifier, which wins.</param>
@@ -127,6 +121,30 @@ public sealed class ManagedAgentResolver
         _locator.ConfigExists(projectDirectory) && Matching(_agents.List(projectDirectory), agentId, agentName) is [var single]
             ? single
             : null;
+
+    /// <summary>Resolves the agent a location selects: the one whose folder holds it, else its project's only MCS agent.</summary>
+    /// <param name="location">A project directory or a folder inside one, or <see langword="null"/> for the current directory.</param>
+    /// <returns>The project directory and the selected record.</returns>
+    public (string ProjectDirectory, ManagedAgentRecord Agent) ResolveAgentAt(string? location)
+    {
+        var start = Path.TrimEndingDirectorySeparator(Path.GetFullPath(string.IsNullOrWhiteSpace(location) ? Directory.GetCurrentDirectory() : location.Trim()));
+        var projectDirectory = Directory.Exists(start) ? _locator.EnclosingProjectDirectory(start) : start;
+
+        if (!_locator.ConfigExists(projectDirectory))
+        {
+            throw ManagedAgentException.ConfigNotFound(_locator.ConfigFilePath(projectDirectory));
+        }
+
+        var candidates = _agents.List(projectDirectory).Select(agent => (Agent: agent, Folder: FindAgentWorkspaceDirectory(projectDirectory, agent))).ToArray();
+        var mcsAgents = candidates.Where(candidate => candidate.Agent.AgentType == AgentTypes.McsAgent).ToArray();
+
+        return (projectDirectory, candidates.Where(candidate => candidate.Folder is { } folder && AgentConfigLocator.IsContainedIn(start, folder)).OrderByDescending(candidate => candidate.Folder!.Length).Select(candidate => candidate.Agent).FirstOrDefault() ?? mcsAgents switch
+        {
+            [var only] => only.Agent,
+            [] => throw ManagedAgentException.AgentNotFound("(none supplied)"),
+            _ => throw ManagedAgentException.AgentAmbiguousAt(projectDirectory, mcsAgents.Select(candidate => $"{candidate.Agent.DisplayName} ({candidate.Folder ?? candidate.Agent.AgentLocation})")),
+        });
+    }
 
     private static IReadOnlyList<ManagedAgentRecord> Matching(IReadOnlyList<ManagedAgentRecord> agents, string? agentId, string? agentName) =>
         !string.IsNullOrWhiteSpace(agentId)
@@ -339,6 +357,20 @@ public sealed class ManagedAgentResolver
     /// <param name="agent">The record owning the deployment.</param>
     /// <param name="deployment">The deployment, or <see langword="null"/> for the agent's home.</param>
     /// <returns>The environment identifier.</returns>
-    public static string TargetEnvironmentId(ManagedAgentRecord agent, AgentDeploymentRecord? deployment) =>
-        deployment is null || string.IsNullOrWhiteSpace(deployment.EnvironmentId) ? agent.EnvironmentId : deployment.EnvironmentId;
+    public static string TargetEnvironmentId(ManagedAgentRecord agent, AgentDeploymentRecord? deployment)
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+
+        var environmentId = deployment is null || string.IsNullOrWhiteSpace(deployment.EnvironmentId) ? agent.EnvironmentId : deployment.EnvironmentId;
+
+        return string.IsNullOrWhiteSpace(environmentId) ? throw ManagedAgentException.AgentEnvironmentMissing(agent.DisplayName, agent.AgentId) : environmentId;
+    }
+
+    /// <summary>Whether the records show the agent carrying the schema name in the deployment's environment is one the project deployed there.</summary>
+    /// <param name="agent">The record owning the deployment.</param>
+    /// <param name="deployment">The deployment whose environment holds the agent.</param>
+    /// <param name="schemaName">The schema name the agent was found by.</param>
+    /// <param name="targetAgentId">The agent carrying the schema name.</param>
+    /// <returns>Whether the project owns the agent.</returns>
+    public static bool ProjectOwns(ManagedAgentRecord agent, AgentDeploymentRecord deployment, string schemaName, string targetAgentId) => string.Equals(agent.McsAgentId, targetAgentId, StringComparison.OrdinalIgnoreCase) || (deployment.LastDeployedTime is not null && string.Equals(agent.McsSchemaName, schemaName, StringComparison.OrdinalIgnoreCase));
 }

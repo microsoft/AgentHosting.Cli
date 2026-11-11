@@ -136,6 +136,9 @@ public sealed record CopilotPushResult
     /// <summary>How many changes were uploaded.</summary>
     public int ChangeCount { get; init; }
 
+    /// <summary>How many of the uploaded component changes the service stored, excluding the agent's settings and icon.</summary>
+    public int ComponentCount { get; init; }
+
     /// <summary>
     /// How many knowledge and attachment files were sent.
     ///

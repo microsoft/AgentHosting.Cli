@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 
 /// <summary>An isolated copy of a fixture, owned by one scenario.</summary>
@@ -18,6 +20,12 @@ public sealed record Workspace
     /// <summary>The Dataverse workflow the copy addresses, for a standalone workflow workspace.</summary>
     public string? WorkflowId { get; init; }
 
+    /// <summary>Whether the workspace may only be read or copied, never deployed as it is.</summary>
+    public bool DeployForbidden { get; init; }
+
+    /// <summary>The local record <c>agent init</c> registered for the workspace, once it has.</summary>
+    public string? RecordId { get; init; }
+
     /// <summary>The file holding the local records, once <c>agent init</c> has written it.</summary>
     public string ConfigPath => Path.Combine(ProjectDirectory, ".config", "agent.config.json");
 
@@ -31,6 +39,9 @@ public sealed class Workspaces
     private const string CliFixture = "MCSCliAgent";
     private const string ClassicFixture = "MCSClassicAgent";
     private const string WorkflowFixture = "MCSWorkflow";
+
+    private static readonly string[] LocalState = [".config", ".mcs"];
+    private static readonly string[] CorpusExclusions = [.. LocalState, ".git"];
 
     private readonly string _fixturesDirectory;
     private readonly string _workspaceRoot;
@@ -92,6 +103,45 @@ public sealed class Workspaces
         FixtureCopies.CopyTree(source.ProjectDirectory, destination, keepLocalState: false);
 
         return source with { ScenarioId = scenarioId, Root = root, ProjectDirectory = destination };
+    }
+
+    /// <summary>Copies a corpus agent without its cloud binding or records, as a copy source that is never deployed itself.</summary>
+    public Workspace CorpusCopy(string scenarioId, string agentFolder, string? label = null)
+    {
+        var source = Path.Combine(_config.Mcs.Copy.CorpusRoot ?? throw new E2EException($"{scenarioId} needs mcs.copy.corpusRoot, which the capability check should have caught."), agentFolder);
+
+        if (!Directory.Exists(source))
+        {
+            throw new ScenarioBlockedException($"the corpus holds no agent named {agentFolder}", "corpus agent missing");
+        }
+
+        var root = Path.Combine(_workspaceRoot, Name(scenarioId, label));
+        var destination = Path.Combine(root, agentFolder);
+        FileTree.CopyDirectory(source, destination, CorpusExclusions);
+
+        if (FileTree.FilesMentioning(destination, ForbiddenMarkers(source), []) is [var first, ..])
+        {
+            throw new E2EException($"Safety stop: {first} names a forbidden environment even without its cloud binding, so {agentFolder} is not copied.");
+        }
+
+        return new Workspace { ScenarioId = scenarioId, Root = root, ProjectDirectory = destination, AgentName = agentFolder, SchemaName = string.Empty, DeployForbidden = true };
+    }
+
+    private IReadOnlyList<string> ForbiddenMarkers(string corpusAgent) => [.. _config.Mcs.ForbiddenEnvironmentIds, .. ForbiddenHosts(Path.Combine(corpusAgent, ".mcs", "conn.json"))];
+
+    private IEnumerable<string> ForbiddenHosts(string connectionPath)
+    {
+        if (!File.Exists(connectionPath))
+        {
+            yield break;
+        }
+
+        using var connection = JsonDocument.Parse(File.ReadAllText(connectionPath));
+
+        if (connection.RootElement.TryGetProperty("EnvironmentId", out var environment) && _config.Mcs.ForbiddenEnvironmentIds.Contains(environment.GetString(), StringComparer.OrdinalIgnoreCase) && connection.RootElement.TryGetProperty("DataverseEndpoint", out var endpoint) && Uri.TryCreate(endpoint.GetString(), UriKind.Absolute, out var organization))
+        {
+            yield return organization.Host;
+        }
     }
 
     private Workspace Copy(string scenarioId, string? label, string? configured, string fixtureName)
@@ -161,7 +211,7 @@ public sealed class Workspaces
 
     private static void RebrandContent(string file, string fixtureName, string uniqueName)
     {
-        if (IsBinary(file))
+        if (FileTree.IsBinary(file))
         {
             return;
         }
@@ -173,9 +223,6 @@ public sealed class Workspaces
             File.WriteAllText(file, original.Replace(fixtureName, uniqueName, StringComparison.Ordinal));
         }
     }
-
-    private static bool IsBinary(string file) =>
-        Path.GetExtension(file).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".gif" or ".ico" or ".zip" or ".dll" or ".exe";
 
     private static string Name(string scenarioId, string? label) => label is { Length: > 0 } ? $"{scenarioId}-{label}" : scenarioId;
 }
