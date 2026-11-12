@@ -135,7 +135,7 @@ extends:
 
           - task: NuGetAuthenticate@1
 
-          - template: Agent-Hosting-CLI/templates/plugin-checks.yml@self
+          - template: .azdo/templates/plugin-checks.yml@self
 
           - script: dotnet tool restore --configfile $(Build.SourcesDirectory)/.azdo/nuget.config
             displayName: Dotnet tools restore
