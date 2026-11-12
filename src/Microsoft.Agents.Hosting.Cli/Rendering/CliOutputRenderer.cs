@@ -318,15 +318,15 @@ public sealed class CliOutputRenderer
         ],
         AuthPartialResult partial => [partial.Guidance],
         AuthProfileListResult profiles => TextGrid.RenderRows(
-            ["Index", "Active", "Name", "User/AppId", "Cloud", "Type", "Endpoint"],
+            ["Index", "Active", "Name", "User/AppId", "Cloud", "Tenant", "Type", "Endpoint"],
             profiles.Profiles.Select(profile => new[]
             {
                 profile.Index?.ToString() ?? string.Empty,
                 profile.IsActive ? "*" : string.Empty,
                 profile.Name ?? "(unnamed)",
-                profile.PrincipalType == AuthPrincipalType.ServicePrincipal && string.IsNullOrWhiteSpace(profile.Account)
-                    ? profile.ClientId ?? string.Empty : profile.Account,
+                AuthProfileDisplay.Account(profile),
                 profile.Cloud,
+                AuthProfileDisplay.Tenant(profile.TenantId),
                 DescribeAuthProfileType(profile.CredentialMethod),
                 profile.ConnectionUrl ?? string.Empty,
             }).ToList()),
@@ -345,7 +345,7 @@ public sealed class CliOutputRenderer
         [
             $"Profile: {DescribeAuthProfile(who.Profile)}",
             $"Principal: {who.Profile?.PrincipalType} | {who.Profile?.CredentialMethod}",
-            $"Tenant: {who.Profile?.TenantId ?? "(none)"}",
+            $"Tenant: {AuthProfileDisplay.Tenant(who.Profile?.TenantId)}",
             $"Default environment: {who.Profile?.DefaultEnvironment?.EnvironmentId ?? "(none)"}",
             $"Effective environment: {who.Environment?.EnvironmentId ?? "(none)"}",
         ],
@@ -356,7 +356,7 @@ public sealed class CliOutputRenderer
 
     private static string DescribeAuthProfile(AuthProfileInfo? profile) => profile is null
         ? "none"
-        : $"{profile.Index} {profile.Name ?? "(unnamed)"} | {profile.Account} | {profile.Cloud} | {profile.ConnectionUrl}";
+        : $"{profile.Index} {profile.Name ?? "(unnamed)"} | {AuthProfileDisplay.Account(profile)} | {profile.Cloud} | Tenant: {AuthProfileDisplay.Tenant(profile.TenantId)} | {profile.ConnectionUrl}";
 
     private static string DescribeAuthProfileType(AuthCredentialMethod method) => method switch
     {

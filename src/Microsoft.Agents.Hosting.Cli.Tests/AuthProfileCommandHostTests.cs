@@ -8,6 +8,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Hosting;
+using Microsoft.Agents.Hosting.Cli.Ports;
 using Microsoft.Agents.Hosting.Cli.Rendering;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -177,7 +178,7 @@ public sealed class AuthProfileCommandHostTests
     [InlineData(AuthPrincipalType.ServicePrincipal, "existing-account", "existing-account")]
     [InlineData(AuthPrincipalType.User, "operator@example.test", "operator@example.test")]
     [InlineData(AuthPrincipalType.User, "", "")]
-    public void ListDisplaysApplicationIdForMissingNonUserAccountsWithoutChangingJson(
+    public async Task HumanViewsDisplayApplicationIdForMissingNonUserAccountsWithoutChangingJson(
         AuthPrincipalType principalType, string account, string expectedAccount)
     {
         var profile = FakeOperations.SafeAuthProfile with
@@ -198,6 +199,13 @@ public sealed class AuthProfileCommandHostTests
         Assert.Equal(expectedAccount, lines[1][accountColumn..cloudColumn].TrimEnd());
         output.GetStringBuilder().Clear();
 
+        var pickerOutput = new StringWriter();
+        await new ConsoleAuthProfilePicker(new StringReader("q\n"), pickerOutput).PickAsync([profile], default);
+        Assert.Contains($" | {expectedAccount} | {profile.Cloud} | ", pickerOutput.ToString());
+        renderer.RenderSuccess(new AuthProfileOperationResult("selected", profile), json: false);
+        Assert.Contains($" | {expectedAccount} | {profile.Cloud} | ", output.ToString());
+        output.GetStringBuilder().Clear();
+
         renderer.RenderSuccess(result, json: true);
 
         using var json = JsonDocument.Parse(output.ToString());
@@ -214,12 +222,14 @@ public sealed class AuthProfileCommandHostTests
             FakeOperations.SafeAuthProfile with
             {
                 Index = 12, IsActive = false, Name = "Dev with spaces",
+                TenantId = Tenant,
                 CredentialMethod = AuthCredentialMethod.Browser,
                 ConnectionUrl = "https://api.powerplatform.com",
             },
             FakeOperations.SafeAuthProfile with
             {
                 ProfileId = "workload-profile", Index = 3, IsActive = true, Name = null,
+                TenantId = "33333333-3333-3333-3333-333333333333",
                 Account = "", ClientId = App, Cloud = "UsGovHigh",
                 PrincipalType = AuthPrincipalType.ServicePrincipal,
                 CredentialMethod = AuthCredentialMethod.Certificate,
@@ -232,9 +242,9 @@ public sealed class AuthProfileCommandHostTests
 
         string[] expected =
         [
-            $"  {"Index",-5}  {"Active",-6}  {"Name",-15}  {"User/AppId",-36}  {"Cloud",-9}  {"Type",-14}  Endpoint",
-            $"  {"12",-5}  {"",-6}  {"Dev with spaces",-15}  {"operator@example.test",-36}  {"Public",-9}  {"User",-14}  https://api.powerplatform.com",
-            $"  {"3",-5}  {"*",-6}  {"(unnamed)",-15}  {App,-36}  {"UsGovHigh",-9}  {"AppCertificate",-14}  https://high.api.gov.powerplatform.microsoft.us",
+            $"  {"Index",-5}  {"Active",-6}  {"Name",-15}  {"User/AppId",-36}  {"Cloud",-9}  {"Tenant",-36}  {"Type",-14}  Endpoint",
+            $"  {"12",-5}  {"",-6}  {"Dev with spaces",-15}  {"operator@example.test",-36}  {"Public",-9}  {Tenant,-36}  {"User",-14}  https://api.powerplatform.com",
+            $"  {"3",-5}  {"*",-6}  {"(unnamed)",-15}  {App,-36}  {"UsGovHigh",-9}  {"33333333-3333-3333-3333-333333333333",-36}  {"AppCertificate",-14}  https://high.api.gov.powerplatform.microsoft.us",
         ];
         Assert.Equal(expected, output.ToString().Split(System.Environment.NewLine, StringSplitOptions.RemoveEmptyEntries));
     }
@@ -272,7 +282,7 @@ public sealed class AuthProfileCommandHostTests
         new CliOutputRenderer(output, TextWriter.Null, color: false)
             .RenderSuccess(new AuthProfileListResult([]), json: false);
 
-        Assert.Equal($"  Index  Active  Name  User/AppId  Cloud  Type  Endpoint{System.Environment.NewLine}", output.ToString());
+        Assert.Equal($"  Index  Active  Name  User/AppId  Cloud  Tenant  Type  Endpoint{System.Environment.NewLine}", output.ToString());
     }
 
     [Fact]
@@ -293,11 +303,74 @@ public sealed class AuthProfileCommandHostTests
         Assert.NotNull(type);
         var output = new StringWriter();
         var picker = (IAuthProfilePicker)Activator.CreateInstance(type, new StringReader("\ninvalid\n2\n"), output)!;
-        var chosen = await picker.PickAsync([FakeOperations.SafeAuthProfile,
-            FakeOperations.SafeAuthProfile with { ProfileId = "second", Index = 2, IsActive = false, Name = "\u001B[31mname" }], default);
+        var first = FakeOperations.SafeAuthProfile with { Name = null, IsActive = false, TenantId = Tenant };
+        var second = first with { ProfileId = "second", Index = 2, TenantId = "33333333-3333-3333-3333-333333333333" };
+        var chosen = await picker.PickAsync([first, second], default);
         Assert.Equal("second", chosen);
+        Assert.Contains($"1   (unnamed) | {first.Account} | {first.Cloud} | Tenant: {first.TenantId}", output.ToString());
+        Assert.Contains($"2   (unnamed) | {second.Account} | {second.Cloud} | Tenant: {second.TenantId}", output.ToString());
         Assert.Contains("Select", output.ToString());
         Assert.DoesNotContain("\u001B", output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null, "(none)")]
+    [InlineData("", "(none)")]
+    [InlineData(" \t ", "(none)")]
+    [InlineData(Tenant, Tenant)]
+    [InlineData("\u001B[31mtenant", "\uFFFD[31mtenant")]
+    public async Task HumanViewsDisplaySafeTenantMetadataWithoutChangingJson(string? tenant, string expectedTenant)
+    {
+        var profile = FakeOperations.SafeAuthProfile with
+        {
+            TenantId = tenant, Name = "\u001B[31mname",
+            DefaultEnvironment = new("env-a", "Default", "44444444-4444-4444-4444-444444444444",
+                "https://env.api.powerplatform.com", null),
+        };
+        var pickerOutput = new StringWriter();
+        var chosen = await new ConsoleAuthProfilePicker(new StringReader("1\n"), pickerOutput).PickAsync([profile], default);
+        Assert.Equal(profile.ProfileId, chosen);
+        Assert.Contains($"Tenant: {expectedTenant}", pickerOutput.ToString());
+        Assert.DoesNotContain("\u001B", pickerOutput.ToString(), StringComparison.Ordinal);
+
+        var output = new StringWriter();
+        var renderer = new CliOutputRenderer(output, TextWriter.Null, color: false);
+        var result = new AuthProfileListResult([profile]);
+        renderer.RenderSuccess(result, json: false);
+        var lines = output.ToString().Split(System.Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+        var tenantColumn = lines[0].IndexOf("Tenant", StringComparison.Ordinal);
+        Assert.True(tenantColumn >= 0);
+        var typeColumn = lines[0].IndexOf("Type", StringComparison.Ordinal);
+        Assert.Equal(expectedTenant, lines[1][tenantColumn..typeColumn].TrimEnd());
+        Assert.DoesNotContain("\u001B", output.ToString(), StringComparison.Ordinal);
+        output.GetStringBuilder().Clear();
+
+        renderer.RenderSuccess(new AuthProfileOperationResult("selected", profile), json: false);
+        Assert.Contains($"Tenant: {expectedTenant}", output.ToString());
+        Assert.DoesNotContain("\u001B", output.ToString(), StringComparison.Ordinal);
+        output.GetStringBuilder().Clear();
+
+        renderer.RenderSuccess(result, json: true);
+        using var json = JsonDocument.Parse(output.ToString());
+        var metadata = Assert.Single(json.RootElement.GetProperty("profiles").EnumerateArray());
+        Assert.Equal(tenant, metadata.GetProperty("tenantId").GetString());
+    }
+
+    [Theory]
+    [InlineData("created")]
+    [InlineData("selected")]
+    [InlineData("named")]
+    [InlineData("deleted")]
+    public void ProfileSummariesIdentifyTenantAndDeletedFallback(string status)
+    {
+        var profile = FakeOperations.SafeAuthProfile with { Name = null, TenantId = Tenant };
+        var active = profile with { ProfileId = "fallback", TenantId = "33333333-3333-3333-3333-333333333333" };
+        var output = new StringWriter();
+        new CliOutputRenderer(output, TextWriter.Null, color: false)
+            .RenderSuccess(new AuthProfileOperationResult(status, profile, active), json: false);
+        Assert.Contains($"Tenant: {profile.TenantId}", output.ToString());
+        if (status == "deleted")
+            Assert.Contains($"Active profile: 1 (unnamed) | {active.Account} | {active.Cloud} | Tenant: {active.TenantId}", output.ToString());
     }
 
     private static async Task<(int Exit, string Output, string Error)> Run(

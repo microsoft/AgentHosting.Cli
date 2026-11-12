@@ -389,7 +389,8 @@ public sealed class AuthProfileOperationsTests : IDisposable
         var deleted = first;
         AuthProfile? later = null;
         if (scenario != "last")
-            deleted = await _profiles.CreateAsync(Profile("b", "Deleted"), default);
+            deleted = await _profiles.CreateAsync(Profile("b", "Deleted") with
+                { TenantId = "33333333-3333-3333-3333-333333333333" }, default);
         if (scenario == "inactive")
             await _profiles.SelectAsync(new(Name: "First"), default);
         if (scenario == "concurrent-selection")
@@ -444,6 +445,7 @@ public sealed class AuthProfileOperationsTests : IDisposable
             Assert.Equal(cleanupIncomplete, partial.GetProperty("cleanupIncomplete").GetBoolean());
             Assert.False(partial.GetProperty("profile").GetProperty("isActive").GetBoolean());
             Assert.Equal(deleted.ProfileId, partial.GetProperty("profile").GetProperty("profileId").GetString());
+            Assert.Equal(deleted.TenantId, partial.GetProperty("profile").GetProperty("tenantId").GetString());
             Assert.True(partial.GetProperty("profileDeleted").GetBoolean());
             var active = partial.GetProperty("activeProfile");
             if (snapshot.Active is null) Assert.Equal(JsonValueKind.Null, active.ValueKind);
@@ -451,6 +453,7 @@ public sealed class AuthProfileOperationsTests : IDisposable
             {
                 Assert.True(active.GetProperty("isActive").GetBoolean());
                 Assert.Equal(snapshot.Active.ProfileId, active.GetProperty("profileId").GetString());
+                Assert.Equal(snapshot.Active.TenantId, active.GetProperty("tenantId").GetString());
             }
         }
         else
@@ -459,8 +462,10 @@ public sealed class AuthProfileOperationsTests : IDisposable
             var lines = error.ToString().Split(System.Environment.NewLine);
             var deletedLine = Assert.Single(lines, line => line.StartsWith("Deleted profile:", StringComparison.Ordinal));
             Assert.Contains($"{deleted.Name} | {deleted.Username}", deletedLine);
+            Assert.Contains($"Tenant: {deleted.TenantId}", deletedLine);
             var activeLine = Assert.Single(lines, line => line.StartsWith("Active profile at commit:", StringComparison.Ordinal));
             Assert.Contains(snapshot.Active is null ? "none" : $"{snapshot.Active.Name} | {snapshot.Active.Username}", activeLine);
+            if (snapshot.Active is not null) Assert.Contains($"Tenant: {snapshot.Active.TenantId}", activeLine);
             Assert.Contains("was committed", error.ToString());
             Assert.DoesNotContain("12006", error.ToString());
         }
@@ -569,12 +574,18 @@ public sealed class AuthProfileOperationsTests : IDisposable
     [Fact]
     public async Task AllowedPickerSelectsWithoutAuthenticationOrInventory()
     {
-        var a = await _profiles.CreateAsync(Profile("a"), default);
-        await _profiles.CreateAsync(Profile("b"), default);
-        var picker = new Picker(profiles => Task.FromResult<string?>(profiles[0].ProfileId));
+        var a = await _profiles.CreateAsync(Profile(), default);
+        var b = await _profiles.CreateAsync(Profile() with { TenantId = "33333333-3333-3333-3333-333333333333" }, default);
+        var picker = new Picker(profiles =>
+        {
+            Assert.Equal(new[] { a.TenantId, b.TenantId }, profiles.Select(p => p.TenantId));
+            Assert.All(profiles, p => Assert.Equal(a.Username, p.Account));
+            return Task.FromResult<string?>(profiles[1].ProfileId);
+        });
         var selected = await Service(picker: picker).SelectAsync(new(), default);
-        Assert.Equal(a.ProfileId, selected.Profile.ProfileId);
-        Assert.Equal(a.ProfileId, (await _profiles.GetActiveProfileAsync(default))!.ProfileId);
+        Assert.Equal(b.ProfileId, selected.Profile.ProfileId);
+        Assert.Equal(b.TenantId, selected.Profile.TenantId);
+        Assert.Equal(b.ProfileId, (await _profiles.GetActiveProfileAsync(default))!.ProfileId);
         Assert.Equal(0, _inventory.Clients);
         Assert.Equal(0, _credentials.Authentications);
     }

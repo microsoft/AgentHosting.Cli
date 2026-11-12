@@ -135,8 +135,9 @@ Lists safe profile/name/cloud/principal/default metadata, an active marker, and 
 positions. Rerun list before using an index after creation or deletion; positions are not persistent IDs.
 
 Human-readable output is an aligned table with `Index`, `Active`, `Name`, `User/AppId`, `Cloud`,
-`Type`, and `Endpoint` columns. `Active` uses `*` for the selected profile. `User/AppId` shows the
-application ID for non-user profiles without an account name.
+`Tenant`, `Type`, and `Endpoint` columns. `Active` uses `*` for the selected profile. `User/AppId`
+shows the application ID for non-user profiles without an account name. `Tenant` shows the full
+stored profile tenant ID, or `(none)` when missing, not the default environment's tenant.
 
 `Type` uses authentication-method labels, such as `User`, `OperatingSystem`,
 `Application`, `AppCertificate`, and `AzureIdentity`. `Endpoint` is the profile's Power Platform API
@@ -155,6 +156,12 @@ Use `-i` for `--index` and `-n` for `--name`.
 Supply exactly one selector, or omit both to use the metadata-only picker when interaction is
 allowed. There is no implicit first-profile selection. Without selectors in non-interactive mode,
 the command fails with 12007 / exit 3. Selection does not authenticate or change the profile's cloud.
+
+Picker rows show the profile name, user/application identity, cloud, and full tenant ID so the
+same account in different tenants can be distinguished. Missing tenant metadata is shown as
+`(none)` without authentication. Like list, the picker uses the application ID for non-user
+profiles without an account name. Profile confirmations and deletion recovery summaries also
+include tenant IDs.
 
 ## `msagent auth delete`
 

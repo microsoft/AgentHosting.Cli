@@ -241,6 +241,8 @@ msagent auth delete --index 1
 
 Names are 1–30 characters and case-sensitive unique. List positions are transient and 1-based.
 Select accepts exactly one `--index` or `--name`, or an interactive metadata picker without selectors.
+List and picker rows show full profile tenant IDs (`(none)` when missing) and use the application
+ID for non-user profiles without an account name, without authenticating.
 Delete requires exactly one selector. Renaming an inactive profile does not activate it.
 `auth clear` repairs corrupt metadata and removes only owned
 msagent profiles/credentials/caches, not PAC/Azure/broker state or source certificates.

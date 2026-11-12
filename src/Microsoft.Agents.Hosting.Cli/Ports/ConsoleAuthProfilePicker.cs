@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Rendering;
+using Microsoft.Agents.Hosting.Cli.Rendering;
 
 namespace Microsoft.Agents.Hosting.Cli.Ports;
 
@@ -15,7 +16,7 @@ public sealed class ConsoleAuthProfilePicker(TextReader input, TextWriter output
         {
             var profile = profiles[index];
             await output.WriteLineAsync(TerminalText.Sanitize(
-                $"{index + 1} {(profile.IsActive ? "*" : " ")} {profile.Name ?? "(unnamed)"} | {profile.Account} | {profile.Cloud}")).ConfigureAwait(false);
+                $"{index + 1} {(profile.IsActive ? "*" : " ")} {profile.Name ?? "(unnamed)"} | {AuthProfileDisplay.Account(profile)} | {profile.Cloud} | Tenant: {AuthProfileDisplay.Tenant(profile.TenantId)}")).ConfigureAwait(false);
         }
         if (profiles.Count == 0) return null;
         while (true)
