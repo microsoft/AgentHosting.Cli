@@ -185,7 +185,7 @@ public sealed class AgentHostingOperationsTests
         var credentials = new ProfileCredentials();
         var selections = new InMemoryEnvironmentSelectionStore();
         var environments = EnvironmentFixtures.Service(new FakeEnvironmentClient(), selections, store);
-        var service = new AuthProfileOperations(store, credentials, environments, selections,
+        var service = new AuthProfileOperations(store, store, credentials, environments, selections,
             new StaticInteractionPolicy(true), new FixedClock(DateTimeOffset.UnixEpoch), credentials);
         var session = new FakeAuthenticationSession();
         var ops = Create(session, store, FakePlatformInfo.Named("unknown"), environments: environments, authProfiles: service);
@@ -280,7 +280,7 @@ public sealed class AgentHostingOperationsTests
         var credentials = new ProfileCredentials();
         var selections = new InMemoryEnvironmentSelectionStore();
         var environments = EnvironmentFixtures.Service(new FakeEnvironmentClient(), selections, store);
-        var profiles = new AuthProfileOperations(store, credentials, environments, selections,
+        var profiles = new AuthProfileOperations(store, store, credentials, environments, selections,
             new StaticInteractionPolicy(true), new FixedClock(DateTimeOffset.UnixEpoch), credentials);
         var session = new FakeAuthenticationSession();
         var core = Create(session, store, FakePlatformInfo.Named("unknown"), environments: environments, authProfiles: profiles);
@@ -453,7 +453,7 @@ public sealed class AgentHostingOperationsTests
         var credentials = new ProfileCredentials { ClearFailure = new CacheProtectionUnavailableException("Unavailable.", "Repair storage.") };
         var selections = new InMemoryEnvironmentSelectionStore();
         var environments = EnvironmentFixtures.Service(new FakeEnvironmentClient(), selections, store);
-        var service = new AuthProfileOperations(store, credentials, environments, selections,
+        var service = new AuthProfileOperations(store, store, credentials, environments, selections,
             new StaticInteractionPolicy(true), new FixedClock(DateTimeOffset.UnixEpoch), credentials);
         var error = await Assert.ThrowsAsync<AuthOperationException>(() =>
             Create(new FakeAuthenticationSession(), store, FakePlatformInfo.Windows(), authProfiles: service).LogoutAsync(default));

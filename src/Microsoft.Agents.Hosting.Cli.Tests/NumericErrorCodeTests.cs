@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Rendering;
@@ -51,6 +52,38 @@ public sealed class NumericErrorCodeTests
         Assert.Equal(expectedExit, document.RootElement.GetProperty("exitCode").GetInt32());
         Assert.Equal(expectedExit, exitCode);
         Assert.Empty(stderr.ToString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AuthenticationContextFailure_RendersInternalFailureAndActionableGuidance(bool json)
+    {
+        var failure = Assert.ThrowsAny<AgentHostingException>(() => ResourceTokenContext.Require(null));
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = new CliOutputRenderer(stdout, stderr, color: false).RenderFailure(failure, json);
+
+        Assert.Equal(ExitCodes.Failure, exitCode);
+        if (json)
+        {
+            using var document = JsonDocument.Parse(stdout.ToString());
+            Assert.Equal(99005, document.RootElement.GetProperty("errorCode").GetInt32());
+            Assert.Equal("authentication-context-invalid", document.RootElement.GetProperty("errorKind").GetString());
+            Assert.Equal(failure.Remediation, document.RootElement.GetProperty("remediation").GetString());
+            Assert.Empty(stderr.ToString());
+        }
+        else
+        {
+            Assert.Empty(stdout.ToString());
+            Assert.Contains("authentication context", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("CLI version", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("token provider", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Do not include tokens or credentials", stderr.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain("auth clear", stderr.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain("auth create", stderr.ToString(), StringComparison.Ordinal);
+        }
     }
 
     public static TheoryData<AgentHostingException, int> DomainFailures() => new()

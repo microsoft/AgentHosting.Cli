@@ -337,9 +337,7 @@ public sealed class PowerAppsConnectionClient : IDisposable
         }
         else
         {
-            var useUserScopes = context.Profile.PrincipalType == AuthPrincipalType.User
-                && context.Profile.CredentialMethod != AuthCredentialMethod.DefaultAzureCredential;
-            var scope = new PacResourceScopeNormalizer(useDoubleSlashSeparator: useUserScopes).ToDefaultScope(resource);
+            var scope = PacResourceScopeNormalizer.ForProfile(context.Profile).ToDefaultScope(resource);
             acquired = await _profileCredentials!.AcquireAsync(context.Profile, [scope], tenantId, cancellationToken).ConfigureAwait(false);
         }
         var token = AcquiredTokenTenant.Require(acquired, tenantId);

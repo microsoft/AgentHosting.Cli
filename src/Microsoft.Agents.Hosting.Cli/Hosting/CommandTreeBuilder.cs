@@ -512,7 +512,7 @@ public sealed class CommandTreeBuilder
         }
     }
 
-    private Symbol Materialise(CommandSymbol declared)
+    internal Symbol Materialise(CommandSymbol declared)
     {
         if (declared is CommandArgument argument)
         {

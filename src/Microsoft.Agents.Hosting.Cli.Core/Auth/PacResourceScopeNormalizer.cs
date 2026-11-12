@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Auth;
 
@@ -24,6 +25,16 @@ public sealed class PacResourceScopeNormalizer
     public PacResourceScopeNormalizer(bool useDoubleSlashSeparator = true)
     {
         _useDoubleSlashSeparator = useDoubleSlashSeparator;
+    }
+
+    /// <summary>Selects resource scope formatting for the profile's principal and credential method.</summary>
+    public static PacResourceScopeNormalizer ForProfile(AuthProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+
+        var useUserScopes = profile.PrincipalType == AuthPrincipalType.User
+            && profile.CredentialMethod != AuthCredentialMethod.DefaultAzureCredential;
+        return new PacResourceScopeNormalizer(useDoubleSlashSeparator: useUserScopes);
     }
 
     /// <summary>Normalizes a resource URL string to its default scope; the URL must be absolute.</summary>

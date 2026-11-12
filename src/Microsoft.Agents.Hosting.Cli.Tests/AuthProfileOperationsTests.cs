@@ -27,7 +27,7 @@ public sealed class AuthProfileOperationsTests : IDisposable
 
     private AuthProfileOperations Service(bool allowed = true, IAuthProfileManagementStore? store = null,
         IAuthProfilePicker? picker = null) =>
-        new(store ?? _profiles, _credentials,
+        new(store ?? _profiles, Assert.IsAssignableFrom<IAuthProfileCreationStore>(store ?? _profiles), _credentials,
             new EnvironmentSelectionService(_inventory, _selections, store ?? _profiles, new FixedClock(DateTimeOffset.UnixEpoch)),
             _selections, new StaticInteractionPolicy(allowed), new FixedClock(DateTimeOffset.UnixEpoch),
             _credentials, picker);
@@ -129,6 +129,49 @@ public sealed class AuthProfileOperationsTests : IDisposable
             ManagedIdentity = true, Environment = null,
         }, default);
         Assert.True(_credentials.Request!.NonInteractive);
+    }
+
+    [Fact]
+    public async Task InteractionOverridePreservesRequestDataWithoutMutatingTheCaller()
+    {
+        var request = new AuthCreateRequest
+        {
+            Name = "Certificate",
+            Environment = "env-a",
+            Target = PowerPlatformApiTargetConfig.Public,
+            Tenant = Profile().TenantId,
+            LoginHint = "synthetic-login-hint",
+            Scopes = ["https://service.test/.default"],
+            ApplicationId = Profile().ClientId,
+            CertificateDiskPath = "synthetic-certificate.pfx",
+            CertificatePassword = "synthetic-certificate-password",
+        };
+
+        await Service(allowed: false).CreateAsync(request, default);
+
+        var captured = Assert.IsType<AuthCreateRequest>(_credentials.Request);
+        Assert.NotSame(request, captured);
+        Assert.True(captured.NonInteractive);
+        Assert.False(request.NonInteractive);
+        foreach (var property in typeof(AuthCreateRequest).GetProperties()
+            .Where(property => property.Name != nameof(AuthCreateRequest.NonInteractive)))
+        {
+            Assert.Equal(property.GetValue(request), property.GetValue(captured));
+        }
+    }
+
+    [Fact]
+    public void AuthenticationRequestStringOutputDoesNotExposeFields()
+    {
+        var request = new AuthCreateRequest
+        {
+            Username = "synthetic-user",
+            Password = "synthetic-password",
+            ClientSecret = "synthetic-client-secret",
+            CertificatePassword = "synthetic-certificate-password",
+        };
+
+        Assert.Equal(nameof(AuthCreateRequest), request.ToString());
     }
 
     [Fact]
@@ -242,7 +285,8 @@ public sealed class AuthProfileOperationsTests : IDisposable
             var committed = await _profiles.CreateAsync(previous, default);
             await provider.CompleteCreationAsync(committed, default);
         }
-        var service = new AuthProfileOperations(new Store(_profiles) { AfterCreate = cancel.Cancel }, provider,
+        var store = new Store(_profiles) { AfterCreate = cancel.Cancel };
+        var service = new AuthProfileOperations(store, store, provider,
             new EnvironmentSelectionService(_inventory, _selections, _profiles, new FixedClock(DateTimeOffset.UnixEpoch)),
             _selections, new StaticInteractionPolicy(true), new FixedClock(DateTimeOffset.UnixEpoch), provider);
         var error = await Assert.ThrowsAsync<AuthOperationCanceledException>(() =>

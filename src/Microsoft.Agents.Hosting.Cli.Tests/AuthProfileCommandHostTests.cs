@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.Reflection;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
@@ -811,13 +810,12 @@ public sealed class AuthProfileCommandHostTests
         var builder = new CommandTreeBuilder(new CliOutputRenderer(TextWriter.Null, TextWriter.Null, false),
             new FacadeHandlerProvider(new FakeOperations()), TestFeatureFlags.AllProductSurfaces,
             new Option<bool>("--json"), new Option<bool>("--non-interactive"));
-        var materialise = typeof(CommandTreeBuilder).GetMethod("Materialise", BindingFlags.Instance | BindingFlags.NonPublic)!;
         var first = new CommandOption("--local", "Same description") { ShortAlias = "-a", ExtraAliases = ["--first"] };
         var second = first with { ShortAlias = "-b", ExtraAliases = ["--second"] };
-        var a = (Option)materialise.Invoke(builder, [first])!;
-        var b = (Option)materialise.Invoke(builder, [second])!;
+        var a = Assert.IsAssignableFrom<Option>(builder.Materialise(first));
+        var b = Assert.IsAssignableFrom<Option>(builder.Materialise(second));
         Assert.NotSame(a, b);
-        Assert.Same(a, materialise.Invoke(builder, [first]));
+        Assert.Same(a, builder.Materialise(first));
         Assert.Contains("-b", b.Aliases);
         Assert.Contains("--second", b.Aliases);
         Assert.DoesNotContain("-a", b.Aliases);

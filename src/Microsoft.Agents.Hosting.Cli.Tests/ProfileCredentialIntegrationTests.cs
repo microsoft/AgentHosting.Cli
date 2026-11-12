@@ -1,6 +1,7 @@
 using Microsoft.Agents.Hosting.Cli.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Identity.Client;
@@ -125,8 +126,25 @@ public sealed class ProfileCredentialIntegrationTests
         using var services = new ServiceCollection().AddAgentHostAuthentication(new() { ConfigDirectory = h.Directory, InteractionAllowed = false })
             .AddAgentHostProfileCredentials(h.Backend, new(), new LegacyCache()).BuildServiceProvider();
         Assert.Same(services.GetRequiredService<IAuthProfileStore>(), services.GetRequiredService<IAuthProfileManagementStore>());
+        Assert.Same(services.GetRequiredService<IAuthProfileManagementStore>(), services.GetRequiredService<IAuthProfileCreationStore>());
         Assert.Same(services.GetRequiredService<IProfileCredentialProvider>(), services.GetRequiredService<IOwnedProfileCredentialCleanup>());
         Assert.Same(services.GetRequiredService<IProfileCredentialProvider>(), services.GetRequiredService<IProfileCachedAccountReader>());
+        Assert.Equal(0, h.Backend.Calls);
+    }
+
+    [Fact]
+    public void ProfileOperationsRequireAtomicCreationDuringComposition()
+    {
+        using var h = new ProfileCredentialTests.Harness();
+        var registrations = new ServiceCollection()
+            .AddAgentHostAuthentication(new() { ConfigDirectory = h.Directory, InteractionAllowed = false })
+            .AddAgentHostProfileCredentials(h.Backend, new(), new LegacyCache());
+        registrations.Remove(Assert.Single(registrations, service => service.ServiceType == typeof(IAuthProfileCreationStore)));
+        using var services = registrations.BuildServiceProvider();
+
+        var error = Assert.Throws<InvalidOperationException>(() => services.GetRequiredService<IAuthProfileOperations>());
+
+        Assert.Contains(nameof(IAuthProfileCreationStore), error.Message, StringComparison.Ordinal);
         Assert.Equal(0, h.Backend.Calls);
     }
 

@@ -47,7 +47,7 @@ msagent auth create [options]
 
 | Option | Local shortcut | Meaning |
 | --- | --- | --- |
-| `--name` | `-n` | Optional case-sensitive name, 1–30 characters. |
+| `--name` | `-n` | Optional case-sensitive name, 1–30 characters; not whitespace-only and no control characters. |
 | `--environment` | `-env` | Default environment ID, trusted organization URL, or unambiguous display name. |
 | `--cloud` | `-ci` | `Public`, `Preprod`, `Test`, `UsGov`, `UsGovHigh`, `UsGovDod`, `China`, `UsNat`, `UsSec`; default `Public`. |
 | `--tenant` | `-t` | Nonzero tenant GUID. |
@@ -186,6 +186,7 @@ msagent auth name --index <position> --name <new-name>
 Use `-i` for `--index` and `-n` for `--name`.
 
 Both options are required. Names contain 1–30 characters and are case-sensitive unique.
+Names must not be whitespace-only or contain control characters.
 Renaming an inactive profile does not activate it.
 
 ## `msagent auth clear`

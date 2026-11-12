@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Reflection;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
@@ -50,40 +49,6 @@ public sealed class ProfileSyncResourceTests
             .AddSingleton(typeof(CoreServicesClusterCategory), CoreServicesClusterCategory.Prod)
             .AddSingleton<Func<HttpMessageHandler>>(() => handler)
             .BuildServiceProvider();
-
-    [Theory]
-    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Production, AuthPrincipalType.User, "api://96ff4394-9197-43aa-b393-6a41652e21f8")]
-    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Production, AuthPrincipalType.ServicePrincipal, "api://96ff4394-9197-43aa-b393-6a41652e21f8")]
-    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Preprod, AuthPrincipalType.User, "api://a522f059-bb65-47c0-8934-7db6e5286414")]
-    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Test, AuthPrincipalType.User, "api://a522f059-bb65-47c0-8934-7db6e5286414")]
-    [InlineData(CloudInstance.UsGov, PowerPlatformApiRing.Production, AuthPrincipalType.User, "api://9315aedd-209b-43b3-b149-2abff6a95d59")]
-    [InlineData(CloudInstance.UsGovHigh, PowerPlatformApiRing.Production, AuthPrincipalType.User, "api://69c6e40c-465f-4154-987d-da5cba10734e")]
-    [InlineData(CloudInstance.UsGovDod, PowerPlatformApiRing.Production, AuthPrincipalType.User, "api://bd4a9f18-e349-4c74-a6b7-65dd465ea9ab")]
-    public async Task SdkIslandAudienceAcquiresExactCapturedResourceProfileAndTenant(
-        CloudInstance cloud, PowerPlatformApiRing ring, AuthPrincipalType mode, string expectedResource)
-    {
-        var credentials = new Credentials();
-        var legacy = new RecordingTokenProvider();
-        var environment = Environment(cloud: cloud, ring: ring, mode: mode,
-            method: mode == AuthPrincipalType.User ? AuthCredentialMethod.Browser : AuthCredentialMethod.ClientSecret);
-        var audienceMethod = typeof(ISyncAuthProvider).Assembly
-            .GetType("Microsoft.CopilotStudio.Sync.IslandControlPlaneService", throwOnError: true)!
-            .GetMethod("GetTokenAudience", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)!;
-        var resource = (string)audienceMethod.Invoke(null,
-            [SyncClusterCategory.For(CoreServicesCluster.For(environment.Context!.Target))])!;
-        Assert.Equal(expectedResource, resource);
-        using var scope = DataverseOperationScope.Push(new(environment.DataverseOrganization, Tenant, environment.Context));
-        var auth = new AgentHostSyncAuthProvider(legacy, credentials);
-
-        var failure = await Record.ExceptionAsync(() => auth.AcquireTokenAsync(new Uri(resource)));
-
-        Assert.Null(failure);
-        var request = Assert.Single(credentials.Requests);
-        Assert.Same(environment.Context.Profile, request.Profile);
-        Assert.Equal(Tenant, request.Tenant);
-        Assert.Equal([resource + (mode == AuthPrincipalType.User ? "//.default" : "/.default")], request.Scopes);
-        Assert.Empty(legacy.RequestedResources);
-    }
 
     [Theory]
     [InlineData(CloudInstance.Public, PowerPlatformApiRing.Production, "api://arbitrary-resource")]

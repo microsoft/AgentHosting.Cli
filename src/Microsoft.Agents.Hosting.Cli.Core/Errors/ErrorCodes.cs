@@ -290,5 +290,6 @@ public static class ErrorCodes
         public const int Usage = 99002;
         public const int PendingImplementation = 99003;
         public const int TransportTimeout = 99004;
+        public const int AuthenticationContextInvalid = 99005;
     }
 }

@@ -194,29 +194,35 @@ public sealed class SyncHttpBoundaryTests
     }
 
     [Theory]
-    [InlineData(AuthPrincipalType.User)]
-    [InlineData(AuthPrincipalType.ServicePrincipal)]
-    public async Task SdkFactoryBranchAuthenticatesExactResourceAndDoesNotReplayPost(AuthPrincipalType mode)
+    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Production, AuthPrincipalType.User, Gateway, IslandResource)]
+    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Production, AuthPrincipalType.ServicePrincipal, Gateway, IslandResource)]
+    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Preprod, AuthPrincipalType.User, Gateway, "api://a522f059-bb65-47c0-8934-7db6e5286414")]
+    [InlineData(CloudInstance.Public, PowerPlatformApiRing.Test, AuthPrincipalType.User, Gateway, "api://a522f059-bb65-47c0-8934-7db6e5286414")]
+    [InlineData(CloudInstance.UsGov, PowerPlatformApiRing.Production, AuthPrincipalType.User, "https://gateway.island.powerapps.us/", "api://9315aedd-209b-43b3-b149-2abff6a95d59")]
+    [InlineData(CloudInstance.UsGovHigh, PowerPlatformApiRing.Production, AuthPrincipalType.User, "https://gateway.island.powerapps.us/", "api://69c6e40c-465f-4154-987d-da5cba10734e")]
+    [InlineData(CloudInstance.UsGovDod, PowerPlatformApiRing.Production, AuthPrincipalType.User, "https://gateway.island.appsplatform.us/", "api://bd4a9f18-e349-4c74-a6b7-65dd465ea9ab")]
+    public async Task SdkFactoryBranchAuthenticatesExactResourceAndDoesNotReplayPost(
+        CloudInstance cloud, PowerPlatformApiRing ring, AuthPrincipalType mode, string gateway, string expectedResource)
     {
         var credentials = new ProfileSyncResourceTests.Credentials();
         var legacy = new RecordingTokenProvider();
         var transport = new Transport();
         var hostFactory = new HostFactory(transport);
         using var services = Services(credentials, legacy, transport, hostFactory, islandEnabled: true);
-        var environment = Environment(mode: mode);
+        var environment = Environment(mode: mode, cloud: cloud, ring: ring);
         using var scope = DataverseOperationScope.Push(new(environment.DataverseOrganization, Tenant, environment.Context));
         var sdk = services.GetRequiredService<IIslandControlPlaneService>();
-        sdk.SetConnectionContext(Gateway, SyncClusterCategory.For(CoreCluster.Prod));
+        sdk.SetConnectionContext(gateway, SyncClusterCategory.For(CoreServicesCluster.For(environment.Context!.Target)));
 
         await Assert.ThrowsAsync<HttpRequestException>(() => sdk.GetComponentsAsync(Context(environment), null!, default));
 
         var acquired = Assert.Single(credentials.Requests);
         Assert.Same(environment.Context!.Profile, acquired.Profile);
         Assert.Equal(Tenant, acquired.Tenant);
-        Assert.Equal([IslandResource + (mode == AuthPrincipalType.User ? "//.default" : "/.default")], acquired.Scopes);
+        Assert.Equal([expectedResource + (mode == AuthPrincipalType.User ? "//.default" : "/.default")], acquired.Scopes);
         var sent = Assert.Single(transport.Requests);
         Assert.Equal(HttpMethod.Post, sent.Method);
-        Assert.Equal("gateway.island.powerapps.com", sent.Destination.Host);
+        Assert.Equal(new Uri(gateway).Host, sent.Destination.Host);
         Assert.Equal("profile-a", sent.Token);
         Assert.Equal(0, hostFactory.Calls);
         Assert.Same(hostFactory, services.GetRequiredService<IHttpClientFactory>());
@@ -433,7 +439,7 @@ public sealed class SyncHttpBoundaryTests
     }
 
     private static CopilotEnvironmentContext Environment(string name = "a", AuthPrincipalType mode = AuthPrincipalType.User,
-        CloudInstance cloud = CloudInstance.Public) => new()
+        CloudInstance cloud = CloudInstance.Public, PowerPlatformApiRing ring = PowerPlatformApiRing.Production) => new()
     {
         EnvironmentId = name,
         TenantId = Tenant,
@@ -446,8 +452,8 @@ public sealed class SyncHttpBoundaryTests
             ClientId = PowerPlatformApiPermissions.AgentHostCliApplicationId, TenantId = Tenant,
             PrincipalType = mode,
             CredentialMethod = mode == AuthPrincipalType.User ? AuthCredentialMethod.Browser : AuthCredentialMethod.ClientSecret,
-            Cloud = cloud, Ring = PowerPlatformApiRing.Production,
-        }, PowerPlatformApiTargetSelection.TargetFor(cloud, PowerPlatformApiRing.Production)),
+            Cloud = cloud, Ring = ring,
+        }, PowerPlatformApiTargetSelection.TargetFor(cloud, ring)),
     };
 
     private static AuthoringOperationContext Context(CopilotEnvironmentContext environment) => new(

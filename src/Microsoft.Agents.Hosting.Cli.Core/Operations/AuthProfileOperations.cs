@@ -9,6 +9,7 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Operations;
 public sealed class AuthProfileOperations : IAuthProfileOperations
 {
     private readonly IAuthProfileManagementStore _profiles;
+    private readonly IAuthProfileCreationStore _creationStore;
     private readonly IProfileCredentialProvider _credentials;
     private readonly EnvironmentSelectionService _environments;
     private readonly IEnvironmentSelectionStore _selections;
@@ -19,12 +20,14 @@ public sealed class AuthProfileOperations : IAuthProfileOperations
     private readonly IAuthenticationSession? _legacySession;
     private readonly EnvironmentSelectionScopes? _selectionScopes;
 
-    public AuthProfileOperations(IAuthProfileManagementStore profiles, IProfileCredentialProvider credentials,
+    public AuthProfileOperations(IAuthProfileManagementStore profiles, IAuthProfileCreationStore creationStore,
+        IProfileCredentialProvider credentials,
         EnvironmentSelectionService environments, IEnvironmentSelectionStore selections, IInteractionPolicy interaction,
         IClock clock, IOwnedProfileCredentialCleanup? cleanup = null, IAuthProfilePicker? picker = null,
         IAuthenticationSession? legacySession = null, EnvironmentSelectionScopes? selectionScopes = null)
     {
         _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
+        _creationStore = creationStore ?? throw new ArgumentNullException(nameof(creationStore));
         _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
         _environments = environments ?? throw new ArgumentNullException(nameof(environments));
         _selections = selections ?? throw new ArgumentNullException(nameof(selections));
@@ -40,7 +43,6 @@ public sealed class AuthProfileOperations : IAuthProfileOperations
     {
         ArgumentNullException.ThrowIfNull(request);
         AuthCreateInput.Validate(request, _interaction.IsInteractionAllowed);
-        ValidateName(request.Name);
         ValidateEnvironment(request.Environment, request.Target);
         RequireTarget(request.Target);
         if (request.Scopes is null || request.Resource is not null && request.Scopes.Count != 0)
@@ -52,8 +54,6 @@ public sealed class AuthProfileOperations : IAuthProfileOperations
         if (!eligibleWithoutUi && nonInteractive)
             throw new InteractionRequiredException("Explicit interactive authentication is not allowed in this invocation.");
         cancellationToken.ThrowIfCancellationRequested();
-        var creationStore = _profiles as IAuthProfileCreationStore
-            ?? throw new AuthProfileStateException("Authentication creation requires atomic replacement inventory.");
         // Validate persisted metadata before staging; atomic creation checks names against the authenticated identity.
         await _profiles.GetProfilesAsync(cancellationToken).ConfigureAwait(false);
 
@@ -64,7 +64,7 @@ public sealed class AuthProfileOperations : IAuthProfileOperations
         try
         {
             staged = await _credentials.AuthenticateAsync(
-                WithInteraction(request, nonInteractive), cancellationToken).ConfigureAwait(false);
+                request with { NonInteractive = nonInteractive }, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             if (request.Environment is not null)
             {
@@ -72,7 +72,7 @@ public sealed class AuthProfileOperations : IAuthProfileOperations
                 staged = staged with { DefaultEnvironment = Default(environment) };
             }
             cancellationToken.ThrowIfCancellationRequested();
-            var creation = await creationStore.CreateWithReplacementAsync(staged, cancellationToken).ConfigureAwait(false);
+            var creation = await _creationStore.CreateWithReplacementAsync(staged, cancellationToken).ConfigureAwait(false);
             committed = creation.Committed;
             cleanupPending = creation.Replaced is { } old
                 && _credentials.OwnsCredential(old) && old.CredentialReference != committed.CredentialReference;
@@ -172,7 +172,7 @@ public sealed class AuthProfileOperations : IAuthProfileOperations
     {
         ValidateSelector(selector);
         if (name is null) throw new UsageException("An authentication profile name is required.");
-        ValidateName(name);
+        AuthProfileName.Validate(name);
         var profile = await _profiles.UpdateAsync(selector, new(Name: name), cancellationToken).ConfigureAwait(false);
         return new("named", Describe(profile));
     }
@@ -266,12 +266,6 @@ public sealed class AuthProfileOperations : IAuthProfileOperations
             throw new UsageException("Supply exactly one one-based profile index or case-sensitive name.");
     }
 
-    private static void ValidateName(string? name)
-    {
-        if (name is not null && (string.IsNullOrWhiteSpace(name) || name.Length > 30 || name.Any(char.IsControl)))
-            throw new UsageException("An authentication profile name must contain 1 to 30 characters.");
-    }
-
     internal static PowerPlatformApiTargetConfig RequireTarget(PowerPlatformApiTargetConfig target)
     {
         try { return PowerPlatformApiTargetSelection.Require(target); }
@@ -293,14 +287,4 @@ public sealed class AuthProfileOperations : IAuthProfileOperations
                 throw new EndpointTrustException("The environment URL is not a trusted organization URL for the requested cloud.");
         }
     }
-
-    private static AuthCreateRequest WithInteraction(AuthCreateRequest request, bool nonInteractive) => new()
-    {
-        Name = request.Name, Environment = request.Environment, Target = request.Target, Tenant = request.Tenant,
-        LoginHint = request.LoginHint, Resource = request.Resource, Scopes = request.Scopes, DeviceCode = request.DeviceCode,
-        Username = request.Username, Password = request.Password, ApplicationId = request.ApplicationId, ClientSecret = request.ClientSecret,
-        CertificateDiskPath = request.CertificateDiskPath, CertificatePassword = request.CertificatePassword,
-        ManagedIdentity = request.ManagedIdentity, GitHubFederated = request.GitHubFederated, AzureDevOpsFederated = request.AzureDevOpsFederated,
-        NonInteractive = nonInteractive,
-    };
 }

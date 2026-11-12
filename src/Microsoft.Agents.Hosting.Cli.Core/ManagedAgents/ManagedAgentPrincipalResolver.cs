@@ -48,8 +48,7 @@ public sealed class ManagedAgentPrincipalResolver
     {
         ArgumentNullException.ThrowIfNull(environment);
         cancellationToken.ThrowIfCancellationRequested();
-        var context = environment.Context
-            ?? throw new TokenClaimException("The operation has no captured authentication context.", TokenClaimFailure.MissingObjectId);
+        var context = ResourceTokenContext.Require(environment.Context);
         RequireUser(context.Profile);
         if (environment.ResourcePrincipal is { } existing && existing.Context == context
             && string.Equals(existing.TenantId, environment.TenantId, StringComparison.OrdinalIgnoreCase))
@@ -61,21 +60,19 @@ public sealed class ManagedAgentPrincipalResolver
             var token = await _resourceTokens.AcquireAsync(context, context.Target.Audience, environment.TenantId,
                 [PowerPlatformApiPermissions.AppsRead], cancellationToken).ConfigureAwait(false);
             if (token.Context != context || !string.Equals(token.TenantId, environment.TenantId, StringComparison.OrdinalIgnoreCase))
-                throw new TokenClaimException("The resource token is bound to another authentication context.", TokenClaimFailure.WrongPrincipalMode);
+                throw new AuthenticationContextException("The resource token does not match the captured authentication context and target tenant.");
             claims = token.Claims;
         }
         else if (_tokens is not null)
         {
-            if (_tokens is ProfileBoundTokenProvider bound && bound.Context != context)
-                throw new TokenClaimException("The token provider is bound to another authentication context.", TokenClaimFailure.WrongPrincipalMode);
+            ResourceTokenContext.RequireBinding(_tokens, context);
             var token = await _tokens.AcquireTokenSilentAsync(context.Target.Audience, environment.TenantId, cancellationToken).ConfigureAwait(false);
             claims = new PpapiTokenClaimsValidator().ValidateForProfile(token.AccessToken, context.Target.Audience,
                 environment.TenantId, context.Profile, [PowerPlatformApiPermissions.AppsRead]);
         }
         else
         {
-            throw new TokenClaimException("A validated resource token is required to resolve the product principal.",
-                TokenClaimFailure.MissingObjectId);
+            throw new AuthenticationContextException("No resource-token provider is configured to resolve the product principal.");
         }
         if (!Guid.TryParse(claims.ObjectId, out var oid) || oid == Guid.Empty)
             throw new TokenClaimException("The resource token has no usable tenant-local principal object id.",

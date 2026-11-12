@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -29,9 +30,7 @@ public static class AuthCreateInput
             throw new UsageException("A certificate password requires a certificate path.");
         if (request.ApplicationId is not null && !workload.Any(x => x))
             throw new UsageException("An application id requires a workload credential method.");
-        if (request.Name is not null && (string.IsNullOrWhiteSpace(request.Name)
-            || request.Name.Length > 30 || request.Name.Any(char.IsControl)))
-            throw new UsageException("An authentication profile name must contain 1 to 30 characters.");
+        AuthProfileName.Validate(request.Name);
         if (request.Tenant is not null) RequireGuid(request.Tenant, "tenant");
         if (request.ApplicationId is not null) RequireGuid(request.ApplicationId, "application id");
         if (request.ClientSecret is not null || request.CertificateDiskPath is not null

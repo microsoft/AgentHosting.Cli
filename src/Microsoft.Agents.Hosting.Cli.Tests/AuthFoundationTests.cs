@@ -1,6 +1,7 @@
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
@@ -237,6 +238,37 @@ public sealed class AuthorityResolverTests
 
 public sealed class ResourceScopeNormalizerTests
 {
+    [Theory]
+    [InlineData(AuthPrincipalType.User, AuthCredentialMethod.Broker, "https://service.test//.default")]
+    [InlineData(AuthPrincipalType.User, AuthCredentialMethod.Browser, "https://service.test//.default")]
+    [InlineData(AuthPrincipalType.User, AuthCredentialMethod.DeviceCode, "https://service.test//.default")]
+    [InlineData(AuthPrincipalType.User, AuthCredentialMethod.Password, "https://service.test//.default")]
+    [InlineData(AuthPrincipalType.User, AuthCredentialMethod.DefaultAzureCredential, "https://service.test/.default")]
+    [InlineData(AuthPrincipalType.ServicePrincipal, AuthCredentialMethod.ClientSecret, "https://service.test/.default")]
+    [InlineData(AuthPrincipalType.ServicePrincipal, AuthCredentialMethod.Certificate, "https://service.test/.default")]
+    [InlineData(AuthPrincipalType.ServicePrincipal, AuthCredentialMethod.DefaultAzureCredential, "https://service.test/.default")]
+    [InlineData(AuthPrincipalType.ServicePrincipal, AuthCredentialMethod.GitHubFederated, "https://service.test/.default")]
+    [InlineData(AuthPrincipalType.ServicePrincipal, AuthCredentialMethod.AzureDevOpsFederated, "https://service.test/.default")]
+    public void ProfileScopesPreserveCredentialAndPrincipalSeparatorPolicy(
+        AuthPrincipalType principal, AuthCredentialMethod method, string expected)
+    {
+        var profile = new AuthProfile
+        {
+            AccountKey = "scope-test",
+            Username = "scope-test",
+            PrincipalType = principal,
+            CredentialMethod = method,
+        };
+
+        Assert.Equal(expected, PacResourceScopeNormalizer.ForProfile(profile).ToDefaultScope("https://service.test/path"));
+    }
+
+    [Fact]
+    public void ProfileScopeNormalizationRequiresAProfile()
+    {
+        Assert.Throws<ArgumentNullException>(() => PacResourceScopeNormalizer.ForProfile(null!));
+    }
+
     [Fact]
     public void DoubleSlash_IsTheDefault_MatchingPac()
     {

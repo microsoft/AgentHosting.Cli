@@ -21,9 +21,7 @@ internal sealed class CapturedSyncTokenProvider(
 
     public Task<TokenAcquisitionResult> AcquireTokenSilentAsync(string resource, string? tenantId, CancellationToken cancellationToken)
     {
-        var useUserScopes = context.Profile.PrincipalType == AuthPrincipalType.User
-            && context.Profile.CredentialMethod != AuthCredentialMethod.DefaultAzureCredential;
-        var scope = new PacResourceScopeNormalizer(useDoubleSlashSeparator: useUserScopes).ToDefaultScope(resource);
+        var scope = PacResourceScopeNormalizer.ForProfile(context.Profile).ToDefaultScope(resource);
         return AcquireTokenSilentAsync([scope], tenantId, cancellationToken);
     }
 

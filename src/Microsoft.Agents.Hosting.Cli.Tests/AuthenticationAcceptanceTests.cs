@@ -1,3 +1,4 @@
+using System.Management.Automation.Language;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -108,7 +109,7 @@ public sealed class AuthenticationAcceptanceTests
     private const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
 
     [Fact]
-    public void NativeDriverWaitsForControlPreparationAndPublicationBeforeNativeAcceptance()
+    public void NativeDriverStructurallyOrdersControlPreparationAndPublicationBeforeNativeAcceptance()
     {
         string? script = null;
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
@@ -117,13 +118,117 @@ public sealed class AuthenticationAcceptanceTests
             if (File.Exists(candidate)) { script = File.ReadAllText(candidate); break; }
         }
         Assert.NotNull(script);
-        var preparation = script.IndexOf("Wait-OwnedChild $controlPreparation", StringComparison.Ordinal);
-        var launch = script.IndexOf("Start-OwnedChild 'gnome-keyring-daemon'", StringComparison.Ordinal);
-        var publication = script.IndexOf("Wait-OwnedChild $controlPublication", StringComparison.Ordinal);
-        var native = script.IndexOf("$harness, 'native'", StringComparison.Ordinal);
-        Assert.True(preparation >= 0 && preparation < launch);
-        Assert.True(publication > launch && publication < native);
-        Assert.Contains("$daemon.Output.Wait(30000)", script);
+        AssertNativeDriverStructure(script);
+    }
+
+    [Fact]
+    public void NativeDriverStructuralGuardAcceptsRenamedVariablesAndFormattedCalls()
+    {
+        var script = NativeDriverStructure
+            .Replace("$controlPreparation", "$preparation")
+            .Replace("$controlPublication", "$publication")
+            .Replace("$daemon", "$keyring")
+            .Replace("Start-OwnedChild 'gnome-keyring-daemon'", "start-ownedchild \"gnome-keyring-daemon\"")
+            .Replace("Wait-OwnedChild $preparation", "wait-ownedchild `\n    $preparation")
+            .Replace(".Wait(30000)", ".Wait( 30000 )");
+        AssertNativeDriverStructure(script);
+    }
+
+    [Theory]
+    [InlineData("Wait-OwnedChild $controlPreparation", "# preparation wait removed")]
+    [InlineData("Wait-OwnedChild $controlPublication", "# publication wait removed")]
+    [InlineData("$daemon.Output.Wait(30000)", "$daemon.Output.Wait(0)")]
+    public void NativeDriverStructuralGuardRejectsCommentsInPlaceOfRequiredCalls(string original, string replacement)
+    {
+        var script = "# Wait-OwnedChild $controlPreparation\n" +
+            "# Start-OwnedChild 'gnome-keyring-daemon'\n" +
+            "# Wait-OwnedChild $controlPublication\n" +
+            "# $harness, 'native'\n" +
+            "# $daemon.Output.Wait(30000)\n" +
+            NativeDriverStructure.Replace(original, replacement);
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertNativeDriverStructure(script));
+    }
+
+    [Theory]
+    [InlineData("Wait-OwnedChild $controlPreparation")]
+    [InlineData("Wait-OwnedChild $controlPublication")]
+    public void NativeDriverStructuralGuardRejectsWaitsMovedAfterNativeLaunch(string wait)
+    {
+        var script = NativeDriverStructure.Replace(wait, "# wait moved") + "\n" + wait;
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertNativeDriverStructure(script));
+    }
+
+    private const string NativeDriverStructure = """
+        $controlPreparation = Start-OwnedChild dotnet @($harness, 'control', '--dedicated')
+        Wait-OwnedChild $controlPreparation
+        $daemon = Start-OwnedChild 'gnome-keyring-daemon' @('--foreground')
+        if (-not $daemon.Output.Wait(30000)) { throw 'publication unavailable' }
+        $controlPublication = Start-OwnedChild dotnet @($harness, 'control', '--dedicated', '--prepared')
+        Wait-OwnedChild $controlPublication
+        $check = Start-OwnedChild dotnet @($harness, 'native', '--dedicated', '--prepared')
+        """;
+
+    private static void AssertNativeDriverStructure(string script)
+    {
+        // Parse only: this guard must never execute the dedicated native driver's side effects.
+        var ast = Parser.ParseInput(script, out _, out var errors);
+        Assert.Empty(errors);
+        var commands = ast.FindAll(node => node is CommandAst, searchNestedScriptBlocks: false)
+            .Cast<CommandAst>().ToArray();
+        var starts = commands.Where(command =>
+            string.Equals(command.GetCommandName(), "Start-OwnedChild", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var preparation = Assert.Single(starts, command => HasArgument(command, "control") && !HasArgument(command, "--prepared"));
+        var publication = Assert.Single(starts, command => HasArgument(command, "control") && HasArgument(command, "--prepared"));
+        var native = Assert.Single(starts, command => HasArgument(command, "native"));
+        var daemon = Assert.Single(starts, command =>
+            command.CommandElements.ElementAtOrDefault(1) is StringConstantExpressionAst { Value: "gnome-keyring-daemon" });
+        var preparationWait = WaitFor(preparation);
+        var publicationWait = WaitFor(publication);
+        var daemonVariable = AssignedVariable(daemon);
+        var outputWait = Assert.Single(ast.FindAll(node =>
+            node is InvokeMemberExpressionAst
+            {
+                Expression: MemberExpressionAst
+                {
+                    Expression: VariableExpressionAst variable,
+                    Member: StringConstantExpressionAst output
+                },
+                Member: StringConstantExpressionAst method,
+                Arguments: [ConstantExpressionAst { Value: 30000 }]
+            } &&
+            string.Equals(variable.VariablePath.UserPath, daemonVariable, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(output.Value, "Output", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(method.Value, "Wait", StringComparison.OrdinalIgnoreCase),
+            searchNestedScriptBlocks: false));
+        Assert.True(preparation.Extent.EndOffset < preparationWait.Extent.StartOffset);
+        Assert.True(preparationWait.Extent.EndOffset < daemon.Extent.StartOffset);
+        Assert.True(daemon.Extent.EndOffset < outputWait.Extent.StartOffset);
+        Assert.True(outputWait.Extent.EndOffset < publication.Extent.StartOffset);
+        Assert.True(publication.Extent.EndOffset < publicationWait.Extent.StartOffset);
+        Assert.True(publicationWait.Extent.EndOffset < native.Extent.StartOffset);
+
+        CommandAst WaitFor(CommandAst start)
+        {
+            var variable = AssignedVariable(start);
+            return Assert.Single(commands, command =>
+                string.Equals(command.GetCommandName(), "Wait-OwnedChild", StringComparison.OrdinalIgnoreCase) &&
+                command.CommandElements.ElementAtOrDefault(1) is VariableExpressionAst child &&
+                string.Equals(child.VariablePath.UserPath, variable, StringComparison.OrdinalIgnoreCase));
+        }
+
+        static string AssignedVariable(CommandAst command)
+        {
+            var parent = command.Parent;
+            while (parent is not null && parent is not AssignmentStatementAst)
+                parent = parent.Parent;
+            return Assert.IsType<VariableExpressionAst>(Assert.IsType<AssignmentStatementAst>(parent).Left).VariablePath.UserPath;
+        }
+
+        static bool HasArgument(CommandAst command, string value) =>
+            command.CommandElements.OfType<ArrayExpressionAst>()
+                .SelectMany(array => array.FindAll(node => node is StringConstantExpressionAst, searchNestedScriptBlocks: false))
+                .Cast<StringConstantExpressionAst>()
+                .Any(argument => string.Equals(argument.Value, value, StringComparison.Ordinal));
     }
 
     [Fact]

@@ -351,12 +351,47 @@ public sealed class AuthProfileLifecycleTests
     [Theory]
     [InlineData("")]
     [InlineData("1234567890123456789012345678901")]
+    [InlineData(" ")]
+    [InlineData("\u00a0")]
+    [InlineData("Work\nProfile")]
+    [InlineData("Work\0Profile")]
     public async Task Create_InvalidName_DoesNotPersist(string name)
     {
         using var dir = new TempDir();
         var store = Management(new FileAuthProfileStore(dir.File("profiles.json")));
         await Assert.ThrowsAsync<UsageException>(() => store.CreateAsync(Profile("home-a", name), default));
         Assert.Empty(await store.GetProfilesAsync(default));
+    }
+
+    [Theory]
+    [InlineData("A")]
+    [InlineData("123456789012345678901234567890")]
+    [InlineData(" Work Profile ")]
+    public async Task Create_ValidName_PreservesExactName(string name)
+    {
+        using var dir = new TempDir();
+        var store = Management(new FileAuthProfileStore(dir.File("profiles.json")));
+
+        var created = await store.CreateAsync(Profile("home-a", name), default);
+
+        Assert.Equal(name, created.Name);
+        Assert.Equal(name, (await store.GetActiveProfileAsync(default))!.Name);
+    }
+
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("Work\nProfile")]
+    [InlineData("1234567890123456789012345678901")]
+    public async Task Update_InvalidName_DoesNotChangeProfileForEitherAddressingMode(string name)
+    {
+        using var dir = new TempDir();
+        var store = Management(new FileAuthProfileStore(dir.File("profiles.json")));
+        var created = await store.CreateAsync(Profile("home-a", "Original"), default);
+
+        await Assert.ThrowsAsync<UsageException>(() => store.UpdateAsync(new(Index: 1), new(Name: name), default));
+        await Assert.ThrowsAsync<UsageException>(() => store.UpdateAsync(created.ProfileId, created.Revision, new(Name: name), default));
+
+        Assert.Equal(created, await store.GetActiveProfileAsync(default));
     }
 
     [Fact]
@@ -575,6 +610,10 @@ public sealed class AuthProfileLifecycleTests
     [InlineData("""{"schemaVersion":2,"schemaVersion":1,"profiles":[]}""")]
     [InlineData("""{"schemaVersion":2,"profiles":[{"profileId":"id","accountKey":"a","name":"dup"},{"profileId":"id2","accountKey":"b","name":"dup"}]}""")]
     [InlineData("""{"schemaVersion":2,"profiles":[{"profileId":"id","accountKey":"a","credentialMethod":999}]}""")]
+    [InlineData("""{"schemaVersion":1,"profiles":[{"accountKey":"a","name":" "}]}""")]
+    [InlineData("""{"schemaVersion":1,"profiles":[{"accountKey":"a","name":"Work\nProfile"}]}""")]
+    [InlineData("""{"schemaVersion":2,"profiles":[{"profileId":"id","revision":1,"accountKey":"a","name":" "}]}""")]
+    [InlineData("""{"schemaVersion":2,"profiles":[{"profileId":"id","revision":1,"accountKey":"a","name":"Work\nProfile"}]}""")]
     [InlineData("""{"schemaVersion":1,"activeProfileId":"ghost","profiles":[]}""")]
     [InlineData("""{"schemaVersion":1,"activeAccountKey":"home-a","profiles":[{"accountKey":"home-a","username":"a","authenticatedTenantId":{"value":1,"value":2},"authenticatedTenantId":null}]}""")]
     [InlineData("""{"schemaVersion":1,"activeAccountKey":"home-a","activeAccountKey":"home-a","profiles":[{"accountKey":"home-a","username":"a"}]}""")]

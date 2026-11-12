@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Commands.Common;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Groups;
@@ -122,7 +123,7 @@ internal static class AuthOptions
     internal static CommandOption Index(bool required = false) =>
         new("--index", "One-based transient profile position from auth list.") { ValueType = typeof(int?), IsRequired = required };
     internal static CommandOption Name(bool required = false) =>
-        new("--name", "Case-sensitive profile name (1 to 30 characters).") { IsRequired = required };
+        new("--name", $"Case-sensitive profile name (1 to {AuthProfileName.MaxLength} characters).") { IsRequired = required };
     internal static AuthProfileSelector Selector(ICommandInput input) => new(input.GetInt("--index"), input.GetString("--name"));
     internal static string? ValidateSelector(ICommandInput input, bool optional = false)
     {
@@ -139,7 +140,7 @@ public sealed class AuthCreateCommand : CommandBase<AuthCreateRequest, AuthProfi
 {
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
-        AuthOptions.Value("--name", "-n", "Optional case-sensitive profile name, 1 to 30 characters."),
+        AuthOptions.Value("--name", "-n", $"Optional case-sensitive profile name, 1 to {AuthProfileName.MaxLength} characters."),
         AuthOptions.Value("--environment", "-env", "Default environment ID, trusted organization URL, or unambiguous name."),
         AuthOptions.Value("--cloud", "-ci", $"Cloud: {string.Join(", ", PowerPlatformApiTargetSelection.AcceptedTokens)}. Defaults to Public."),
         AuthOptions.Value("--tenant", "-t", "Tenant GUID; required for application credentials and federation."),

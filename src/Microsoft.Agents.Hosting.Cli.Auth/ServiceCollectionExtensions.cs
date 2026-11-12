@@ -45,6 +45,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProfileConsentTokenAcquisition>(sp => sp.GetRequiredService<ProfileCredentialProvider>());
         services.AddSingleton<IAuthProfileOperations>(sp => new AuthProfileOperations(
             sp.GetRequiredService<IAuthProfileManagementStore>(),
+            sp.GetRequiredService<IAuthProfileCreationStore>(),
             sp.GetRequiredService<IProfileCredentialProvider>(),
             sp.GetRequiredService<EnvironmentSelectionService>(),
             sp.GetRequiredService<IEnvironmentSelectionStore>(),

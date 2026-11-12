@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Auth.OwnedStorage;
+using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
@@ -6,10 +7,9 @@ namespace Microsoft.Agents.Hosting.Cli.Auth;
 
 internal sealed class OwnedProfileReferences
 {
-    internal const string Prefix = "msagent-owned-v1:";
     internal OwnedProtectedStorageReference Cache { get; }
     internal OwnedProtectedStorageReference? Credential { get; }
-    internal string Value => $"{Prefix}{Cache.OpaqueId}:{Credential?.OpaqueId ?? "-"}";
+    internal string Value => $"{AuthCredentialReference.OwnedV1Prefix}{Cache.OpaqueId}:{Credential?.OpaqueId ?? "-"}";
     internal IEnumerable<OwnedProtectedStorageReference> Items => Credential is null ? [Cache] : [Cache, Credential];
 
     private OwnedProfileReferences(string cacheId, string? credentialId)
@@ -21,14 +21,14 @@ internal sealed class OwnedProfileReferences
     internal static OwnedProfileReferences New(bool credential) =>
         new(Guid.NewGuid().ToString("N"), credential ? Guid.NewGuid().ToString("N") : null);
 
-    internal static bool IsOwned(string? value) => value?.StartsWith(Prefix, StringComparison.Ordinal) == true;
+    internal static bool IsOwned(string? value) => value?.StartsWith(AuthCredentialReference.OwnedV1Prefix, StringComparison.Ordinal) == true;
 
     internal static OwnedProfileReferences Parse(string? value)
     {
         try
         {
             if (!IsOwned(value)) throw new ArgumentException("Invalid reference.", nameof(value));
-            var pieces = value![Prefix.Length..].Split(':');
+            var pieces = value![AuthCredentialReference.OwnedV1Prefix.Length..].Split(':');
             if (pieces.Length != 2) throw new ArgumentException("Invalid reference.", nameof(value));
             return new(pieces[0], pieces[1] == "-" ? null : pieces[1]);
         }

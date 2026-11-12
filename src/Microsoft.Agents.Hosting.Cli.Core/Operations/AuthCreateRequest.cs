@@ -3,7 +3,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Environments;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Operations;
 
-public sealed class AuthCreateRequest
+public sealed record AuthCreateRequest
 {
     public string? Name { get; init; }
     public string? Environment { get; init; }
@@ -23,4 +23,6 @@ public sealed class AuthCreateRequest
     public bool GitHubFederated { get; init; }
     public bool AzureDevOpsFederated { get; init; }
     public bool NonInteractive { get; init; }
+
+    public override string ToString() => nameof(AuthCreateRequest);
 }

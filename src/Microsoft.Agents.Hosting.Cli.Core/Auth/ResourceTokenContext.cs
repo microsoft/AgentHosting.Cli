@@ -6,13 +6,12 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Auth;
 internal static class ResourceTokenContext
 {
     internal static EnvironmentResolutionContext Require(EnvironmentResolutionContext? context) =>
-        context ?? throw new TokenClaimException("The resource request has no captured authentication context.",
-            TokenClaimFailure.WrongPrincipalMode);
+        context ?? throw new AuthenticationContextException("The resource request has no captured authentication context.");
 
     internal static void RequireBinding(ITokenProvider tokens, EnvironmentResolutionContext? context)
     {
         if (tokens is ProfileBoundTokenProvider bound && context is not null && context != bound.Context)
-            throw new TokenClaimException("The token provider is bound to another authentication context.", TokenClaimFailure.WrongPrincipalMode);
+            throw new AuthenticationContextException("The token provider is bound to another authentication context.");
     }
 
     internal static void ValidateLegacy(PpapiTokenClaimsValidator validator, ITokenProvider tokens,

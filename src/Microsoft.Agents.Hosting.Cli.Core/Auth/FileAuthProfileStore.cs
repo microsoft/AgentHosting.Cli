@@ -75,7 +75,7 @@ public sealed class FileAuthProfileStore : IAuthProfileManagementStore, IAuthPro
             throw new UsageException("Profile account metadata is required.");
         }
 
-        ValidateName(profile.Name);
+        AuthProfileName.Validate(profile.Name);
         var incoming = ToStored(profile);
         if (legacyUpsert && profile.CredentialMethod == AuthCredentialMethod.Broker)
         {
@@ -186,7 +186,7 @@ public sealed class FileAuthProfileStore : IAuthProfileManagementStore, IAuthPro
         ArgumentNullException.ThrowIfNull(update);
         if (update.Name is { Length: > 0 })
         {
-            ValidateName(update.Name);
+            AuthProfileName.Validate(update.Name);
         }
 
         return MutateAsync(document =>
@@ -202,7 +202,7 @@ public sealed class FileAuthProfileStore : IAuthProfileManagementStore, IAuthPro
     {
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(update);
-        if (update.Name is { Length: > 0 }) ValidateName(update.Name);
+        if (update.Name is { Length: > 0 }) AuthProfileName.Validate(update.Name);
         return MutateAsync(document =>
         {
             var selected = document.Profiles.SingleOrDefault(p => p.ProfileId == profileId);
@@ -474,9 +474,9 @@ public sealed class FileAuthProfileStore : IAuthProfileManagementStore, IAuthPro
                 throw Corrupt("a profile identity or revision is missing or invalid");
             }
 
-            if (profile.Name is not null && profile.Name.Length is < 1 or > 30)
+            if (!AuthProfileName.IsValid(profile.Name))
             {
-                throw Corrupt("a profile name has invalid length");
+                throw Corrupt("a profile name is invalid");
             }
         }
 
@@ -616,14 +616,6 @@ public sealed class FileAuthProfileStore : IAuthProfileManagementStore, IAuthPro
         revision >= 0 && revision < long.MaxValue
             ? revision + 1
             : throw new UsageException("The profile revision cannot be advanced.");
-
-    private static void ValidateName(string? name)
-    {
-        if (name is not null && name.Length is < 1 or > 30)
-        {
-            throw new UsageException("Profile names must contain 1 to 30 characters.");
-        }
-    }
 
     private static void RequireUniqueName(AuthProfilesDocument document, string? name, string id)
     {

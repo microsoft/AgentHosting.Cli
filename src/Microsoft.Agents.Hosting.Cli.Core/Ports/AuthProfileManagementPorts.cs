@@ -34,7 +34,7 @@ public sealed record AuthProfileDeletion(AuthProfile Deleted, AuthProfile? Activ
 public sealed record AuthProfileCreation(AuthProfile Committed, AuthProfile? Replaced);
 
 /// <summary>
-/// Optional atomic replacement inventory. Lifecycle create requires this extension; existing
+/// Atomic replacement inventory required by profile lifecycle operations; existing
 /// session-only stores and facade constructors remain compatible.
 /// </summary>
 public interface IAuthProfileCreationStore

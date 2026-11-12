@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Ports;
@@ -9,7 +10,7 @@ public interface IProfileCredentialProvider
     /// reads or cleanup. Implementations with another owned reference scheme can override this.
     /// </summary>
     bool OwnsCredential(AuthProfile profile) =>
-        profile.CredentialReference?.StartsWith("msagent-owned-v1:", StringComparison.Ordinal) == true;
+        profile.CredentialReference?.StartsWith(AuthCredentialReference.OwnedV1Prefix, StringComparison.Ordinal) == true;
 
     Task<AuthProfile> AuthenticateAsync(AuthCreateRequest request, CancellationToken ct);
     Task<TokenAcquisitionResult> AcquireAsync(AuthProfile profile, IReadOnlyList<string> scopes, string? targetTenantId, CancellationToken ct);

@@ -165,7 +165,72 @@ public sealed class ProfileResourceConsumerTests
         var resolver = new ManagedAgentPrincipalResolver(
             InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant));
 
-        await Assert.ThrowsAsync<TokenClaimException>(() => resolver.ResolveAsync(default));
+        var error = await Assert.ThrowsAnyAsync<AgentHostingException>(() => resolver.ResolveAsync(default));
+
+        AssertAuthenticationContextFailure(error);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProductPrincipal_MissingContextIsAnInternalFailureBeforeAcquisition(bool useResourceProvider)
+    {
+        var profile = Profile();
+        var credentials = new Credentials(Jwt(profile));
+        var resolver = new ManagedAgentPrincipalResolver(new InMemoryAuthProfileStore(),
+            tokens: useResourceProvider ? null : new NoLegacyTokenProvider(),
+            resourceTokens: useResourceProvider ? new ProfileResourceTokenProvider(credentials) : null);
+
+        var error = await Assert.ThrowsAnyAsync<AgentHostingException>(() => resolver.BindUserAsync(new CopilotEnvironmentContext
+        {
+            EnvironmentId = "env-a", TenantId = profile.TenantId!, DataverseOrganization = new Uri("https://contoso.crm.dynamics.com"),
+        }, default));
+
+        AssertAuthenticationContextFailure(error);
+        Assert.Equal(0, credentials.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProductPrincipal_RejectsMismatchedValidatedResourceBinding(bool wrongTenant)
+    {
+        var profile = Profile();
+        var context = new EnvironmentResolutionContext(profile, PowerPlatformApiTargetConfig.Public);
+        var returnedContext = wrongTenant ? context : new(profile with { ProfileId = "b" }, context.Target);
+        var returnedTenant = wrongTenant ? "22222222-2222-2222-2222-222222222222" : profile.TenantId!;
+        var token = await new ProfileResourceTokenProvider(new Credentials(Jwt(profile, tenant: returnedTenant)))
+            .AcquireAsync(returnedContext, context.Target.Audience, returnedTenant, [PowerPlatformApiPermissions.AppsRead], default);
+        var resolver = new ManagedAgentPrincipalResolver(new InMemoryAuthProfileStore(),
+            resourceTokens: new CapturedResourceTokenProvider(token));
+
+        var error = await Assert.ThrowsAnyAsync<AgentHostingException>(() => resolver.BindUserAsync(new CopilotEnvironmentContext
+        {
+            EnvironmentId = "env-a", TenantId = profile.TenantId!, DataverseOrganization = new Uri("https://contoso.crm.dynamics.com"),
+            Context = context,
+        }, default));
+
+        AssertAuthenticationContextFailure(error);
+    }
+
+    [Fact]
+    public async Task ProductPrincipal_RejectsMismatchedLegacyProviderBeforeAcquisition()
+    {
+        var profile = Profile();
+        var context = new EnvironmentResolutionContext(profile, PowerPlatformApiTargetConfig.Public);
+        var credentials = new Credentials(Jwt(profile));
+        var resolver = new ManagedAgentPrincipalResolver(new InMemoryAuthProfileStore(),
+            tokens: new ProfileBoundTokenProvider(new ProfileResourceTokenProvider(credentials),
+                new(profile with { ProfileId = "b" }, context.Target)));
+
+        var error = await Assert.ThrowsAnyAsync<AgentHostingException>(() => resolver.BindUserAsync(new CopilotEnvironmentContext
+        {
+            EnvironmentId = "env-a", TenantId = profile.TenantId!, DataverseOrganization = new Uri("https://contoso.crm.dynamics.com"),
+            Context = context,
+        }, default));
+
+        AssertAuthenticationContextFailure(error);
+        Assert.Equal(0, credentials.Calls);
     }
 
     [Fact]
@@ -319,6 +384,30 @@ public sealed class ProfileResourceConsumerTests
     }
 
     [Fact]
+    public async Task AmsCreateMissingContextIsAnInternalFailureBeforeAcquisitionOrHttp()
+    {
+        var profile = Profile();
+        var context = new EnvironmentResolutionContext(profile, PowerPlatformApiTargetConfig.Public);
+        var credentials = new Credentials(Jwt(profile, scope: PowerPlatformApiPermissions.AppsCreate));
+        using var handler = new RecordingHttp("{}");
+        using var http = new HttpClient(handler);
+        var adapter = new AmsAgentCreationAdapter(http, new NoLegacyTokenProvider(),
+            profileTokens: new ProfileResourceTokenProvider(credentials));
+        var request = new AmsAgentCreationTransportRequest
+        {
+            Endpoint = context.Target.GlobalEndpoint, Audience = context.Target.Audience,
+            TenantId = profile.TenantId!, EnvironmentId = "env-a", RouteMode = AmsAgentCreationRouteMode.PowerPlatformApiFrontDoor,
+            DisplayName = "A", IdempotencyKey = "operation-a", AgentType = 0, Language = 1, LanguageVersion = "10", Origin = "test",
+        };
+
+        var error = await Assert.ThrowsAnyAsync<AgentHostingException>(() => adapter.CreateAsync(request, default));
+
+        AssertAuthenticationContextFailure(error);
+        Assert.Equal(0, credentials.Calls);
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
     public async Task BoundLegacyAdapterRejectsAnotherSnapshotBeforeTokenAcquisition()
     {
         var a = Profile();
@@ -336,11 +425,29 @@ public sealed class ProfileResourceConsumerTests
             DisplayName = "A", IdempotencyKey = "operation-a", AgentType = 0, Language = 1, LanguageVersion = "10", Origin = "test",
         };
 
-        var error = await Assert.ThrowsAsync<TokenClaimException>(() => adapter.CreateAsync(request, default));
+        var error = await Assert.ThrowsAnyAsync<AgentHostingException>(() => adapter.CreateAsync(request, default));
 
-        Assert.Equal(TokenClaimFailure.WrongPrincipalMode, error.Failure);
+        AssertAuthenticationContextFailure(error);
         Assert.Equal(0, credentials.Calls);
         Assert.Equal(0, handler.Calls);
+    }
+
+    private static void AssertAuthenticationContextFailure(AgentHostingException error)
+    {
+        Assert.IsType<AuthenticationContextException>(error);
+        Assert.Equal(99005, error.ErrorCode);
+        Assert.Equal(ExitCodes.Failure, error.ExitCode);
+        Assert.Equal("authentication-context-invalid", error.ErrorKind);
+        Assert.Contains("CLI version", error.Remediation, StringComparison.Ordinal);
+        Assert.Contains("token provider", error.Remediation, StringComparison.Ordinal);
+        Assert.Contains("Do not include tokens or credentials", error.Remediation, StringComparison.Ordinal);
+    }
+
+    private sealed class CapturedResourceTokenProvider(ValidatedResourceToken token) : IProfileResourceTokenProvider
+    {
+        public Task<ValidatedResourceToken> AcquireAsync(EnvironmentResolutionContext context, string audience,
+            string tenantId, IReadOnlyList<string> requiredPermissions, CancellationToken cancellationToken,
+            IReadOnlyList<string>? explicitScopes = null) => Task.FromResult(token);
     }
 
     private sealed class RecordingHttp(string body) : HttpMessageHandler
