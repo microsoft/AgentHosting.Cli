@@ -38,7 +38,8 @@ public static class PackageChecks
         var expected = new Dictionary<string, string>
         {
             ["amsFeatures"] = "off", ["azureBotServiceFeatures"] = "off", ["identityFeatures"] = "off",
-            ["liveTestFeatures"] = "off", ["evaluationFeatures"] = "on", ["legacyAuth"] = "off",
+            ["liveTestFeatures"] = "on", ["evaluationFeatures"] = "on", ["legacyAuth"] = "off",
+            ["appusersupport"] = "off",
         };
         if (flags.RootElement.EnumerateObject().Count() != expected.Count ||
             expected.Any(f => !flags.RootElement.TryGetProperty(f.Key, out var value) || value.GetString() != f.Value))

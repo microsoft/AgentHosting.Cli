@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using Microsoft.Agents.Hosting.Cli.AuthenticationChecks;
+using Microsoft.Agents.Hosting.Cli.Hosting;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
@@ -51,6 +52,9 @@ public sealed class AuthenticationPackageTests
     [InlineData("feature-enabled")]
     [InlineData("legacy-auth-enabled")]
     [InlineData("legacy-auth-missing")]
+    [InlineData("application-support-enabled")]
+    [InlineData("application-support-missing")]
+    [InlineData("live-test-disabled")]
     [InlineData("command-renamed")]
     [InlineData("dependency-mismatch")]
     [InlineData("extra-shim")]
@@ -69,7 +73,16 @@ public sealed class AuthenticationPackageTests
         PackageChecks.CheckImplementation(zip, "win-x64");
     }
 
-    private static MemoryStream Fixture(string? missing = null, string? mutation = null)
+    [Fact]
+    public void ShippedFeatureDefaultsAreAccepted()
+    {
+        var featuresPath = Path.Combine(Path.GetDirectoryName(typeof(AgentHostCli).Assembly.Location)!, "featureflags.json");
+        using var bytes = Fixture(featuresJson: File.ReadAllText(featuresPath));
+        using var zip = new ZipArchive(bytes, ZipArchiveMode.Read);
+        PackageChecks.CheckImplementation(zip, "win-x64");
+    }
+
+    private static MemoryStream Fixture(string? missing = null, string? mutation = null, string? featuresJson = null)
     {
         var result = new MemoryStream();
         using (var zip = new ZipArchive(result, ZipArchiveMode.Create, leaveOpen: true))
@@ -87,11 +100,13 @@ public sealed class AuthenticationPackageTests
             {
                 ["amsFeatures"] = mutation == "feature-enabled" ? "on" : "off",
                 ["azureBotServiceFeatures"] = "off", ["identityFeatures"] = "off",
-                ["liveTestFeatures"] = "off", ["evaluationFeatures"] = "on",
+                ["liveTestFeatures"] = mutation == "live-test-disabled" ? "off" : "on", ["evaluationFeatures"] = "on",
             };
             if (mutation != "legacy-auth-missing")
                 features["legacyAuth"] = mutation == "legacy-auth-enabled" ? "on" : "off";
-            Add("featureflags.json", System.Text.Json.JsonSerializer.Serialize(features));
+            if (mutation != "application-support-missing")
+                features["appusersupport"] = mutation == "application-support-enabled" ? "on" : "off";
+            Add("featureflags.json", featuresJson ?? System.Text.Json.JsonSerializer.Serialize(features));
             Add("Microsoft.Agents.Hosting.Cli.runtimeconfig.json", mutation == "self-contained" ? """{"runtimeOptions":{"includedFrameworks":[]}}""" :
                 """{"runtimeOptions":{"tfm":"net10.0","frameworks":[{"name":"Microsoft.NETCore.App","version":"10.0.0"},{"name":"Microsoft.AspNetCore.App","version":"10.0.0"}]}}""");
             Add("Microsoft.Agents.Hosting.Cli.deps.json",

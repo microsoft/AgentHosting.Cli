@@ -77,12 +77,21 @@ public static class InstalledToolChecks
             var executable = Path.Combine(installed, "msagent" + (OperatingSystem.IsWindows() ? ".cmd" : ""));
             Require(File.Exists(executable), "installed-shim");
             Console.WriteLine($"tier=package check=local-install status=PASS rid={rid} version={family.Version}");
-            await Help(["--help"], ["auth", "agent", "deployment", "telemetry"]);
+            await Help(["--help"], ["auth", "agent", "deployment", "telemetry", "test"]);
             foreach (var verb in new[] { "create", "list", "select", "delete", "name", "clear", "who", "status" })
                 await Help(["auth", verb, "--help"], [$"msagent auth {verb}"]);
             foreach (var verb in new[] { "login", "logout" })
                 await Help(["auth", verb, "--help"], [$"msagent auth {verb}"], features: "LegacyAuth");
-            await Help(["auth", "create", "--help"], ["--deviceCode", "-dc", "--managedIdentity", "-mi", "--githubFederated", "-ghf", "--azureDevOpsFederated", "-adof"]);
+            string[] userOptions = ["--deviceCode", "-dc", "--username", "-un", "--password", "-pw"];
+            string[] applicationOptions =
+            [
+                "--applicationId", "-id", "--clientSecret", "-cs", "--certificateDiskPath", "-cdp",
+                "--certificatePassword", "-cp", "--managedIdentity", "-mi", "--githubFederated", "-ghf",
+                "--azureDevOpsFederated", "-adof",
+            ];
+            await Help(["auth", "create", "--help"], userOptions, forbidden: applicationOptions);
+            await Help(["auth", "create", "--help"], [.. userOptions, .. applicationOptions], features: "AppUserSupport");
+            await Help(["test", "--help"], ["ask", "playground"]);
             await Help(["agent", "eval", "--help"], ["run", "testset"]);
             foreach (var args in new[] { new[] { "auth", "switch" }, ["auth", "token"], ["auth", "update", "--help"],
                 ["auth", "login"], ["auth", "login", "--help"], ["auth", "logout"], ["auth", "logout", "--help"],
@@ -114,10 +123,13 @@ public static class InstalledToolChecks
             Console.WriteLine("tier=package check=installed-contracts status=PASS help=8-default+2-legacy-auth-verbs aliases=PASS defaults=PASS json=PASS NI12007=exit3 telemetry=off");
             if (nativeLibraryCheck is not null) await nativeLibraryCheck(Path.GetDirectoryName(runtimeFiles[0])!);
 
-            async Task Help(string[] args, string[] required, string? features = null)
+            async Task Help(string[] args, string[] required, string? features = null, string[]? forbidden = null)
             {
                 var help = await RunChild(executable, args, root, dotnetRoot, features);
                 Require(help.Exit == 0 && required.All(s => help.Output.Contains(s, StringComparison.Ordinal)), "reflection-help");
+                if (forbidden is not null)
+                    Require(forbidden.All(s => !System.Text.RegularExpressions.Regex.IsMatch(help.Output,
+                        $@"(?<!\S){System.Text.RegularExpressions.Regex.Escape(s)}(?=[,\s]|$)")), "feature-hidden-help");
             }
             async Task<JsonDocument> Json(string[] args, int exit, string? features = null)
             {
