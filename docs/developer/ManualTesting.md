@@ -30,8 +30,10 @@ or enable shipped-off features without the relevant approval.
 
 ### Live agent test
 
-Testing requires no feature-flag opt-in. For an approved test, select the
-intended account with `msagent auth login`. When testing a custom client configuration,
+`LiveTestFeatures` ships on, so `test ask` and `test playground` are available
+by default. No feature override is needed; availability does not replace the
+required approval. Select the intended account with `msagent auth login`. When
+testing a custom client configuration,
 configure `AH_CLI_CLIENT_ID` for
 an authorized public/native client with public-client redirect flow and
 delegated Power Platform `CopilotStudio.Copilots.Invoke` consent. The selected
@@ -84,7 +86,8 @@ The target is `directengine` (the default) or `directline`.
 Wherever `--tenant` is accepted, `--tenant-id` and `-t` are equivalent aliases.
 DirectEngine uses the same agent selectors as `test ask` and the same resolver.
 Neither mode accepts `--query` or `--conversation-id`.
-No separate testing or Playground opt-in is required.
+The command is part of the `LiveTestFeatures`-controlled `test` group; it ships
+on by default. No separate testing or Playground opt-in is required.
 
 ```text
 msagent test playground --project <project> --agent-name <agent> --deployment-name <deployment>

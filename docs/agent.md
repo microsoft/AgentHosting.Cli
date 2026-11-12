@@ -117,8 +117,11 @@ Keep credentials out of source. Do not hand-edit generated registration/sync sta
 
 ## Testing from Copilot, Claude, or automation
 
-Testing requires no feature-flag opt-in. Use a published agent that the selected
-account can access, and authenticate interactively before an unattended run.
+Current CLI builds ship `liveTestFeatures` **on**, so testing requires no
+feature-flag opt-in. Older installations may have the feature disabled; if
+`msagent test` is missing, use the installed version's feature configuration.
+Use a published agent that the selected account can access, and authenticate
+interactively before an unattended run.
 
 From the parent directory of `MyAgent`, a coding assistant can test the deployed
 CLI-native/GitHub Copilot-backed agent with:

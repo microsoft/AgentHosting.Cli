@@ -55,8 +55,9 @@ If you want to test it yourself with a UX, you can use the Agent Playground whic
 
 Direct Line supports a published Copilot Studio agent configured for **no
 authentication**, using the global public-cloud Direct Line service.
-Use Node.js 22.17.1+ LTS and an interactive terminal with input
-and output attached.
+Live test commands are enabled by default in current CLI builds. Older builds
+may require `LiveTestFeatures` to be enabled in the CLI's `featureflags.json`.
+Use Node.js 22.17.1+ LTS and an interactive terminal with input and output attached.
 
 ```text
 msagent test playground --target directline

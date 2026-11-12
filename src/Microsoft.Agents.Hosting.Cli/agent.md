@@ -148,18 +148,15 @@ authorization or security boundaries.
 
 The source of truth is [featureflags.json](featureflags.json):
 
-The table records this checkout's implementation defaults, not a request for
-customers to opt in. Public-preview testing is documented without a feature gate.
-The legacy `LiveTestFeatures` default and command attributes still present in
-this source snapshot must be aligned with that release before packaging; do not
-work around the mismatch by asking customers to edit installed configuration.
+The table records this checkout's implementation defaults. Public-preview
+testing is documented without a feature gate; the current source default is on.
 
 | Feature | Source default | Implementation surface |
 |---|---|---|
 | `AmsFeatures` | `off` | Future-state CodeAgent creation, AMS package upload, and package-revision deployment; do not use. |
 | `AzureBotServiceFeatures` | `off` | `abs` and resolved CodeAgent deployment routes backed by Azure Bot Service. |
 | `IdentityFeatures` | `off` | The user-facing `identity` command group. |
-| `LiveTestFeatures` | `off` | Legacy source control on `test ask` and `test playground`; release alignment required as described above. |
+| `LiveTestFeatures` | `on` | The `test` group: `test ask` and `test playground`. |
 | `EvaluationFeatures` | `on` | `agent eval` and its `testset` subgroup. |
 
 Feature override syntax is shown for implementation reference, not permission

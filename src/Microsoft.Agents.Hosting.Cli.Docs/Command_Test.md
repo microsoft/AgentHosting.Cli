@@ -3,8 +3,9 @@
 [Command reference](ReadMe.md)
 
 The `msagent test` group sends queries to published Copilot Studio agents or
-launches the M365 Agents Playground. Testing requires no feature-flag opt-in;
-the signed-in account still needs access and the required delegated permissions.
+launches the M365 Agents Playground. The group is enabled by default and
+requires no feature-flag opt-in; the signed-in account still needs access and
+the required delegated permissions.
 
 These commands perform **live operations**, not dry runs. Remote actions are not rolled back
 and may continue after local cancellation. Check remote effects before retrying a failed query.

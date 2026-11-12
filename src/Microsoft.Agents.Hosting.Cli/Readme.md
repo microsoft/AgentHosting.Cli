@@ -85,8 +85,13 @@ Common command groups include:
 - `msagent env` — list available environments and select a target environment
 - `msagent agent` — create, initialize, list, show, pull, delete, deploy, and evaluate agents
 - `msagent deployment` — manage deployment records and connection binding
-- `msagent test` — query a published agent or launch the M365 Agents Playground
+- `msagent test ask` — send a live query to a selected Copilot Studio agent
+- `msagent test playground` — launch the M365 Agents Playground for a selected agent
 - `msagent telemetry` — inspect and change telemetry collection preferences
+
+Live test commands are available by default. They perform live operations that can have real
+effects; use only an approved agent and destination. See the [live testing command reference](../Microsoft.Agents.Hosting.Cli.Docs/Command_Test.md)
+for target selection, prerequisites, and behavior.
 
 Global options:
 
