@@ -212,7 +212,7 @@ msagent agent copy --mcs-clone-workflow-id <mcs-clone-workflow-id> --agent-name 
 
 | Option | Shortcut | Value | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--agent-name` | `-an` | String | Required | The copy's display name. An agent's name has at most 42 characters, without `<` or `>`, and must differ, ignoring case, from the source's name and from the name of every agent in the environment. A workflow's name follows the [workflow name rule](#copying-a-standalone-workflow). |
+| `--agent-name` | `-an` | String | Required | The copy's display name. An agent's name has at most 42 characters, without `<` or `>`, and must differ, ignoring case, from the source's name and from the name of every agent in the environment. A workflow's name has at most 100 characters, no control characters, and must differ, ignoring case, from the source flow's name and from the name of every unmanaged cloud flow in the environment. |
 | `--mcs-clone-agent-id` | `-mcaid` | String | None | The cloud agent to copy as it is in its environment, instead of a local agent or workflow. |
 | `--mcs-clone-workflow-id` | `-mcwid` | String | None | The cloud standalone workflow to copy as it is in its environment, by its workflow id, instead of a local agent or workflow. |
 | `--project` | `-p` | Directory path | Current directory | The local agent or workflow to copy: its folder, or a project holding only that agent or workflow. With `--mcs-clone-agent-id` or `--mcs-clone-workflow-id`, the project to register the copy in. |
@@ -221,60 +221,6 @@ msagent agent copy --mcs-clone-workflow-id <mcs-clone-workflow-id> --agent-name 
 
 Name one cloud source at most: `--mcs-clone-agent-id` together with `--mcs-clone-workflow-id` is a usage
 error.
-
-A local copy is made from the agent or workflow whose folder `--project`, or the current directory, is
-in, the deepest one when several folders hold it. Elsewhere in a project it is made from the project's
-only agent, or, when the project holds no agent, from its only standalone workflow. A project holding
-several agents, or no agent and several workflows, fails with `agent-ambiguous` until `--project` names
-the folder of the agent or workflow to copy. A workflow registered at the project root holds every
-location outside the folders of the project's agents. The copy lands beside its source: in the source's
-project, or in a sibling project when the source fills its own project. A copy of a cloud agent or
-workflow is registered in `--project`, or in the current project.
-
-The new agent gets new identities for itself and for everything it owns: topics, tools, knowledge,
-and its other components. It also gets its own copies of the source's workflows, prompts, and custom
-connectors:
-
-| Resource | The new agent |
-| --- | --- |
-| Workflows | Gets its own copies, created as drafts |
-| AI Builder prompts | Gets its own copies |
-| Custom connectors | Gets its own copies |
-| Connection references of tools | Gets its own |
-| Connection references inside workflows | Gets its own, with the copied workflows rewritten to use them |
-| Environment variables, component collections, connected agents | Stay linked |
-
-Copied workflows and prompts are named `<new name> - <source name>`. A tool that still has the name of
-the workflow or prompt it calls takes the name of the copied one, while a tool renamed since it was
-added keeps its own.
-
-A copied custom connector keeps its display name followed by a short marker, such as `Weather 1a2b3c`.
-A tool still named `<connector> - <operation>` takes the copied connector's display name in place of the
-source connector's, and a connection reference named after the connector is named after the copied one.
-When several of the source's custom connectors share one internal identifier, only the one saved last
-is copied.
-
-No file links the copy to its source. It deploys, pulls, and is deleted like any other agent, and
-components added to it or removed from it later are deployed the way any agent's are.
-
-Before writing anything, copying reads the source's environment and stops, with nothing written,
-when an agent there already carries the copy's schema name, or when a workflow, prompt, custom
-connector, or connection reference the copy would create already exists there. Copy again, with
-another `--schema-name` when the schema name is taken.
-
-Copying stops, with nothing written, when the source holds something the copy could not own safely.
-For example, a custom connector can be copied only when the environment derives its internal
-identifier from its name prefix and display name.
-A copied custom connector's internal identifier ends with a suffix that belongs to its environment.
-Unless the source is a cloud agent or a local workspace connected to the copy's environment, the copy
-reads that suffix from the unmanaged custom connectors the environment already holds; in an
-environment without one, copy from a workspace connected to that environment.
-
-A copy stages its work under the project's `.config\copy` folder and keeps nothing there once it
-finishes. A copy into a project first removes what earlier interrupted copies left there, and only one
-copy into a project runs at a time: another one started meanwhile fails with `copy-busy` and writes
-nothing. The `copy.lock` file those copies take, and the `.gitignore` that keeps `.config\copy` out of
-source control, stay in the project.
 
 ```text
 # Copy the local agent in a folder
@@ -294,41 +240,6 @@ A local workflow is copied when the record the location selects is a standalone 
 (`MCSWorkflow`). A cloud flow is copied with `--mcs-clone-workflow-id`, which takes its Dataverse
 workflow id: the flow is downloaded once into the copy's staging, and nothing else in the environment
 is read before the copy is prepared.
-
-The workflow name rule: `--agent-name` is the new flow's name and its record's name. It has at most 100
-characters and no control characters, such as tabs or line breaks, and it must differ, ignoring case,
-from the source flow's name and from the name of every unmanaged cloud flow in the environment. A name
-that breaks the length or character rule fails with `workflow-name-invalid` before anything is read. A
-name the source or another flow in the environment already has fails with `copy-not-prepared`, with
-nothing written. A name already registered in the copy's project fails before that, with
-`already-registered`. A name that would make the copy's folder overlap a local source's folder is
-refused before that, as a usage error; that includes the source's own name, ignoring case, when the
-source's folder is named after it.
-
-| Resource | The new workflow |
-| --- | --- |
-| Workflow | Gets a new id and its own folder, and is created as a draft |
-| Connection references | Gets its own, each keeping its name with a fresh trailing suffix, with the copied definition rewritten to use them |
-| Calls to child flows, AI Builder prompts, and custom connectors | Stay as they are, shared with the source |
-
-A local copy holds everything in the workflow's folder except `.git` and `.config` at its top level
-and `.mcs` folders at any depth, so folders a workflow does not deploy, such as prompt or custom
-connector folders, are copied unchanged.
-The copy of a workflow registered at a project root holds only the root's files and its `workflows`
-and `infrastructure` folders, so it carries none of the project's other agents or workflows.
-
-Only a cloud flow can be copied: a source whose metadata names another workflow category or type, or
-names none, fails with `copy-not-prepared`. A source whose metadata writes the flow's name or state in
-a form the copy cannot rewrite, such as a YAML block scalar, fails with `copy-not-prepared` too: write
-those values on one line. Any copied `workflow.json` that holds comments or trailing commas fails with
-`copy-not-prepared` too: a deploy reads it as strict JSON, so remove them. A flow in a managed solution
-fails with `workflow-managed`, and a workflow id the environment does not hold fails with
-`workflow-source-not-found`. The id of a local record passed to `--mcs-clone-workflow-id` is refused,
-and the error names that record's folder.
-
-The copy is an ordinary `MCSWorkflow` record with no deployment yet. It deploys, pulls, and is deleted
-like any workflow, and nothing records its source. A copy never carries the source's `.mcs` cache; the
-copy's first deploy writes its own.
 
 ```text
 # Copy the local workflow in a folder
