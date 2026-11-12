@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
@@ -14,6 +16,7 @@ namespace Microsoft.Agents.Hosting.Cli.E2E.Scenarios;
 public static partial class McsCopyScenarios
 {
     private const string RefusedName = "ahe2e refused copy";
+    private const string PlaceholderCloudId = "00000000-0000-0000-0000-000000000001";
     private const string DocsFolder = "Microsoft.Agents.Hosting.Cli.Docs";
     private const string AgentA1Folder = "Agent A1 This is long name as possible 123";
     private const string LongNameFiller = "Weather Assistant For The Whole Pacific Northwest With Extended Forecasts And Severe Alerts";
@@ -23,8 +26,11 @@ public static partial class McsCopyScenarios
     private static readonly ScenarioBuilder Builder = new("mcs-copy");
     private static readonly Capability[] Signed = [Capability.Auth];
     private static readonly Capability[] Cli = [Capability.Auth, Capability.McsDev, Capability.WorkspaceCli];
+    private static readonly Capability[] CliAndWorkflow = [Capability.Auth, Capability.McsDev, Capability.WorkspaceCli, Capability.WorkspaceWorkflow];
     private static readonly Capability[] Classic = [Capability.Auth, Capability.McsDev, Capability.WorkspaceClassic];
+    private static readonly Capability[] ClassicAndWorkflow = [Capability.Auth, Capability.McsDev, Capability.WorkspaceClassic, Capability.WorkspaceWorkflow];
     private static readonly Capability[] Both = [Capability.Auth, Capability.McsDev, Capability.WorkspaceCli, Capability.WorkspaceClassic];
+    private static readonly Capability[] BothAndWorkflow = [Capability.Auth, Capability.McsDev, Capability.WorkspaceCli, Capability.WorkspaceClassic, Capability.WorkspaceWorkflow];
     private static readonly Capability[] FromCorpus = [Capability.Auth, Capability.McsDev, Capability.CopyCorpus];
     private static readonly TimeSpan Long = TimeSpan.FromMinutes(45);
     private static readonly string[] GlobalOptions = ["--help", "--json", "--debug", "--no-color", "--non-interactive"];
@@ -45,9 +51,11 @@ public static partial class McsCopyScenarios
         new("MC-03", "the removed --agent-id", ["--agent-id", "00000000-0000-0000-0000-000000000001", "--agent-name", RefusedName], "Unrecognized command or argument '--agent-id'"),
         new("MC-04", "--share-resources", ["--share-resources", "--agent-name", RefusedName], "Unrecognized command or argument '--share-resources'"),
         new("MC-06", "the removed --from-project", ["--from-project", ".", "--agent-name", RefusedName], "Unrecognized command or argument '--from-project'"),
-        new("MC-07", $"a {AgentNameValidator.MaximumLength + 1}-character --agent-name", ["--agent-name", new string('n', AgentNameValidator.MaximumLength + 1)], $"is {AgentNameValidator.MaximumLength + 1} characters long; Copilot Studio allows at most {AgentNameValidator.MaximumLength}"),
+        new("MC-07", $"a {AgentNameValidator.MaximumLength + 1}-character --agent-name", ["--mcs-clone-agent-id", PlaceholderCloudId, "--agent-name", new string('n', AgentNameValidator.MaximumLength + 1)], $"is {AgentNameValidator.MaximumLength + 1} characters long; Copilot Studio allows at most {AgentNameValidator.MaximumLength}"),
         new("MC-08", "a --schema-name with a space", ["--agent-name", RefusedName, "--schema-name", "bad schema"], "unsupported characters"),
         new("MC-08", $"a {SchemaNameValidator.MaximumLength + 1}-character --schema-name", ["--agent-name", RefusedName, "--schema-name", new string('s', SchemaNameValidator.MaximumLength + 1)], $"longer than {SchemaNameValidator.MaximumLength} characters"),
+        new("MC-08", "a --schema-name for a workflow copy", ["--mcs-clone-workflow-id", PlaceholderCloudId, "--agent-name", RefusedName, "--schema-name", "ahe2e_refused"], "a workflow has none"),
+        new("MC-10", "both --mcs-clone-agent-id and --mcs-clone-workflow-id", ["--mcs-clone-agent-id", PlaceholderCloudId, "--mcs-clone-workflow-id", PlaceholderCloudId, "--agent-name", RefusedName], "Pass one cloud source"),
     ];
 
     private static readonly CorpusFolder[] CorpusFolders =
@@ -98,7 +106,7 @@ public static partial class McsCopyScenarios
 
         yield return Builder.Make("MC-06", "the removed --from-project option is refused", Signed, SafetyTier.ReadOnly, run: context => RefuseAsync(context, json: true));
 
-        yield return Builder.Make("MC-07", $"--agent-name is accepted at {AgentNameValidator.MaximumLength} characters and refused past it", Cli, SafetyTier.ReadOnly, run: async context =>
+        yield return Builder.Make("MC-07", $"--agent-name is accepted at {AgentNameValidator.MaximumLength} characters for an agent and {WorkflowNaming.MaximumLength} for a workflow, and refused past it", CliAndWorkflow, SafetyTier.ReadOnly, run: async context =>
         {
             await RefuseAsync(context, json: true).ConfigureAwait(false);
 
@@ -108,9 +116,23 @@ public static partial class McsCopyScenarios
             context.Assert.Equal(name, copy.DisplayName, "the whole name is kept");
             context.Assert.True(Directory.Exists(copy.WorkspaceDirectory), "the workspace exists where the result says");
             CopySteps.AssertRegistered(context, copy, deployed: null);
+
+            var workflowSource = await CopySteps.WorkflowSourceAsync(context).ConfigureAwait(false);
+            var overlongName = CopySteps.NewName(context, "workflow-overlong").PadRight(WorkflowNaming.MaximumLength + 1, 'x');
+
+            RefusedAs(context, await CopySteps.RawCopyAsync(context, [.. CopySteps.LocalSource(workflowSource), "--agent-name", overlongName]).ConfigureAwait(false), "workflow-name-invalid", ErrorCodes.ManagedAgent.WorkflowNameInvalid, $"can hold at most {WorkflowNaming.MaximumLength} characters", $"the {WorkflowNaming.MaximumLength + 1}-character workflow copy {overlongName}");
+            context.Assert.False(Directory.Exists(CopySteps.BesideSource(workflowSource, overlongName)), $"nothing was written for the workflow copy {overlongName}");
+
+            var workflowName = CopySteps.NewName(context, "workflow-longest").PadRight(WorkflowNaming.MaximumLength, 'x');
+            var workflowCopy = await CopySteps.CopyAsync(context, CopySteps.LocalSource(workflowSource), "workflow-longest", workflowName).ConfigureAwait(false);
+
+            context.Assert.Equal(workflowName, workflowCopy.DisplayName, $"the whole name of the workflow copy {workflowName} is kept");
+            context.Assert.Equal(workflowName, workflowCopy.WorkflowName, $"the workflow copy {workflowName} names its flow so");
+            context.Assert.True(Directory.Exists(workflowCopy.WorkspaceDirectory), $"the workspace of the workflow copy {workflowName} exists where the result says");
+            CopySteps.AssertRegistered(context, workflowCopy, deployed: null);
         });
 
-        yield return Builder.Make("MC-08", "an invalid, overlong, or source-owned --schema-name is refused", Cli, SafetyTier.ReadOnly, run: async context =>
+        yield return Builder.Make("MC-08", "an invalid, overlong, or source-owned --schema-name is refused, and so is any --schema-name for a workflow copy", Cli, SafetyTier.ReadOnly, run: async context =>
         {
             await RefuseAsync(context, json: true).ConfigureAwait(false);
 
@@ -120,15 +142,21 @@ public static partial class McsCopyScenarios
             context.Assert.Refused(result, CopySteps.Usage, "is the source agent's own schema name", "the source's schema name in another case");
         });
 
-        yield return Builder.Make("MC-09", "--agent-name equal to the source's name in another case is refused", Cli, SafetyTier.ReadOnly, run: async context =>
+        yield return Builder.Make("MC-09", "--agent-name equal to the source agent's or workflow's name in another case is refused", CliAndWorkflow, SafetyTier.ReadOnly, run: async context =>
         {
             var source = await CopySteps.FixtureSourceAsync(context).ConfigureAwait(false);
             var result = await CopySteps.RawCopyAsync(context, [.. CopySteps.LocalSource(source), "--agent-name", CopySteps.DisplayNameOf(source.ProjectDirectory).ToLowerInvariant()]).ConfigureAwait(false);
 
             context.Assert.Refused(result, CopySteps.Usage, "is the source agent's own name", "the source's name in lower case");
+
+            var workflowSource = await CopySteps.WorkflowSourceAsync(context).ConfigureAwait(false);
+            var workflowName = workflowSource.AgentName.ToLowerInvariant();
+
+            RefusedAs(context, await CopySteps.RawCopyAsync(context, [.. CopySteps.LocalSource(workflowSource), "--agent-name", workflowName]).ConfigureAwait(false), "copy-not-prepared", ErrorCodes.ManagedAgent.CopyNotPrepared, "is the source workflow's own name", $"the workflow copy {workflowName}, its source's name in lower case");
+            context.Assert.NoDifferences(CopySteps.LeftBesideTheProjectLock(CopySteps.BesideSource(workflowSource, workflowName)), $"nothing but the project's copy lock is left for the workflow copy {workflowName}");
         });
 
-        yield return Builder.Make("MC-10", "--mcs-clone-agent-id given a local record id or an unknown id is refused", Cli, SafetyTier.ReadOnly, run: async context =>
+        yield return Builder.Make("MC-10", "--mcs-clone-agent-id or --mcs-clone-workflow-id given a local record id or an unknown id is refused, and so are both together", CliAndWorkflow, SafetyTier.ReadOnly, run: async context =>
         {
             var source = await CopySteps.FixtureSourceAsync(context).ConfigureAwait(false);
             var project = context.Workspaces.EmptyDirectory(context.ScenarioId, "copy");
@@ -138,9 +166,26 @@ public static partial class McsCopyScenarios
             context.Assert.Refused(await CopySteps.RawCopyAsync(context, Arguments(source.RecordId!), source.ProjectDirectory).ConfigureAwait(false), CopySteps.Usage, "is the managed-agent record", "a record id passed as a cloud agent id");
             context.Assert.FailedCleanly(await CopySteps.RawCopyAsync(context, Arguments(Guid.NewGuid().ToString())).ConfigureAwait(false), "a cloud agent id nobody owns");
             context.Assert.False(Directory.EnumerateFileSystemEntries(project).Any(), "nothing was written");
+
+            var workflowSource = await CopySteps.WorkflowSourceAsync(context).ConfigureAwait(false);
+            var workflowProject = context.Workspaces.EmptyDirectory(context.ScenarioId, "workflow-copy");
+            var workflowName = CopySteps.NewName(context, "workflow");
+            var unknownWorkflowId = Guid.NewGuid().ToString();
+
+            string[] WorkflowArguments(string workflowId) => [.. CopySteps.CloudWorkflowSource(workflowId, context.DevEnvironmentId), "--agent-name", workflowName, "--project", workflowProject];
+
+            var recordId = await CopySteps.RawCopyAsync(context, WorkflowArguments(workflowSource.RecordId!), workflowSource.ProjectDirectory).ConfigureAwait(false);
+            context.Assert.Refused(recordId, CopySteps.Usage, "is the managed-agent record", $"the workflow copy {workflowName} of a record id passed as a cloud workflow id");
+            context.Assert.Contains(recordId, workflowSource.AgentName, $"the refusal of the workflow copy {workflowName} names the record");
+            context.Assert.Contains(recordId, workflowSource.WorkflowId!, $"the refusal of the workflow copy {workflowName} names the record's cloud workflow id");
+
+            RefusedAs(context, await CopySteps.RawCopyAsync(context, WorkflowArguments(unknownWorkflowId)).ConfigureAwait(false), "workflow-source-not-found", ErrorCodes.ManagedAgent.WorkflowSourceNotFound, unknownWorkflowId, $"the workflow copy {workflowName} of a cloud workflow id nobody owns");
+            context.Assert.NoDifferences(CopySteps.LeftBesideTheProjectLock(workflowProject), $"nothing but the project's copy lock is left for the workflow copy {workflowName}");
+
+            await RefuseAsync(context, json: true).ConfigureAwait(false);
         });
 
-        yield return Builder.Make("MC-11", "a local copy takes the agent the current directory or --project is in, and nothing else", Cli, SafetyTier.ReadOnly, run: async context =>
+        yield return Builder.Make("MC-11", "a local copy takes the agent or workflow the current directory or --project is in, and nothing else", CliAndWorkflow, SafetyTier.ReadOnly, run: async context =>
         {
             var source = await CopySteps.FixtureSourceAsync(context).ConfigureAwait(false);
             var outside = context.Workspaces.EmptyDirectory(context.ScenarioId, "outside");
@@ -151,9 +196,28 @@ public static partial class McsCopyScenarios
             context.Assert.Refused(await CopySteps.RawCopyAsync(context, ["--project", source.File("missing"), "--agent-name", CopySteps.NewName(context, "missing")]).ConfigureAwait(false), CopySteps.Usage, "No agent configuration was found", "a --project that does not exist, even inside the agent's folder");
             context.Assert.Refused(await CopySteps.RawCopyAsync(context, ["--agent-name", CopySteps.NewName(context, "outside")], outside).ConfigureAwait(false), CopySteps.Usage, "No agent configuration was found", "a copy run outside any project");
             context.Assert.False(Directory.EnumerateFileSystemEntries(outside).Any(), "nothing was written outside any project");
+
+            var agentCopy = inside.Json<ManagedAgentCopyResult>();
+            var nested = await CopySteps.WorkflowSourceAsync(context, parentDirectory: agentCopy.ProjectDirectory).ConfigureAwait(false);
+            var byProject = await CopySteps.CopyAsync(context, CopySteps.LocalSource(nested), "workflow-by-project").ConfigureAwait(false);
+            context.Assert.Equal(nested.WorkflowId, byProject.SourceMcsWorkflowId, $"--project naming the folder of the workflow {nested.AgentName}, registered beside an agent, makes the workflow copy {byProject.DisplayName} of it");
+
+            var insideWorkflowName = CopySteps.NewName(context, "workflow-inside");
+            var insideWorkflow = await CopySteps.RawCopyAsync(context, ["--agent-name", insideWorkflowName], Path.Combine(nested.ProjectDirectory, WorkflowWorkspace.WorkflowsFolderName)).ConfigureAwait(false);
+            context.Assert.ExitZero(insideWorkflow, $"the workflow copy {insideWorkflowName} run from a folder inside the workflow's folder");
+            context.Assert.Equal(nested.WorkflowId, CopySteps.RequireHome(context, insideWorkflow.Json<ManagedAgentCopyResult>()).SourceMcsWorkflowId, $"the workflow the current directory is in is the source of the workflow copy {insideWorkflowName}");
+
+            context.Assert.Equal(agentCopy.SchemaName, (await CopySteps.CopyAsync(context, CopySteps.LocalSource(agentCopy.ProjectDirectory), "agent-beside-workflow").ConfigureAwait(false)).SourceSchemaName, $"the project root still copies the agent, not the workflow {nested.AgentName} it also registers");
+
+            var standalone = await CopySteps.WorkflowSourceAsync(context).ConfigureAwait(false);
+            var alone = await CopySteps.CopyAsync(context, CopySteps.LocalSource(standalone), "workflow-alone").ConfigureAwait(false);
+            context.Assert.Equal(standalone.WorkflowId, alone.SourceMcsWorkflowId, $"a project holding only the workflow {standalone.AgentName} copies it as the workflow copy {alone.DisplayName}");
+
+            var fromWorkflowProject = await CopySteps.CopyAsync(context, CopySteps.LocalSource(alone.ProjectDirectory), "workflow-from-root").ConfigureAwait(false);
+            context.Assert.Equal(alone.McsWorkflowId, fromWorkflowProject.SourceMcsWorkflowId, $"the root of a project holding only the workflow copy {alone.DisplayName}, in a folder, copies it as the workflow copy {fromWorkflowProject.DisplayName}");
         });
 
-        yield return Builder.Make("MC-12", "a local source names its own environment when another is asked for", Cli, SafetyTier.ReadOnly, run: async context =>
+        yield return Builder.Make("MC-12", "a local agent or workflow source names its own environment when another is asked for", CliAndWorkflow, SafetyTier.ReadOnly, run: async context =>
         {
             var source = await CopySteps.FixtureSourceAsync(context).ConfigureAwait(false);
 
@@ -182,9 +246,16 @@ public static partial class McsCopyScenarios
                 context.Assert.DoesNotContain(result, "()", "the message names a real environment");
                 context.Assert.DoesNotContain(result, "agent create", "the message names the command that was run");
             }).ConfigureAwait(false);
+
+            var workflowName = CopySteps.NewName(context, "workflow-elsewhere");
+            var workflowElsewhere = await CopySteps.RawCopyAsync(context, [.. CopySteps.LocalSource(await CopySteps.WorkflowSourceAsync(context).ConfigureAwait(false)), "--agent-name", workflowName, "--environment-id", Guid.NewGuid().ToString()]).ConfigureAwait(false);
+
+            context.Assert.Refused(workflowElsewhere, CopySteps.Usage, "is not the environment the local source belongs to", $"the workflow copy {workflowName} in another environment");
+            context.Assert.Contains(workflowElsewhere, context.DevEnvironmentId, $"the refusal of the workflow copy {workflowName} names its source's environment");
+            context.Assert.Contains(workflowElsewhere, "--mcs-clone-workflow-id", $"the refusal of the workflow copy {workflowName} names --mcs-clone-workflow-id");
         });
 
-        yield return Builder.Make("MC-14", "agent delete --all-resources of a copy that never deployed finds none of its resources, removes only its records, and sends nothing", Cli, SafetyTier.ReadOnly, run: async context =>
+        yield return Builder.Make("MC-14", "agent delete --all-resources of a copy that never deployed finds none of its resources, removes only its records, and sends nothing, and of a workflow copy is refused and keeps its record and files", CliAndWorkflow, SafetyTier.ReadOnly, run: async context =>
         {
             var copy = await CopySteps.NeverDeployedCopyAsync(context).ConfigureAwait(false);
             var workspace = TreeSnapshot.Take(copy.WorkspaceDirectory);
@@ -197,6 +268,14 @@ public static partial class McsCopyScenarios
             context.Assert.False(CopySteps.Registry(copy.ConfigPath).ManagedAgents.Any(agent => agent.AgentId == copy.AgentId), "the copy's record is gone");
             context.Assert.NoDifferences(TreeSnapshot.Take(copy.WorkspaceDirectory).DifferencesFrom(workspace), "the delete left the copy's workspace as it was");
             await CopySteps.AssertNothingSentAsync(context, copy, "the delete sent nothing").ConfigureAwait(false);
+
+            var workflowCopy = await CopySteps.RegisteredAsync(context, CopySteps.LocalSource(await CopySteps.WorkflowSourceAsync(context).ConfigureAwait(false)), "workflow").ConfigureAwait(false);
+            var workflowProject = TreeSnapshot.Take(workflowCopy.ProjectDirectory);
+
+            context.Assert.Refused(await CopySteps.DeleteAsync(context, workflowCopy, allResources: true).ConfigureAwait(false), CopySteps.Usage, "a standalone workflow has none of its own", $"agent delete --all-resources of the workflow copy {workflowCopy.DisplayName}");
+            context.Assert.NoDifferences(TreeSnapshot.Take(workflowCopy.ProjectDirectory).DifferencesFrom(workflowProject), $"the refused delete left the record and files of the workflow copy {workflowCopy.DisplayName} as they were");
+            CopySteps.AssertRegistered(context, workflowCopy, deployed: null);
+            await CopySteps.AssertNothingSentAsync(context, workflowCopy, $"the refused delete of the workflow copy {workflowCopy.DisplayName} sent nothing").ConfigureAwait(false);
         });
 
         yield return Builder.Make("MC-15", "every argument refusal is a clean usage error, as JSON and as text", Signed, SafetyTier.ReadOnly, smoke: true, run: async context =>
@@ -224,7 +303,7 @@ public static partial class McsCopyScenarios
 
     private static IEnumerable<Scenario> Preparation()
     {
-        yield return Builder.Make("MC-20", "a local copy registers locally as an agent of its own and leaves the cloud and the source alone", Cli, SafetyTier.ReadOnly, smoke: true, run: async context =>
+        yield return Builder.Make("MC-20", "a local copy of an agent or a workflow registers locally as one of its own and leaves the cloud and the source alone", CliAndWorkflow, SafetyTier.ReadOnly, smoke: true, run: async context =>
         {
             var source = await CopySteps.FixtureSourceAsync(context).ConfigureAwait(false);
             var before = TreeSnapshot.Take(source.ProjectDirectory);
@@ -241,9 +320,36 @@ public static partial class McsCopyScenarios
             context.Assert.False(Directory.Exists(Path.Combine(copy.WorkspaceDirectory, ".mcs")), "the copy carries no cloud binding");
             context.Assert.NoDifferences(TreeSnapshot.Take(source.ProjectDirectory).DifferencesFrom(before), "the source project is byte-identical");
             await CopySteps.AssertNothingSentAsync(context, copy, "nothing was sent").ConfigureAwait(false);
+            context.Assert.Equal(AgentTypes.McsAgent, copy.AgentType, "the result names an agent copy");
+            context.Assert.True(copy.McsWorkflowId is null && copy.SourceMcsWorkflowId is null && copy.WorkflowName is null && copy.WorkflowFolder is null && copy.WorkflowState is null, "the result of an agent copy carries no workflow fields");
+
+            var workflowSource = await CopySteps.WorkflowSourceAsync(context).ConfigureAwait(false);
+            var workflowBefore = TreeSnapshot.Take(workflowSource.ProjectDirectory);
+            var workflowCopy = await CopySteps.CopyAsync(context, CopySteps.LocalSource(workflowSource), "workflow").ConfigureAwait(false);
+            var workflowFolder = WorkflowSteps.Folder(workflowCopy.WorkspaceDirectory);
+
+            context.Assert.Equal("agent-copied", workflowCopy.Status, $"the result status of the workflow copy {workflowCopy.DisplayName}");
+            context.Assert.Equal(CopilotCopySourceKinds.Local, workflowCopy.Source, $"the source kind of the workflow copy {workflowCopy.DisplayName}");
+            context.Assert.Equal(AgentTypes.McsWorkflow, workflowCopy.AgentType, $"the result names the workflow copy {workflowCopy.DisplayName} a workflow");
+            CopySteps.AssertRegistered(context, workflowCopy, deployed: null);
+            context.Assert.Equal(workflowSource.WorkflowId, workflowCopy.SourceMcsWorkflowId, $"the workflow copy {workflowCopy.DisplayName} names its source's flow id");
+            context.Assert.False(string.Equals(workflowSource.WorkflowId, workflowCopy.McsWorkflowId, StringComparison.OrdinalIgnoreCase), $"the workflow copy {workflowCopy.DisplayName} gets a flow id of its own");
+            context.Assert.True(workflowCopy.Identities.Any(identity => identity.Kind == CopyIdentityKinds.Workflow && string.Equals(identity.Source, workflowSource.WorkflowId, StringComparison.OrdinalIgnoreCase) && string.Equals(identity.Destination, workflowCopy.McsWorkflowId, StringComparison.OrdinalIgnoreCase)), $"the result maps the source's flow id to the workflow copy {workflowCopy.DisplayName}'s");
+            context.Assert.Equal(workflowCopy.DisplayName, workflowCopy.WorkflowName, $"the workflow copy {workflowCopy.DisplayName} names its flow so");
+            context.Assert.Equal(workflowFolder.FolderPath, workflowCopy.WorkflowFolder, $"the result names the folder of the workflow copy {workflowCopy.DisplayName}");
+            context.Assert.Equal(workflowCopy.McsWorkflowId, workflowFolder.WorkflowId.ToString(), $"the folder of the workflow copy {workflowCopy.DisplayName} holds its own flow");
+            context.Assert.Equal(WorkflowStateProjection.NotDeployed, workflowCopy.WorkflowState, $"the result reports the workflow copy {workflowCopy.DisplayName} not deployed");
+            context.Assert.Equal("0", CopySteps.WorkflowMetadataOf(workflowCopy.WorkspaceDirectory, "stateCode"), $"the workflow copy {workflowCopy.DisplayName} is a draft");
+            context.Assert.Equal("1", CopySteps.WorkflowMetadataOf(workflowSource.ProjectDirectory, "stateCode"), $"the source of the workflow copy {workflowCopy.DisplayName} is activated");
+            context.Assert.True(workflowCopy.SchemaName is null && workflowCopy.SourceSchemaName is null, $"the result of the workflow copy {workflowCopy.DisplayName} names no schema");
+            context.Assert.NoDifferences(CopySteps.LeftInCopyState(workflowCopy.ProjectDirectory), $".config\\copy holds only .gitignore and copy.lock for the workflow copy {workflowCopy.DisplayName}");
+            context.Assert.NoDifferences(CopySteps.SourceIdentityMentions(workflowCopy.WorkspaceDirectory, workflowCopy), $"no file of the workflow copy {workflowCopy.DisplayName} names its source's identities");
+            context.Assert.False(Directory.Exists(Path.Combine(workflowCopy.WorkspaceDirectory, ".mcs")), $"the workflow copy {workflowCopy.DisplayName} carries no cloud binding");
+            context.Assert.NoDifferences(TreeSnapshot.Take(workflowSource.ProjectDirectory).DifferencesFrom(workflowBefore), $"the source of the workflow copy {workflowCopy.DisplayName} is byte-identical");
+            await CopySteps.AssertNothingSentAsync(context, workflowCopy, $"the workflow copy {workflowCopy.DisplayName} sent nothing").ConfigureAwait(false);
         });
 
-        yield return Builder.Make("MC-22", "a cloud copy stages a clone, keeps no copy of the source, and binds to nothing", Classic, SafetyTier.Creating, timeout: Long, run: async context =>
+        yield return Builder.Make("MC-22", "a cloud copy of an agent or a workflow stages a clone, keeps no copy of the source, and binds to nothing", Classic, SafetyTier.Creating, timeout: Long, run: async context =>
         {
             var seed = await CopySteps.FixtureSeedAsync(context, SessionAgentKind.FixtureClassic).ConfigureAwait(false);
             var copy = await CopySteps.CopyAsync(context, CopySteps.CloudSource(seed)).ConfigureAwait(false);
@@ -256,6 +362,20 @@ public static partial class McsCopyScenarios
             context.Assert.True(CopySteps.OwnedIdentities(copy, CopyIdentityKinds.Connector).Count > 0, "the custom connector is copied");
             context.Assert.NoDifferences(CopySteps.SourceSchemaMentions(copy), "no file of the copy names the source's schema");
             await CopySteps.AssertNothingSentAsync(context, copy, "nothing was sent").ConfigureAwait(false);
+
+            await CopySteps.BaselineAsync(context, seed).ConfigureAwait(false);
+
+            var flow = WorkflowSteps.Folder(seed.ProjectDirectory);
+            var workflowCopy = await CopySteps.CopyAsync(context, CopySteps.CloudWorkflowSource(flow.WorkflowId.ToString(), seed.EnvironmentId), "workflow").ConfigureAwait(false);
+
+            context.Assert.Equal(CopilotCopySourceKinds.Cloud, workflowCopy.Source, $"the source kind of the workflow copy {workflowCopy.DisplayName}");
+            context.Assert.Equal(flow.WorkflowId.ToString(), workflowCopy.SourceMcsWorkflowId, $"the provenance of the workflow copy {workflowCopy.DisplayName} names the classic seed's flow");
+            context.Assert.NoDifferences(CopySteps.LeftInCopyState(workflowCopy.ProjectDirectory), $"no copy of the source flow is kept under .config\\copy for the workflow copy {workflowCopy.DisplayName}");
+            context.Assert.False(Directory.Exists(Path.Combine(workflowCopy.WorkspaceDirectory, ".mcs")), $"the workflow copy {workflowCopy.DisplayName} carries no cloud binding");
+            context.Assert.True(CopySteps.OwnedIdentities(workflowCopy, CopyIdentityKinds.ConnectionReference).Count == 1, $"the workflow copy {workflowCopy.DisplayName} renames the flow's connection reference");
+            context.Assert.NoDifferences(CopySteps.SourceIdentityMentions(workflowCopy.WorkspaceDirectory, workflowCopy), $"no file of the workflow copy {workflowCopy.DisplayName} names the flow's identities");
+            await CopySteps.AssertNothingSentAsync(context, workflowCopy, $"the workflow copy {workflowCopy.DisplayName} sent nothing").ConfigureAwait(false);
+            await CopySteps.AssertSourceIntactAsync(context, seed).ConfigureAwait(false);
         });
 
         yield return Builder.Make("MC-23", "a local copy lands beside its source under a safe folder name", Cli, SafetyTier.ReadOnly, run: async context =>
@@ -360,19 +480,10 @@ public static partial class McsCopyScenarios
             context.Assert.NoDifferences(CopySteps.LeftBesideTheProjectLock(CopySteps.BesideSource(source, name)), "no workspace, staging, or record is left");
         });
 
-        yield return Builder.Make("MC-28", "a copy of a never-deployed copy and of a deployed copy gets fresh identities and leaves its source alone", Cli, SafetyTier.Creating, timeout: Long, run: async context =>
+        yield return Builder.Make("MC-28", "a copy of a never-deployed copy and of a deployed copy, agent or workflow, gets fresh identities and leaves its source alone", CliAndWorkflow, SafetyTier.Creating, timeout: Long, run: async context =>
         {
-            var neverDeployed = await CopySteps.CopyAsync(context, CopySteps.LocalSource(await CopySteps.FixtureSourceAsync(context).ConfigureAwait(false)), "first").ConfigureAwait(false);
-            var neverDeployedBefore = TreeSnapshot.Take(neverDeployed.WorkspaceDirectory);
-            var neverDeployedRecord = JsonSerializer.Serialize(CopySteps.Registry(neverDeployed.ConfigPath).ManagedAgents.Single(agent => agent.AgentId == neverDeployed.AgentId));
-            AssertFreshIdentities(context, neverDeployed, await CopySteps.CopyAsync(context, CopySteps.LocalSource(neverDeployed), "of-never-deployed").ConfigureAwait(false));
-            context.Assert.NoDifferences(TreeSnapshot.Take(neverDeployed.WorkspaceDirectory).DifferencesFrom(neverDeployedBefore), "the never-deployed copy's workspace is byte-identical");
-            context.Assert.Equal(neverDeployedRecord, JsonSerializer.Serialize(CopySteps.Registry(neverDeployed.ConfigPath).ManagedAgents.Single(agent => agent.AgentId == neverDeployed.AgentId)), "the never-deployed copy's record is unchanged");
-
-            var (deployedCopy, deployed) = await CopySteps.DeployedCopyAsync(context).ConfigureAwait(false);
-            var deployedBefore = TreeSnapshot.Take(deployedCopy.ProjectDirectory);
-            AssertFreshIdentities(context, deployedCopy, await CopySteps.CopyAsync(context, CopySteps.CloudSource(CopySteps.CloudAgentId(deployed), deployedCopy.EnvironmentId), "of-deployed").ConfigureAwait(false));
-            context.Assert.NoDifferences(TreeSnapshot.Take(deployedCopy.ProjectDirectory).DifferencesFrom(deployedBefore), "the deployed copy's project is byte-identical");
+            await AssertCopiesOfCopiesAsync(context, CopySteps.LocalSource(await CopySteps.FixtureSourceAsync(context).ConfigureAwait(false)), () => CopySteps.DeployedCopyAsync(context)).ConfigureAwait(false);
+            await AssertCopiesOfCopiesAsync(context, CopySteps.LocalSource(await CopySteps.WorkflowSourceAsync(context).ConfigureAwait(false)), () => CopySteps.DeployedWorkflowCopyAsync(context), "workflow-").ConfigureAwait(false);
         });
 
         yield return Builder.Make("MC-29", "a --schema-name another agent in the environment holds is refused by agent copy, which registers nothing", Both, SafetyTier.Creating, timeout: Long, run: async context =>
@@ -434,7 +545,7 @@ public static partial class McsCopyScenarios
             context.Assert.NoDifferences(CopySteps.LeftInCopyState(project), ".config\\copy holds only .gitignore and copy.lock, and nothing of the killed attempt");
         });
 
-        yield return Builder.Make("MC-33", "--agent-name of an existing cloud agent in another case is refused and writes nothing", Both, SafetyTier.ReadOnly, timeout: Long, run: async context =>
+        yield return Builder.Make("MC-33", "--agent-name of an existing cloud agent or workflow in another case is refused and writes nothing", BothAndWorkflow, SafetyTier.ReadOnly, timeout: Long, run: async context =>
         {
             var cli = await CopySteps.FixtureSeedAsync(context, SessionAgentKind.FixtureCli).ConfigureAwait(false);
             var source = await CopySteps.FixtureSourceAsync(context, classic: true).ConfigureAwait(false);
@@ -443,12 +554,18 @@ public static partial class McsCopyScenarios
 
             context.Assert.Refused(result, CopySteps.Usage, "already has an agent named", "the name of an agent already in the environment, in upper case");
             context.Assert.False(Directory.Exists(CopySteps.BesideSource(source, name)), "nothing was written beside the source");
+
+            var workflowSource = await CopySteps.WorkflowSourceAsync(context).ConfigureAwait(false);
+            var workflowName = CopySteps.WorkflowMetadataOf(cli.ProjectDirectory, "name").ToUpperInvariant();
+
+            RefusedAs(context, await CopySteps.RawCopyAsync(context, [.. CopySteps.LocalSource(workflowSource), "--agent-name", workflowName]).ConfigureAwait(false), "copy-not-prepared", ErrorCodes.ManagedAgent.CopyNotPrepared, "already has a workflow named", $"the workflow copy {workflowName}, the name of the CLI seed's flow in upper case");
+            context.Assert.NoDifferences(CopySteps.LeftBesideTheProjectLock(CopySteps.BesideSource(workflowSource, workflowName)), $"nothing but the project's copy lock is left for the workflow copy {workflowName}");
         });
     }
 
     private static IEnumerable<Scenario> Lifecycle()
     {
-        yield return Builder.Make("MC-35", "cloud copy of the CLI agent: copy, deployment create, first deploy", Cli, SafetyTier.Creating, smoke: true, timeout: Long, run: async context =>
+        yield return Builder.Make("MC-35", "cloud copy of the CLI agent and of a workflow: copy, deployment create, first deploy", CliAndWorkflow, SafetyTier.Creating, smoke: true, timeout: Long, run: async context =>
         {
             var seed = await CopySteps.FixtureSeedAsync(context, SessionAgentKind.FixtureCli).ConfigureAwait(false);
             var (copy, _, clone) = await FirstDeployAsync(context, seed, CopySteps.CloudSource(seed)).ConfigureAwait(false);
@@ -456,6 +573,9 @@ public static partial class McsCopyScenarios
             context.Assert.True(copy.DraftWorkflows.Count > 0, "the copied workflows await activation as drafts");
             await CopySteps.AssertWorkflowsExistAsync(context, copy.EnvironmentId, CopySteps.OwnedIdentities(copy, CopyIdentityKinds.Workflow), "the copy").ConfigureAwait(false);
             context.Assert.Equal(Shape(await CopySteps.BaselineAsync(context, seed).ConfigureAwait(false)), Shape(TreeSnapshot.Take(clone, CopySteps.CloneState)), "the copy has its source's components");
+
+            var workflowSeed = await CopySteps.WorkflowSeedAsync(context).ConfigureAwait(false);
+            await FirstDeployAsync(context, workflowSeed, CopySteps.CloudSource(workflowSeed), "workflow").ConfigureAwait(false);
         });
 
         yield return Builder.Make("MC-37", "local copy of the classic agent copies prompts, connector, child agent, and knowledge", Classic, SafetyTier.Creating, timeout: Long, run: async context =>
@@ -471,13 +591,16 @@ public static partial class McsCopyScenarios
             CopySteps.AssertLocalSourceIntact(context, source, before);
         });
 
-        yield return Builder.Make("MC-39", "a deployed copy redeploys unchanged into its own agent", Cli, SafetyTier.Creating, timeout: Long, run: async context =>
+        yield return Builder.Make("MC-39", "a deployed agent or workflow copy redeploys unchanged into its own agent or flow", CliAndWorkflow, SafetyTier.Creating, timeout: Long, run: async context =>
         {
             var (copy, deployed) = await CopySteps.DeployedCopyAsync(context).ConfigureAwait(false);
             var again = await CopySteps.DeployAsync(context, copy).ConfigureAwait(false);
 
             context.Transcript.Note($"redeploy warnings: {string.Join(" | ", again.Warnings)}");
             await CopySteps.AssertRedeployedAsync(context, copy, deployed, again).ConfigureAwait(false);
+
+            var (workflowCopy, workflowDeployed) = await CopySteps.DeployedWorkflowCopyAsync(context).ConfigureAwait(false);
+            await CopySteps.AssertRedeployedAsync(context, workflowCopy, workflowDeployed, await CopySteps.DeployAsync(context, workflowCopy).ConfigureAwait(false)).ConfigureAwait(false);
         });
 
         yield return Builder.Make("MC-40", "an edit to an owned skill reaches only the copy", Cli, SafetyTier.Creating, timeout: Long, run: async context =>
@@ -495,20 +618,18 @@ public static partial class McsCopyScenarios
             await CopySteps.AssertSourceIntactAsync(context, seed).ConfigureAwait(false);
         });
 
-        yield return Builder.Make("MC-42", "--publish on the first deploy publishes the copy and leaves the source alone", Cli, SafetyTier.Creating, timeout: Long, run: async context =>
+        yield return Builder.Make("MC-42", "--publish on the first deploy publishes the agent or workflow copy and leaves the source alone", CliAndWorkflow, SafetyTier.Creating, timeout: Long, run: async context =>
         {
             var seed = await CopySteps.FixtureSeedAsync(context, SessionAgentKind.FixtureCli).ConfigureAwait(false);
-            await CopySteps.BaselineAsync(context, seed).ConfigureAwait(false);
+            await PublishedFirstDeployAsync(context, seed, CopySteps.CloudSource(seed)).ConfigureAwait(false);
 
-            var copy = await CopySteps.RegisteredAsync(context, CopySteps.CloudSource(seed)).ConfigureAwait(false);
-            var deployed = await CopySteps.DeployAsync(context, copy, "--publish").ConfigureAwait(false);
+            var workflowSeed = await CopySteps.WorkflowSeedAsync(context).ConfigureAwait(false);
+            var (workflowCopy, workflowDeployed) = await PublishedFirstDeployAsync(context, workflowSeed, CopySteps.CloudSource(workflowSeed), "workflow").ConfigureAwait(false);
 
-            context.Assert.True(deployed.Published && deployed.PublishedOn is not null, "the copy was published");
-            await CopySteps.AssertFirstDeployAsync(context, copy, deployed).ConfigureAwait(false);
-            await CopySteps.AssertSourceIntactAsync(context, seed).ConfigureAwait(false);
+            context.Assert.True(workflowDeployed.UnboundConnectionCount == 0, $"the published workflow copy {workflowCopy.DisplayName} leaves no connection reference unbound");
         });
 
-        yield return Builder.Make("MC-43", "agent pull on a deployed copy reads its own agent and keeps the copy's records", Cli, SafetyTier.Creating, timeout: Long, run: async context =>
+        yield return Builder.Make("MC-43", "agent pull on a deployed agent or workflow copy reads its own agent or flow and keeps the copy's records", CliAndWorkflow, SafetyTier.Creating, timeout: Long, run: async context =>
         {
             var (copy, deployed) = await CopySteps.DeployedCopyAsync(context).ConfigureAwait(false);
             var registryBefore = File.ReadAllText(copy.ConfigPath);
@@ -518,6 +639,19 @@ public static partial class McsCopyScenarios
             context.Assert.ExitZero(pulled, "agent pull on a deployed copy");
             context.Assert.Equal(CopySteps.CloudAgentId(deployed), BoundAgentId(copy.WorkspaceDirectory), "the workspace is bound to the copy's own agent");
             context.Assert.Equal(registryBefore, File.ReadAllText(copy.ConfigPath), "the copy's records are byte-identical");
+
+            var (workflowCopy, _) = await CopySteps.DeployedWorkflowCopyAsync(context).ConfigureAwait(false);
+            var workflowRegistryBefore = File.ReadAllText(workflowCopy.ConfigPath);
+
+            var workflowPulled = await CopySteps.PullAsync(context, workflowCopy).ConfigureAwait(false);
+
+            context.Assert.ExitZero(workflowPulled, $"agent pull on the deployed workflow copy {workflowCopy.DisplayName}");
+
+            var workflowPull = workflowPulled.Json<ManagedAgentPullResult>();
+            context.Assert.Equal(workflowCopy.AgentId, workflowPull.AgentId, $"the pull reads the record of the workflow copy {workflowCopy.DisplayName}");
+            context.Assert.Equal(workflowCopy.DisplayName, workflowPull.WorkflowName, $"the pull reads the flow of the workflow copy {workflowCopy.DisplayName}, not its source's");
+            context.Assert.Equal(workflowCopy.McsWorkflowId, WorkflowSteps.Folder(workflowCopy.WorkspaceDirectory).WorkflowId.ToString(), $"the workspace of the workflow copy {workflowCopy.DisplayName} holds its own flow");
+            context.Assert.Equal(workflowRegistryBefore, File.ReadAllText(workflowCopy.ConfigPath), $"the records of the workflow copy {workflowCopy.DisplayName} are byte-identical");
         });
 
         yield return Builder.Make("MC-44", "a deployed copy clones back to the files it deployed", Cli, SafetyTier.Creating, timeout: Long, run: async context =>
@@ -688,7 +822,7 @@ public static partial class McsCopyScenarios
 
     private static IEnumerable<Scenario> Deletion()
     {
-        yield return Builder.Make("MC-82", "agent delete --all-resources of a deployed copy removes its agent with the flows, prompts, and connectors its workspace names, and leaves its files and its source alone", Classic, SafetyTier.Creating, timeout: Long, run: async context =>
+        yield return Builder.Make("MC-82", "agent delete --all-resources of a deployed copy removes its agent with the flows, prompts, and connectors its workspace names, and leaves its files and its source alone, and agent delete of a deployed workflow copy removes only its flow and record", ClassicAndWorkflow, SafetyTier.Creating, timeout: Long, run: async context =>
         {
             var seed = await CopySteps.FixtureSeedAsync(context, SessionAgentKind.FixtureClassic).ConfigureAwait(false);
             await CopySteps.BaselineAsync(context, seed).ConfigureAwait(false);
@@ -711,6 +845,23 @@ public static partial class McsCopyScenarios
             context.Assert.NoDifferences(TreeSnapshot.Take(copy.WorkspaceDirectory).DifferencesFrom(workspace), "the delete left the workspace's files, its cloud cache included, as they were");
             context.Assert.FailedCleanly(await CopySteps.DeleteAsync(context, copy, allResources: true).ConfigureAwait(false), "a second delete of the deleted copy");
             await CopySteps.AssertSourceIntactAsync(context, seed).ConfigureAwait(false);
+
+            var workflowSeed = await CopySteps.WorkflowSeedAsync(context).ConfigureAwait(false);
+            var (workflowCopy, workflowDeployed) = await CopySteps.DeployedAsync(context, CopySteps.CloudSource(workflowSeed), "workflow").ConfigureAwait(false);
+            var workflowId = CopySteps.CloudWorkflowId(workflowDeployed);
+            var workflowFiles = TreeSnapshot.Take(workflowCopy.WorkspaceDirectory);
+            var workflowDeleted = await CopySteps.DeleteAsync(context, workflowCopy, allResources: false).ConfigureAwait(false);
+
+            context.Assert.ExitZero(workflowDeleted, $"agent delete of the deployed workflow copy {workflowCopy.DisplayName}");
+            context.Ledger.MarkDeleted(workflowId);
+
+            var workflowResult = workflowDeleted.Json<ManagedAgentDeleteResult>();
+            context.Assert.True(string.Equals(workflowResult.McsWorkflowId, workflowId, StringComparison.OrdinalIgnoreCase) && !workflowResult.McsAgentAlreadyAbsent && workflowResult.Resources.Count == 0, $"the delete of the workflow copy {workflowCopy.DisplayName} removes its flow and nothing else");
+            await CopySteps.AssertWorkflowGoneAsync(context, workflowCopy.EnvironmentId, workflowId, $"the flow of the workflow copy {workflowCopy.DisplayName} is gone").ConfigureAwait(false);
+            context.Assert.False(CopySteps.Registry(workflowCopy.ConfigPath).ManagedAgents.Any(agent => agent.AgentId == workflowCopy.AgentId), $"the record of the workflow copy {workflowCopy.DisplayName} is gone");
+            context.Assert.NoDifferences(TreeSnapshot.Take(workflowCopy.WorkspaceDirectory).DifferencesFrom(workflowFiles), $"the delete left the files of the workflow copy {workflowCopy.DisplayName} as they were");
+            context.Assert.FailedCleanly(await CopySteps.DeleteAsync(context, workflowCopy, allResources: false).ConfigureAwait(false), $"a second delete of the deleted workflow copy {workflowCopy.DisplayName}");
+            await CopySteps.AssertWorkflowsExistAsync(context, workflowSeed.EnvironmentId, [workflowSeed.WorkflowId], $"the source of the workflow copy {workflowCopy.DisplayName}").ConfigureAwait(false);
         });
 
         yield return Builder.Make("MC-83", "agent delete --all-resources of a deployed copy with a wrong confirmation is reported as a mismatch and deletes nothing", Cli, SafetyTier.Creating, timeout: Long, run: async context =>
@@ -961,7 +1112,7 @@ public static partial class McsCopyScenarios
 
         foreach (var workflow in CopySteps.OwnedIdentities(copy, CopyIdentityKinds.Workflow))
         {
-            await context.Assert.EventuallyAsync(async () => await context.Cloud.WorkflowExistsAsync(copy.EnvironmentId, workflow, context.CancellationToken).ConfigureAwait(false) == false, TimeSpan.FromMinutes(3), $"the copy's workflow {workflow} is gone").ConfigureAwait(false);
+            await CopySteps.AssertWorkflowGoneAsync(context, copy.EnvironmentId, workflow, $"the copy's workflow {workflow} is gone").ConfigureAwait(false);
         }
     }
 
@@ -1013,7 +1164,7 @@ public static partial class McsCopyScenarios
         context.Assert.True(deployed.PushedComponentCount == deployedComponents, $"pushedComponentCount counts every component the deployed {agent} holds ({deployed.PushedComponentCount} pushed, {deployedComponents} deployed)");
     }
 
-    private static async Task<(ManagedAgentCopyResult Copy, ManagedAgentDeployResult Deployed, string Clone)> FirstDeployAsync(ScenarioContext context, CopySeed seed, IReadOnlyList<string> source, string label = "copy", string? newName = null)
+    private static async Task<(ManagedAgentCopyResult Copy, ManagedAgentDeployResult Deployed, string Clone)> FirstDeployAsync(ScenarioContext context, CloudSeed seed, IReadOnlyList<string> source, string label = "copy", string? newName = null)
     {
         await CopySteps.BaselineAsync(context, seed).ConfigureAwait(false);
 
@@ -1021,6 +1172,35 @@ public static partial class McsCopyScenarios
         await CopySteps.AssertSourceIntactAsync(context, seed).ConfigureAwait(false);
 
         return deployed;
+    }
+
+    private static async Task<(ManagedAgentCopyResult Copy, ManagedAgentDeployResult Deployed)> PublishedFirstDeployAsync(ScenarioContext context, CloudSeed seed, IReadOnlyList<string> source, string label = "copy")
+    {
+        await CopySteps.BaselineAsync(context, seed).ConfigureAwait(false);
+
+        var copy = await CopySteps.RegisteredAsync(context, source, label).ConfigureAwait(false);
+        var deployed = await CopySteps.DeployAsync(context, copy, "--publish").ConfigureAwait(false);
+
+        context.Assert.True(deployed.Published && deployed.PublishedOn is not null, CopySteps.Labelled(copy, "the copy was published"));
+        await CopySteps.AssertFirstDeployAsync(context, copy, deployed).ConfigureAwait(false);
+        await CopySteps.AssertSourceIntactAsync(context, seed).ConfigureAwait(false);
+
+        return (copy, deployed);
+    }
+
+    private static async Task AssertCopiesOfCopiesAsync(ScenarioContext context, IReadOnlyList<string> source, Func<Task<(ManagedAgentCopyResult Copy, ManagedAgentDeployResult Deployed)>> deployedCopyAsync, string labelPrefix = "")
+    {
+        var neverDeployed = await CopySteps.CopyAsync(context, source, $"{labelPrefix}first").ConfigureAwait(false);
+        var neverDeployedBefore = TreeSnapshot.Take(neverDeployed.WorkspaceDirectory);
+        var neverDeployedRecord = JsonSerializer.Serialize(CopySteps.Registry(neverDeployed.ConfigPath).ManagedAgents.Single(agent => agent.AgentId == neverDeployed.AgentId));
+        AssertFreshIdentities(context, neverDeployed, await CopySteps.CopyAsync(context, CopySteps.LocalSource(neverDeployed), $"{labelPrefix}of-never-deployed").ConfigureAwait(false));
+        context.Assert.NoDifferences(TreeSnapshot.Take(neverDeployed.WorkspaceDirectory).DifferencesFrom(neverDeployedBefore), CopySteps.Labelled(neverDeployed, "the never-deployed copy's workspace is byte-identical"));
+        context.Assert.Equal(neverDeployedRecord, JsonSerializer.Serialize(CopySteps.Registry(neverDeployed.ConfigPath).ManagedAgents.Single(agent => agent.AgentId == neverDeployed.AgentId)), CopySteps.Labelled(neverDeployed, "the never-deployed copy's record is unchanged"));
+
+        var (deployedCopy, deployed) = await deployedCopyAsync().ConfigureAwait(false);
+        var deployedBefore = TreeSnapshot.Take(deployedCopy.ProjectDirectory);
+        AssertFreshIdentities(context, deployedCopy, await CopySteps.CopyAsync(context, CopySteps.CloudSource(deployedCopy, deployed), $"{labelPrefix}of-deployed").ConfigureAwait(false));
+        context.Assert.NoDifferences(TreeSnapshot.Take(deployedCopy.ProjectDirectory).DifferencesFrom(deployedBefore), CopySteps.Labelled(deployedCopy, "the deployed copy's project is byte-identical"));
     }
 
     private static string Shape(TreeSnapshot snapshot) => string.Join(", ", snapshot.Files.Keys.Select(ShapeOf).OfType<string>().GroupBy(kind => kind, StringComparer.Ordinal).OrderBy(group => group.Key, StringComparer.Ordinal).Select(group => $"{group.Key}={group.Count()}"));
@@ -1054,9 +1234,17 @@ public static partial class McsCopyScenarios
 
     private static void AssertFreshIdentities(ScenarioContext context, ManagedAgentCopyResult source, ManagedAgentCopyResult copy)
     {
-        context.Assert.Equal(source.SchemaName, copy.SourceSchemaName, $"{copy.DisplayName} records {source.DisplayName} as its source");
-        context.Assert.False(string.Equals(source.SchemaName, copy.SchemaName, StringComparison.OrdinalIgnoreCase), $"{copy.DisplayName} gets a schema name of its own");
+        var (sourceIdentity, recordedSourceIdentity, ownIdentity, identityName) = CopySteps.IsWorkflow(copy) ? (source.McsWorkflowId, copy.SourceMcsWorkflowId, copy.McsWorkflowId, "flow id") : (source.SchemaName, copy.SourceSchemaName, copy.SchemaName, "schema name");
+
+        context.Assert.Equal(sourceIdentity, recordedSourceIdentity, $"{copy.DisplayName} records {source.DisplayName} as its source");
+        context.Assert.False(string.Equals(sourceIdentity, ownIdentity, StringComparison.OrdinalIgnoreCase), $"{copy.DisplayName} gets a {identityName} of its own");
         context.Assert.NoDifferences([.. copy.Identities.Select(identity => identity.Destination).Intersect(source.Identities.Select(identity => identity.Destination), StringComparer.OrdinalIgnoreCase)], $"{copy.DisplayName} reuses no identity of {source.DisplayName}");
+    }
+
+    private static void RefusedAs(ScenarioContext context, MsagentResult result, string errorKind, int errorCode, string fragment, string check)
+    {
+        context.Assert.Refused(result, CopySteps.Usage, fragment, check);
+        context.Assert.True(result.JsonElement() is { ValueKind: JsonValueKind.Object } envelope && envelope.TryGetProperty("errorKind", out var kind) && kind.ValueKind == JsonValueKind.String && kind.GetString() == errorKind && envelope.TryGetProperty("errorCode", out var code) && code.TryGetInt32(out var value) && value == errorCode, $"{check}: refused as {errorKind} ({errorCode})");
     }
 
     private static void CreateJunction(string link, string target)

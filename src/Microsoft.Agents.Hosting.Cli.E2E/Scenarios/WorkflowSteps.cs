@@ -131,7 +131,7 @@ public static class WorkflowSteps
         return created;
     }
 
-    private static void Record(ScenarioContext context, string? workflowId, string agentId, string? displayName, string projectDirectory)
+    internal static void Record(ScenarioContext context, string? workflowId, string agentId, string? displayName, string projectDirectory)
     {
         if (workflowId is { Length: > 0 } id)
         {

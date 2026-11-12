@@ -365,6 +365,8 @@ internal sealed class FakeCopyPort : ICopilotCopyPort
 
     public Action? OnPrepare { get; init; }
 
+    public Guid CopiedWorkflowId { get; init; } = Guid.Parse("c3c3c3c3-1111-2222-3333-444444444444");
+
     public List<(string WorkspaceDirectory, string SourceSchemaName, string DisplayName, IReadOnlyList<string> StagedEntries)> Proposals { get; } = [];
 
     public Task<CopilotCopyPreparation> PrepareAsync(CopilotCopyPrepareCommand command, CancellationToken cancellationToken)
@@ -373,6 +375,15 @@ internal sealed class FakeCopyPort : ICopilotCopyPort
         StagedEntries.Add(Entries(command.WorkspaceDirectory));
         SourceDefinitions.Add(command.SourceDefinitionPath is { } definition && File.Exists(definition) ? File.ReadAllText(definition) : null);
         OnPrepare?.Invoke();
+
+        if (command.AgentType == AgentTypes.McsWorkflow && PreparationBlockers.Count == 0)
+        {
+            var source = WorkflowWorkspaceFixtures.Single(command.WorkspaceDirectory);
+            var sourceDefinition = File.ReadAllText(source.DefinitionPath);
+
+            Directory.Delete(source.FolderPath, recursive: true);
+            WorkflowFixtures.Write(command.WorkspaceDirectory, command.DisplayName, activated: false, workflowId: CopiedWorkflowId, definition: sourceDefinition);
+        }
 
         return Task.FromResult(PreparationBlockers.Count > 0 ? new CopilotCopyPreparation { Blockers = PreparationBlockers } : new CopilotCopyPreparation
         {

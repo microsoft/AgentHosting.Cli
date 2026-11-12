@@ -43,20 +43,23 @@ public sealed class ManagedAgentResolver
     /// passes <see langword="false"/>, which still refuses a location that escapes the project root.
     /// </param>
     /// <returns>The workspace directory.</returns>
-    public string ResolveWorkspaceDirectory(string? projectDirectory, ManagedAgentRecord agent, bool requireExists = true)
+    public string ResolveWorkspaceDirectory(string? projectDirectory, ManagedAgentRecord agent, bool requireExists = true) => FindWorkspaceDirectory(projectDirectory, agent, requireExists) ?? throw ManagedAgentException.WorkspaceMissing(agent.AgentId, agent.AgentLocation, _locator.ResolveProjectDirectory(projectDirectory));
+
+    /// <summary>Finds the content directory a record names, for either an agent project or a workflow, when the record's location holds one.</summary>
+    /// <param name="projectDirectory">The project directory.</param>
+    /// <param name="agent">The record whose workspace is sought.</param>
+    /// <param name="requireExists">Whether a workflow directory has to be on disk already.</param>
+    /// <returns>The workspace directory, or <see langword="null"/> when the location holds none or escapes the project root.</returns>
+    public string? FindWorkspaceDirectory(string? projectDirectory, ManagedAgentRecord agent, bool requireExists = true)
     {
         ArgumentNullException.ThrowIfNull(agent);
 
         if (agent.AgentType != AgentTypes.McsWorkflow)
         {
-            return ResolveAgentWorkspaceDirectory(projectDirectory, agent);
+            return FindAgentWorkspaceDirectory(projectDirectory, agent);
         }
 
-        var root = _locator.ResolveProjectDirectory(projectDirectory);
-
-        return _locator.ContainedLocation(root, agent.AgentLocation) is { } located && (!requireExists || Directory.Exists(located))
-            ? located
-            : throw ManagedAgentException.WorkspaceMissing(agent.AgentId, agent.AgentLocation, root);
+        return _locator.ContainedLocation(_locator.ResolveProjectDirectory(projectDirectory), agent.AgentLocation) is { } located && (!requireExists || Directory.Exists(located)) ? located : null;
     }
 
     /// <summary>Finds the directory holding an agent's workspace content, when it is still on disk.</summary>
@@ -122,7 +125,7 @@ public sealed class ManagedAgentResolver
             ? single
             : null;
 
-    /// <summary>Resolves the agent a location selects: the one whose folder holds it, else its project's only MCS agent.</summary>
+    /// <summary>Resolves the record a location selects: the agent or workflow whose folder holds it, else its project's only MCS agent, else, when the project holds no MCS agent, its only standalone workflow.</summary>
     /// <param name="location">A project directory or a folder inside one, or <see langword="null"/> for the current directory.</param>
     /// <returns>The project directory and the selected record.</returns>
     public (string ProjectDirectory, ManagedAgentRecord Agent) ResolveAgentAt(string? location)
@@ -135,14 +138,16 @@ public sealed class ManagedAgentResolver
             throw ManagedAgentException.ConfigNotFound(_locator.ConfigFilePath(projectDirectory));
         }
 
-        var candidates = _agents.List(projectDirectory).Select(agent => (Agent: agent, Folder: FindAgentWorkspaceDirectory(projectDirectory, agent))).ToArray();
+        var candidates = _agents.List(projectDirectory).Select(agent => (Agent: agent, Folder: FindWorkspaceDirectory(projectDirectory, agent))).ToArray();
         var mcsAgents = candidates.Where(candidate => candidate.Agent.AgentType == AgentTypes.McsAgent).ToArray();
+        var fallbackCandidates = mcsAgents.Length > 0 ? mcsAgents : [.. candidates.Where(candidate => candidate.Agent.AgentType == AgentTypes.McsWorkflow)];
+        var physicalStart = AgentConfigLocator.PhysicalPath(start);
 
-        return (projectDirectory, candidates.Where(candidate => candidate.Folder is { } folder && AgentConfigLocator.IsContainedIn(start, folder)).OrderByDescending(candidate => candidate.Folder!.Length).Select(candidate => candidate.Agent).FirstOrDefault() ?? mcsAgents switch
+        return (projectDirectory, candidates.Select(candidate => (candidate.Agent, PhysicalFolder: candidate.Folder is { } folder ? AgentConfigLocator.PhysicalPath(folder) : null)).Where(candidate => candidate.PhysicalFolder is { } physicalFolder && AgentConfigLocator.IsContainedIn(physicalStart, physicalFolder)).OrderByDescending(candidate => candidate.PhysicalFolder!.Length).Select(candidate => candidate.Agent).FirstOrDefault() ?? fallbackCandidates switch
         {
             [var only] => only.Agent,
             [] => throw ManagedAgentException.AgentNotFound("(none supplied)"),
-            _ => throw ManagedAgentException.AgentAmbiguousAt(projectDirectory, mcsAgents.Select(candidate => $"{candidate.Agent.DisplayName} ({candidate.Folder ?? candidate.Agent.AgentLocation})")),
+            _ => throw ManagedAgentException.AgentAmbiguousAt(projectDirectory, fallbackCandidates.Select(candidate => $"{candidate.Agent.DisplayName} ({candidate.Folder ?? candidate.Agent.AgentLocation})")),
         });
     }
 

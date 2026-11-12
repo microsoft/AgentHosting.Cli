@@ -348,7 +348,7 @@ public sealed class ManagedAgentException : AgentHostingException
         "workflow-metadata-unreadable",
         "Pull the workflow again, or restore the file from source control.");
 
-    /// <summary>The workflow a clone names does not exist in its environment.</summary>
+    /// <summary>The workflow a clone or copy names does not exist in its environment.</summary>
     /// <param name="workflowId">The workflow that was requested.</param>
     /// <param name="environmentId">The environment that was searched.</param>
     /// <returns>The failure.</returns>
@@ -357,7 +357,7 @@ public sealed class ManagedAgentException : AgentHostingException
         $"No workflow with id {workflowId} exists in {environmentId}.",
         ExitCodes.Usage,
         "workflow-source-not-found",
-        "Check the id with `msagent agent list`, or supply --mcs-clone-environment-id for the environment holding it.");
+        "Check the id with `msagent agent list --agent-type MCSWorkflow` in the environment that holds it, and name that environment.");
 
     /// <summary>The service refused the workflow the push sent.</summary>
     /// <param name="workflowName">The workflow that was pushed.</param>

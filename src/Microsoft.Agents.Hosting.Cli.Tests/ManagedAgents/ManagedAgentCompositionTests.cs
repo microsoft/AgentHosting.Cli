@@ -105,6 +105,7 @@ public sealed class ManagedAgentCompositionTests
         services.AddSingleton<IDeploymentStore, ProjectDeploymentStore>();
         services.AddSingleton<IWorkflowStorePort, FakeWorkflowStorePort>();
         services.AddSingleton<IWorkflowScaffoldPort, FakeWorkflowScaffoldPort>();
+        services.AddSingleton<IWorkflowWorkspacePort, FakeWorkflowWorkspacePort>();
         services.AddSingleton<WorkflowProjectResolver>();
         services.AddSingleton<WorkflowCreateService>();
         services.AddSingleton<WorkflowInitService>();

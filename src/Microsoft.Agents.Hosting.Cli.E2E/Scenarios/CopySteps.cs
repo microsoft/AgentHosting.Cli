@@ -10,7 +10,11 @@ using Microsoft.CopilotStudio.Sync.Copy;
 
 namespace Microsoft.Agents.Hosting.Cli.E2E.Scenarios;
 
-public sealed record CopySeed(string Name, string CloudAgentId, string EnvironmentId, string SchemaName, string DisplayName, string ProjectDirectory, string RecordName);
+public abstract record CloudSeed(string Name, string CloudId, string EnvironmentId);
+
+public sealed record CopySeed(string Name, string CloudAgentId, string EnvironmentId, string SchemaName, string DisplayName, string ProjectDirectory, string RecordName) : CloudSeed(Name, CloudAgentId, EnvironmentId);
+
+public sealed record WorkflowSeed(string Name, string WorkflowId, string EnvironmentId) : CloudSeed(Name, WorkflowId, EnvironmentId);
 
 public sealed record CorpusSeed(CopySeed Seed, ManagedAgentCopyResult Copy, ManagedAgentDeployResult Deployed, string CloneDirectory, double Seconds);
 
@@ -26,6 +30,9 @@ public static class CopySteps
     private const string CorpusSeedPool = "copy-corpus-seed";
     private const string DeployedPool = "copy-deployed";
     private const string DeployedKey = "cli-copy";
+    private const string DeployedWorkflowPool = "copy-deployed-workflow";
+    private const string WorkflowSeedPool = "copy-workflow-seed";
+    private const string WorkflowSeedName = "FixtureWorkflow";
     private const string SettingsFileName = "settings.mcs.yml";
 
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromMinutes(20);
@@ -42,13 +49,19 @@ public static class CopySteps
 
     public static IReadOnlyList<string> LocalSource(ManagedAgentCopyResult copy) => LocalSource(copy.WorkspaceDirectory);
 
-    public static IReadOnlyList<string> CopyArguments(ScenarioContext context, IReadOnlyList<string> source, string name, string label) => [.. source, "--agent-name", name, .. source.Contains("--mcs-clone-agent-id") ? new[] { "--project", context.Workspaces.EmptyDirectory(context.ScenarioId, label) } : []];
+    public static IReadOnlyList<string> CopyArguments(ScenarioContext context, IReadOnlyList<string> source, string name, string label) => [.. source, "--agent-name", name, .. source.Contains("--mcs-clone-agent-id") || source.Contains("--mcs-clone-workflow-id") ? new[] { "--project", context.Workspaces.EmptyDirectory(context.ScenarioId, label) } : []];
 
     public static string BesideSource(Workspace source, string name) => Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(source.ProjectDirectory))!, WorkspaceFolderNames.ForProject(name.Trim()));
 
     public static IReadOnlyList<string> CloudSource(CopySeed seed) => CloudSource(seed.CloudAgentId, seed.EnvironmentId);
 
     public static IReadOnlyList<string> CloudSource(string cloudAgentId, string environmentId) => ["--environment-id", environmentId, "--mcs-clone-agent-id", cloudAgentId];
+
+    public static IReadOnlyList<string> CloudSource(WorkflowSeed seed) => CloudWorkflowSource(seed.WorkflowId, seed.EnvironmentId);
+
+    public static IReadOnlyList<string> CloudSource(ManagedAgentCopyResult copy, ManagedAgentDeployResult deployed) => IsWorkflow(copy) ? CloudWorkflowSource(CloudWorkflowId(deployed), copy.EnvironmentId) : CloudSource(CloudAgentId(deployed), copy.EnvironmentId);
+
+    public static IReadOnlyList<string> CloudWorkflowSource(string workflowId, string environmentId) => ["--environment-id", environmentId, "--mcs-clone-workflow-id", workflowId];
 
     public static Task<MsagentResult> RawCopyAsync(ScenarioContext context, IReadOnlyList<string> arguments, string? workingDirectory = null, string? stdin = null, bool interactive = false, bool json = true, ProcessInterruption? interruption = null) =>
         context.Msagent.RunAsync(["agent", "copy", .. arguments, .. (json ? Json : []), .. (interactive ? [] : NonInteractive)], workingDirectory, stdin, CommandTimeout, interruption, context.CancellationToken);
@@ -70,13 +83,18 @@ public static class CopySteps
         return copy;
     }
 
+    public static bool IsWorkflow(ManagedAgentCopyResult copy) => copy.AgentType == AgentTypes.McsWorkflow;
+
+    public static string Labelled(ManagedAgentCopyResult copy, string check) => IsWorkflow(copy) ? $"{check} (workflow copy {copy.DisplayName})" : check;
+
     public static Workspace WorkspaceOf(ScenarioContext context, ManagedAgentCopyResult copy) => new()
     {
         ScenarioId = context.ScenarioId,
         Root = copy.ProjectDirectory,
         ProjectDirectory = copy.ProjectDirectory,
         AgentName = copy.DisplayName,
-        SchemaName = copy.SchemaName,
+        SchemaName = copy.SchemaName ?? string.Empty,
+        WorkflowId = copy.McsWorkflowId,
         RecordId = copy.AgentId,
     };
 
@@ -87,13 +105,20 @@ public static class CopySteps
 
     public static async Task<MsagentResult> DeployCommandAsync(ScenarioContext context, ManagedAgentCopyResult copy, string deploymentName, IReadOnlyList<string> extraArguments)
     {
-        context.Ledger.RecordCopy(copy.SchemaName, copy.DisplayName, copy.EnvironmentId, copy.ProjectDirectory, copy.WorkspaceDirectory, copy.AgentId, deploymentName, context.ScenarioId);
+        if (IsWorkflow(copy))
+        {
+            WorkflowSteps.Record(context, copy.McsWorkflowId, copy.AgentId, copy.DisplayName, copy.ProjectDirectory);
+        }
+        else
+        {
+            context.Ledger.RecordCopy(SchemaNameOf(copy), copy.DisplayName, copy.EnvironmentId, copy.ProjectDirectory, copy.WorkspaceDirectory, copy.AgentId, deploymentName, context.ScenarioId);
+        }
 
         var result = await McsSteps.DeployCommandAsync(context, WorkspaceOf(context, copy), deploymentName, null, ["--agent-name", copy.DisplayName, .. extraArguments], CommandTimeout).ConfigureAwait(false);
 
         if (result.ExitCode == 0 && result.Json<ManagedAgentDeployResult>().TargetMcsAgentId is { Length: > 0 } agentId)
         {
-            context.Ledger.ResolveMcsAgent(copy.SchemaName, agentId);
+            context.Ledger.ResolveMcsAgent(SchemaNameOf(copy), agentId);
         }
 
         return result;
@@ -128,13 +153,24 @@ public static class CopySteps
     {
         var (copy, deployed) = await DeployedAsync(context, source, label, newName).ConfigureAwait(false);
 
-        context.Assert.False(deployed.Published, "the first deploy leaves the copy unpublished");
+        context.Assert.False(deployed.Published, Labelled(copy, "the first deploy leaves the copy unpublished"));
 
         return (copy, deployed, await AssertIsolatedAsync(context, copy, deployed).ConfigureAwait(false));
     }
 
     public static async Task AssertFirstDeployAsync(ScenarioContext context, ManagedAgentCopyResult copy, ManagedAgentDeployResult deployed)
     {
+        if (IsWorkflow(copy))
+        {
+            context.Assert.True(deployed.TargetAgentCreated, $"the first deploy creates the flow of the workflow copy {copy.DisplayName}");
+            context.Assert.Equal(copy.McsWorkflowId, deployed.McsWorkflowId, $"the first deploy of the workflow copy {copy.DisplayName} reports the copy's flow id");
+            context.Assert.False(string.Equals(deployed.McsWorkflowId, copy.SourceMcsWorkflowId, StringComparison.OrdinalIgnoreCase), $"the flow of the workflow copy {copy.DisplayName} is a new one, not its source's");
+            context.Assert.Equal(deployed.Published ? WorkflowStateProjection.Published : WorkflowStateProjection.Draft, deployed.WorkflowState, $"the first deploy leaves the workflow copy {copy.DisplayName} a draft unless it publishes it");
+            AssertRegistered(context, copy, deployed);
+            await AssertOneCloudWorkflowAsync(context, copy, deployed, $"exactly one flow is named for the workflow copy {copy.DisplayName}, and it carries the copy's id").ConfigureAwait(false);
+            return;
+        }
+
         context.Assert.True(deployed.TargetAgentCreated, "the first deploy creates the copy's own agent");
         context.Assert.False(string.Equals(CloudAgentId(deployed), copy.SourceMcsAgentId, StringComparison.OrdinalIgnoreCase), "the copy's agent is a new one, not its source's");
         AssertRegistered(context, copy, deployed);
@@ -144,6 +180,15 @@ public static class CopySteps
 
     public static async Task AssertRedeployedAsync(ScenarioContext context, ManagedAgentCopyResult copy, ManagedAgentDeployResult first, ManagedAgentDeployResult again)
     {
+        if (IsWorkflow(copy))
+        {
+            context.Assert.Equal(CloudWorkflowId(first), again.McsWorkflowId, $"the redeploy targets the flow of the workflow copy {copy.DisplayName}");
+            context.Assert.False(again.TargetAgentCreated, $"the redeploy of the workflow copy {copy.DisplayName} creates no flow");
+            AssertRegistered(context, copy, again);
+            await AssertOneCloudWorkflowAsync(context, copy, again, $"no duplicate flow is named for the workflow copy {copy.DisplayName}").ConfigureAwait(false);
+            return;
+        }
+
         context.Assert.Equal(CloudAgentId(first), again.TargetMcsAgentId, "the redeploy targets the copy's own agent");
         context.Assert.False(again.TargetAgentCreated, "the redeploy creates no agent");
         AssertRegistered(context, copy, again);
@@ -158,15 +203,20 @@ public static class CopySteps
         context.Assert.NoDifferences([.. named.Where(workflow => !owned.Contains(workflow.WorkflowId, StringComparer.OrdinalIgnoreCase)).Select(workflow => $"{workflow.WorkflowId} ({workflow.DisplayName}) is no workflow of the copy")], "the environment holds no workflow named for the copy beyond its own");
     }
 
-    public static CopySeed SeedOf(string name, ManagedAgentCopyResult copy, ManagedAgentDeployResult deployed) => new(name, CloudAgentId(deployed), deployed.TargetEnvironmentId, copy.SchemaName, copy.DisplayName, copy.ProjectDirectory, copy.DisplayName);
+    public static CopySeed SeedOf(string name, ManagedAgentCopyResult copy, ManagedAgentDeployResult deployed) => new(name, CloudAgentId(deployed), deployed.TargetEnvironmentId, SchemaNameOf(copy), copy.DisplayName, copy.ProjectDirectory, copy.DisplayName);
 
     public static string CloudAgentId(ManagedAgentDeployResult deployed) => deployed.TargetMcsAgentId ?? throw new E2EException($"{deployed.DisplayName} was deployed without a cloud agent id.");
+
+    public static string CloudWorkflowId(ManagedAgentDeployResult deployed) => deployed.McsWorkflowId ?? throw new E2EException($"{deployed.DisplayName} was deployed without a cloud workflow id.");
 
     public static async Task<ManagedAgentCopyResult> NeverDeployedCopyAsync(ScenarioContext context, string label = "copy") =>
         await RegisteredAsync(context, LocalSource(await FixtureSourceAsync(context, label: $"{label}-source").ConfigureAwait(false)), label).ConfigureAwait(false);
 
     public static Task<(ManagedAgentCopyResult Copy, ManagedAgentDeployResult Deployed)> DeployedCopyAsync(ScenarioContext context) =>
         context.Session.PooledAsync(DeployedPool, DeployedKey, async () => await DeployedAsync(context, CloudSource(await FixtureSeedAsync(context, SessionAgentKind.FixtureCli).ConfigureAwait(false)), "pooled").ConfigureAwait(false));
+
+    public static Task<(ManagedAgentCopyResult Copy, ManagedAgentDeployResult Deployed)> DeployedWorkflowCopyAsync(ScenarioContext context) =>
+        context.Session.PooledAsync(DeployedWorkflowPool, WorkflowSeedName, async () => await DeployedAsync(context, CloudSource(await WorkflowSeedAsync(context).ConfigureAwait(false)), "pooled-workflow").ConfigureAwait(false));
 
     public static void ConsumeDeployedCopy(ScenarioContext context) => context.Session.ConsumePooled(DeployedPool, DeployedKey);
 
@@ -198,7 +248,15 @@ public static class CopySteps
         var records = Registry(copy.ConfigPath).ManagedAgents.Where(agent => string.Equals(agent.DisplayName, copy.DisplayName, StringComparison.OrdinalIgnoreCase)).ToArray();
 
         context.Assert.True(records.Length == 1 && string.Equals(records[0].AgentId, copy.AgentId, StringComparison.OrdinalIgnoreCase), $"{copy.ConfigPath} registers {copy.DisplayName} exactly once, under its record id");
-        context.Assert.Equal(copy.EnvironmentId, records[0].EnvironmentId, "the record's home is the copy's environment");
+        context.Assert.Equal(copy.EnvironmentId, records[0].EnvironmentId, Labelled(copy, "the record's home is the copy's environment"));
+
+        if (IsWorkflow(copy))
+        {
+            context.Assert.Equal(AgentTypes.McsWorkflow, records[0].AgentType, $"the workflow copy {copy.DisplayName} is registered as a workflow");
+            context.Assert.Equal(copy.McsWorkflowId, records[0].McsWorkflowId, $"the record of the workflow copy {copy.DisplayName} names the copy's own flow id");
+            return;
+        }
+
         context.Assert.Equal(deployed?.TargetMcsAgentId ?? string.Empty, records[0].McsAgentId ?? string.Empty, "the record names a cloud agent exactly when the copy was deployed, and it is the deployed one");
     }
 
@@ -211,6 +269,16 @@ public static class CopySteps
 
         return new CopySeed(kind.ToString(), agent.CloudAgentId, agent.EnvironmentId, agent.Deployed.SchemaName ?? agent.Workspace.SchemaName, DisplayNameOf(agent.Workspace.ProjectDirectory), agent.Workspace.ProjectDirectory, agent.Workspace.AgentName);
     }
+
+    public static Task<WorkflowSeed> WorkflowSeedAsync(ScenarioContext context) =>
+        context.Session.PooledAsync(WorkflowSeedPool, WorkflowSeedName, async () =>
+        {
+            var source = await WorkflowSourceAsync(context, "workflow-seed").ConfigureAwait(false);
+            var deployed = await WorkflowSteps.DeployAsync(context, source, source.RecordId!).ConfigureAwait(false);
+            RequireDevEnvironment(context, deployed.TargetEnvironmentId, deployed.DisplayName);
+
+            return new WorkflowSeed(WorkflowSeedName, CloudWorkflowId(deployed), deployed.TargetEnvironmentId);
+        });
 
     public static Task<CorpusSeed> CorpusSeedAsync(ScenarioContext context, string agentFolder) =>
         context.Session.SettledAsync(CorpusSeedPool, agentFolder, async () =>
@@ -251,6 +319,15 @@ public static class CopySteps
         return await InitialisedAsync(context, classic ? context.Workspaces.ClassicAgent(context.ScenarioId, label) : context.Workspaces.CliAgent(context.ScenarioId, label)).ConfigureAwait(false);
     }
 
+    public static async Task<Workspace> WorkflowSourceAsync(ScenarioContext context, string label = "workflow-source", string? parentDirectory = null)
+    {
+        var source = context.Workspaces.Workflow(context.ScenarioId, label, parentDirectory);
+        var initialised = await WorkflowSteps.InitAsync(context, source).ConfigureAwait(false);
+        RequireDevEnvironment(context, initialised.EnvironmentId, source.AgentName);
+
+        return source with { RecordId = initialised.AgentId };
+    }
+
     public static async Task<Workspace> ClonedSourceAsync(ScenarioContext context, CopySeed seed, string label = "clone")
     {
         await McsSteps.PinEnvironmentAsync(context).ConfigureAwait(false);
@@ -261,26 +338,28 @@ public static class CopySteps
         return McsSteps.CreatedWorkspace(context.ScenarioId, directory, created, seed.SchemaName) with { DeployForbidden = true };
     }
 
-    public static Task<TreeSnapshot> BaselineAsync(ScenarioContext context, CopySeed seed) =>
-        context.Session.PooledAsync(BaselinePool, seed.CloudAgentId, async () => TreeSnapshot.Take(await CloneAsync(context, seed.CloudAgentId, seed.EnvironmentId, $"baseline-{seed.Name}").ConfigureAwait(false), CloneState));
+    public static Task<TreeSnapshot> BaselineAsync(ScenarioContext context, CloudSeed seed) =>
+        context.Session.PooledAsync(BaselinePool, seed.CloudId, async () => TreeSnapshot.Take(await CloneSeedAsync(context, seed, $"baseline-{seed.Name}").ConfigureAwait(false), CloneState));
 
-    public static async Task AssertSourceIntactAsync(ScenarioContext context, CopySeed seed)
+    public static async Task AssertSourceIntactAsync(ScenarioContext context, CloudSeed seed)
     {
         var baseline = await BaselineAsync(context, seed).ConfigureAwait(false);
 
-        context.Assert.NoDifferences(TreeSnapshot.Take(await CloneAsync(context, seed.CloudAgentId, seed.EnvironmentId, $"recheck-{seed.Name}").ConfigureAwait(false), CloneState).DifferencesFrom(baseline), $"{seed.Name} is unchanged in the cloud");
+        context.Assert.NoDifferences(TreeSnapshot.Take(await CloneSeedAsync(context, seed, $"recheck-{seed.Name}").ConfigureAwait(false), CloneState).DifferencesFrom(baseline), $"{seed.Name} is unchanged in the cloud");
     }
 
-    public static Task<string> CloneAsync(ScenarioContext context, string agentId, string environmentId, string label) => McsSteps.CloneAsync(context, agentId, environmentId, $"{label}-{Guid.NewGuid().ToString()[..6]}");
+    public static Task<string> CloneAsync(ScenarioContext context, string agentId, string environmentId, string label) => McsSteps.CloneAsync(context, agentId, environmentId, Unique(label));
 
     public static async Task AssertOneCloudAgentAsync(ScenarioContext context, ManagedAgentCopyResult copy, ManagedAgentDeployResult deployed, string check)
     {
-        var (withId, withSchemaName) = await context.Cloud.CountAgentsAsync(copy.EnvironmentId, CloudAgentId(deployed), copy.SchemaName, context.CancellationToken).ConfigureAwait(false);
+        var (withId, withSchemaName) = await context.Cloud.CountAgentsAsync(copy.EnvironmentId, CloudAgentId(deployed), SchemaNameOf(copy), context.CancellationToken).ConfigureAwait(false);
 
         context.Assert.True(withId == 1 && withSchemaName == 1, $"{check} ({withId} by id, {withSchemaName} by schema name)");
     }
 
-    public static Task AssertAgentGoneAsync(ScenarioContext context, ManagedAgentCopyResult copy, string agentId, string check) => context.Assert.EventuallyAsync(async () => await context.Cloud.CountAgentsAsync(copy.EnvironmentId, agentId, copy.SchemaName, context.CancellationToken).ConfigureAwait(false) is (0, 0), TimeSpan.FromMinutes(3), check);
+    public static Task AssertAgentGoneAsync(ScenarioContext context, ManagedAgentCopyResult copy, string agentId, string check) => context.Assert.EventuallyAsync(async () => await context.Cloud.CountAgentsAsync(copy.EnvironmentId, agentId, SchemaNameOf(copy), context.CancellationToken).ConfigureAwait(false) is (0, 0), TimeSpan.FromMinutes(3), check);
+
+    public static Task AssertWorkflowGoneAsync(ScenarioContext context, string environmentId, string workflowId, string check) => context.Assert.EventuallyAsync(async () => await context.Cloud.WorkflowExistsAsync(environmentId, workflowId, context.CancellationToken).ConfigureAwait(false) == false, TimeSpan.FromMinutes(3), check);
 
     public static async Task AssertWorkflowsExistAsync(ScenarioContext context, string environmentId, IEnumerable<string> workflowIds, string owner)
     {
@@ -294,29 +373,37 @@ public static class CopySteps
     {
         var workflows = OwnedIdentities(copy, CopyIdentityKinds.Workflow);
 
-        context.Assert.False((await context.Cloud.AgentsAsync(copy.EnvironmentId, context.CancellationToken).ConfigureAwait(false)).Any(agent => string.Equals(agent.SchemaName, copy.SchemaName, StringComparison.OrdinalIgnoreCase)), $"{check}: no agent carries the copy's schema name {copy.SchemaName}");
+        if (!IsWorkflow(copy))
+        {
+            context.Assert.False((await context.Cloud.AgentsAsync(copy.EnvironmentId, context.CancellationToken).ConfigureAwait(false)).Any(agent => string.Equals(agent.SchemaName, copy.SchemaName, StringComparison.OrdinalIgnoreCase)), $"{check}: no agent carries the copy's schema name {copy.SchemaName}");
+        }
+
         context.Assert.NoDifferences([.. (await context.Cloud.WorkflowsAsync(copy.EnvironmentId, context.CancellationToken).ConfigureAwait(false)).Where(workflow => workflows.Contains(workflow.WorkflowId, StringComparer.OrdinalIgnoreCase)).Select(workflow => $"{workflow.WorkflowId} ({workflow.DisplayName}) exists")], $"{check}: no workflow of the copy exists");
     }
 
     public static async Task<string> AssertIsolatedAsync(ScenarioContext context, ManagedAgentCopyResult copy, ManagedAgentDeployResult deployed)
     {
-        var clone = await CloneAsync(context, CloudAgentId(deployed), copy.EnvironmentId, "isolation").ConfigureAwait(false);
+        var clone = IsWorkflow(copy) ? await CloneWorkflowAsync(context, CloudWorkflowId(deployed), "workflow-isolation").ConfigureAwait(false) : await CloneAsync(context, CloudAgentId(deployed), copy.EnvironmentId, "isolation").ConfigureAwait(false);
 
-        context.Assert.NoDifferences(IdentityMentions(clone, copy.Identities.Select(identity => identity.Source)), $"the deployed {copy.DisplayName} names none of its source's identities");
+        context.Assert.NoDifferences(SourceIdentityMentions(clone, copy), $"the deployed {copy.DisplayName} names none of its source's identities");
 
         return clone;
     }
 
     public static IReadOnlyList<string> OwnedIdentities(ManagedAgentCopyResult copy, string kind) => [.. copy.Identities.Where(identity => identity.Kind == kind).Select(identity => identity.Destination)];
 
-    public static IReadOnlyList<string> SourceSchemaMentions(ManagedAgentCopyResult copy) => IdentityMentions(copy.WorkspaceDirectory, [copy.SourceSchemaName]);
+    public static IReadOnlyList<string> SourceSchemaMentions(ManagedAgentCopyResult copy) => copy.SourceSchemaName is { } sourceSchemaName ? IdentityMentions(copy.WorkspaceDirectory, [sourceSchemaName]) : [];
+
+    public static IReadOnlyList<string> SourceIdentityMentions(string directory, ManagedAgentCopyResult copy) => IdentityMentions(directory, copy.Identities.Select(identity => identity.Source));
 
     public static IReadOnlyList<string> IdentityMentions(string directory, IEnumerable<string> identities) =>
         identities.Distinct(StringComparer.OrdinalIgnoreCase).ToArray() is { Length: > 0 } distinct
             ? [.. FileTree.Matches(directory, new Regex($"(?<![A-Za-z0-9_])(?:{string.Join('|', distinct.OrderByDescending(identity => identity.Length).Select(Regex.Escape))})(?![A-Za-z0-9_])", RegexOptions.IgnoreCase), CloneState).Select(found => $"{Path.GetRelativePath(directory, found.Path)} names {string.Join(", ", found.Values)}")]
             : [];
 
-    public static string DisplayNameOf(string workspaceDirectory) => File.ReadLines(Path.Combine(workspaceDirectory, SettingsFileName)).Select(line => line.Split(':', 2)).First(parts => parts.Length == 2 && parts[0] == "displayName")[1].Trim();
+    public static string DisplayNameOf(string workspaceDirectory) => ScalarOf(Path.Combine(workspaceDirectory, SettingsFileName), "displayName");
+
+    public static string WorkflowMetadataOf(string workspaceDirectory, string key) => ScalarOf(WorkflowSteps.Folder(workspaceDirectory).MetadataPath, key);
 
     private static async Task<Workspace> InitialisedAsync(ScenarioContext context, Workspace source)
     {
@@ -336,6 +423,23 @@ public static class CopySteps
             throw new E2EException($"Safety stop: {subject} is bound to {environmentId}, not the dev environment {context.DevEnvironmentId}, so nothing is copied or deployed from it.");
         }
     }
+
+    private static string SchemaNameOf(ManagedAgentCopyResult copy) => copy.SchemaName ?? throw new E2EException($"{copy.DisplayName} is a {copy.AgentType} copy, which has no schema name.");
+
+    private static async Task AssertOneCloudWorkflowAsync(ScenarioContext context, ManagedAgentCopyResult copy, ManagedAgentDeployResult deployed, string check)
+    {
+        var named = (await context.Cloud.WorkflowsAsync(copy.EnvironmentId, context.CancellationToken).ConfigureAwait(false)).Where(workflow => string.Equals(workflow.DisplayName, copy.DisplayName, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+        context.Assert.True(named is [var only] && string.Equals(only.WorkflowId, CloudWorkflowId(deployed), StringComparison.OrdinalIgnoreCase), $"{check} ({named.Length} flows carry the name)");
+    }
+
+    private static Task<string> CloneSeedAsync(ScenarioContext context, CloudSeed seed, string label) => seed is WorkflowSeed ? CloneWorkflowAsync(context, seed.CloudId, label) : CloneAsync(context, seed.CloudId, seed.EnvironmentId, label);
+
+    private static async Task<string> CloneWorkflowAsync(ScenarioContext context, string workflowId, string label) => (await WorkflowSteps.CloneAsync(context, workflowId, Unique(label)).ConfigureAwait(false)).ProjectDirectory;
+
+    private static string Unique(string label) => $"{label}-{Guid.NewGuid().ToString()[..6]}";
+
+    private static string ScalarOf(string yamlPath, string key) => File.ReadLines(yamlPath).Select(line => line.Split(':', 2)).First(parts => parts.Length == 2 && parts[0] == key)[1].Trim();
 
     private static IReadOnlyList<string> LeftBesideTheLock(string project, string directory) => [.. Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.AllDirectories).Select(entry => Path.GetRelativePath(project, entry)).Where(entry => !ProjectCopyLock.Contains(entry, StringComparer.OrdinalIgnoreCase)).Select(entry => $"{entry} is left behind")];
 }

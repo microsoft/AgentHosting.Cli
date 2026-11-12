@@ -52,6 +52,10 @@ public interface IWorkflowWorkspacePort
     /// <param name="directory">The directory to test.</param>
     bool HasAgentProject(string directory);
 
+    /// <summary>Whether a standalone workflow project owns a top-level folder of this name, as it owns its workflows and infrastructure folders.</summary>
+    /// <param name="folderName">The folder's name, relative to the project root.</param>
+    bool IsProjectFolder(string folderName);
+
     /// <summary>The folder name a project of this display name occupies.</summary>
     /// <param name="displayName">The project's display name.</param>
     /// <returns>A folder name every supported file system accepts.</returns>

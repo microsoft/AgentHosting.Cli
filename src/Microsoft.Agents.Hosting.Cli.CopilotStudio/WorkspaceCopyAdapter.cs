@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.CopilotStudio.Sync.Copy;
 using Microsoft.CopilotStudio.Sync.Dataverse;
@@ -60,9 +61,11 @@ public sealed class WorkspaceCopyAdapter : ICopilotCopyPort
     private static CopyPreparationRequest ToRequest(CopilotCopyPrepareCommand command, ICopyDataverseClient? targetEnvironment) => new()
     {
         WorkspacePath = command.WorkspaceDirectory,
+        WorkspaceKind = command.AgentType == AgentTypes.McsWorkflow ? CopyWorkspaceKinds.Workflow : CopyWorkspaceKinds.Agent,
         SourceSchemaName = command.SourceSchemaName,
+        SourceWorkflowId = command.SourceWorkflowId,
         DisplayName = command.DisplayName,
-        SchemaName = command.SchemaName,
+        SchemaName = command.SchemaName ?? string.Empty,
         SourceDefinitionPath = command.SourceDefinitionPath,
         CapturedInTargetEnvironment = command.CapturedInTargetEnvironment,
         TargetEnvironment = targetEnvironment,

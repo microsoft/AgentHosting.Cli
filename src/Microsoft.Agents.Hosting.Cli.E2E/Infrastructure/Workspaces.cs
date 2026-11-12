@@ -65,9 +65,10 @@ public sealed class Workspaces
         Copy(scenarioId, label, _config.Mcs.Workspaces.ClassicAgent, ClassicFixture);
 
     /// <summary>Copies the standalone workflow fixture, giving the copy a workflow identity of its own.</summary>
-    public Workspace Workflow(string scenarioId, string? label = null)
+    public Workspace Workflow(string scenarioId, string? label = null, string? parentDirectory = null)
     {
-        var destination = Path.Combine(_workspaceRoot, Name(scenarioId, label), WorkflowFixture);
+        var root = parentDirectory ?? Path.Combine(_workspaceRoot, Name(scenarioId, label));
+        var destination = Path.Combine(root, WorkflowFixture);
         var displayName = $"ahe2e-{scenarioId}-{_runSuffix}";
         var workflowId = Guid.NewGuid();
 
@@ -76,7 +77,7 @@ public sealed class Workspaces
         return new Workspace
         {
             ScenarioId = scenarioId,
-            Root = Path.Combine(_workspaceRoot, Name(scenarioId, label)),
+            Root = root,
             ProjectDirectory = destination,
             AgentName = displayName,
             SchemaName = string.Empty,

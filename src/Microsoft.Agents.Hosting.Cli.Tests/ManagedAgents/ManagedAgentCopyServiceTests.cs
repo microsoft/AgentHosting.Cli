@@ -22,7 +22,13 @@ public sealed class ManagedAgentCopyServiceTests
 
     private const string SourceSettings = "displayName: \"Source Agent\"\nschemaName: \"con_source\"\n";
 
-    private static ManagedAgentCopyService Create(JsonAgentConfigStore store, FakeCopyPort copies, FakeCopilotWorkspacePort? workspaces = null, FakeCopilotCatalogPort? catalog = null, IManagedAgentRegistry? agents = null, CopilotEnvironmentResolver? resolver = null)
+    private const string SourceWorkflowId = "a1a1a1a1-1111-2222-3333-444444444444";
+
+    private const string SourceWorkflowRecordId = "b2b2b2b2-1111-2222-3333-444444444444";
+
+    private const string SourceWorkflowDefinition = "{\"properties\":{\"definition\":{\"actions\":{}}}}";
+
+    private static ManagedAgentCopyService Create(JsonAgentConfigStore store, FakeCopyPort copies, FakeCopilotWorkspacePort? workspaces = null, FakeCopilotCatalogPort? catalog = null, IManagedAgentRegistry? agents = null, CopilotEnvironmentResolver? resolver = null, FakeWorkflowStorePort? workflows = null)
     {
         var resolvedWorkspaces = workspaces ?? new FakeCopilotWorkspacePort { WorkspaceExists = false };
 
@@ -39,7 +45,10 @@ public sealed class ManagedAgentCopyServiceTests
             ManagedAgentFixtures.AgentNames(),
             copies,
             ManagedAgentFixtures.Principals(),
-            resolvedWorkspaces);
+            resolvedWorkspaces,
+            workflows ?? new FakeWorkflowStorePort(),
+            new FakeWorkflowWorkspacePort(),
+            new FakeWorkflowScaffoldPort());
     }
 
     private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store, string SourceWorkspace) LocalSource(string environmentId = "env-1")
@@ -75,6 +84,78 @@ public sealed class ManagedAgentCopyServiceTests
 
     private static ManagedAgentCopyRequest CloudRequest() => new() { CloneAgentId = SourceAgentId, Name = "Copy Agent" };
 
+    private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store, string SourceWorkspace) LocalWorkflowSource()
+    {
+        var workspace = new TemporaryWorkspace(withProjectFile: false);
+        var store = ManagedAgentFixtures.Store();
+        var sourceWorkspace = Path.Combine(workspace.Root, "Source Flow");
+
+        WorkflowFixtures.Write(sourceWorkspace, "Source Flow", workflowId: Guid.Parse(SourceWorkflowId), definition: SourceWorkflowDefinition);
+        workspace.AddFile(Path.Combine("Source Flow", ".git", "HEAD"), "ref: refs/heads/main\n");
+        workspace.AddFile(Path.Combine("Source Flow", ".config", "settings.json"), "{}");
+        workspace.AddFile(Path.Combine("Source Flow", ".mcs", "botdefinition.json"), "{}");
+        store.Add(workspace.Root, WorkflowFixtures.Record(SourceWorkflowRecordId, "Source Flow", "env-1", SourceWorkflowId, "Source Flow"));
+
+        return (workspace, store, sourceWorkspace);
+    }
+
+    private static ManagedAgentCopyRequest LocalWorkflowRequest() => new() { Name = "Copy Flow" };
+
+    private static ManagedAgentCopyRequest CloudWorkflowRequest() => new() { CloneWorkflowId = SourceWorkflowId, Name = "Copy Flow" };
+
+    private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store, string Project) SourceThatFillsItsProject(string agentType)
+    {
+        var workspace = new TemporaryWorkspace(withProjectFile: false);
+        var store = ManagedAgentFixtures.Store();
+        var project = Path.Combine(workspace.Root, "projects", "source-project");
+
+        if (agentType == AgentTypes.McsWorkflow)
+        {
+            WorkflowFixtures.Write(project, "Source Flow", workflowId: Guid.Parse(SourceWorkflowId), definition: SourceWorkflowDefinition);
+            store.Add(project, WorkflowFixtures.Record(SourceWorkflowRecordId, "Source Flow", "env-1", SourceWorkflowId));
+        }
+        else
+        {
+            workspace.AddFile(Path.Combine("projects", "source-project", AgentConfigLocator.ProjectSettingsFileName), SourceSettings);
+            store.Add(project, ManagedAgentFixtures.Agent("agent-src", "Source Agent"));
+        }
+
+        return (workspace, store, project);
+    }
+
+    private static string? ThroughALinkToItsParent(string directory)
+    {
+        var parent = Path.GetFullPath(Path.Combine(directory, ".."));
+
+        return DirectoryLink($"{parent}-link", parent) is { } link ? Path.Combine(link, Path.GetFileName(directory)) : null;
+    }
+
+    private static string? DirectoryLink(string link, string target)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(link, target);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return null;
+        }
+
+        return link;
+    }
+
+    private static FakeWorkflowStorePort CloudWorkflows(params string[] downloadWarnings)
+    {
+        var workflows = new FakeWorkflowStorePort { WritesCloudCacheOnDownload = true, WarningsOnDownload = downloadWarnings };
+        workflows.Cloud[Guid.Parse(SourceWorkflowId)] = new WorkflowDocument { WorkflowId = Guid.Parse(SourceWorkflowId), Name = "Source Flow", Description = "Approves expenses", State = WorkflowStateProjection.Activated };
+        workflows.CloudDefinition[Guid.Parse(SourceWorkflowId)] = SourceWorkflowDefinition;
+
+        return workflows;
+    }
+
+    private static IReadOnlyList<string> CopyStateFolders(string projectDirectory) =>
+        [.. Directory.EnumerateDirectories(CopyProjectState.Root(projectDirectory)).SelectMany(Directory.EnumerateFileSystemEntries).Select(entry => Path.GetFileName(entry)).Order(StringComparer.Ordinal)];
+
     private static FakeCopilotCatalogPort CloudCatalog(params CopilotAgentSummary[] others)
     {
         var catalog = new FakeCopilotCatalogPort();
@@ -103,18 +184,37 @@ public sealed class ManagedAgentCopyServiceTests
     private static string Snapshot(string directory) =>
         string.Join("\n", Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).Select(file => $"{Path.GetRelativePath(directory, file)}={File.ReadAllText(file)}"));
 
-    private static void AssertNothingLeftBehind(string projectDirectory, JsonAgentConfigStore store, int registeredAgents = 1)
+    private static void AssertNothingLeftBehind(string projectDirectory, JsonAgentConfigStore store, int registeredAgents = 1, string copyFolder = "Copy Agent")
     {
-        Assert.False(Directory.Exists(Path.Combine(projectDirectory, "Copy Agent")));
+        Assert.False(Directory.Exists(Path.Combine(projectDirectory, copyFolder)));
         Assert.False(Directory.Exists(CopyProjectState.Root(projectDirectory)));
         Assert.Equal(registeredAgents, store.Read(projectDirectory).ManagedAgents.Count);
     }
 
-    private static void AssertOnlyTheProjectLockIsLeft(string projectDirectory, JsonAgentConfigStore store)
+    private static void AssertOnlyTheProjectLockIsLeft(string projectDirectory, JsonAgentConfigStore store, int registeredAgents = 1, string copyFolder = "Copy Agent")
     {
-        Assert.False(Directory.Exists(Path.Combine(projectDirectory, "Copy Agent")));
+        Assert.False(Directory.Exists(Path.Combine(projectDirectory, copyFolder)));
         Assert.Equal([CopyProjectState.IgnoreFileName, CopyProjectState.LockFileName], Entries(CopyProjectState.Root(projectDirectory)));
-        Assert.Single(store.Read(projectDirectory).ManagedAgents);
+        Assert.Equal(registeredAgents, store.Read(projectDirectory).ManagedAgents.Count);
+    }
+
+    private static async Task AssertCopyIsRefusedForOverlappingTheSourceAsync(JsonAgentConfigStore store, string projectDirectory, string sourceWorkspace, string newName, string copyFolder)
+    {
+        using var scope = new CurrentDirectoryScope(projectDirectory);
+        var copies = new FakeCopyPort();
+        var sourceFiles = Snapshot(sourceWorkspace);
+        var sourceRecord = Assert.Single(store.Read(projectDirectory).ManagedAgents);
+        var projectEntries = Entries(projectDirectory);
+
+        Assert.Equal(
+            $"The copy's workspace {Path.Combine(projectDirectory, copyFolder)} would overlap the source's workspace {sourceWorkspace}. Choose another --agent-name.",
+            (await Assert.ThrowsAsync<UsageException>(() => Create(store, copies).CopyAsync(new ManagedAgentCopyRequest { Name = newName, Project = projectDirectory }, CancellationToken.None))).Message);
+        Assert.Empty(copies.Prepared);
+        Assert.Empty(copies.Proposals);
+        Assert.False(Directory.Exists(CopyProjectState.Root(projectDirectory)));
+        Assert.Equal(sourceFiles, Snapshot(sourceWorkspace));
+        Assert.Equal(sourceRecord, Assert.Single(store.Read(projectDirectory).ManagedAgents));
+        Assert.Equal(projectEntries, Entries(projectDirectory));
     }
 
     private static IReadOnlyList<string> CopyStateOnceTheProjectLockIsFree(string projectDirectory)
@@ -160,6 +260,26 @@ public sealed class ManagedAgentCopyServiceTests
         Assert.True(File.Exists(Path.Combine(copyWorkspace, "topics", "Greeting.mcs.yml")));
         Assert.False(Directory.Exists(Path.Combine(copyWorkspace, ".git")));
         Assert.False(Directory.Exists(Path.Combine(copyWorkspace, ".mcs")));
+    }
+
+    [Theory]
+    [InlineData(AgentTypes.McsAgent)]
+    [InlineData(AgentTypes.McsWorkflow)]
+    public async Task Copy_OfALocalSourceWithACloudCacheInANestedFolder_CopiesThatFolderWithoutTheCloudCache(string agentType)
+    {
+        var (workspace, store, sourceWorkspace) = agentType == AgentTypes.McsWorkflow ? LocalWorkflowSource() : LocalSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var nestedFolder = Path.Combine(Path.GetFileName(sourceWorkspace), "Assistant");
+        workspace.AddFile(Path.Combine(nestedFolder, ".mcs", "conn.json"), "{}");
+        workspace.AddFile(Path.Combine(nestedFolder, ".git", "HEAD"), "ref: refs/heads/main\n");
+        workspace.AddFile(Path.Combine(nestedFolder, "notes.md"), "# Notes\n");
+        var sourceFiles = Snapshot(sourceWorkspace);
+
+        var result = await Create(store, new FakeCopyPort()).CopyAsync(LocalRequest(), CancellationToken.None);
+
+        Assert.Equal([".git", Path.Combine(".git", "HEAD"), "notes.md"], Entries(Path.Combine(result.WorkspaceDirectory, "Assistant")));
+        Assert.Equal(sourceFiles, Snapshot(sourceWorkspace));
     }
 
     [Fact]
@@ -745,6 +865,125 @@ public sealed class ManagedAgentCopyServiceTests
         Assert.Single(store.Read(sourceProject).ManagedAgents);
     }
 
+    [Theory]
+    [InlineData(AgentTypes.McsAgent, "Source Agent.", "Source Agent")]
+    [InlineData(AgentTypes.McsWorkflow, "source flow", "source flow")]
+    public async Task Copy_UnderANameWhoseFolderIsTheSourcesOwn_IsRefusedBeforeAnythingIsWritten(string agentType, string newName, string copyFolder)
+    {
+        var (workspace, store, sourceWorkspace) = agentType == AgentTypes.McsWorkflow ? LocalWorkflowSource() : LocalSource();
+        using var disposable = workspace;
+
+        await AssertCopyIsRefusedForOverlappingTheSourceAsync(store, workspace.Root, sourceWorkspace, newName, copyFolder);
+    }
+
+    [Theory]
+    [InlineData(AgentTypes.McsAgent, false)]
+    [InlineData(AgentTypes.McsWorkflow, false)]
+    [InlineData(AgentTypes.McsAgent, true)]
+    [InlineData(AgentTypes.McsWorkflow, true)]
+    public async Task Copy_UnderTheFolderNameOfTheProjectItsSourceFills_IsRefusedBeforeAnythingIsWritten(string agentType, bool reachedThroughALink)
+    {
+        var (workspace, store, project) = SourceThatFillsItsProject(agentType);
+        using var disposable = workspace;
+
+        if ((reachedThroughALink ? ThroughALinkToItsParent(project) : project) is not { } projectDirectory)
+        {
+            return;
+        }
+
+        await AssertCopyIsRefusedForOverlappingTheSourceAsync(store, projectDirectory, project, "source-project", "source-project");
+    }
+
+    [Theory]
+    [InlineData(AgentTypes.McsAgent)]
+    [InlineData(AgentTypes.McsWorkflow)]
+    public async Task Copy_OfASourceThatFillsAProjectReachedThroughALink_LandsInTheSiblingProject(string agentType)
+    {
+        var (workspace, store, project) = SourceThatFillsItsProject(agentType);
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var sourceFiles = Snapshot(project);
+
+        if (ThroughALinkToItsParent(project) is not { } linkedProject)
+        {
+            return;
+        }
+
+        Assert.Equal(Path.Combine(workspace.Root, "projects-link", "Source Copy", "Source Copy"), (await Create(store, new FakeCopyPort()).CopyAsync(new ManagedAgentCopyRequest { Name = "Source Copy", Project = linkedProject }, CancellationToken.None)).WorkspaceDirectory);
+        Assert.True(Directory.Exists(Path.Combine(workspace.Root, "projects", "Source Copy", "Source Copy")));
+        Assert.Equal(sourceFiles, Snapshot(project));
+    }
+
+    [Theory]
+    [InlineData("Other Agent", AgentTypes.McsAgent, "Other Agent")]
+    [InlineData("workflows", AgentTypes.McsWorkflow, "Source Flow")]
+    public async Task Copy_WithAProjectFolderReachedThroughALink_CopiesTheAgentOrWorkflowWhoseFolderHoldsIt(string folder, string sourceType, string sourceName)
+    {
+        var (workspace, store, project) = ProjectWithTwoAgents();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        WorkflowFixtures.Write(project, "Source Flow", workflowId: Guid.Parse(SourceWorkflowId));
+        store.Add(project, WorkflowFixtures.Record(SourceWorkflowRecordId, "Source Flow", "env-1", SourceWorkflowId));
+
+        if (ThroughALinkToItsParent(Path.Combine(project, folder)) is not { } linkedFolder)
+        {
+            return;
+        }
+
+        var result = await Create(store, new FakeCopyPort()).CopyAsync(LocalRequest() with { Project = linkedFolder }, CancellationToken.None);
+
+        Assert.Equal(sourceType, result.AgentType);
+        Assert.Equal(sourceName, result.SourceDisplayName);
+    }
+
+    [Fact]
+    public async Task Copy_FromAnAgentFolderLinkedIntoAWorkflowsFolder_CopiesTheAgent()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        WorkflowFixtures.Write(Path.Combine(workspace.Root, "LongWorkflow"), "Source Flow", workflowId: Guid.Parse(SourceWorkflowId));
+        workspace.AddFile(Path.Combine("LongWorkflow", "Agent", AgentConfigLocator.ProjectSettingsFileName), SourceSettings);
+        store.Add(workspace.Root, WorkflowFixtures.Record(SourceWorkflowRecordId, "Source Flow", "env-1", SourceWorkflowId, "LongWorkflow"));
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent("agent-src", "Source Agent") with { AgentLocation = "a", McsAgentId = SourceAgentId });
+
+        if (DirectoryLink(Path.Combine(workspace.Root, "a"), Path.Combine(workspace.Root, "LongWorkflow", "Agent")) is not { } agentFolder)
+        {
+            return;
+        }
+
+        var result = await Create(store, new FakeCopyPort()).CopyAsync(LocalRequest() with { Project = agentFolder }, CancellationToken.None);
+
+        Assert.Equal(AgentTypes.McsAgent, result.AgentType);
+        Assert.Equal("Source Agent", result.SourceDisplayName);
+    }
+
+    [Fact]
+    public async Task Copy_UnderANameWhoseFolderHoldsTheSourceWorkflow_IsRefusedBeforeAnythingIsWritten()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        var store = ManagedAgentFixtures.Store();
+        var sourceWorkspace = Path.Combine(workspace.Root, "Flows", "Source Flow");
+        WorkflowFixtures.Write(sourceWorkspace, "Source Flow", workflowId: Guid.Parse(SourceWorkflowId), definition: SourceWorkflowDefinition);
+        store.Add(workspace.Root, WorkflowFixtures.Record(SourceWorkflowRecordId, "Source Flow", "env-1", SourceWorkflowId, "Flows/Source Flow"));
+
+        await AssertCopyIsRefusedForOverlappingTheSourceAsync(store, workspace.Root, sourceWorkspace, "Flows", "Flows");
+    }
+
+    [Theory]
+    [InlineData(AgentTypes.McsAgent, "Source Agent 2")]
+    [InlineData(AgentTypes.McsAgent, "Source")]
+    [InlineData(AgentTypes.McsWorkflow, "Source Flow 2")]
+    [InlineData(AgentTypes.McsWorkflow, "Source")]
+    public async Task Copy_UnderANameWhoseFolderOnlySharesAPrefixWithTheSourcesOwn_CopiesBesideTheSource(string agentType, string newName)
+    {
+        var (workspace, store, _) = agentType == AgentTypes.McsWorkflow ? LocalWorkflowSource() : LocalSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+
+        Assert.Equal(Path.Combine(workspace.Root, newName), (await Create(store, new FakeCopyPort()).CopyAsync(new ManagedAgentCopyRequest { Name = newName }, CancellationToken.None)).WorkspaceDirectory);
+    }
+
     [Fact]
     public async Task Copy_FromInsideAnAgentsFolder_CopiesThatAgentIntoItsProject()
     {
@@ -808,18 +1047,157 @@ public sealed class ManagedAgentCopyServiceTests
     }
 
     [Fact]
-    public async Task Copy_FromAProjectHoldingNoAgent_IsRefused()
+    public async Task Copy_FromAProjectHoldingOnlyAWorkflow_CopiesTheWorkflow()
+    {
+        var (workspace, store, _) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var copies = new FakeCopyPort();
+
+        var result = await Create(store, copies).CopyAsync(LocalWorkflowRequest(), CancellationToken.None);
+
+        Assert.Equal(Guid.Parse(SourceWorkflowId), Assert.Single(copies.Prepared).SourceWorkflowId);
+        Assert.Equal(AgentTypes.McsWorkflow, result.AgentType);
+        Assert.Equal(Path.Combine(workspace.Root, "Copy Flow"), result.WorkspaceDirectory);
+    }
+
+    [Fact]
+    public async Task Copy_FromAProjectHoldingSeveralWorkflowsAndNoAgent_AsksForTheWorkflowsFolder()
+    {
+        var (workspace, store, sourceWorkspace) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var otherWorkspace = Path.Combine(workspace.Root, "Other Flow");
+        store.Add(workspace.Root, WorkflowFixtures.Record("wf-other", "Other Flow", "env-1", WorkflowFixtures.Write(otherWorkspace, "Other Flow").ToString(), "Other Flow"));
+        var copies = new FakeCopyPort();
+        var before = Entries(workspace.Root);
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, copies).CopyAsync(LocalWorkflowRequest(), CancellationToken.None));
+
+        Assert.Equal("agent-ambiguous", failure.ErrorKind);
+        Assert.Equal($"The project {workspace.Root} holds several agents: Source Flow ({sourceWorkspace}), Other Flow ({otherWorkspace}).", failure.Message);
+        Assert.Empty(copies.Prepared);
+        Assert.Equal(before, Entries(workspace.Root));
+    }
+
+    [Fact]
+    public async Task Copy_FromAProjectHoldingNoRecord_IsRefused()
     {
         using var workspace = new TemporaryWorkspace(withProjectFile: false);
         using var scope = new CurrentDirectoryScope(workspace.Root);
         var store = ManagedAgentFixtures.Store();
-        store.Add(workspace.Root, ManagedAgentFixtures.Agent("wf-1", "Flow") with { AgentType = AgentTypes.McsWorkflow, AgentLocation = "Flow" });
+        var removed = store.Add(workspace.Root, WorkflowFixtures.Record("wf-gone", "Gone Flow", "env-1", SourceWorkflowId, "Gone Flow"));
+        store.RemoveWithDeployments(workspace.Root, removed.AgentId, removed.EntityTag);
         var copies = new FakeCopyPort();
 
-        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, copies).CopyAsync(LocalRequest(), CancellationToken.None));
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, copies).CopyAsync(LocalWorkflowRequest(), CancellationToken.None));
 
         Assert.Equal("agent-not-found", failure.ErrorKind);
         Assert.Empty(copies.Prepared);
+        AssertNothingLeftBehind(workspace.Root, store, registeredAgents: 0, copyFolder: "Copy Flow");
+    }
+
+    [Fact]
+    public async Task Copy_FromAProjectWhoseOnlyWorkflowsFolderIsGone_IsWorkspaceMissing()
+    {
+        var (workspace, store, sourceWorkspace) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        Directory.Delete(sourceWorkspace, recursive: true);
+        var workflows = new FakeWorkflowStorePort();
+        var copies = new FakeCopyPort();
+        var before = Entries(workspace.Root);
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, copies, workflows: workflows).CopyAsync(LocalWorkflowRequest(), CancellationToken.None));
+
+        Assert.Equal("workspace-missing", failure.ErrorKind);
+        Assert.Equal($"Agent '{SourceWorkflowRecordId}' records its workspace at 'Source Flow', which holds no Copilot Studio project under {workspace.Root}.", failure.Message);
+        Assert.Empty(workflows.Calls);
+        Assert.Empty(copies.Prepared);
+        Assert.Equal(before, Entries(workspace.Root));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Copy_WithAProjectNamingAWorkflowsFolderInAProjectWithAnAgent_CopiesTheWorkflow(bool namedByTheProjectOption)
+    {
+        var (workspace, store, _) = LocalSource();
+        using var disposable = workspace;
+        var flowWorkspace = Path.Combine(workspace.Root, "Source Flow");
+        var workflowId = WorkflowFixtures.Write(flowWorkspace, "Source Flow");
+        store.Add(workspace.Root, WorkflowFixtures.Record(SourceWorkflowRecordId, "Source Flow", "env-1", workflowId.ToString(), "Source Flow"));
+        using var scope = new CurrentDirectoryScope(namedByTheProjectOption ? workspace.Root : Path.Combine(flowWorkspace, "workflows"));
+        var copies = new FakeCopyPort();
+
+        var result = await Create(store, copies).CopyAsync(LocalWorkflowRequest() with { Project = namedByTheProjectOption ? flowWorkspace : null }, CancellationToken.None);
+
+        Assert.Equal(workflowId, Assert.Single(copies.Prepared).SourceWorkflowId);
+        Assert.Equal(AgentTypes.McsWorkflow, result.AgentType);
+        Assert.Equal(workspace.Root, result.ProjectDirectory);
+    }
+
+    [Fact]
+    public async Task Copy_FromTheRootOfAProjectAWorkflowFills_CopiesTheWorkflowAndNotTheAgentInASubfolder()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        var project = Path.Combine(workspace.Root, "project");
+        var store = ManagedAgentFixtures.Store();
+        var workflowId = WorkflowFixtures.Write(project, "Source Flow");
+        workspace.AddFile(Path.Combine("project", "Source Agent", AgentConfigLocator.ProjectSettingsFileName), SourceSettings);
+        workspace.AddFile(Path.Combine("project", "Source Agent", ".mcs", "conn.json"), "{}");
+        store.Add(project, WorkflowFixtures.Record(SourceWorkflowRecordId, "Source Flow", "env-1", workflowId.ToString()));
+        store.Add(project, ManagedAgentFixtures.Agent("agent-src", "Source Agent") with { AgentLocation = "Source Agent" });
+        using var scope = new CurrentDirectoryScope(project);
+        var copies = new FakeCopyPort();
+
+        var result = await Create(store, copies).CopyAsync(LocalWorkflowRequest(), CancellationToken.None);
+
+        var staged = Assert.Single(copies.StagedEntries);
+        Assert.Equal(workflowId, Assert.Single(copies.Prepared).SourceWorkflowId);
+        Assert.Equal(AgentTypes.McsWorkflow, result.AgentType);
+        Assert.Equal(Path.Combine(workspace.Root, "Copy Flow"), result.ProjectDirectory);
+        Assert.Equal(2, store.Read(project).ManagedAgents.Count);
+        Assert.DoesNotContain(staged, entry => entry.Split(Path.DirectorySeparatorChar).Contains("Source Agent", StringComparer.Ordinal));
+        Assert.DoesNotContain(staged, entry => entry.Split(Path.DirectorySeparatorChar).Contains(".mcs", StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task Copy_OfAWorkflowAtTheRootOfAProject_StagesOnlyTheRootFilesAndTheWorkflowProjectFolders()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        var project = Path.Combine(workspace.Root, "project");
+        var store = ManagedAgentFixtures.Store();
+        var workflowId = WorkflowFixtures.Write(project, "Source Flow");
+        workspace.AddFile(Path.Combine("project", "workflow.sync.yaml"), "workflowProjectVersion: 1\n");
+        workspace.AddFile(Path.Combine("project", "README.md"), "# Source Flow\n");
+        workspace.AddFile(Path.Combine("project", ".git"), "gitdir: ../.git/modules/project\n");
+        workspace.AddFile(Path.Combine("project", "infrastructure", "connections", "new_teams.sync.yaml"), "connectionReferenceLogicalName: new_teams\n");
+        workspace.AddFile(Path.Combine("project", ".mcs", "botdefinition.json"), "{}");
+        workspace.AddFile(Path.Combine("project", "Source Agent", AgentConfigLocator.ProjectSettingsFileName), SourceSettings);
+        workspace.AddFile(Path.Combine("project", "Source Agent", ".mcs", "conn.json"), "{}");
+        workspace.AddFile(Path.Combine("project", "notes", "plan.txt"), "Unrelated to the workflow.\n");
+        store.Add(project, WorkflowFixtures.Record(SourceWorkflowRecordId, "Source Flow", "env-1", workflowId.ToString()));
+        store.Add(project, ManagedAgentFixtures.Agent("agent-src", "Source Agent") with { AgentLocation = "Source Agent" });
+        using var scope = new CurrentDirectoryScope(project);
+        var copies = new FakeCopyPort();
+
+        await Create(store, copies).CopyAsync(LocalWorkflowRequest(), CancellationToken.None);
+
+        var flowFolder = Path.Combine("workflows", $"SourceFlow-{workflowId}");
+        Assert.Equal(
+            [
+                "README.md",
+                "infrastructure",
+                Path.Combine("infrastructure", "connections"),
+                Path.Combine("infrastructure", "connections", "new_teams.sync.yaml"),
+                "workflow.sync.yaml",
+                "workflows",
+                flowFolder,
+                Path.Combine(flowFolder, "metadata.yml"),
+                Path.Combine(flowFolder, "workflow.json"),
+            ],
+            [.. Assert.Single(copies.StagedEntries).Order(StringComparer.Ordinal)]);
     }
 
     [Fact]
@@ -936,6 +1314,25 @@ public sealed class ManagedAgentCopyServiceTests
     }
 
     [Fact]
+    public async Task Copy_WithAnInvalidSchemaNameOutsideAnyProject_IsRefusedForTheSchemaNameBeforeReadingAnything()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var copies = new FakeCopyPort();
+        var catalog = new FakeCopilotCatalogPort();
+        var workflows = new FakeWorkflowStorePort();
+        var (resolver, client) = ManagedAgentFixtures.TrackedResolver();
+        var before = client.ListCalls;
+
+        Assert.Equal("The schema name 'con copy' contains unsupported characters. Use letters, digits, and the characters _ - . { } !", (await Assert.ThrowsAsync<UsageException>(() => Create(ManagedAgentFixtures.Store(), copies, catalog: catalog, resolver: resolver, workflows: workflows).CopyAsync(LocalRequest() with { SchemaName = "con copy" }, CancellationToken.None))).Message);
+        Assert.Equal(before, client.ListCalls);
+        Assert.Empty(catalog.RequestedMaximumCounts);
+        Assert.Empty(workflows.Calls);
+        Assert.Empty(copies.Prepared);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(workspace.Root));
+    }
+
+    [Fact]
     public async Task Copy_OfACloudAgentGivenAManagedRecordId_PointsAtTheLocalRecord()
     {
         var (workspace, store, sourceWorkspace) = LocalSource();
@@ -1024,6 +1421,394 @@ public sealed class ManagedAgentCopyServiceTests
         var result = await Create(store, copies).CopyAsync(LocalRequest(), CancellationToken.None);
 
         Assert.Equal(["The flow Weather is copied as a draft. (workflows/Weather/metadata.yml)", "The knowledge source Handbook was not checked."], result.Warnings);
+    }
+
+    [Fact]
+    public async Task Copy_OfAnAgent_ReportsTheAgentTypeAndNoWorkflowFields()
+    {
+        var (workspace, store, _) = LocalSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var copies = new FakeCopyPort();
+
+        var result = await Create(store, copies).CopyAsync(LocalRequest(), CancellationToken.None);
+
+        Assert.Equal(AgentTypes.McsAgent, result.AgentType);
+        Assert.Equal(AgentTypes.McsAgent, Assert.Single(copies.Prepared).AgentType);
+        Assert.Null(Assert.Single(copies.Prepared).SourceWorkflowId);
+        Assert.Null(result.McsWorkflowId);
+        Assert.Null(result.WorkflowName);
+        Assert.Null(result.WorkflowFolder);
+        Assert.Null(result.WorkflowState);
+        Assert.Null(result.SourceMcsWorkflowId);
+    }
+
+    [Fact]
+    public async Task Copy_OfALocalWorkflow_PreparesAWorkflowAndRegistersAnMcsWorkflowRecord()
+    {
+        var (workspace, store, _) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var copies = new FakeCopyPort();
+
+        var result = await Create(store, copies).CopyAsync(LocalWorkflowRequest(), CancellationToken.None);
+
+        var prepared = Assert.Single(copies.Prepared);
+        Assert.Equal(AgentTypes.McsWorkflow, prepared.AgentType);
+        Assert.Equal(Guid.Parse(SourceWorkflowId), prepared.SourceWorkflowId);
+        Assert.Null(prepared.SchemaName);
+        Assert.Null(prepared.SourceSchemaName);
+        Assert.Null(prepared.SourceDefinitionPath);
+        Assert.Equal("Copy Flow", prepared.DisplayName);
+        Assert.Equal("env-1", prepared.Environment?.EnvironmentId);
+        Assert.False(prepared.CapturedInTargetEnvironment);
+        Assert.Empty(copies.Proposals);
+        var record = store.Read(workspace.Root).ManagedAgents.Single(agent => agent.AgentId == result.AgentId);
+        Assert.Equal(AgentTypes.McsWorkflow, record.AgentType);
+        Assert.Equal(copies.CopiedWorkflowId.ToString(), record.McsWorkflowId);
+        Assert.Equal("Copy Flow", record.DisplayName);
+        Assert.Equal("Copy Flow", record.AgentLocation);
+        Assert.Null(record.McsSchemaName);
+        Assert.Null(record.McsAgentId);
+        Assert.Equal("env-1", record.EnvironmentId);
+        Assert.Equal(EnvironmentFixtures.ContosoTenant, record.TenantId);
+        Assert.Empty(store.Read(workspace.Root).AgentDeployments);
+    }
+
+    [Fact]
+    public async Task Copy_OfALocalWorkflow_StagesWithoutGitConfigOrCloudCacheAndCopiesNothingAside()
+    {
+        var (workspace, store, _) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        workspace.AddFile(Path.Combine("Source Flow", "prompts", "Summarize", "metadata.yml"), "name: Summarize\n");
+        workspace.AddFile(Path.Combine("Source Flow", "connectors", "Weather", "metadata.yml"), "{}");
+        workspace.AddFile(Path.Combine("Source Flow", "docs", "notes.md"), "# Notes\n");
+        IReadOnlyList<string>? copyState = null;
+        var copies = new FakeCopyPort { OnPrepare = () => copyState = CopyStateFolders(workspace.Root) };
+
+        var result = await Create(store, copies).CopyAsync(LocalWorkflowRequest(), CancellationToken.None);
+
+        var sourceFolder = Path.Combine("workflows", $"SourceFlow-{SourceWorkflowId}");
+        Assert.Equal(
+            [
+                "connectors",
+                Path.Combine("connectors", "Weather"),
+                Path.Combine("connectors", "Weather", "metadata.yml"),
+                "docs",
+                Path.Combine("docs", "notes.md"),
+                "prompts",
+                Path.Combine("prompts", "Summarize"),
+                Path.Combine("prompts", "Summarize", "metadata.yml"),
+                "workflows",
+                sourceFolder,
+                Path.Combine(sourceFolder, "metadata.yml"),
+                Path.Combine(sourceFolder, "workflow.json"),
+            ],
+            [.. Assert.Single(copies.StagedEntries).Order(StringComparer.Ordinal)]);
+        Assert.Equal(["staging"], copyState);
+        Assert.Null(Assert.Single(copies.SourceDefinitions));
+        Assert.False(Directory.Exists(Path.Combine(result.WorkspaceDirectory, ".git")));
+        Assert.False(Directory.Exists(Path.Combine(result.WorkspaceDirectory, ".config")));
+        Assert.False(Directory.Exists(Path.Combine(result.WorkspaceDirectory, ".mcs")));
+        Assert.False(Directory.Exists(CopyProjectState.AgentDirectory(workspace.Root, result.AgentId)));
+    }
+
+    [Fact]
+    public async Task Copy_OfALocalWorkflow_LeavesTheSourceUnchanged()
+    {
+        var (workspace, store, sourceWorkspace) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var before = Snapshot(sourceWorkspace);
+        var sourceRecord = store.Read(workspace.Root).ManagedAgents[0];
+
+        await Create(store, new FakeCopyPort()).CopyAsync(LocalWorkflowRequest(), CancellationToken.None);
+
+        Assert.Equal(before, Snapshot(sourceWorkspace));
+        Assert.Equal(sourceRecord, store.Read(workspace.Root).ManagedAgents.Single(agent => agent.AgentId == SourceWorkflowRecordId));
+    }
+
+    [Fact]
+    public async Task Copy_OfAWorkflow_ReportsTheWorkflowFieldsAndPrintsTheWorkflowSummary()
+    {
+        var (workspace, store, _) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var copies = new FakeCopyPort { PreparedNotices = [new CopilotCopyFinding("workflow-draft", "The copy is created as a draft.")] };
+
+        var result = await Create(store, copies).CopyAsync(LocalWorkflowRequest(), CancellationToken.None);
+
+        var workflowId = copies.CopiedWorkflowId.ToString();
+        Assert.Equal("agent-copied", result.Status);
+        Assert.Equal(AgentTypes.McsWorkflow, result.AgentType);
+        Assert.Equal("Copy Flow", result.DisplayName);
+        Assert.Null(result.SchemaName);
+        Assert.Null(result.SourceSchemaName);
+        Assert.Equal(workflowId, result.McsWorkflowId);
+        Assert.Equal("Copy Flow", result.WorkflowName);
+        Assert.Equal(Path.Combine(workspace.Root, "Copy Flow", "workflows", $"CopyFlow-{workflowId}"), result.WorkflowFolder);
+        Assert.Equal(WorkflowStateProjection.NotDeployed, result.WorkflowState);
+        Assert.Equal(CopilotCopySourceKinds.Local, result.Source);
+        Assert.Equal("Source Flow", result.SourceDisplayName);
+        Assert.Equal(SourceWorkflowId, result.SourceMcsWorkflowId);
+        Assert.Null(result.SourceMcsAgentId);
+        Assert.Equal(workspace.Root, result.ProjectDirectory);
+        Assert.Equal(Path.Combine(workspace.Root, "Copy Flow"), result.WorkspaceDirectory);
+        Assert.Equal(["The copy is created as a draft."], result.Warnings);
+        Assert.Equal(["Copied workflow 'Source Flow' (local) into 'Copy Flow'. Nothing was sent to Copilot Studio.", $"  agent id      {result.AgentId}", $"  workflow id   {workflowId}", "  environment   env-1", $"  workspace     {result.WorkspaceDirectory}", "  warning       The copy is created as a draft."], result.ToTextLines());
+    }
+
+    [Fact]
+    public async Task Copy_OfALocalWorkflowWithASchemaName_IsRefusedBeforeAnyCloudRead()
+    {
+        var (workspace, store, _) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var copies = new FakeCopyPort();
+        var workflows = new FakeWorkflowStorePort();
+        var (resolver, client) = ManagedAgentFixtures.TrackedResolver();
+        var before = client.ListCalls;
+
+        Assert.Equal("--schema-name names an agent's schema; a workflow has none. Remove --schema-name.", (await Assert.ThrowsAsync<UsageException>(() => Create(store, copies, resolver: resolver, workflows: workflows).CopyAsync(LocalWorkflowRequest() with { SchemaName = "con_mine" }, CancellationToken.None))).Message);
+        Assert.Equal(before, client.ListCalls);
+        Assert.Empty(workflows.Calls);
+        Assert.Empty(copies.Prepared);
+        AssertNothingLeftBehind(workspace.Root, store, copyFolder: "Copy Flow");
+    }
+
+    [Fact]
+    public async Task Copy_OfALocalWorkflowAskedForAnotherEnvironment_NamesTheWorkflowOption()
+    {
+        var (workspace, store, _) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var copies = new FakeCopyPort();
+
+        Assert.Equal("--environment-id env-2 is not the environment the local source belongs to (env-1). Remove --environment-id, or copy the workflow as it is in that environment with --mcs-clone-workflow-id.", (await Assert.ThrowsAsync<UsageException>(() => Create(store, copies).CopyAsync(LocalWorkflowRequest() with { EnvironmentId = "env-2" }, CancellationToken.None))).Message);
+        Assert.Empty(copies.Prepared);
+        AssertNothingLeftBehind(workspace.Root, store, copyFolder: "Copy Flow");
+    }
+
+    [Fact]
+    public async Task Copy_OfALocalWorkflowRecordWithoutAWorkflowId_IsRefused()
+    {
+        var (workspace, store, _) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        store.Update(workspace.Root, store.Read(workspace.Root).ManagedAgents[0] with { McsWorkflowId = null });
+        var copies = new FakeCopyPort();
+
+        Assert.Equal("workflow-id-missing", (await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, copies).CopyAsync(LocalWorkflowRequest(), CancellationToken.None))).ErrorKind);
+        Assert.Empty(copies.Prepared);
+        AssertNothingLeftBehind(workspace.Root, store, copyFolder: "Copy Flow");
+    }
+
+    [Fact]
+    public async Task Copy_OfAWorkflowWithANameOfAHundredCharacters_RegistersIt()
+    {
+        var (workspace, store, _) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var copies = new FakeCopyPort();
+        var newName = "Copy Flow".PadRight(100, 'x');
+
+        var result = await Create(store, copies).CopyAsync(LocalWorkflowRequest() with { Name = newName }, CancellationToken.None);
+
+        Assert.Equal(newName, result.DisplayName);
+        Assert.Equal(newName, Assert.Single(copies.Prepared).DisplayName);
+        Assert.Equal(newName, store.Read(workspace.Root).ManagedAgents.Single(agent => agent.AgentId == result.AgentId).DisplayName);
+    }
+
+    public static TheoryData<string> NamesTheWorkflowRuleRefuses => new() { "Copy Flow".PadRight(101, 'x'), "Copy\tFlow" };
+
+    [Theory]
+    [MemberData(nameof(NamesTheWorkflowRuleRefuses))]
+    public async Task Copy_OfAWorkflowWithANameTheWorkflowRuleRefuses_IsRefusedBeforeAnyCloudRead(string newName)
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workflows = CloudWorkflows();
+        var (resolver, client) = ManagedAgentFixtures.TrackedResolver();
+        var before = client.ListCalls;
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(ManagedAgentFixtures.Store(), new FakeCopyPort(), resolver: resolver, workflows: workflows).CopyAsync(CloudWorkflowRequest() with { Name = newName }, CancellationToken.None));
+
+        Assert.Equal("workflow-name-invalid", failure.ErrorKind);
+        Assert.Equal(new FakeWorkflowScaffoldPort().ValidateName(newName), failure.Message);
+        Assert.Equal(before, client.ListCalls);
+        Assert.Empty(workflows.Calls);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(workspace.Root));
+    }
+
+    [Fact]
+    public async Task Copy_OfALocalWorkflow_ReadsNothingInTheCloudBeforeStaging()
+    {
+        var (workspace, store, _) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workflows = new FakeWorkflowStorePort();
+        var catalog = new FakeCopilotCatalogPort();
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var (resolver, client) = ManagedAgentFixtures.TrackedResolver();
+        var before = client.ListCalls;
+        var environmentReads = -1;
+
+        await Create(store, new FakeCopyPort { OnPrepare = () => environmentReads = client.ListCalls - before }, workspaces, catalog, resolver: resolver, workflows: workflows).CopyAsync(LocalWorkflowRequest(), CancellationToken.None);
+
+        Assert.Equal(1, environmentReads);
+        Assert.Equal([$"read-local:{SourceWorkflowId}"], workflows.Calls);
+        Assert.Empty(catalog.RequestedMaximumCounts);
+        Assert.Equal(0, catalog.GetAgentCalls);
+        Assert.Equal(0, workspaces.CloneCalls);
+    }
+
+    [Fact]
+    public async Task Copy_OfACloudWorkflow_DownloadsItOnceIntoStagingAndKeepsNoCloudCache()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workflows = CloudWorkflows();
+        IReadOnlyList<string>? copyState = null;
+        var copies = new FakeCopyPort { OnPrepare = () => copyState = CopyStateFolders(workspace.Root) };
+
+        var result = await Create(ManagedAgentFixtures.Store(), copies, workflows: workflows).CopyAsync(CloudWorkflowRequest(), CancellationToken.None);
+
+        var prepared = Assert.Single(copies.Prepared);
+        var staged = Assert.Single(copies.StagedEntries);
+        Assert.Equal([$"download:{SourceWorkflowId}"], workflows.Calls);
+        Assert.StartsWith(CopyProjectState.Root(workspace.Root), prepared.WorkspaceDirectory, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(Path.Combine("workflows", $"SourceFlow-{SourceWorkflowId}", "workflow.json"), staged);
+        Assert.DoesNotContain(staged, entry => entry.StartsWith(".mcs", StringComparison.Ordinal));
+        Assert.Equal(["source", "staging"], copyState);
+        Assert.Null(prepared.SourceDefinitionPath);
+        Assert.False(Directory.Exists(Path.Combine(result.WorkspaceDirectory, ".mcs")));
+        Assert.False(Directory.Exists(Path.Combine(workspace.Root, ".mcs")));
+        Assert.False(Directory.Exists(CopyProjectState.AgentDirectory(workspace.Root, result.AgentId)));
+    }
+
+    [Fact]
+    public async Task Copy_OfACloudWorkflow_RecordsItsProvenanceAndTheDownloadsWarnings()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        var workflows = CloudWorkflows("'Source Flow' also has a draft in env-1 that was saved in the designer but not published, so only the published version was written.");
+        var copies = new FakeCopyPort { PreparedNotices = [new CopilotCopyFinding("workflow-draft", "The copy is created as a draft.")] };
+
+        var result = await Create(store, copies, workflows: workflows).CopyAsync(CloudWorkflowRequest(), CancellationToken.None);
+
+        Assert.Equal(CopilotCopySourceKinds.Cloud, result.Source);
+        Assert.Equal(SourceWorkflowId, result.SourceMcsWorkflowId);
+        Assert.Equal("Source Flow", result.SourceDisplayName);
+        Assert.Null(result.SourceMcsAgentId);
+        Assert.Equal([.. workflows.WarningsOnDownload, "The copy is created as a draft."], result.Warnings);
+        Assert.True(Assert.Single(copies.Prepared).CapturedInTargetEnvironment);
+        var record = Assert.Single(store.Read(workspace.Root).ManagedAgents);
+        Assert.Equal(copies.CopiedWorkflowId.ToString(), record.McsWorkflowId);
+        Assert.Equal("Approves expenses", record.Description);
+    }
+
+    [Theory]
+    [InlineData("not-a-workflow")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public async Task Copy_OfACloudWorkflowWithAnIdThatIsNotAGuid_IsRefusedBeforeReadingAnything(string cloneWorkflowId)
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workflows = CloudWorkflows();
+        var (resolver, client) = ManagedAgentFixtures.TrackedResolver();
+        var before = client.ListCalls;
+
+        Assert.Equal($"--mcs-clone-workflow-id '{cloneWorkflowId}' is not a workflow id.", (await Assert.ThrowsAsync<UsageException>(() => Create(ManagedAgentFixtures.Store(), new FakeCopyPort(), resolver: resolver, workflows: workflows).CopyAsync(CloudWorkflowRequest() with { CloneWorkflowId = cloneWorkflowId }, CancellationToken.None))).Message);
+        Assert.Equal(before, client.ListCalls);
+        Assert.Empty(workflows.Calls);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(workspace.Root));
+    }
+
+    [Fact]
+    public async Task Copy_OfACloudWorkflowGivenAManagedRecordId_PointsAtTheLocalRecord()
+    {
+        var (workspace, store, sourceWorkspace) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workflows = CloudWorkflows();
+
+        Assert.Equal($"--mcs-clone-workflow-id {SourceWorkflowRecordId} is the managed-agent record 'Source Flow' in {workspace.Root}, not a cloud workflow. Copy that record without --mcs-clone-workflow-id, passing its folder {sourceWorkspace} to --project, or pass its cloud workflow id {SourceWorkflowId} to --mcs-clone-workflow-id.", (await Assert.ThrowsAsync<UsageException>(() => Create(store, new FakeCopyPort(), workflows: workflows).CopyAsync(CloudWorkflowRequest() with { CloneWorkflowId = SourceWorkflowRecordId }, CancellationToken.None))).Message);
+        Assert.Empty(workflows.Calls);
+        AssertNothingLeftBehind(workspace.Root, store, copyFolder: "Copy Flow");
+    }
+
+    public static TheoryData<ManagedAgentException> DownloadRefusals => new()
+    {
+        ManagedAgentException.WorkflowSourceNotFound(SourceWorkflowId, "env-1"),
+        ManagedAgentException.WorkflowManaged($"The workflow {SourceWorkflowId} belongs to a managed solution in env-1."),
+    };
+
+    [Theory]
+    [MemberData(nameof(DownloadRefusals))]
+    public async Task Copy_OfACloudWorkflowTheDownloadRefuses_LeavesOnlyTheProjectLock(ManagedAgentException refusal)
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        var workflows = CloudWorkflows();
+        workflows.DownloadThrows = refusal;
+        var copies = new FakeCopyPort();
+
+        Assert.Same(refusal, await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, copies, workflows: workflows).CopyAsync(CloudWorkflowRequest(), CancellationToken.None)));
+
+        Assert.Equal([$"download:{SourceWorkflowId}"], workflows.Calls);
+        Assert.Empty(copies.Prepared);
+        AssertOnlyTheProjectLockIsLeft(workspace.Root, store, registeredAgents: 0, copyFolder: "Copy Flow");
+    }
+
+    [Fact]
+    public async Task Copy_OfACloudWorkflowWithAProject_RegistersTheCopyInThatProject()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        var destination = Path.Combine(workspace.Root, "destination");
+
+        var result = await Create(store, new FakeCopyPort(), workflows: CloudWorkflows()).CopyAsync(CloudWorkflowRequest() with { Project = destination }, CancellationToken.None);
+
+        Assert.Equal(destination, result.ProjectDirectory);
+        Assert.Equal(Path.Combine(destination, "Copy Flow"), result.WorkspaceDirectory);
+        Assert.Equal(AgentTypes.McsWorkflow, Assert.Single(store.Read(destination).ManagedAgents).AgentType);
+        Assert.False(Directory.Exists(Path.Combine(workspace.Root, "Copy Flow")));
+    }
+
+    [Fact]
+    public async Task Copy_OfAWorkflowWhenPreparationIsBlocked_LeavesOnlyTheProjectLockBehind()
+    {
+        var (workspace, store, _) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, new FakeCopyPort { PreparationBlockers = [new CopilotCopyFinding("identity-taken", "The environment already has a workflow named 'Copy Flow' (e5e5e5e5-1111-2222-3333-444444444444). Copy the workflow again under another name.")] }).CopyAsync(LocalWorkflowRequest(), CancellationToken.None));
+
+        Assert.Equal("copy-not-prepared", failure.ErrorKind);
+        Assert.Equal("The copy 'Copy Flow' could not be prepared: The environment already has a workflow named 'Copy Flow' (e5e5e5e5-1111-2222-3333-444444444444). Copy the workflow again under another name.", failure.Message);
+        AssertOnlyTheProjectLockIsLeft(workspace.Root, store, copyFolder: "Copy Flow");
+    }
+
+    [Fact]
+    public async Task Copy_RegistersARecordTheWorkflowCommandsResolve()
+    {
+        var (workspace, store, _) = LocalWorkflowSource();
+        using var disposable = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var copies = new FakeCopyPort();
+
+        var result = await Create(store, copies).CopyAsync(LocalWorkflowRequest(), CancellationToken.None);
+
+        var target = new WorkflowProjectResolver(ManagedAgentFixtures.AgentResolver(store), new AgentConfigLocator(), ManagedAgentFixtures.Resolver(), new FakeWorkflowWorkspacePort()).Resolve(workspace.Root, null, "Copy Flow", "msagent agent deploy");
+
+        Assert.Equal(result.AgentId, target.Agent.AgentId);
+        Assert.Equal(result.WorkspaceDirectory, target.WorkspaceRoot);
+        Assert.Equal(copies.CopiedWorkflowId, target.WorkflowId);
+        Assert.Equal(result.WorkflowFolder, target.Folder?.FolderPath);
     }
 
     private sealed class CountingAgentRegistry(IManagedAgentRegistry inner) : IManagedAgentRegistry

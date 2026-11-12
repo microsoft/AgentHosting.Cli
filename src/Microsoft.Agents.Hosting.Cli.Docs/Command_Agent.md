@@ -9,7 +9,7 @@ The command group is described in help as `Agent Hosting agent operations.`
 | Command | Description |
 | --- | --- |
 | [`msagent agent create`](#msagent-agent-create) | Create an agent project or standalone workflow. Creating a CodeAgent is **Gated**; MCS agents and workflows are available by default. |
-| [`msagent agent copy`](#msagent-agent-copy---mcs-specific) | **MCS-specific.** Create a new agent from an existing one. Prepares local content only; the first deploy creates the new agent. |
+| [`msagent agent copy`](#msagent-agent-copy---mcs-specific) | **MCS-specific.** Create a new agent or standalone workflow from an existing one. Prepares local content only; the first deploy creates the new agent or workflow. |
 | [`msagent agent init`](#msagent-agent-init---mcs-specific) | **MCS-specific.** Register an MCS project or standalone workflow that already exists on disk. |
 | [`msagent agent list`](#msagent-agent-list---mcs-specific) | **MCS-specific.** List MCS agents or standalone workflows in an environment or across the tenant. |
 | [`msagent agent show`](#msagent-agent-show) | Show the managed-agent records held by a project. Reads local configuration only. |
@@ -193,32 +193,43 @@ msagent agent create --agent-name "Support agent" --description "Answers support
 
 ## `msagent agent copy` - MCS-specific
 
-Creates a new agent from an existing MCS agent: a local agent, or the agent as it is in its
-environment (`--mcs-clone-agent-id`). Copying only prepares and registers a new local project. Nothing
-is sent to Copilot Studio and the source is never changed. The copy is an agent of its own from the
-start: work on it like any other agent, and its first deploy creates it in the cloud.
+Creates a new agent or standalone workflow from an existing one: a local agent or workflow, an agent as
+it is in its environment (`--mcs-clone-agent-id`), or a standalone workflow as it is in its environment
+(`--mcs-clone-workflow-id`). Copying only prepares and registers a new local project. Nothing is sent
+to Copilot Studio and the source is never changed. The copy is an agent or workflow of its own from the
+start: work on it like any other, and its first deploy creates it in the cloud.
 
 ```text
-# Copy a local agent project
+# Copy a local agent or workflow project
 msagent agent copy --agent-name <agent-name> [options]
 
 # Copy an agent as it is in its environment
 msagent agent copy --mcs-clone-agent-id <mcs-clone-agent-id> --agent-name <agent-name> [options]
+
+# Copy a standalone workflow as it is in its environment
+msagent agent copy --mcs-clone-workflow-id <mcs-clone-workflow-id> --agent-name <agent-name> [options]
 ```
 
 | Option | Shortcut | Value | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--agent-name` | `-an` | String | Required | The new agent's display name: at most 42 characters, without `<` or `>`. It must differ, ignoring case, from the source's name and from the name of every agent in the environment. |
-| `--mcs-clone-agent-id` | `-mcaid` | String | None | The cloud agent to copy as it is in its environment, instead of a local agent. |
-| `--project` | `-p` | Directory path | Current directory | The local agent to copy: its folder, or a project holding only that agent. With `--mcs-clone-agent-id`, the project to register the new agent in. |
-| `--environment-id` | `-eid` | String | Active environment | The environment holding the `--mcs-clone-agent-id` agent, or the environment to copy a local agent in when it names none. |
-| `--schema-name` | `-sn` | String | Generated from `--agent-name`, short enough for the agent's longest component | The new agent's schema name. |
+| `--agent-name` | `-an` | String | Required | The copy's display name. An agent's name has at most 42 characters, without `<` or `>`, and must differ, ignoring case, from the source's name and from the name of every agent in the environment. A workflow's name follows the [workflow name rule](#copying-a-standalone-workflow). |
+| `--mcs-clone-agent-id` | `-mcaid` | String | None | The cloud agent to copy as it is in its environment, instead of a local agent or workflow. |
+| `--mcs-clone-workflow-id` | `-mcwid` | String | None | The cloud standalone workflow to copy as it is in its environment, by its workflow id, instead of a local agent or workflow. |
+| `--project` | `-p` | Directory path | Current directory | The local agent or workflow to copy: its folder, or a project holding only that agent or workflow. With `--mcs-clone-agent-id` or `--mcs-clone-workflow-id`, the project to register the copy in. |
+| `--environment-id` | `-eid` | String | Active environment | The environment holding the `--mcs-clone-agent-id` agent or the `--mcs-clone-workflow-id` workflow, or the environment to copy a local agent or workflow in when it names none. |
+| `--schema-name` | `-sn` | String | Generated from `--agent-name`, short enough for the agent's longest component | The new agent's schema name, for agents only. A workflow has no schema name, so a workflow copy refuses it. |
 
-A local copy is made from the agent whose folder `--project`, or the current directory, is in.
-Elsewhere in a project it is made from the project's only agent; a project holding several agents
-fails with `agent-ambiguous` until `--project` names the folder of the agent to copy. The copy lands
-beside its source: in the source's project, or in a sibling project when the source fills its own
-project. A copy of a cloud agent is registered in `--project`, or in the current project.
+Name one cloud source at most: `--mcs-clone-agent-id` together with `--mcs-clone-workflow-id` is a usage
+error.
+
+A local copy is made from the agent or workflow whose folder `--project`, or the current directory, is
+in, the deepest one when several folders hold it. Elsewhere in a project it is made from the project's
+only agent, or, when the project holds no agent, from its only standalone workflow. A project holding
+several agents, or no agent and several workflows, fails with `agent-ambiguous` until `--project` names
+the folder of the agent or workflow to copy. A workflow registered at the project root holds every
+location outside the folders of the project's agents. The copy lands beside its source: in the source's
+project, or in a sibling project when the source fills its own project. A copy of a cloud agent or
+workflow is registered in `--project`, or in the current project.
 
 The new agent gets new identities for itself and for everything it owns: topics, tools, knowledge,
 and its other components. It also gets its own copies of the source's workflows, prompts, and custom
@@ -275,6 +286,60 @@ msagent agent copy --mcs-clone-agent-id <mcs-clone-agent-id> --environment-id <e
 msagent deployment create --project <directory> --agent-name "Support agent copy" \
   --deployment-name "Development" --deployment-type dev
 msagent agent deploy --project <directory> --agent-name "Support agent copy" --deployment-name "Development"
+```
+
+### Copying a standalone workflow
+
+A local workflow is copied when the record the location selects is a standalone workflow
+(`MCSWorkflow`). A cloud flow is copied with `--mcs-clone-workflow-id`, which takes its Dataverse
+workflow id: the flow is downloaded once into the copy's staging, and nothing else in the environment
+is read before the copy is prepared.
+
+The workflow name rule: `--agent-name` is the new flow's name and its record's name. It has at most 100
+characters and no control characters, such as tabs or line breaks, and it must differ, ignoring case,
+from the source flow's name and from the name of every unmanaged cloud flow in the environment. A name
+that breaks the length or character rule fails with `workflow-name-invalid` before anything is read. A
+name the source or another flow in the environment already has fails with `copy-not-prepared`, with
+nothing written. A name already registered in the copy's project fails before that, with
+`already-registered`. A name that would make the copy's folder overlap a local source's folder is
+refused before that, as a usage error; that includes the source's own name, ignoring case, when the
+source's folder is named after it.
+
+| Resource | The new workflow |
+| --- | --- |
+| Workflow | Gets a new id and its own folder, and is created as a draft |
+| Connection references | Gets its own, each keeping its name with a fresh trailing suffix, with the copied definition rewritten to use them |
+| Calls to child flows, AI Builder prompts, and custom connectors | Stay as they are, shared with the source |
+
+A local copy holds everything in the workflow's folder except `.git` and `.config` at its top level
+and `.mcs` folders at any depth, so folders a workflow does not deploy, such as prompt or custom
+connector folders, are copied unchanged.
+The copy of a workflow registered at a project root holds only the root's files and its `workflows`
+and `infrastructure` folders, so it carries none of the project's other agents or workflows.
+
+Only a cloud flow can be copied: a source whose metadata names another workflow category or type, or
+names none, fails with `copy-not-prepared`. A source whose metadata writes the flow's name or state in
+a form the copy cannot rewrite, such as a YAML block scalar, fails with `copy-not-prepared` too: write
+those values on one line. Any copied `workflow.json` that holds comments or trailing commas fails with
+`copy-not-prepared` too: a deploy reads it as strict JSON, so remove them. A flow in a managed solution
+fails with `workflow-managed`, and a workflow id the environment does not hold fails with
+`workflow-source-not-found`. The id of a local record passed to `--mcs-clone-workflow-id` is refused,
+and the error names that record's folder.
+
+The copy is an ordinary `MCSWorkflow` record with no deployment yet. It deploys, pulls, and is deleted
+like any workflow, and nothing records its source. A copy never carries the source's `.mcs` cache; the
+copy's first deploy writes its own.
+
+```text
+# Copy the local workflow in a folder
+msagent agent copy --project <workflow-folder> --agent-name "Approve expenses copy"
+
+# Copy a cloud flow as it is in its environment, then deploy and turn on the copy
+msagent agent copy --mcs-clone-workflow-id <workflow-id> --environment-id <environment-id> \
+  --agent-name "Approve expenses copy" --project <directory>
+msagent deployment create --project <directory> --agent-name "Approve expenses copy" \
+  --deployment-name "Development" --deployment-type dev
+msagent agent deploy --project <directory> --agent-name "Approve expenses copy" --deployment-name "Development" --publish
 ```
 
 ## `msagent agent init` - MCS-specific
@@ -517,13 +582,21 @@ icon changes, so the same push can now report a lower number. `auxiliaryChangeCo
 workflows sent that the reported changes do not already include, and `uploadedFileCount` the knowledge
 and attachment files.
 
-### Deploying a copied agent - MCS-specific
+### Deploying a copied agent or workflow - MCS-specific
 
-A copy deploys like any other agent. Its first deploy creates its agent in the deployment's
+A copied agent deploys like any other agent. Its first deploy creates its agent in the deployment's
 environment, together with its own workflows, prompts, custom connectors, and connection references.
 Its workflows were copied as drafts: the deploy warns how many workflows are not running and how many
 connection references are not bound, the way any agent's deploy does; run
 `msagent deployment connection update` to bind them and turn the workflows on.
+
+A copied standalone workflow deploys like any other workflow. Its first deploy creates the flow in the
+deployment's environment as a draft, declares its own connection references unbound, and writes the
+copy's `.mcs` cache from what the environment returns. With `--publish`, the deploy binds each unbound
+reference to a connected connection the signed-in user owns, the first by connection ID when the user
+owns several, and turns the flow on once all its references are bound. A reference no such connection
+fits stays unbound: bind it with `msagent deployment connection update` and deploy again with
+`--publish`.
 
 ## `msagent agent share` - MCS-specific
 

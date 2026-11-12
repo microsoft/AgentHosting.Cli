@@ -1,3 +1,5 @@
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
+
 namespace Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 /// <summary>The kinds of identity a copy maps from its source, matching the sync library's copy identity kinds.</summary>
@@ -57,6 +59,9 @@ public sealed record CopilotCopyPrepareCommand
     /// <summary>The staged copy of the source workspace, rewritten in place.</summary>
     public required string WorkspaceDirectory { get; init; }
 
+    /// <summary>What the staged workspace holds, one of <see cref="Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage.AgentTypes"/>, where <c>MCSWorkflow</c> prepares a standalone workflow and anything else an agent.</summary>
+    public string AgentType { get; init; } = AgentTypes.McsAgent;
+
     /// <summary>The schema name the source is expected to carry, when known.</summary>
     public string? SourceSchemaName { get; init; }
 
@@ -66,8 +71,11 @@ public sealed record CopilotCopyPrepareCommand
     /// <summary>The copy's display name.</summary>
     public required string DisplayName { get; init; }
 
-    /// <summary>The copy's schema name.</summary>
-    public required string SchemaName { get; init; }
+    /// <summary>The copy's schema name, set for an agent and <see langword="null"/> for a workflow.</summary>
+    public string? SchemaName { get; init; }
+
+    /// <summary>The flow the staged workspace must hold, for a workflow.</summary>
+    public Guid? SourceWorkflowId { get; init; }
 
     /// <summary>Whether the source was captured in the environment the copy is prepared for, so its custom connector identifiers already fit there.</summary>
     public bool CapturedInTargetEnvironment { get; init; }

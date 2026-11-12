@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
@@ -76,6 +77,29 @@ public sealed class WorkspaceCopyAdapterTests : IDisposable
         Assert.Equal("Copy Agent", request.DisplayName);
         Assert.Equal("con_copy", request.SchemaName);
         Assert.Equal(definition, request.SourceDefinitionPath);
+    }
+
+    [Theory]
+    [InlineData(AgentTypes.McsAgent, "con_copy", null, CopyWorkspaceKinds.Agent, "con_copy")]
+    [InlineData(AgentTypes.McsWorkflow, null, SourceWorkflowId, CopyWorkspaceKinds.Workflow, "")]
+    public async Task Prepare_MapsTheKindSchemaAndSourceWorkflow(string agentType, string? schemaName, string? sourceWorkflowId, string workspaceKind, string requestedSchemaName)
+    {
+        var client = new RecordingConnectionReferenceClient();
+        var copies = new RecordingCopyService();
+        using var accessor = new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider());
+        var command = CopyCommand() with
+        {
+            AgentType = agentType,
+            SchemaName = schemaName,
+            SourceWorkflowId = sourceWorkflowId is null ? null : Guid.Parse(sourceWorkflowId),
+        };
+
+        await new WorkspaceCopyAdapter(copies, client, client, accessor).PrepareAsync(command, CancellationToken.None);
+
+        var request = Assert.Single(copies.Requests);
+        Assert.Equal(workspaceKind, request.WorkspaceKind);
+        Assert.Equal(requestedSchemaName, request.SchemaName);
+        Assert.Equal(command.SourceWorkflowId, request.SourceWorkflowId);
     }
 
     [Fact]

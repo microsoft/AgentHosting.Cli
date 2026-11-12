@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -11,13 +12,16 @@ public sealed record ManagedAgentCopyRequest
     /// <summary>The cloud agent to copy as it is in its environment, by identifier, instead of a local agent.</summary>
     public string? CloneAgentId { get; init; }
 
-    /// <summary>The environment holding the cloud agent, or the one to copy a local agent in when it names none.</summary>
+    /// <summary>The cloud standalone workflow to copy as it is in its environment, by identifier, instead of a local agent or workflow.</summary>
+    public string? CloneWorkflowId { get; init; }
+
+    /// <summary>The environment holding the cloud agent or workflow, or the one to copy a local source in when it names none.</summary>
     public string? EnvironmentId { get; init; }
 
-    /// <summary>An explicit schema name for the copy, generated from its name when omitted.</summary>
+    /// <summary>An explicit schema name for an agent's copy, generated from its name when omitted.</summary>
     public string? SchemaName { get; init; }
 
-    /// <summary>The local agent to copy, by its folder or project, or for a cloud agent the project the copy is registered in.</summary>
+    /// <summary>The local agent or workflow to copy, by its folder or project, or for a cloud source the project the copy is registered in.</summary>
     public string? Project { get; init; }
 }
 
@@ -36,20 +40,38 @@ public sealed record ManagedAgentCopyResult : ITextGridRenderable
     /// <summary>The copy's display name.</summary>
     public required string DisplayName { get; init; }
 
-    /// <summary>The copy's schema name.</summary>
-    public required string SchemaName { get; init; }
+    /// <summary>The copy's agent type, one of <see cref="Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage.AgentTypes"/>.</summary>
+    public string AgentType { get; init; } = AgentTypes.McsAgent;
+
+    /// <summary>The copy's schema name, or <see langword="null"/> for a workflow copy.</summary>
+    public string? SchemaName { get; init; }
+
+    /// <summary>The copy's Dataverse workflow identifier, for a workflow copy.</summary>
+    public string? McsWorkflowId { get; init; }
+
+    /// <summary>The copy's workflow name, which is its display name, for a workflow copy.</summary>
+    public string? WorkflowName { get; init; }
+
+    /// <summary>The absolute folder holding the copy's workflow files, for a workflow copy.</summary>
+    public string? WorkflowFolder { get; init; }
+
+    /// <summary>The copy's workflow state, for a workflow copy.</summary>
+    public string? WorkflowState { get; init; }
 
     /// <summary>Which version of the source was copied.</summary>
     public required string Source { get; init; }
 
-    /// <summary>The source agent's schema name.</summary>
-    public required string SourceSchemaName { get; init; }
+    /// <summary>The source agent's schema name, or <see langword="null"/> for a workflow copy.</summary>
+    public string? SourceSchemaName { get; init; }
 
-    /// <summary>The source agent's display name.</summary>
+    /// <summary>The source agent's or workflow's display name.</summary>
     public string? SourceDisplayName { get; init; }
 
     /// <summary>The source's cloud agent identifier, when it had one, kept as provenance only.</summary>
     public string? SourceMcsAgentId { get; init; }
+
+    /// <summary>The source workflow's identifier, for a workflow copy, kept as provenance only.</summary>
+    public string? SourceMcsWorkflowId { get; init; }
 
     /// <summary>The environment the copy was prepared for and is registered with.</summary>
     public required string EnvironmentId { get; init; }
@@ -79,19 +101,14 @@ public sealed record ManagedAgentCopyResult : ITextGridRenderable
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
     /// <inheritdoc />
-    public IReadOnlyList<string> ToTextLines()
-    {
-        var lines = new List<string>
-        {
-            $"Copied {SourceSchemaName} ({Source}) into {SchemaName} ({DisplayName}). Nothing was sent to Copilot Studio.",
-            $"  agent id      {AgentId}",
-            $"  environment   {EnvironmentId}",
-            $"  workspace     {WorkspaceDirectory}",
-        };
-
-        lines.AddRange(Warnings.Select(warning => $"  warning       {warning}"));
-
-        return lines;
-    }
+    public IReadOnlyList<string> ToTextLines() =>
+    [
+        AgentType == AgentTypes.McsWorkflow ? $"Copied workflow '{SourceDisplayName}' ({Source}) into '{DisplayName}'. Nothing was sent to Copilot Studio." : $"Copied {SourceSchemaName} ({Source}) into {SchemaName} ({DisplayName}). Nothing was sent to Copilot Studio.",
+        $"  agent id      {AgentId}",
+        .. AgentType == AgentTypes.McsWorkflow ? [$"  workflow id   {McsWorkflowId}"] : Array.Empty<string>(),
+        $"  environment   {EnvironmentId}",
+        $"  workspace     {WorkspaceDirectory}",
+        .. Warnings.Select(warning => $"  warning       {warning}"),
+    ];
 }
 

@@ -19,7 +19,7 @@ internal static class DeclaredConnectionReferences
 {
     private const string DeclarationFileName = "connectionreferences.mcs.yml";
     private const string ConnectionsFolderName = "connections";
-    private const string InfrastructureFolderName = "infrastructure";
+    internal const string InfrastructureFolderName = "infrastructure";
     private const string ConnectionFilePattern = "*.sync.yaml";
 
     /// <summary>Every connection reference the workspace declares, deduplicated by logical name.</summary>

@@ -7,6 +7,8 @@ public sealed class AgentCopyCommandTests
 {
     private const string CloudAgentId = "50505050-1111-2222-3333-444444444444";
 
+    private const string CloudWorkflowId = "a1a1a1a1-1111-2222-3333-444444444444";
+
     private static (int ExitCode, string Stdout, string Stderr, FakeOperations Operations) Run(params string[] args)
     {
         var operations = new FakeOperations();
@@ -67,6 +69,23 @@ public sealed class AgentCopyCommandTests
         Assert.Equal(ExitCodes.Success, exitCode);
         Assert.Empty(stderr);
         Assert.Equal(CloudAgentId, operations.LastManagedAgentCopyRequest!.CloneAgentId);
+    }
+
+    [Theory]
+    [InlineData("--mcs-clone-workflow-id")]
+    [InlineData("-mcwid")]
+    public void Bind_ReadsTheCloudWorkflowId(string option)
+    {
+        var (exitCode, _, stderr, operations) = Run("agent", "copy", option, CloudWorkflowId, "--agent-name", "Flow Copy", "--environment-id", "env-1", "--project", "proj");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var request = operations.LastManagedAgentCopyRequest!;
+        Assert.Equal(CloudWorkflowId, request.CloneWorkflowId);
+        Assert.Null(request.CloneAgentId);
+        Assert.Equal("Flow Copy", request.Name);
+        Assert.Equal("env-1", request.EnvironmentId);
+        Assert.Equal("proj", request.Project);
     }
 
     [Fact]
@@ -157,5 +176,14 @@ public sealed class AgentCopyCommandTests
         Assert.DoesNotContain("--share-resources", stdout, StringComparison.Ordinal);
         Assert.DoesNotContain("--dependencies", stdout, StringComparison.Ordinal);
         Assert.DoesNotContain("--source", stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Help_ListsTheCloudWorkflowRoute()
+    {
+        var (exitCode, stdout, _, _) = Run("agent", "copy", "--help");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Contains("msagent agent copy --mcs-clone-workflow-id <mcs-clone-workflow-id> --agent-name <agent-name> [options]", stdout, StringComparison.Ordinal);
     }
 }
