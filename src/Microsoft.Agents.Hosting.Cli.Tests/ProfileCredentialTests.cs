@@ -775,9 +775,17 @@ public sealed class ProfileCredentialTests
         var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         h.Acquisition.BeforeAcquire = async _ => { entered.SetResult(); await proceed.Task; };
         var creating = h.Provider.AuthenticateAsync(new AuthCreateRequest(), default);
-        await entered.Task;
-        await Assert.ThrowsAnyAsync<AuthenticationException>(() => h.NewProvider().ClearOwnedCredentialsAsync(default));
-        proceed.SetResult();
+        try
+        {
+            var ready = await Task.WhenAny(entered.Task, creating).WaitAsync(TimeSpan.FromSeconds(5));
+            await ready;
+            await Assert.ThrowsAnyAsync<AuthenticationException>(() => h.NewProvider().ClearOwnedCredentialsAsync(default));
+        }
+        finally
+        {
+            proceed.TrySetResult();
+            await creating.WaitAsync(TimeSpan.FromSeconds(5));
+        }
         var stage = await creating;
         h.Profiles.Items.Add(stage);
         await h.Provider.CompleteCreationAsync(stage, default);
