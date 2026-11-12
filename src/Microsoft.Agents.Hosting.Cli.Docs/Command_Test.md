@@ -2,17 +2,13 @@
 
 [Command reference](ReadMe.md)
 
-The `msagent test` group is a controlled preview, gated by `LiveTestFeatures` and off by default.
-Enable it through the [feature controls](../Microsoft.Agents.Hosting.Cli/README.md#feature-controls).
-Enabling a command does not grant access to an agent or approve use of a preview.
-
 These commands perform **live operations**, not dry runs. Remote actions are not rolled back
 and may continue after local cancellation. Check remote effects before retrying a failed query.
 The removed `--agent-harness` option is not accepted; endpoint discovery selects the runtime.
 
 ## Target selection
 
-`test ask` and the default DirectEngine playground use the same selection rules.
+`test ask` and the default CopilotStudio Client playground use the same selection rules.
 Only public-cloud MCS targets are supported, not CodeAgent/AHRG targets.
 
 | Option | Alias | Description |
@@ -40,10 +36,9 @@ The fully explicit route requires `--schema-name`, `--environment-id`, `--tenant
 does not require a local configuration file. The deployment selector is a label for the
 selection, not a verified association with a local deployment record.
 
-DirectEngine uses the selected CLI account and an authorized public/native client configuration
+CopilotStudio Client uses the selected CLI account and an authorized public/native client configuration
 with delegated `CopilotStudio.Copilots.Invoke` consent. The agent must be published and shared
-with that account. Configure the client as described in the
-[live-test setup](../Microsoft.Agents.Hosting.Cli/README.md#live-agent-test-controlled-preview).
+with that account.
 Endpoint discovery failure stops the command; it does not guess a fallback endpoint.
 
 ## `msagent test ask`
@@ -112,7 +107,7 @@ msagent test playground --target directline
 | `--plain` | `-pl` | `false` | Suppress CLI transient progress; the playground's own console output is still inherited. |
 | `--install-playground` | `-ipg` | `false` | Authorize global npm installation when needed in non-interactive/redirected-input use. Interactive use still asks for confirmation. Installation may execute package lifecycle scripts. |
 
-### DirectEngine
+### CopilotStudio Client
 
 The default transport accepts all [target selectors](#target-selection). The CLI uses its
 selected account to discover the endpoint, then gives the playground the endpoint and public
@@ -141,7 +136,7 @@ do not disable the CLI's separate command telemetry.
 
 Use Node.js 22.17.1+ LTS for Direct Line. Regional/custom/sovereign Direct Line endpoints,
 OAuth-card sign-in, file upload, headless interaction, and saved connections are unsupported.
-Use DirectEngine for agents requiring Microsoft sign-in. Wait for Connected and an enabled
+Use CopilotStudio Client for agents requiring Microsoft sign-in. Wait for Connected and an enabled
 composer in the browser rather than assuming process start means a connection is ready.
 
 ### Installation and lifetime
@@ -175,4 +170,4 @@ Neither command is exempt from [command telemetry controls](Command_Telemetry.md
 The preview README recommends keeping the feature disabled or setting
 `AH_CLI_TELEMETRY_OPTOUT=1` until its identifier-minimization policy is reviewed.
 These command descriptions do not claim that live integration, accessibility, or cross-platform
-validation is complete; see the [preview status and limitations](../Microsoft.Agents.Hosting.Cli/README.md#live-agent-test-controlled-preview).
+validation is complete.

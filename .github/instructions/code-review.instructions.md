@@ -10,7 +10,7 @@ and the local `review` agent (`.github/agents/review.agent.md`) loads the same f
 **single source of truth** for review rules — edit this file to change what both GitHub and the
 local review enforce, so the two never diverge.
 
-Use `.github/copilot-instructions.md` for repository architecture and conventions. This
+Use root `CONTRIBUTING.md` for repository architecture and contributor conventions. This
 repository builds the `msagent` CLI, not the Agents SDK or an agent-hosting runtime.
 Additional `*.instructions.md` files under `.github/instructions/` apply only when a
 changed file matches their `applyTo` globs; discover existing files rather than assuming

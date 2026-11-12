@@ -13,7 +13,7 @@ The reference is derived from the command host in `Microsoft.Agents.Hosting.Cli`
 definitions in `Microsoft.Agents.Hosting.Cli.Commands`, and validation performed by
 `Microsoft.Agents.Hosting.Cli.Core`. It documents command-line arguments and options
 only; host configuration environment variables are documented in
-[README.md](../Microsoft.Agents.Hosting.Cli/README.md#configuration-host-environment).
+[agent.md](../Microsoft.Agents.Hosting.Cli/agent.md#configuration-host-environment).
 
 Commands or options labeled **MCS-specific** apply to Microsoft Copilot Studio. Agent
 `create`, `init`, `list`, `pull`, `delete`, and `deploy` also support standalone workflows
@@ -46,11 +46,12 @@ help.
 
 ## Output and exit codes
 
-In a terminal, eligible commands can first show a newer-version notice on stderr, including
-labeled prereleases and a manual update command. Notices are suppressed for `--json`, help/version,
-invalid/navigation-only commands, CI, or redirected stdout/stderr. No command-specific options
+In a terminal, eligible commands and help (including bare `msagent`) can first show a newer-version
+notice on stderr, including labeled prereleases and a manual update command.
+Notices are suppressed for `--json`, version output, invalid/navigation-only commands,
+CI, or redirected stdout/stderr. No command-specific options
 are added; `--non-interactive` alone does not suppress notices. See the
-[update-check configuration](../Microsoft.Agents.Hosting.Cli/README.md#automatic-version-notices)
+[update-check configuration](../Microsoft.Agents.Hosting.Cli/agent.md#automatic-version-notices)
 for opt-out, cache, and deadline behavior.
 
 Most commands write human-readable results to stdout and failures with recovery guidance to
@@ -82,7 +83,7 @@ normal success envelope.
 | [`msagent env`](Command_Env.md) | `list`, `select` | List and select Power Platform environments. |
 | [`msagent agent`](Command_Agent.md) | `create`, `init` (**MCS-specific**), `list` (**MCS-specific**), `show`, `pull` (**MCS-specific**), `delete` (**MCS-specific**), `deploy`, `share` (**MCSAgent-only**), `share show` (**MCSAgent-only**), `unshare` (**MCSAgent-only**), `package upload` (**Gated**), [`eval`](Command_Agent_Eval.md) {`run`, `list`, `show`, `cancel`, `delete`, `generate`, `testset`} (**Gated**, **MCSAgent-only**) | Create, list, inspect, and delete hosted agents or standalone workflows; initialize or pull MCS source; deploy agents and workflows; manage MCS agent sharing; run MCS evaluations; and upload agent packages. |
 | [`msagent deployment`](Command_Deployment.md) | `create`, `list`, `show`, `update`, `delete`, [`channel`](Command_Deployment_Channel.md) {`create`, `update`, `delete`, `show`, `list`} (**CodeAgent-specific**), [`connection`](Command_Deployment_Connection.md) {`list`, `add`, `update`, `remove`, `connectors`} (**MCS-specific**), [`oauth`](Command_Deployment_OAuth.md) {`create`, `delete`, `list`, `list-providers`, `show`, `update`} (**CodeAgent-specific**) | Manage deployment records, CodeAgent channels and OAuth settings, and MCS connections. |
-| [`msagent test`](Command_Test.md) (**Gated**, **MCS-specific**) | `ask`, `playground` | Send a live query or launch the M365 Agents Playground. Actions can have real effects. |
+| [`msagent test`](Command_Test.md) (**MCS-specific**) | `ask`, `playground` | Send a live query or launch the M365 Agents Playground. Actions can have real effects. |
 | [`msagent abs`](Command_Abs.md) (**Gated**) | `preview`, `apply` | Preview and apply Azure Bot Service configuration. |
 | [`msagent identity`](Command_Identity.md) (**Gated**) | `create blueprint`, `create app` | Create and reconcile agent identities. |
 | [`msagent telemetry`](Command_Telemetry.md) | `enable`, `disable`, `status` | Manage and inspect command telemetry collection preferences. |
