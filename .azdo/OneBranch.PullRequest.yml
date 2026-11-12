@@ -93,8 +93,6 @@ extends:
             env:
               ob_restore_phase: true
 
-          - template: templates/plugin-checks.yml
-
           - checkout: tools
             path: s/tools
 
@@ -136,6 +134,8 @@ extends:
               ob_restore_phase: true
 
           - task: NuGetAuthenticate@1
+
+          - template: templates/plugin-checks.yml@self
 
           - script: dotnet tool restore --configfile $(Build.SourcesDirectory)/.azdo/nuget.config
             displayName: Dotnet tools restore
