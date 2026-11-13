@@ -22,8 +22,7 @@ msagent --help
 Already installed? Use `dotnet tool update --global Microsoft.Agents.Hosting.Cli --prerelease`.
 If your preview invitation specifies a package source, follow those instructions.
 
-Package check: 2026-10-21, latest public and configured preview-feed package:
-0.2.27-beta (build fbc49aea93). Before using a command, check its `--help`;
+Record `msagent --version` when reporting issues and check each command's `--help`;
 preview syntax changes. Use `--json` for automation. `--non-interactive` generally
 fails instead of opening sign-in; it does not supply credentials or consent.
 
@@ -71,10 +70,11 @@ msagent deployment connection list --deployment-name dev_slot --json
 ```
 
 Edit the generated source files to add instructions, knowledge, tools, and workflows.
-For connector-backed features, deploy the definitions first, inspect connection
+For connector-backed features, inspect deployment diagnostics and connection
 readiness, then use `msagent deployment connection update --deployment-name dev_slot`
-if binding is needed. Let the user complete any required OAuth consent; never guess
-between multiple candidate connections.
+if binding is needed. A missing workflow reference can require binding before
+deployment fully succeeds; inspect state before retrying. Let the user complete
+required OAuth consent; never guess between multiple candidate connections.
 
 Review the draft before going live. A draft evaluation is available through
 `msagent agent eval run --generate 3 --name "Smoke tests" --watch`; evaluations use
@@ -88,8 +88,8 @@ msagent test ask --deployment-name dev_slot --query "What can you help me with?"
 ```
 
 `msagent test playground --deployment-name dev_slot` opens an interactive testing
-experience. Live testing can execute real actions. If a test command is unavailable,
-report that limitation; do not silently change local feature flags or install tools.
+experience. Live testing can execute real actions. If a command is unavailable,
+report the installed version and limitation; do not silently install or replace tools.
 
 ## What a project looks like
 
@@ -117,24 +117,14 @@ Keep credentials out of source. Do not hand-edit generated registration/sync sta
 
 ## Testing from Copilot, Claude, or automation
 
-In a pristine 0.2.27-beta installation, `liveTestFeatures` is **off** and
-`evaluationFeatures` is **on**. Current CLI builds ship `liveTestFeatures` **on**;
-the following override is only needed with an older installation where `msagent test`
-is missing. It enables live testing for the current shell without editing the
-installed `featureflags.json`:
+Current CLI builds ship `liveTestFeatures` **on**, so testing requires no
+feature-flag opt-in. Older installations may have the feature disabled; if
+`msagent test` is missing, use the installed version's feature configuration.
+Use a published agent that the selected account can access, and authenticate
+interactively before an unattended run.
 
-```powershell
-$env:AH_CLI_FEATURES = (@($env:AH_CLI_FEATURES, 'liveTestFeatures') | Where-Object { $_ }) -join ';'
-msagent test ask --help
-```
-
-On macOS/Linux, the equivalent is
-`export AH_CLI_FEATURES="${AH_CLI_FEATURES:+$AH_CLI_FEATURES;}liveTestFeatures"`.
-If evaluation commands are gated in another build, `evaluationFeatures` can be
-added to the same semicolon-separated list. Overrides are shell-scoped; an
-assistant must inherit them or set them in the process that runs `msagent`.
-
-For a coding assistant testing the deployed CLI-native/GitHub Copilot-backed agent:
+From the parent directory of `MyAgent`, a coding assistant can test the deployed
+CLI-native/GitHub Copilot-backed agent with:
 
 ```text
 msagent test ask --project MyAgent --deployment-name dev_slot --query "What can you help me with?" --json --non-interactive
@@ -186,8 +176,8 @@ Do not create an `MCSAgent` as a workaround. To clone an existing standalone flo
 use `agent create --agent-type MCSWorkflow --mcs-clone-workflow-id <workflow-id>`.
 
 **Workflow format and standalone registration are separate concerns.** Both attached
-and standalone workflows use `workflow.json` + `metadata.yml`. The **0.2.27-beta
-scaffolder uses the newer designer-compatible shape**: trigger metadata contains
+and standalone workflows use `workflow.json` + `metadata.yml`. Use the
+designer-compatible scaffold shape: trigger metadata contains
 `associatedData.graph` (nodes and edges) and `associatedData.nodeActionMapping`;
 actions carry matching `metadata.nodeId` values. Preserve these and keep graph
 configuration, executable actions, and input/output schemas consistent when editing.
