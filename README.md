@@ -46,7 +46,7 @@ msagent env select <environment-id>
 Create a local agent definition with a name, description, and instructions:
 
 ```powershell
-msagent agent create -n "Hello World" -d "A friendly greeting agent" -ip "Greet the user and ask how you can help."
+msagent agent create --agent-type MCSAgent -n "Hello World" -d "A friendly greeting agent" -ip "Greet the user and ask how you can help."
 ```
 
 Your agent files are ready to edit locally. Follow the [quickstart](docs/Quickstart.md) to deploy, evaluate, and publish your agent in Copilot Studio.
