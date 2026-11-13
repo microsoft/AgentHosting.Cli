@@ -57,7 +57,7 @@ The clone establishes cloud tracking and a sync baseline. Compare the source-con
 
 ## Managing conflicts if the remote Copilot Studio Agent has changed since you last pulled the definition
 
-Where you have a local definition of a deployed agent (at least once), if this deployed agent has been modified, for example by yourself or another team member, on the browser, your local definition and the definition held in the cloud is now out of sync. This scenario may occur with a team who are all working locally and pushing changes to copilot studio using [msagent deploy]
+Where you have a local definition of a deployed agent (at least once), if this deployed agent has been modified, for example by yourself or another team member, on the browser, your local definition and the definition held in the cloud is now out of sync. This scenario may occur with a team who are all working locally and pushing changes to Copilot Studio using `msagent agent deploy`.
 
 This scenario can be avoided by following these practices:
 
@@ -70,7 +70,7 @@ To update local out-of-sync folders and get your local folder back in sync to wo
 1. Have your local out-of-sync working folder open and authenticated via the CLI
 2. Ensure you have got your local-out-of-sync working folder backed up with a git commit and to your remote in the scenario you ever need to roll back
 3. This path is assuming the source of truth in this scenario is on the cloud and you’re going to overwrite your local changes
-4. Ensure your authenticated with the msagent CLI and your environment is selected which has the copilot studio agent you wish to sync with
+4. Ensure you are authenticated with the msagent CLI. Pull uses the environment and agent in the workspace's established cloud connection, not the current `env select` value.
 5. Confirm that the project is connected to the intended cloud agent. If it is disconnected, use the cloud-clone procedure above; running `agent init` does not reconnect it.
 6. In the connected project, run `command: msagent agent pull -an "<agent-name>" -p <project-path>` to retrieve the cloud definition, then review any reported conflicts before continuing.
 
@@ -80,7 +80,11 @@ The vs code interface provides an improved IDE experience for this scenario whic
 
 ### Collaborating in remote source control
 
-Your organization will have it's own process for managing PRs in a repo, interaction between main and branches, and more. [We will publish recommendations on a simplified process for this soon.]
+Agree on your organization's process for branches, pull requests, cloud edits,
+and deployments. Review definition changes in source control and make one
+person or pipeline responsible for each target's deployment at a time. A Git
+merge does not resolve independent cloud drift or retarget local deployment
+records.
 
 ### Notes
 
