@@ -51,6 +51,10 @@ msagent agent create --agent-type MCSAgent -n "Hello World" -d "A friendly greet
 
 Your agent files are ready to edit locally. Follow the [quickstart](docs/Quickstart.md) to deploy, evaluate, and publish your agent in Copilot Studio.
 
+- [Copilot Studio CLI Plugin](.github/plugins/msagent-assistant/README.md):
+  shared Claude/Copilot workflows and generated host distributions, maintained
+  separately from the CLI's NuGet contents.
+
 ## Cost Management
 
 Testing from a local machine invokes the real Copilot Studio runtime, not a local simulation. Agent responses, connector actions, and evaluations can consume Copilot Credits and incur other service charges. Apply your organization's cost controls and ensure the signed-in user has the required access. Coding assistants have their own licensing and billing, separate from Copilot Studio. See [testing usage and billing](docs/Testing%20your%20Agent%20from%20your%20local%20machine.md#billing-and-channel-ids-in-usage-telemetry) for technical details.
