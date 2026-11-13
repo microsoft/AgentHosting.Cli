@@ -9,10 +9,6 @@
 
 The Microsoft.Agents.Hosting.CLI (`msagent`) connects local development workflows with Microsoft Copilot Studio. It lets teams define agents and workflows as code, create and update them while collaborating with developers using the Copilot Studio UI, and apply software development lifecycle (SDLC) and application lifecycle management (ALM) practices to manage connections, test and evaluate agents, and deploy changes.
 
-## Why is this important
-
-The CLI creates a local definition of a Copilot Studio agent as a project that acts as your workspace. This allows you to edit the definition, add functionality to it, commit changes locally, and push to your remote repository. From your remote repository, you and your team can manage changes through pull requests, see what has changed, and deploy reviewed source to development, test, and production environments. Source control does not itself configure deployment authentication; non-interactive CLI use requires an existing authenticated session and cannot complete new sign-in or consent.
-
 ## Prerequisites
 
 ### Permissions:
@@ -34,10 +30,10 @@ Apply update (use this to pick up the current version after you have installed i
 dotnet tool update microsoft.agents.hosting.cli --prerelease -g
 ```
 ### Note:
-- In a terminal, msagent checks listed versions on nuget.org and shows newer stable/prerelease versions on stderr before eligible command output, prompts, or help. Results are cached for 24 hours; feed checks allow three seconds and fail silently. Checks are skipped for version output, invalid/navigation-only commands, `--json`, CI, or redirected stdout/stderr. Set `AH_CLI_SKIP_UPDATE_CHECK=true` (or `1`) to opt out. Suggested commands target global installations; use your installation's scope for local or `--tool-path` tools.
+- The CLI checks NuGet for newer versions when you run it interactively and displays an update command when one is available. To disable these notifications, set `AH_CLI_SKIP_UPDATE_CHECK=true`. If you installed the CLI locally or with `--tool-path`, use the same installation scope when updating.
 - If you're using AI, provide [agent.md](docs/agent.md) and any compatible skills supplied by your organization to ground your coding assistant in the CLI's workflows. An editor or coding assistant is optional.
 
-## Get started: Create your first agent
+# Get started: Create your first agent
 
 Sign in and select a Power Platform environment:
 
