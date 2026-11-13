@@ -5,39 +5,62 @@ internal sealed class ManualTimeProvider : TimeProvider
     private readonly List<ManualTimer> _timers = [];
     private TimeSpan _elapsed;
 
-    public int ActiveTimers => _timers.Count(timer => !timer.Disposed);
+    public int ActiveTimers
+    {
+        get
+        {
+            lock (_timers)
+                return _timers.Count(timer => !timer.Disposed);
+        }
+    }
 
     public override long TimestampFrequency => TimeSpan.TicksPerSecond;
 
-    public override long GetTimestamp() => _elapsed.Ticks;
+    public override long GetTimestamp()
+    {
+        lock (_timers)
+            return _elapsed.Ticks;
+    }
 
-    public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch + _elapsed;
+    public override DateTimeOffset GetUtcNow()
+    {
+        lock (_timers)
+            return DateTimeOffset.UnixEpoch + _elapsed;
+    }
 
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
     {
-        var timer = new ManualTimer(callback, state, _elapsed + dueTime, period);
-        _timers.Add(timer);
-        return timer;
+        lock (_timers)
+        {
+            var timer = new ManualTimer(callback, state, _elapsed + dueTime, period);
+            _timers.Add(timer);
+            return timer;
+        }
     }
 
     public void Advance(TimeSpan duration)
     {
-        var target = _elapsed + duration;
-
-        while (_timers.Where(timer => !timer.Disposed && timer.DueAt <= target).MinBy(timer => timer.DueAt) is { } due)
+        lock (_timers)
         {
-            _elapsed = due.DueAt;
-            due.Fire();
-        }
+            var target = _elapsed + duration;
 
-        _elapsed = target > _elapsed ? target : _elapsed;
+            while (_timers.Where(timer => !timer.Disposed && timer.DueAt <= target).MinBy(timer => timer.DueAt) is { } due)
+            {
+                _elapsed = due.DueAt;
+                due.Fire();
+            }
+
+            _elapsed = target > _elapsed ? target : _elapsed;
+        }
     }
 
     private sealed class ManualTimer(TimerCallback callback, object? state, TimeSpan dueAt, TimeSpan period) : ITimer
     {
         public TimeSpan DueAt { get; private set; } = dueAt;
 
-        public bool Disposed { get; private set; }
+        private bool _disposed;
+
+        public bool Disposed => Volatile.Read(ref _disposed);
 
         public void Fire()
         {
@@ -47,7 +70,7 @@ internal sealed class ManualTimeProvider : TimeProvider
 
         public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
 
-        public void Dispose() => Disposed = true;
+        public void Dispose() => Volatile.Write(ref _disposed, true);
 
         public ValueTask DisposeAsync()
         {
