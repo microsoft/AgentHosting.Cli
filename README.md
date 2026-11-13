@@ -51,9 +51,7 @@ msagent agent create --agent-type MCSAgent -n "Hello World" -d "A friendly greet
 
 Your agent files are ready to edit locally. Follow the [quickstart](docs/Quickstart.md) to deploy, evaluate, and publish your agent in Copilot Studio.
 
-- [Copilot Studio CLI Plugin](.github/plugins/msagent-assistant/README.md):
-  shared Claude/Copilot workflows and generated host distributions, maintained
-  separately from the CLI's NuGet contents.
+If you're using Claude or GitHub Copilot, try the [Copilot Studio CLI Plugin](.github/plugins/msagent-assistant/README.md) for workflows that help your coding assistant work with `msagent`. The plugin is maintained separately and isn't included in the CLI's NuGet package.
 
 ## Cost Management
 
