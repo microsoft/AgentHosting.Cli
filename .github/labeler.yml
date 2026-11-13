@@ -25,6 +25,7 @@
     - '*.md'
     - 'docs/**'
     - 'src/**/*.md'
+    - '.github/plugins/**/*.md'
 
 "ML: CLI":
 - changed-files:

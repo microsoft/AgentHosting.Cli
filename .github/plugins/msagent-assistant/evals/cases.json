@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "triggers": [
+    { "id": "create-new", "split": "train", "prompt": "Build a new Copilot Studio agent for travel support in a new local MSAGENT project.", "expected": "create-agent" },
+    { "id": "create-draft", "split": "validation", "prompt": "Scaffold a Copilot Studio agent from these instructions and deploy its draft, without publishing.", "expected": "create-agent" },
+    { "id": "clone-existing", "split": "train", "prompt": "Clone my existing Copilot Studio agent into a new local folder.", "expected": "clone-agent" },
+    { "id": "clone-url", "split": "validation", "prompt": "Bring this existing Copilot Studio agent URL into a new MSAGENT project on my machine.", "expected": "clone-agent" },
+    { "id": "push-draft", "split": "train", "prompt": "Deploy my local agent edits to Copilot Studio, but do not make them live.", "expected": "deploy-agent" },
+    { "id": "push-not-publish", "split": "validation", "smoke": true, "prompt": "Upload the changes from this registered MSAGENT project to the existing agent's draft. This is not permission to publish.", "expected": "deploy-agent" },
+    { "id": "pull-existing", "split": "train", "prompt": "Pull the remote agent changes into my existing registered MSAGENT project.", "expected": "pull-agent" },
+    { "id": "pull-not-clone", "split": "validation", "prompt": "Refresh the agent project already checked out here with the latest changes from Copilot Studio; do not create another project.", "expected": "pull-agent" },
+    { "id": "publish-live", "split": "train", "prompt": "Publish my registered Copilot Studio agent so the local changes become live.", "expected": "publish-agent" },
+    { "id": "publish-not-push", "split": "validation", "smoke": true, "prompt": "Make the agent in this local MSAGENT project live, rather than only uploading a draft.", "expected": "publish-agent" },
+    { "id": "delete-cloud", "split": "train", "prompt": "Delete the Copilot Studio agent's cloud resources while preserving its local files.", "expected": "delete-agent" },
+    { "id": "delete-registered", "split": "validation", "prompt": "Remove this registered MSAGENT project's Copilot Studio agent from the cloud.", "expected": "delete-agent" },
+    { "id": "knowledge-web", "split": "train", "prompt": "Ground my locally cloned Copilot Studio agent on this public website.", "expected": "add-knowledge" },
+    { "id": "knowledge-file", "split": "validation", "prompt": "Attach this local policy PDF as knowledge to my cloned Copilot Studio agent.", "expected": "add-knowledge" },
+    { "id": "skill-author", "split": "train", "prompt": "Write an Agent Skill for my Copilot Studio agent that creates a verified weekly incident report.", "expected": "add-skill" },
+    { "id": "skill-import", "split": "validation", "prompt": "Import this SKILL.md bundle into my Copilot Studio agent's behaviors folder.", "expected": "add-skill" },
+    { "id": "channel-teams", "split": "train", "prompt": "Enable the Teams channel on my CLI-authored Copilot Studio agent using the GitHub Copilot harness.", "expected": "add-channel" },
+    { "id": "channel-copilot", "split": "validation", "prompt": "Add the Microsoft 365 Copilot channel in this local MCS agent's settings; it uses the GitHub harness.", "expected": "add-channel" },
+    { "id": "git-push", "split": "train", "prompt": "Push this Git branch to origin. Do not deploy the Copilot Studio agent.", "expected": "none" },
+    { "id": "local-folder-delete", "split": "validation", "smoke": true, "prompt": "Delete only the temporary local folder named agent-demo; do not remove any cloud resources.", "expected": "none" },
+    { "id": "git-clone", "split": "train", "prompt": "Clone the public Git repository containing an agent sample. Do not clone a Copilot Studio agent.", "expected": "none" },
+    { "id": "teams-message", "split": "validation", "smoke": true, "prompt": "Send a message to the existing Teams channel. Do not configure an agent channel.", "expected": "none" }
+  ],
+  "outcomes": [
+    {
+      "id": "push-workspace-mismatch",
+      "split": "validation",
+      "skill": "deploy-agent",
+      "prompt": "Push edits from C:\\fixtures\\project\\B to the agent's draft. Read-only CLI help and agent show are complete: parent C:\\fixtures\\project is registered and its sole MCS record is agentId 33333333-3333-3333-3333-333333333333, displayName Agent A, agentLocation A, with one dev deployment. Workspace B exists but has no matching agentLocation record. Decide whether mutation may proceed using this completed discovery.",
+      "assertions": [
+        { "path": "decision", "equals": "stop" },
+        { "path": "commands", "equals": [] },
+        { "path": "notes", "matches": "workspace|match|register|target" }
+      ]
+    },
+    {
+      "id": "delete-workspace-mismatch",
+      "split": "validation",
+      "skill": "delete-agent",
+      "references": ["registered-project.md"],
+      "prompt": "Delete the cloud agent represented by C:\\fixtures\\project\\B. Read-only CLI help and agent show are complete: parent C:\\fixtures\\project is registered and its sole MCS record is agentId 33333333-3333-3333-3333-333333333333, displayName Agent A, agentLocation A, with one deployment. Workspace B exists but has no matching agentLocation record. No typed-name confirmation has occurred. Decide whether to proceed with that registered agent or stop.",
+      "assertions": [
+        { "path": "decision", "equals": "stop" },
+        { "path": "commands", "equals": [] },
+        { "path": "notes", "matches": "workspace|match|register|target" }
+      ]
+    },
+    {
+      "id": "publish-cloud-target-supported",
+      "split": "validation",
+      "skill": "publish-agent",
+      "prompt": "Propose only the final PowerShell deploy-and-publish command, without executing anything. Publish cloud mcsAgentId 22222222-2222-2222-2222-222222222222 in environment 11111111-1111-1111-1111-111111111111, schema cr_support. The registered project is C:\\fixtures\\project, local agentId 33333333-3333-3333-3333-333333333333, deploymentId 44444444-4444-4444-4444-444444444444. All help and auth checks passed. The cloud lookup, workspace schema, local record, and deployment environment match and were revalidated immediately before this proposal. Verified preservation, pull, reconciliation, YAML and payload checks are complete, and I gave final publication confirmation for this exact content and target. Current deploy help has --project, --agent-id, --deployment-id, --publish and --overwrite, but no expected-cloud-ID flag.",
+      "assertions": [
+        { "path": "decision", "equals": "plan" },
+        { "path": "commands.length", "equals": 1 },
+        { "path": "commands.0", "matches": "msagent agent deploy\\b" },
+        { "path": "commands.0", "matches": "--project 'C:\\\\fixtures\\\\project'" },
+        { "path": "commands.0", "matches": "--agent-id '33333333-3333-3333-3333-333333333333'" },
+        { "path": "commands.0", "matches": "--deployment-id '44444444-4444-4444-4444-444444444444'" },
+        { "path": "commands.0", "matches": "--publish(?:\\s|$)" },
+        { "path": "commands.0", "matches": "--json\\b" },
+        { "path": "commands.0", "matches": "--non-interactive\\b" }
+      ]
+    },
+    {
+      "id": "push-cloud-target-supported",
+      "split": "validation",
+      "skill": "deploy-agent",
+      "prompt": "Propose only the final PowerShell draft deploy command, without executing anything. Push to cloud mcsAgentId 22222222-2222-2222-2222-222222222222 in environment 11111111-1111-1111-1111-111111111111, schema cr_support, without publishing. The registered project is C:\\fixtures\\project, local agentId 33333333-3333-3333-3333-333333333333, deploymentId 44444444-4444-4444-4444-444444444444. All help and auth checks passed. The cloud lookup, workspace schema, local record, and deployment environment match and were revalidated immediately before this proposal. I confirmed the preservation plan, prerequisite pull, and draft upload. Verified preservation, pull, reconciliation, YAML and payload checks are complete. Current deploy help has --project, --agent-id, --deployment-id, --publish and --overwrite, but no expected-cloud-ID flag.",
+      "assertions": [
+        { "path": "decision", "equals": "plan" },
+        { "path": "commands.length", "equals": 1 },
+        { "path": "commands.0", "matches": "^(?!.*--publish\\b).*msagent agent deploy\\b" },
+        { "path": "commands.0", "matches": "--project 'C:\\\\fixtures\\\\project'" },
+        { "path": "commands.0", "matches": "--agent-id '33333333-3333-3333-3333-333333333333'" },
+        { "path": "commands.0", "matches": "--deployment-id '44444444-4444-4444-4444-444444444444'" },
+        { "path": "commands.0", "matches": "--json\\b" },
+        { "path": "commands.0", "matches": "--non-interactive\\b" }
+      ]
+    },
+    {
+      "id": "push-cloud-target-mismatch",
+      "split": "validation",
+      "skill": "deploy-agent",
+      "prompt": "Push to cloud mcsAgentId 22222222-2222-2222-2222-222222222222 in environment 11111111-1111-1111-1111-111111111111, schema cr_support. Completed read-only discovery maps it to a local MCS record whose last deployment was test in that environment. Its sole remaining deployment is dev and targets environment 55555555-5555-5555-5555-555555555555. No deployment was specified by me, and none matches the requested environment. Decide whether to use the dev slot or stop.",
+      "assertions": [
+        { "path": "decision", "equals": "stop" },
+        { "path": "commands", "equals": [] },
+        { "path": "notes", "matches": "environment|deployment|target|constraint" }
+      ]
+    },
+    {
+      "id": "push-preservation-blocked",
+      "split": "validation",
+      "skill": "deploy-agent",
+      "prompt": "Push my local edits from the correctly resolved registered project and connected dev deployment. No cloud ID was requested. All read-only capability, target and auth checks passed. Git is clean, but a binary knowledge payload cannot be read or copied into the proposed private pre-pull snapshot, so complete preservation cannot be verified. No pull has run. Decide whether the prerequisite pull and upload may proceed.",
+      "assertions": [
+        { "path": "decision", "equals": "stop" },
+        { "path": "commands", "equals": [] },
+        { "path": "notes", "matches": "preserv|snapshot|backup|unreadable" }
+      ]
+    },
+    {
+      "id": "publish-preservation-blocked",
+      "split": "validation",
+      "skill": "publish-agent",
+      "prompt": "Publish local edits from the correctly resolved registered project and local dev deployment. No cloud ID was requested. All read-only capability, target and auth checks passed, and I confirmed publication. A binary knowledge payload cannot be read or copied into the private pre-pull snapshot, so complete preservation cannot be verified. No pull has run. Decide whether publication may proceed despite that file.",
+      "assertions": [
+        { "path": "decision", "equals": "stop" },
+        { "path": "commands", "equals": [] },
+        { "path": "notes", "matches": "preserv|snapshot|backup|unreadable" }
+      ]
+    },
+    {
+      "id": "pull-preservation-blocked",
+      "split": "validation",
+      "skill": "pull-agent",
+      "prompt": "Pull the remote changes into the correctly resolved registered agent workspace. All read-only capability, target and auth checks passed. Git is clean, but a binary knowledge payload cannot be read or copied into the private pre-pull snapshot, so complete preservation cannot be verified. I have not been warned about knowledge-file overwrites. Decide whether the pull may proceed.",
+      "assertions": [
+        { "path": "decision", "equals": "stop" },
+        { "path": "commands", "equals": [] },
+        { "path": "notes", "matches": "preserv|snapshot|backup|unreadable" }
+      ]
+    },
+    {
+      "id": "knowledge-explicit-missing",
+      "split": "validation",
+      "skill": "add-knowledge",
+      "prompt": "Add https://example.com/policies to workspace C:\\fixtures\\B. Read-only checks are complete: that directory has no settings.mcs.yml. A glob of the current tree found exactly one valid CLI-agent workspace A with settings.mcs.yml and schema cr_a. Decide whether to author files in A or stop for the explicit B target.",
+      "assertions": [
+        { "path": "decision", "equals": "stop" },
+        { "path": "files", "equals": [] },
+        { "path": "commands", "equals": [] },
+        { "path": "notes", "matches": "explicit|supplied|target|workspace" }
+      ]
+    },
+    {
+      "id": "skill-import-literal",
+      "split": "validation",
+      "skill": "add-skill",
+      "references": ["import.md"],
+      "prompt": "Propose only a PowerShell dry-run import command, without executing anything. All import prerequisites and schemas were validated. Helper C:\\plugins\\$cache\\add-skill.bundle.js exists. Source C:\\fixtures\\O'Brien\\$target\\demo contains a valid skill named demo. Target C:\\fixtures\\agent is the approved CLI-agent workspace. Dollar signs and apostrophe in these paths are literal filesystem characters, not variables. Do not copy or rename the paths.",
+      "assertions": [
+        { "path": "decision", "equals": "plan" },
+        { "path": "commands.0", "matches": "'C:\\\\plugins\\\\\\$cache\\\\add-skill\\.bundle\\.js'" },
+        { "path": "commands.0", "matches": "'C:\\\\fixtures\\\\O''Brien\\\\\\$target\\\\demo'" },
+        { "path": "commands.0", "matches": "--dry-run" }
+      ]
+    },
+    {
+      "id": "knowledge-unsupported",
+      "split": "validation",
+      "smoke": true,
+      "skill": "add-knowledge",
+      "references": ["knowledge-schema.md", "website.md"],
+      "prompt": "Add https://example.com/policies as local website knowledge. The selected settings.mcs.yml contains schemaName: cr_policy, template: default-2.1.0, configuration.authoringModel: Classic. Decide whether this workspace is supported before proposing any files.",
+      "assertions": [
+        { "path": "decision", "equals": "stop" },
+        { "path": "files", "equals": [] },
+        { "path": "notes", "matches": "unsupported|non-CLI|not.*CLI|harness|template" }
+      ]
+    },
+    {
+      "id": "knowledge-website",
+      "split": "validation",
+      "smoke": true,
+      "skill": "add-knowledge",
+      "references": ["knowledge-schema.md", "website.md"],
+      "prompt": "Propose adding https://example.com/policies as website knowledge in a cloned local agent. Settings: schemaName: cr_policy; template: cliagent-1.0.0; configuration.authoringModel: CliCopilot. Exactly one workspace, no collisions, public indexed website confirmed, no access check requested. Include the candidate knowledge YAML and the checks required before reporting success. This is a proposal, not an actual write.",
+      "assertions": [
+        { "path": "decision", "equals": "plan" },
+        { "path": "files.length", "equals": 1 },
+        { "path": "checks", "matches": "YAML|pars" },
+        { "path": "checks", "matches": "diff|before.after|inventory" },
+        { "path": "notes", "matches": "local|not.*deploy|not.*publish" }
+      ],
+      "yamlArtifact": { "kind": "KnowledgeSourceConfiguration", "source": { "kind": "WebsiteKnowledgeSource", "siteUrl": "https://example.com/policies" } }
+    },
+    {
+      "id": "creation-publication",
+      "split": "validation",
+      "smoke": true,
+      "skill": "create-agent",
+      "references": ["publish-handoff.md"],
+      "prompt": "Creation, validation, draft deployment and final pull are all verified successful. The user explicitly requested publication. Exact verified target: projectRoot C:\\fixtures\\project, local agentId 33333333-3333-3333-3333-333333333333, deploymentId 44444444-4444-4444-4444-444444444444, environmentId 11111111-1111-1111-1111-111111111111, cloud mcsAgentId 22222222-2222-2222-2222-222222222222, schemaName cr_support. The publish skill is available. Return the next handoff and checks, not a deployment command.",
+      "assertions": [
+        { "path": "decision", "equals": "handoff" },
+        { "path": "handoff.skill", "matches": "(^|:)publish-agent$" },
+        { "path": "handoff.projectRoot", "equals": "C:\\fixtures\\project" },
+        { "path": "handoff.agentId", "equals": "33333333-3333-3333-3333-333333333333" },
+        { "path": "handoff.deploymentId", "equals": "44444444-4444-4444-4444-444444444444" },
+        { "path": "handoff.schemaName", "equals": "cr_support" },
+        { "path": "handoff.environmentId", "equals": "11111111-1111-1111-1111-111111111111" },
+        { "path": "handoff.mcsAgentId", "equals": "22222222-2222-2222-2222-222222222222" },
+        { "path": "checks", "matches": "final.*confirm|confirm.*publish|confirm.*live" },
+        { "path": "commands", "equals": [] }
+      ]
+    }
+  ]
+}

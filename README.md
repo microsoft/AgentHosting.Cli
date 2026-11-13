@@ -1,3 +1,9 @@
+>[!IMPORTANT]
+>This CLI and supporting componets are in **Public Preview**. This means:
+>- **Features and capabilities are subject to change, and may not be in a fully finished form.**
+>- **If a feature option described here is not in the public --help of the CLI, it is not avaialbe for general use.**
+>- **The CLI will tell you when there is a new version, please accept those updates as we move though public preview as we are fixing bugs and enhancing support for things.**
+
 # What is the Microsoft.Agents.Hosting.CLI Tool (msagent)
 
 The Microsoft.Agents.Hosting.CLI (`msagent`) connects local development workflows with Microsoft Copilot Studio. It lets teams define agents and workflows as code, create and update them while collaborating with developers using the Copilot Studio UI, and apply software development lifecycle (SDLC) and application lifecycle management (ALM) practices to manage connections, test and evaluate agents, and deploy changes.
@@ -62,6 +68,10 @@ msagent agent deploy --deployment-name develop
 Review the draft and any connection/workflow diagnostics before publishing. See the [quickstart](docs/Quickstart.md) for evaluation, publication, and live testing.
 
 ## What to do next
+
+- [Copilot Studio CLI Plugin](.github/plugins/msagent-assistant/README.md):
+  shared Claude/Copilot workflows and generated host distributions, maintained
+  separately from the CLI's NuGet contents.
 
 - Follow the [quickstart](docs/Quickstart.md) guide to go through the full end-to-end lifecycle of a Copilot Studio agent.
 - [New Agents](docs/New%20Agents.md): Create, Clone or Initialize

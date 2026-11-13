@@ -1,0 +1,27 @@
+{
+  "name": "copilot-studio-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "description": "Bundled scripts for Copilot Studio plugin",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "eval:skills": "node src/evaluate-skills.js",
+    "build": "npm run build:verify-knowledge-access && npm run build:workiq-catalog && npm run build:add-skill && npm run build:convert-actions-to-tools && npm run build:set-env-vars",
+    "build:verify-knowledge-access": "esbuild src/verify-knowledge-access.js --bundle --preserve-symlinks --platform=node --target=node22 --outfile=../skills/add-knowledge/scripts/verify-knowledge-access.bundle.js --format=cjs --external:keytar --external:@azure/msal-node-extensions",
+    "build:workiq-catalog": "esbuild src/workiq-catalog.js --bundle --preserve-symlinks --platform=node --target=node22 --outfile=../skills/add-skill/scripts/workiq-catalog.bundle.js --format=cjs",
+    "build:add-skill": "esbuild src/add-skill.js --bundle --preserve-symlinks --platform=node --target=node22 --outfile=../skills/add-skill/scripts/add-skill.bundle.js --format=cjs",
+    "build:convert-actions-to-tools": "esbuild src/convert-actions-to-tools.js --bundle --preserve-symlinks --platform=node --target=node22 --outfile=convert-actions-to-tools.bundle.js --format=cjs",
+    "build:set-env-vars": "esbuild src/set-env-vars.js --bundle --preserve-symlinks --platform=node --target=node22 --outfile=../hooks/set-env-vars.bundle.js --format=cjs",
+    "package:host": "node src/package-host.js"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^5.4.1",
+    "js-yaml": "^4.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}
