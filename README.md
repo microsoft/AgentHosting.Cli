@@ -1,63 +1,13 @@
 >[!IMPORTANT]
 >This CLI and supporting componets are in **Public Preview**. This means:
 >- **Features and capabilities are subject to change, and may not be in a fully finished form.**
->- **If a feature option described here is not in the public --help of the CLI, it is not avaialbe for general use.**
+>- **If a feature option described here is not in the public --help of the CLI, it is not available for general use.**
 >- **The CLI will tell you when there is a new version, please accept those updates as we move though public preview as we are fixing bugs and enhancing support for things.**
+>- These features are subject to [supplemental terms of use](https://www.microsoft.com/en-us/business-applications/legal/supp-powerplatform-preview/), and are available before an official release so that customers can get early access and provide feedback.
 
 # What is the Microsoft.Agents.Hosting.CLI Tool (msagent)
 
 The Microsoft.Agents.Hosting.CLI (`msagent`) connects local development workflows with Microsoft Copilot Studio. It lets teams define agents and workflows as code, create and update them while collaborating with developers using the Copilot Studio UI, and apply software development lifecycle (SDLC) and application lifecycle management (ALM) practices to manage connections, test and evaluate agents, and deploy changes.
-
-The CLI is preview software. Obtain the package and review the terms of the preview before installing it.
-
-> [!IMPORTANT]
->
-> - This is a preview feature.
-> - These features are subject to [supplemental terms of use](https://www.microsoft.com/en-us/business-applications/legal/supp-powerplatform-preview/), and are available before an official release so that customers can get early access and provide feedback.
-
-## Why is this important
-
-The CLI creates a local definition of a Copilot Studio agent as a project that acts as your workspace. This allows you to edit the definition, add functionality to it, commit changes locally, and push to your remote repository. From your remote repository, you and your team can manage changes through pull requests, see what has changed, and deploy reviewed source to development, test, and production environments. Source control does not itself configure deployment authentication; non-interactive CLI use requires an existing authenticated session and cannot complete new sign-in or consent.
-
-## Documentation
-
-[See the Copilot Studio CLI documentation](https://learn.microsoft.com/en-us/microsoft-365/copilot-managed-runtime/).
-
-For repository-specific guides and technical references, start with the
-[documentation index](docs/README.md) and [command reference](src/Microsoft.Agents.Hosting.Cli.Docs/ReadMe.md).
-For building or changing the CLI itself, see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Support
-
-This project uses [GitHub issues](https://github.com/microsoft/AgentHosting.Cli/issues)
-to track bugs and feature requests. Please search existing issues before filing
-a new one to avoid duplicates. For a new bug,
-[open an issue in this repository](https://github.com/microsoft/AgentHosting.Cli/issues/new/choose).
-
-## Repository structure
-
-This repository contains the `msagent` CLI, its documentation, and its tests.
-It does not contain the Copilot Studio service or the agent-hosting runtime.
-
-| Folder | Contents |
-|---|---|
-| [`docs/`](docs/) | Guides for creating, editing, deploying, testing, and maintaining agents with the CLI. |
-| [`docs/developer/`](docs/developer/) | Contributor references for telemetry, conformance comparisons, and manual testing. |
-| [`src/`](src/) | CLI projects, the solution, shared build settings, package versions, and versioning configuration. |
-| [`src/Microsoft.Agents.Hosting.Cli/`](src/Microsoft.Agents.Hosting.Cli/) | The `msagent` executable: composition, command hosting, output rendering, configuration, and telemetry. |
-| [`src/Microsoft.Agents.Hosting.Cli.Commands/`](src/Microsoft.Agents.Hosting.Cli.Commands/) | Command definitions, options, validation, and dispatch into Core operations. |
-| [`src/Microsoft.Agents.Hosting.Cli.Core/`](src/Microsoft.Agents.Hosting.Cli.Core/) | Embeddable operations, contracts, ports, and local project/deployment state. |
-| [`src/Microsoft.Agents.Hosting.Cli.Auth/`](src/Microsoft.Agents.Hosting.Cli.Auth/) | Sign-in, broker integration, token caching, and authentication registration. |
-| [`src/Microsoft.Agents.Hosting.Cli.CopilotStudio/`](src/Microsoft.Agents.Hosting.Cli.CopilotStudio/) | Copilot Studio synchronization, Dataverse, workspace, connection, template, and evaluation adapters. |
-| [`src/Microsoft.Agents.Hosting.Cli.Docs/`](src/Microsoft.Agents.Hosting.Cli.Docs/) | Detailed command references and error-code recovery guidance. |
-| [`src/Microsoft.Agents.Hosting.Cli.Tests/`](src/Microsoft.Agents.Hosting.Cli.Tests/) | Offline unit, contract, command-host, and adapter tests. |
-| [`src/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests/`](src/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests/) | Isolated tests for using Core without the CLI host or authentication adapter. |
-| [`src/Microsoft.Agents.Hosting.Cli.E2E/`](src/Microsoft.Agents.Hosting.Cli.E2E/) | Explicitly invoked live-service scenario harness and fixtures. Runs can change cloud resources or incur charges; this is not part of `dotnet test`. |
-| [`src/AgentHostCli.Conformance/`](src/AgentHostCli.Conformance/) | Language-neutral contract fixtures and a TypeScript comparison runner. |
-| [`src/Images/`](src/Images/) | Image assets used by the CLI package. |
-| [`.github/`](.github/) | GitHub workflows, contribution automation, issue templates, and coding-agent instructions. |
-| [`.azdo/`](.azdo/) | OneBranch pull-request/nightly pipeline definitions and build-feed configuration. |
-| [`.config/`](.config/) | Repository-local .NET tool manifest and compliance-tool configuration, not an agent workspace's local registration. |
 
 ## Prerequisites
 
@@ -80,53 +30,28 @@ Apply update (use this to pick up the current version after you have installed i
 dotnet tool update microsoft.agents.hosting.cli --prerelease -g
 ```
 ### Note:
-- In a terminal, msagent checks listed versions on nuget.org and shows newer stable/prerelease versions on stderr before eligible command output, prompts, or help. Results are cached for 24 hours; feed checks allow three seconds and fail silently. Checks are skipped for version output, invalid/navigation-only commands, `--json`, CI, or redirected stdout/stderr. Set `AH_CLI_SKIP_UPDATE_CHECK=true` (or `1`) to opt out. Suggested commands target global installations; use your installation's scope for local or `--tool-path` tools.
+- The CLI checks NuGet for newer versions when you run it interactively and displays an update command when one is available. To disable these notifications, set `AH_CLI_SKIP_UPDATE_CHECK=true`. If you installed the CLI locally or with `--tool-path`, use the same installation scope when updating.
 - If you're using AI, provide [agent.md](docs/agent.md) and any compatible skills supplied by your organization to ground your coding assistant in the CLI's workflows. An editor or coding assistant is optional.
 
-# Getting Started - Your first Copilot Studio Agent built with code: Hello World
-- In the CLI, authenticate, then list and select your environment:
+# Get started: Create your first agent
 
-```
+Sign in and select a Power Platform environment:
+
+```powershell
 msagent auth login
 msagent env list
 msagent env select <environment-id>
 ```
 
-- Run the following command to create a new Copilot Studio agent:
+Create a local agent definition with a name, description, and instructions:
 
-```
-msagent agent create --agent-type MCSAgent -n "My Agent" -d "Description" -ip "Initial prompt/instructions"
-```
-
-- You have scaffolded a local agent with instructions, not a cloud agent. Create a deployment record and deploy it to upload a draft:
-
-```text
-msagent deployment create --deployment-name develop --deployment-type dev
-msagent agent deploy --deployment-name develop
+```powershell
+msagent agent create --agent-type MCSAgent -n "Hello World" -d "A friendly greeting agent" -ip "Greet the user and ask how you can help."
 ```
 
-Review the draft and any connection/workflow diagnostics before publishing. See the [quickstart](docs/Quickstart.md) for evaluation, publication, and live testing.
+Your agent files are ready to edit locally. Follow the [quickstart](docs/Quickstart.md) to deploy, evaluate, and publish your agent in Copilot Studio.
 
-## What to do next
-
-- [Copilot Studio CLI Plugin](.github/plugins/msagent-assistant/README.md):
-  shared Claude/Copilot workflows and generated host distributions, maintained
-  separately from the CLI's NuGet contents.
-
-- Follow the [quickstart](docs/Quickstart.md) guide to go through the full end-to-end lifecycle of a Copilot Studio agent.
-- [New Agents](docs/New%20Agents.md): Create, Clone or Initialize
-- [Editing Agents](docs/Editing%20Agents.md)
-  - [Using msagent CLI with GitHub Copilot](docs/Using%20msagents%20CLI%20with%20GitHub%20Copilot.md)
-  - [Working with connections, locally](docs/Working%20with%20connections%2C%20locally.md)
-- [Source Control](docs/Source%20Control%20with%20msagent%20cli.md)
-- [Deploying your Agent](docs/Deploying%20your%20Agent%20from%20your%20local%20machine.md)
-- [Testing your Agent](docs/Testing%20your%20Agent%20from%20your%20local%20machine.md)
-  - using the agent playground
-  - using terminal
-- Additional Activities
-  - [Additional coding agent instructions](docs/Additional%20coding%20agent%20instructions.md)
-- Review the [command reference](src/Microsoft.Agents.Hosting.Cli.Docs/ReadMe.md)
-- [File an issue or ask a question](https://github.com/microsoft/AgentHosting.Cli/issues)
+If you're using Claude or GitHub Copilot, try the [Copilot Studio CLI Plugin](.github/plugins/msagent-assistant/README.md) for workflows that help your coding assistant work with `msagent`. The plugin is maintained separately and isn't included in the CLI's NuGet package.
 
 ## Cost Management
 
@@ -151,6 +76,13 @@ We use telemetry to capture command and feature useage inside the Microsoft.Agen
 - **How to disable telemetry**. Use `msagent telemetry disable`.
 - **How to reenable telemetry**. Use `msagent telemetry enable`. An environment override takes precedence over the saved preference; see the [telemetry command reference](src/Microsoft.Agents.Hosting.Cli.Docs/Command_Telemetry.md).
 
+
+## Support
+
+This project uses [GitHub issues](https://github.com/microsoft/AgentHosting.Cli/issues)
+to track bugs and feature requests. Please search existing issues before filing
+a new one to avoid duplicates. For a new bug,
+[open an issue in this repository](https://github.com/microsoft/AgentHosting.Cli/issues/new/choose).
 
 # Trademarks
 
