@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Auth;
 /// hard-codes the first-party "Power Platform CLI - pac" registration.
 ///
 /// The AgentHost public-client registration in <see cref="DefaultClientId"/> is used when nothing is
-/// supplied, so a fresh clone signs in with <c>msagent auth login</c> and no further configuration.
+/// supplied, so a fresh clone signs in with <c>msagent auth create</c> and no further configuration.
 /// <c>AH_CLI_CLIENT_ID</c> overrides it, and the guardrails still apply to whatever is supplied:
 ///
 /// <list type="bullet">
@@ -19,7 +19,7 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Auth;
 /// </list>
 ///
 /// Construction fails with a <see cref="ClientApplicationConfigurationException"/> (exit 1) that names
-/// the required setting, so <c>auth login</c> stops before any interactive request is built.
+/// the required setting, so <c>auth create</c> stops before any interactive request is built.
 /// </summary>
 public sealed class AgentHostClientAppConfiguration
 {
@@ -119,5 +119,5 @@ public sealed class AgentHostClientAppConfiguration
         new(
             $"{ClientIdSettingName} is not configured. The production first-party AgentHost application " +
             "registration is unresolved, so interactive sign-in cannot proceed.",
-            remediation: $"Set {ClientIdSettingName} to the AgentHost public-client application (GUID) id before running `msagent auth login`.");
+            remediation: $"Set {ClientIdSettingName} to the AgentHost public-client application (GUID) id before running `msagent auth create`.");
 }

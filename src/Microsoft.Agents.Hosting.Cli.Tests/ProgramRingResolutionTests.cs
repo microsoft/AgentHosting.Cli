@@ -13,7 +13,7 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 /// </summary>
 public sealed class ProgramRingResolutionTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"ah-ring-{Guid.NewGuid():N}");
+    private readonly string _directory = Path.Combine(Directory.GetCurrentDirectory(), $"ah-ring-{Guid.NewGuid():N}");
 
     public ProgramRingResolutionTests() => Directory.CreateDirectory(_directory);
 
@@ -84,6 +84,41 @@ public sealed class ProgramRingResolutionTests : IDisposable
         Assert.Equal("prod", await TokenAsync(await StoreProfilesAsync("a", ("a", null))));
     }
 
+    [Theory]
+    [InlineData(CloudInstance.UsGov)]
+    [InlineData(CloudInstance.UsGovHigh)]
+    [InlineData(CloudInstance.UsGovDod)]
+    [InlineData(CloudInstance.China)]
+    [InlineData(CloudInstance.UsNat)]
+    [InlineData(CloudInstance.UsSec)]
+    public async Task BootstrapPreservesTheSelectedSovereignCloud(CloudInstance cloud)
+    {
+        var store = new FileAuthProfileStore(ProfilesPath);
+        await store.UpsertAsync(new AuthProfile { AccountKey = "a", Username = "a@example.test", Cloud = cloud }, default);
+        await store.SetActiveAsync("a", default);
+
+        Assert.Equal(PowerPlatformApiTargetSelection.TargetFor(cloud),
+            await Program.ResolvePowerPlatformApiTargetAsync(_directory));
+    }
+
+    [Fact]
+    public void CorruptStateGuidanceDoesNotEchoPayloadOrEquateMetadataDeletionWithCredentialCleanup()
+    {
+        var message = Program.DescribeUnreadableRing(_directory, new AuthProfileStateException("secret-runtime-payload"));
+        Assert.DoesNotContain("secret-runtime-payload", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("same effect", message, StringComparison.Ordinal);
+        Assert.Contains("auth clear", message, StringComparison.Ordinal);
+        Assert.Contains("owned", message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task OptionValuesCannotMasqueradeAsRecoveryVerbs()
+    {
+        WriteProfiles("not json");
+        await Assert.ThrowsAsync<AuthProfileStateException>(() =>
+            Program.ResolveTargetForInvocationAsync(_directory, ["--account", "auth", "logout"]));
+    }
+
     [Fact]
     public async Task AnActivePointerNamingNoProfileIsRefused()
     {
@@ -128,15 +163,15 @@ public sealed class ProgramRingResolutionTests : IDisposable
 
         Assert.Contains(ProfilesPath, message, StringComparison.Ordinal);
         Assert.Contains("nothing was run", message, StringComparison.Ordinal);
-        Assert.Contains("auth logout", message, StringComparison.Ordinal);
+        Assert.Contains("auth clear", message, StringComparison.Ordinal);
         Assert.True(
-            message.IndexOf("auth logout", StringComparison.Ordinal)
-                < message.IndexOf("auth login", StringComparison.Ordinal),
+            message.IndexOf("auth clear", StringComparison.Ordinal)
+                < message.IndexOf("auth create", StringComparison.Ordinal),
             "Clearing the stored sign-in has to be recommended before signing in again, because signing in reads it first.");
 
         foreach (var token in PowerPlatformApiRingSelection.AcceptedTokens)
         {
-            Assert.DoesNotContain(token, message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(token, message.Replace(ProfilesPath, "", StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -149,8 +184,17 @@ public sealed class ProgramRingResolutionTests : IDisposable
 
     public static TheoryData<string[]> RecoveryCommands() =>
     [
-        ["auth", "logout"],
-        ["auth", "login", "--cloud", "preprod"],
+        ["auth", "create", "--cloud", "Preprod"],
+        ["auth", "list"],
+        ["auth", "select", "--index", "1"],
+        ["auth", "create"],
+        ["auth", "clear"],
+        ["auth", "who"],
+        ["auth", "status"],
+        ["auth", "delete", "--index", "1"],
+        ["auth", "name", "--index", "1", "--name", "Dev"],
+        ["--non-interactive", "false", "auth", "clear"],
+        ["--non-interactive:false", "auth", "clear"],
         ["--help"],
         ["--version"],
     ];
@@ -276,14 +320,14 @@ public sealed class RingSurfaceTests
 
     [Theory]
     [InlineData("login")]
-    [InlineData("switch")]
+    [InlineData("create")]
     public void TheAuthCommandsThatSetTheRingAdvertiseIt(string verb)
     {
         var (_, stdout, _) = Run("auth", verb, "--help");
 
         Assert.Contains("--cloud", stdout, StringComparison.Ordinal);
 
-        foreach (var token in PowerPlatformApiRingSelection.AcceptedTokens)
+        foreach (var token in PowerPlatformApiTargetSelection.AcceptedTokens)
         {
             Assert.Contains(token, stdout, StringComparison.Ordinal);
         }
@@ -291,22 +335,22 @@ public sealed class RingSurfaceTests
 
     [Theory]
     [InlineData("login")]
-    [InlineData("switch")]
+    [InlineData("create")]
     public void ARingTheHostDoesNotServeIsRefused(string verb)
     {
-        var (exitCode, _, stderr) = Run("auth", verb, "--cloud", "dev", "--non-interactive");
-
-        Assert.Equal(2, exitCode);
-        Assert.Contains("dev", stderr, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void SwitchWithNeitherSelectorIsRefused()
-    {
-        var (exitCode, _, stderr) = Run("auth", "switch", "--non-interactive");
+        var (exitCode, _, stderr) = Run("auth", verb, "--cloud", "dev");
 
         Assert.Equal(2, exitCode);
         Assert.Contains("--cloud", stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelectWithBothSelectorsIsRefused()
+    {
+        var (exitCode, _, stderr) = Run("auth", "select", "--index", "1", "--name", "Dev", "--non-interactive");
+
+        Assert.Equal(2, exitCode);
+        Assert.Contains("--index", stderr, StringComparison.Ordinal);
     }
 
     [Fact]

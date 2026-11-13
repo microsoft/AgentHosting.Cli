@@ -5,7 +5,8 @@ public static class PowerPlatformApiDiscovery
 {
     /// <summary>
     /// Resolves the environment-scoped front door using the platform's normalized identifier split.
-    /// Production uses a two-character suffix; Test uses one.
+    /// Public production uses a two-character suffix; other verified targets use one.
+    /// China environment routing is not verified and cannot be derived.
     /// </summary>
     public static Uri GetEnvironmentEndpoint(
         PowerPlatformApiTargetConfig target,
@@ -33,16 +34,28 @@ public static class PowerPlatformApiDiscovery
         var cloudMap = PowerPlatformCloudMap.ForTarget(target);
         Uri globalEndpoint =
             cloudMap.RequireTrusted(target.GlobalEndpoint, "Power Platform API global");
+        if (target.Cloud == Auth.CloudInstance.China)
+        {
+            throw new NotSupportedException("Derived Power Platform API environment routing is not verified for China.");
+        }
+
         string normalized = environmentId
             .Trim()
             .ToLowerInvariant()
             .Replace("-", string.Empty, StringComparison.Ordinal);
         int suffixLength =
-            target.Ring == PowerPlatformApiRing.Production ? 2 : 1;
+            target.Cloud == Auth.CloudInstance.Public && target.Ring == PowerPlatformApiRing.Production ? 2 : 1;
         if (normalized.Length <= suffixLength)
         {
             throw new ArgumentException(
                 $"The normalized environment identifier must contain more than {suffixLength} characters.",
+                nameof(environmentId));
+        }
+
+        if (normalized.Length - suffixLength > 63)
+        {
+            throw new ArgumentException(
+                "The normalized environment identifier prefix must fit in a DNS label of at most 63 characters.",
                 nameof(environmentId));
         }
 

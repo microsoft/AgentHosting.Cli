@@ -129,9 +129,9 @@ mean a change partially completed or its result is uncertain.
 | [12001](ErrorCodes/12001.md) | The CLI could not complete authentication or account selection. |
 | [12002](ErrorCodes/12002.md) | No usable active sign-in profile is available for this command. |
 | [12003](ErrorCodes/12003.md) | The client application ID is missing, invalid, or not permitted. |
-| [12004](ErrorCodes/12004.md) | Saved authentication profiles could not be safely read or written. |
+| [12004](ErrorCodes/12004.md) | Saved authentication profiles could not be safely read or written, including invalid stored profile names. |
 | [12005](ErrorCodes/12005.md) | Interactive consent returned an identity other than the active CLI account. |
-| [12006](ErrorCodes/12006.md) | The CLI refused to silently persist tokens without platform protection. |
+| [12006](ErrorCodes/12006.md) | Required native protection for owned credentials or token storage is unavailable or its replies fail ownership/protocol validation; Linux diagnostics include a redacted category and operation. |
 | [12007](ErrorCodes/12007.md) | The required token cannot be obtained without interactive sign-in or consent. |
 | [12008](ErrorCodes/12008.md) | Microsoft Entra ID is limiting token requests; wait before retrying. |
 | [12009](ErrorCodes/12009.md) | The Microsoft corporate account must authenticate through the operating-system broker. |
@@ -142,6 +142,10 @@ mean a change partially completed or its result is uncertain.
 | [12014](ErrorCodes/12014.md) | The token's client application does not match the application the CLI expects. |
 | [12015](ErrorCodes/12015.md) | The acquired token does not match the operation's required tenant. |
 | [12016](ErrorCodes/12016.md) | The token does not carry the delegated permission needed for the operation. |
+| [12017](ErrorCodes/12017.md) | The token's user/application mode differs from the captured profile. |
+| [12018](ErrorCodes/12018.md) | A required directory object ID is missing from the token. |
+| [12019](ErrorCodes/12019.md) | The operation requires a user principal, not an application profile. |
+| [12020](ErrorCodes/12020.md) | Owned credential finalization or cleanup is incomplete without another primary error. |
 
 ## Environment
 
@@ -314,6 +318,7 @@ mean a change partially completed or its result is uncertain.
 | Code | Description |
 | --- | --- |
 | [99001](ErrorCodes/99001.md) | An unexpected error occurred without a more specific classification. |
-| [99002](ErrorCodes/99002.md) | The command, arguments, or required context are not valid for this operation. |
+| [99002](ErrorCodes/99002.md) | The command, arguments, or required context are not valid for this operation, including invalid authentication profile names and application profile creation options when `appusersupport` is disabled. |
 | [99003](ErrorCodes/99003.md) | This CLI build does not implement the requested operation. |
 | [99004](ErrorCodes/99004.md) | The target did not return a response before the operation timed out. |
+| [99005](ErrorCodes/99005.md) | An internal authentication context is missing or inconsistent, or required token-provider wiring is unavailable. |

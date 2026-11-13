@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
@@ -8,7 +9,7 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Environments;
 /// <summary>The on-disk shape of the active-environment selection. Never token material.</summary>
 internal sealed class EnvironmentSelectionDocument
 {
-    /// <summary>Persisted schema version. Only version 1 is understood by this build.</summary>
+    /// <summary>Missing versions denote legacy version 1; mutations write version 2.</summary>
     public int SchemaVersion { get; set; } = 1;
 
     /// <summary>The active selection, or <see langword="null"/> when none is selected.</summary>
@@ -25,12 +26,15 @@ internal sealed class StoredEnvironmentSelection
     public string ApiAudience { get; set; } = string.Empty;
     public string? InstanceUrl { get; set; }
     public DateTimeOffset SelectedAt { get; set; }
+    public EnvironmentSelectionOwner? Owner { get; set; }
+    public string? DefaultGeneration { get; set; }
 }
 
 /// <summary>Source-generated <c>System.Text.Json</c> metadata for the persisted selection.</summary>
 [JsonSourceGenerationOptions(
     WriteIndented = true,
-    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    UseStringEnumConverter = true)]
 [JsonSerializable(typeof(EnvironmentSelectionDocument))]
 internal sealed partial class EnvironmentSelectionJsonContext : JsonSerializerContext
 {
@@ -45,8 +49,6 @@ internal sealed partial class EnvironmentSelectionJsonContext : JsonSerializerCo
 /// </summary>
 public sealed class FileEnvironmentSelectionStore : IEnvironmentSelectionStore
 {
-    private const int SupportedSchemaVersion = 1;
-
     private readonly string _selectionFilePath;
 
     /// <param name="selectionFilePath">
@@ -66,6 +68,7 @@ public sealed class FileEnvironmentSelectionStore : IEnvironmentSelectionStore
     /// <inheritdoc />
     public Task<ActiveEnvironment?> GetActiveAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var document = ReadDocument();
         if (document.Active is null)
         {
@@ -75,10 +78,10 @@ public sealed class FileEnvironmentSelectionStore : IEnvironmentSelectionStore
         var stored = document.Active;
         if (!Uri.TryCreate(stored.ApiEndpoint, UriKind.Absolute, out var endpoint))
         {
-            throw Corrupt($"the stored endpoint '{stored.ApiEndpoint}' is not an absolute uri");
+            throw Corrupt("the stored endpoint is not an absolute URI");
         }
 
-        return Task.FromResult<ActiveEnvironment?>(new ActiveEnvironment
+        var environment = new ActiveEnvironment
         {
             EnvironmentId = stored.EnvironmentId,
             DisplayName = stored.DisplayName,
@@ -87,21 +90,30 @@ public sealed class FileEnvironmentSelectionStore : IEnvironmentSelectionStore
             ApiAudience = stored.ApiAudience,
             InstanceUrl = stored.InstanceUrl,
             SelectedAt = stored.SelectedAt,
-        });
+            Owner = document.SchemaVersion == 2 ? stored.Owner : null,
+            DefaultGeneration = document.SchemaVersion == 2 ? stored.DefaultGeneration : null,
+        };
+        if (!EnvironmentProfileBinding.HasValidOwnershipMetadata(environment))
+            throw Corrupt("the stored selection ownership is incomplete or invalid");
+        return Task.FromResult<ActiveEnvironment?>(environment);
     }
 
     /// <inheritdoc />
     public Task SetActiveAsync(ActiveEnvironment environment, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(environment);
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (string.IsNullOrWhiteSpace(environment.EnvironmentId))
         {
             throw new ArgumentException("Environment id is required.", nameof(environment));
         }
+        if (!EnvironmentProfileBinding.HasValidOwnershipMetadata(environment))
+            throw Corrupt("the selection ownership is incomplete or invalid");
 
         WriteDocument(new EnvironmentSelectionDocument
         {
+            SchemaVersion = 2,
             Active = new StoredEnvironmentSelection
             {
                 EnvironmentId = environment.EnvironmentId,
@@ -111,6 +123,8 @@ public sealed class FileEnvironmentSelectionStore : IEnvironmentSelectionStore
                 ApiAudience = environment.ApiAudience,
                 InstanceUrl = environment.InstanceUrl,
                 SelectedAt = environment.SelectedAt,
+                Owner = environment.Owner,
+                DefaultGeneration = environment.DefaultGeneration,
             },
         });
 
@@ -120,6 +134,7 @@ public sealed class FileEnvironmentSelectionStore : IEnvironmentSelectionStore
     /// <inheritdoc />
     public Task ClearAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (File.Exists(_selectionFilePath))
         {
             File.Delete(_selectionFilePath);
@@ -130,31 +145,32 @@ public sealed class FileEnvironmentSelectionStore : IEnvironmentSelectionStore
 
     private EnvironmentSelectionDocument ReadDocument()
     {
-        if (!File.Exists(_selectionFilePath))
-        {
-            return new EnvironmentSelectionDocument();
-        }
-
         string json;
         try
         {
             json = File.ReadAllText(_selectionFilePath);
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
-            throw Corrupt($"it could not be read ({ex.Message})");
+            return new EnvironmentSelectionDocument();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw Corrupt("it could not be read");
         }
 
         EnvironmentSelectionDocument? document;
         try
         {
+            using var parsed = JsonDocument.Parse(json);
+            RejectDuplicateProperties(parsed.RootElement, EnvironmentSelectionJsonContext.Default.EnvironmentSelectionDocument);
             document = JsonSerializer.Deserialize(
                 json,
                 EnvironmentSelectionJsonContext.Default.EnvironmentSelectionDocument);
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            throw Corrupt($"it is not valid JSON ({ex.Message})");
+            throw Corrupt("it is not valid JSON");
         }
 
         if (document is null)
@@ -162,9 +178,9 @@ public sealed class FileEnvironmentSelectionStore : IEnvironmentSelectionStore
             throw Corrupt("it deserialized to null");
         }
 
-        if (document.SchemaVersion != SupportedSchemaVersion)
+        if (document.SchemaVersion is not (1 or 2))
         {
-            throw Corrupt($"unsupported schema version {document.SchemaVersion} (expected {SupportedSchemaVersion})");
+            throw Corrupt($"unsupported schema version {document.SchemaVersion}");
         }
 
         if (document.Active is not null && string.IsNullOrWhiteSpace(document.Active.EnvironmentId))
@@ -173,6 +189,24 @@ public sealed class FileEnvironmentSelectionStore : IEnvironmentSelectionStore
         }
 
         return document;
+    }
+
+    private static void RejectDuplicateProperties(JsonElement element, JsonTypeInfo metadata)
+    {
+        if (element.ValueKind != JsonValueKind.Object || metadata.Kind != JsonTypeInfoKind.Object)
+            return;
+
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in element.EnumerateObject())
+        {
+            var mapped = metadata.Properties.FirstOrDefault(p => string.Equals(p.Name, property.Name, StringComparison.Ordinal));
+            if (mapped is null)
+                continue;
+            if (!keys.Add(property.Name))
+                throw Corrupt("duplicate JSON property");
+            if (EnvironmentSelectionJsonContext.Default.GetTypeInfo(mapped.PropertyType) is { Kind: JsonTypeInfoKind.Object } nested)
+                RejectDuplicateProperties(property.Value, nested);
+        }
     }
 
     private void WriteDocument(EnvironmentSelectionDocument document)

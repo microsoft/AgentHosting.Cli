@@ -37,16 +37,48 @@ public sealed record AuthAccount
 }
 
 /// <summary>
-/// A persisted AgentHost auth profile. Holds only account metadata and selection state — never token
-/// material (the MSAL cache is a separate, secure store). One AgentHost profile is active at a time
-/// because the demonstrator has a single auth kind; PAC's per-<c>AuthKind</c> "current" dictionary is
-/// intentionally collapsed.
+/// A Universal authentication profile containing metadata and credential references, never tokens
+/// or credential secrets. Exactly one profile can be active. Credential methods describe persisted
+/// intent; their presence does not imply that credential acquisition is implemented.
 /// </summary>
 public sealed record AuthProfile
 {
+    /// <summary>Stable opaque identity assigned by persistence; empty before creation.</summary>
+    public string ProfileId { get; init; } = string.Empty;
+
+    /// <summary>Optional ordinal, case-sensitive profile name.</summary>
+    public string? Name { get; init; }
+
+    /// <summary>Persisted mutation revision, used for optimistic concurrency.</summary>
+    public long Revision { get; init; }
+
+    /// <summary>Home-account identity for user profiles; legacy profiles fall back to account metadata.</summary>
+    public string? HomeAccountId { get; init; }
+
+    /// <summary>The intended credential acquisition method, not credential material.</summary>
+    public AuthCredentialMethod CredentialMethod { get; init; } = AuthCredentialMethod.Broker;
+
+    /// <summary>The principal represented by the profile.</summary>
+    public AuthPrincipalType PrincipalType { get; init; } = AuthPrincipalType.User;
+
+    /// <summary>Power Platform API connection endpoint, not a Dataverse URL.</summary>
+    public string? ConnectionUrl { get; init; }
+
+    /// <summary>Reference to a separately protected credential, never the credential itself.</summary>
+    public string? CredentialReference { get; init; }
+
+    /// <summary>Certificate location metadata, not certificate contents.</summary>
+    public string? CertificatePath { get; init; }
+
+    /// <summary>Certificate identity metadata.</summary>
+    public string? CertificateThumbprint { get; init; }
+
+    /// <summary>The profile's selected default environment.</summary>
+    public ActiveEnvironment? DefaultEnvironment { get; init; }
+
     /// <summary>
-    /// Stable account key used for selection. This is the MSAL home-account id, not the mutable
-    /// username; combined with the client application id, it forms the durable profile identity.
+    /// Legacy home-account metadata, not the opaque profile identity. Legacy selection by this value
+    /// is accepted only when unambiguous.
     /// </summary>
     public required string AccountKey { get; init; }
 
@@ -60,9 +92,8 @@ public sealed record AuthProfile
     public bool IsActive { get; init; }
 
     /// <summary>
-    /// The client application id under which this profile was created. Combined with
-    /// <see cref="AccountKey"/> it forms the durable profile key; a profile created under a different
-    /// client id is not reused.
+    /// The client application id under which this profile was created. It participates in identity
+    /// matching with tenant, authority, cloud, ring, principal and credential method.
     /// </summary>
     public string? ClientId { get; init; }
 
@@ -84,12 +115,14 @@ public sealed record AuthProfile
 
     /// <summary>
     /// Issuer tenant observed from normal authentication while optional telemetry collection was
-    /// enabled. This is not inferred from <see cref="AccountKey"/> or <see cref="TenantId"/>.
+    /// enabled. This is not inferred from <see cref="Microsoft.Agents.Hosting.Cli.Core.Ports.AuthProfile.AccountKey"/>
+    /// or <see cref="Microsoft.Agents.Hosting.Cli.Core.Ports.AuthProfile.TenantId"/>.
     /// </summary>
     public string? AuthenticatedTenantId { get; init; }
 
     /// <summary>
-    /// Tenant-local Entra object id paired with <see cref="AuthenticatedTenantId"/>, when verified.
+    /// Tenant-local Entra object id paired with
+    /// <see cref="Microsoft.Agents.Hosting.Cli.Core.Ports.AuthProfile.AuthenticatedTenantId"/>, when verified.
     /// </summary>
     public string? PrincipalObjectId { get; init; }
 }
@@ -282,7 +315,10 @@ public interface IAuthProfileStore
     /// <summary>Inserts or updates a profile.</summary>
     Task UpsertAsync(AuthProfile profile, CancellationToken cancellationToken);
 
-    /// <summary>Marks <paramref name="accountKey"/> as the single active profile.</summary>
+    /// <summary>
+    /// Selects only when the union of opaque profile id and legacy <paramref name="accountKey"/>
+    /// matches identifies exactly one profile.
+    /// </summary>
     Task SetActiveAsync(string accountKey, CancellationToken cancellationToken);
 
     /// <summary>Clears all persisted profile metadata.</summary>

@@ -18,7 +18,7 @@ public sealed class AgentDeploymentConnectionService
     private readonly IConnectionSelectionPrompt _selectionPrompt;
     private readonly WorkflowStateCache _workflowStates;
     private readonly ManagedAgentPrincipalResolver _principals;
-    private readonly CoreServicesClusterCategory _cluster;
+    private readonly Func<CoreServicesClusterCategory> _cluster;
 
     /// <summary>Creates the service.</summary>
     /// <param name="targets">Resolves the deployment, environment and workspace the verb acts on.</param>
@@ -29,6 +29,15 @@ public sealed class AgentDeploymentConnectionService
     /// <param name="principals">Names the identity a connection has to belong to before it is bound without asking.</param>
     /// <param name="cluster">The cluster category the environment belongs to.</param>
     public AgentDeploymentConnectionService(AgentDeploymentConnectionResolver targets, ICopilotConnectionPort connections, ConnectionBindingCoordinator bindings, IConnectionSelectionPrompt selectionPrompt, WorkflowStateCache workflowStates, ManagedAgentPrincipalResolver principals, CoreServicesClusterCategory cluster)
+        : this(targets, connections, bindings, selectionPrompt, workflowStates, principals, () => cluster)
+    {
+    }
+
+    /// <summary>Creates a service that resolves its legacy cluster only when reporting connections.</summary>
+    public static AgentDeploymentConnectionService CreateDeferred(AgentDeploymentConnectionResolver targets, ICopilotConnectionPort connections, ConnectionBindingCoordinator bindings, IConnectionSelectionPrompt selectionPrompt, WorkflowStateCache workflowStates, ManagedAgentPrincipalResolver principals, Func<CoreServicesClusterCategory> cluster) =>
+        new(targets, connections, bindings, selectionPrompt, workflowStates, principals, cluster);
+
+    private AgentDeploymentConnectionService(AgentDeploymentConnectionResolver targets, ICopilotConnectionPort connections, ConnectionBindingCoordinator bindings, IConnectionSelectionPrompt selectionPrompt, WorkflowStateCache workflowStates, ManagedAgentPrincipalResolver principals, Func<CoreServicesClusterCategory> cluster)
     {
         _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
@@ -36,7 +45,7 @@ public sealed class AgentDeploymentConnectionService
         _selectionPrompt = selectionPrompt ?? throw new ArgumentNullException(nameof(selectionPrompt));
         _workflowStates = workflowStates ?? throw new ArgumentNullException(nameof(workflowStates));
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
-        _cluster = cluster;
+        _cluster = cluster ?? throw new ArgumentNullException(nameof(cluster));
     }
 
     /// <summary>Computes readiness and binds what is unambiguous.</summary>
@@ -49,6 +58,8 @@ public sealed class AgentDeploymentConnectionService
 
         var target = await _targets.ResolveAsync(request, "msagent deployment connection update", cancellationToken).ConfigureAwait(false);
         var environment = target.Environment;
+        environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
+        target = target with { Environment = environment };
         var workspaceDirectory = target.WorkspaceDirectory;
 
         try
@@ -69,7 +80,7 @@ public sealed class AgentDeploymentConnectionService
     private async Task<AgentDeploymentConnectionResult> ResolveAndBindAsync(AgentDeploymentConnectionRequest request, AgentDeploymentConnectionTarget target, CopilotEnvironmentContext environment, string workspaceDirectory, CancellationToken cancellationToken)
     {
         var snapshot = await _connections.ReadConnectionsAsync(environment, workspaceDirectory, cancellationToken).ConfigureAwait(false);
-        var principal = await _principals.ResolveUsernameAsync(cancellationToken).ConfigureAwait(false);
+        var principal = await _principals.ResolveUsernameAsync(environment, cancellationToken).ConfigureAwait(false);
         var observed = snapshot.References.Select(ConnectionReadinessPlanner.Observe).ToList();
         var selected = ConnectionSelectionScope.Apply(observed, request, workspaceDirectory);
         var plan = Propose(observed, selected, principal);
@@ -106,7 +117,7 @@ public sealed class AgentDeploymentConnectionService
             ConnectionsReady = connectionsReady,
             WorkflowsReady = workflowsReady,
             Ready = ConnectionReport.IsReady(connectionsReady, workflowsReady),
-            Connections = ConnectionReport.Connections(plan, _cluster, environment.EnvironmentId),
+            Connections = ConnectionReport.Connections(plan, environment.Context is { } context ? PowerAppsServiceTarget.ClusterFor(context) : _cluster(), environment.EnvironmentId),
             Workflows = workflows,
             ActivatedWorkflows = activation.Activated,
             RefusedWorkflows = activation.Refused,

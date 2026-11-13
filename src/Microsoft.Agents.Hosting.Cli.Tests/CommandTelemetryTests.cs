@@ -55,7 +55,13 @@ public sealed class CommandTelemetryTests
         },
         { "auth login", ["auth", "login"] },
         { "auth status", ["auth", "status"] },
-        { "auth switch", ["auth", "switch", "--account", "operator"] },
+        { "auth create", ["auth", "create", "--managedIdentity"] },
+        { "auth list", ["auth", "list"] },
+        { "auth select", ["auth", "select", "--name", "operator"] },
+        { "auth delete", ["auth", "delete", "--index", "1"] },
+        { "auth name", ["auth", "name", "--index", "1", "--name", "operator"] },
+        { "auth clear", ["auth", "clear"] },
+        { "auth who", ["auth", "who"] },
         { "auth logout", ["auth", "logout"] },
         {
             "deployment create",
@@ -374,12 +380,12 @@ public sealed class CommandTelemetryTests
         { "-h", ["env", "select", "--", "-h"] },
         { "-v", ["env", "select", "--", "-v"] },
         { "--version", ["env", "select", "--version"] },
-        { "--help", ["auth", "switch", "--account", "--help"] },
-        { "--version", ["auth", "switch", "--account", "--version"] },
-        { "--help", ["auth", "switch", "--account=--help"] },
-        { "--version", ["auth", "switch", "--account=--version"] },
-        { "--help", ["auth", "switch", "--account:--help"] },
-        { "--version", ["auth", "switch", "--account:--version"] },
+        { "--help", ["auth", "select", "--name", "--help"] },
+        { "--version", ["auth", "select", "--name", "--version"] },
+        { "--help", ["auth", "select", "--name=--help"] },
+        { "--version", ["auth", "select", "--name=--version"] },
+        { "--help", ["auth", "select", "--name:--help"] },
+        { "--version", ["auth", "select", "--name:--version"] },
     };
 
     [Theory]
@@ -399,14 +405,14 @@ public sealed class CommandTelemetryTests
                 transport: transport),
             operations);
         JsonElement[] events = Parse(Assert.IsType<string>(transport.Payload));
-        string expectedPath = args[0] == "env" ? "env.select" : "auth.switch";
+        string expectedPath = args[0] == "env" ? "env.select" : "auth.select";
 
         Assert.Equal(ExitCodes.Success, actual.ExitCode);
         Assert.Equal(
             expectedValue,
             args[0] == "env"
                 ? operations.LastSelectedEnvironmentId
-                : operations.LastSwitchAccount);
+                : operations.LastAuthSelect?.Selector.Name);
         Assert.Equal(
             ["CommandAttempt", "CommandOutcome"],
             events.Select(item =>
@@ -418,7 +424,7 @@ public sealed class CommandTelemetryTests
 
     [Theory]
     [InlineData("auth status", "auth", "status")]
-    [InlineData("auth switch", "auth", "switch", "-acc", "operator")]
+    [InlineData("auth login", "auth", "login", "-acc", "operator")]
     [InlineData("agent create", "agent", "create", "-at", "MCSAgent", "-an", "Contoso Agent")]
     [InlineData("agent share", "agent", "share", "-aid", "agent-1", "-u", "ada@contoso.com", "-rl", "use")]
     [InlineData("deployment connection list", "deployment", "connection", "list", "-aid", "agent-1", "-dn", "dev")]

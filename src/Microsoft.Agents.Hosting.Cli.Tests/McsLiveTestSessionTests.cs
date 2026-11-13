@@ -825,7 +825,7 @@ public sealed class McsLiveTestSessionTests
         await using var session = new McsLiveTestSession(Target, "token", handler);
         using var cancellation = new CancellationTokenSource();
         var enumerator = session.QueryAsync("query", "c", cancellation.Token).GetAsyncEnumerator(cancellation.Token);
-        var firstMove = enumerator.MoveNextAsync().AsTask();
+        var firstMove = Task.Run(async () => await enumerator.MoveNextAsync());
 
         try
         {

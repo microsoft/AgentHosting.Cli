@@ -21,16 +21,19 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
     private readonly HttpClient _httpClient;
     private readonly ITokenProvider _tokens;
     private readonly PpapiTokenClaimsValidator _claimsValidator;
+    private readonly IProfileResourceTokenProvider? _profileTokens;
 
     public AmsPackagePublicationAdapter(
         HttpClient httpClient,
         ITokenProvider tokens,
-        PpapiTokenClaimsValidator? claimsValidator = null)
+        PpapiTokenClaimsValidator? claimsValidator = null,
+        IProfileResourceTokenProvider? profileTokens = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _httpClient.Timeout = Timeout.InfiniteTimeSpan;
         _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens));
         _claimsValidator = claimsValidator ?? new PpapiTokenClaimsValidator();
+        _profileTokens = profileTokens;
     }
 
     public async Task<AmsPackagePublicationResult> PublishAsync(
@@ -49,14 +52,18 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
             $"agenthosting/agents/{Uri.EscapeDataString(request.AgentId)}/packages?api-version=1";
         var targetUri = new Uri(EnsureTrailingSlash(request.Endpoint), relativePath);
         var clientRequestId = Guid.NewGuid().ToString("D");
-        var token = await _tokens
+        if (_profileTokens is null) ResourceTokenContext.RequireBinding(_tokens, request.Context);
+        var token = _profileTokens is not null
+            ? (await _profileTokens.AcquireAsync(ResourceTokenContext.Require(request.Context), request.Audience,
+                request.TenantId, [PowerPlatformApiPermissions.AppsUpdate], cancellationToken).ConfigureAwait(false)).Token
+            : await _tokens
             .AcquireTokenSilentAsync(request.Audience, request.TenantId, cancellationToken)
             .ConfigureAwait(false);
-        _claimsValidator.Validate(
+        if (_profileTokens is null) ResourceTokenContext.ValidateLegacy(_claimsValidator, _tokens, request.Context,
             token.AccessToken,
             request.Audience,
             request.TenantId,
-            PowerPlatformApiPermissions.AppsUpdate);
+            [PowerPlatformApiPermissions.AppsUpdate]);
 
         using var message = new HttpRequestMessage(HttpMethod.Post, targetUri);
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);

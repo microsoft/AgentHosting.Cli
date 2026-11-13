@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using Microsoft.Agents.Hosting.Cli.Commands.Common;
+using Microsoft.Agents.Hosting.Cli.Commands.Groups;
+using Microsoft.Agents.Hosting.Cli.Commands.Model;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
@@ -14,18 +16,24 @@ public sealed partial class ReadmeOptionTests
     {
         var path = ReadmePath(folder, subfolder, fileName);
 
+        var aliases = OptionCatalog.DeclaredAliases.Keys.Concat(
+            CommandReflector.Discover(typeof(EnvGroup).Assembly, TestFeatureFlags.Everything)
+                .SelectMany(CommandTree.AllCommands)
+                .SelectMany(command => command.Implementation.Symbols.OfType<CommandOption>())
+                .SelectMany(option => new[] { option.Name, option.ShortAlias }.Concat(option.ExtraAliases)))
+            .ToHashSet(StringComparer.Ordinal);
         var unknown = File.ReadAllLines(path)
             .Where(line => line.Contains("msagent ", StringComparison.Ordinal))
             .SelectMany(line => OptionToken().Matches(line).Select(match => match.Value))
             .Distinct(StringComparer.Ordinal)
-            .Where(option => option != "--help" && !OptionCatalog.DeclaredAliases.ContainsKey(option))
+            .Where(option => option != "--help" && !aliases.Contains(option))
             .Order(StringComparer.Ordinal)
             .ToArray();
 
         Assert.Empty(unknown);
     }
 
-    [GeneratedRegex(@"--[a-z][a-z0-9-]*")]
+    [GeneratedRegex(@"--[A-Za-z][A-Za-z0-9-]*")]
     private static partial Regex OptionToken();
 
     private static string ReadmePath(string folder, string subfolder, string fileName)

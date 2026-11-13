@@ -22,6 +22,9 @@ public enum AmsAgentCreationRouteMode
 /// </summary>
 public sealed record AmsAgentCreationTransportRequest
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public EnvironmentResolutionContext? Context { get; init; }
+
     public required Uri Endpoint { get; init; }
     public required AmsAgentCreationRouteMode RouteMode { get; init; }
     public required string Audience { get; init; }

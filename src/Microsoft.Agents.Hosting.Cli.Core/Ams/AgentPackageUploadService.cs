@@ -59,6 +59,7 @@ public sealed class AgentPackageUploadService
                 new AmsAgentReadTransportRequest
                 {
                     Endpoint = environment.ApiEndpoint,
+                    Context = environment.Context,
                     Audience = environment.ApiAudience,
                     TenantId = environment.TenantId,
                     EnvironmentId = environment.EnvironmentId,
@@ -73,6 +74,7 @@ public sealed class AgentPackageUploadService
                 new AmsPackagePublicationTransportRequest
                 {
                     Endpoint = environment.ApiEndpoint,
+                    Context = environment.Context,
                     Audience = environment.ApiAudience,
                     TenantId = environment.TenantId,
                     EnvironmentId = environment.EnvironmentId,

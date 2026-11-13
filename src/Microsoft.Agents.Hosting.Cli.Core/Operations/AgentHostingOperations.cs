@@ -45,6 +45,9 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
     private readonly DeploymentOAuthService? _deploymentOAuth;
     private readonly DeploymentChannelService? _deploymentChannels;
     private readonly EvaluationServices? _evaluations;
+    private readonly IAuthProfileOperations? _authProfiles;
+    private readonly IProfileCredentialProvider? _profileCredentials;
+    private readonly IProfileCachedAccountReader? _profileCachedAccounts;
 
     public AgentHostingOperations(
         IAuthenticationSession session,
@@ -111,6 +114,38 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
         DeploymentOAuthService? deploymentOAuth,
         DeploymentChannelService? deploymentChannels,
         EvaluationServices? evaluations)
+        : this(session, profileStore, interactionPolicy, platform, messagePresenter, sessionContext,
+            absProvisioning, absApply, environments, agentCreate, agentPackageUpload, agentDeploy,
+            authProfiles: null, profileCredentials: null, profileCachedAccounts: null,
+            blueprintIdentity, appRegistrationIdentity, managedAgents, deployments, deploymentOAuth,
+            deploymentChannels, evaluations)
+    {
+    }
+
+    /// <summary>Creates a profile-credential host with an explicit dependency set, preserving legacy overload resolution.</summary>
+    public AgentHostingOperations(
+        IAuthenticationSession session,
+        IAuthProfileStore profileStore,
+        IInteractionPolicy interactionPolicy,
+        IPlatformInfo platform,
+        IInteractiveMessagePresenter messagePresenter,
+        AuthSessionContext sessionContext,
+        AbsProvisioningService absProvisioning,
+        AbsApplyService absApply,
+        EnvironmentSelectionService environments,
+        AgentCreateService agentCreate,
+        AgentPackageUploadService agentPackageUpload,
+        AgentDeployService agentDeploy,
+        IAuthProfileOperations? authProfiles,
+        IProfileCredentialProvider? profileCredentials,
+        IProfileCachedAccountReader? profileCachedAccounts,
+        BlueprintIdentityService? blueprintIdentity,
+        AppRegistrationIdentityService? appRegistrationIdentity,
+        ManagedAgentServices? managedAgents,
+        DeploymentService? deployments,
+        DeploymentOAuthService? deploymentOAuth,
+        DeploymentChannelService? deploymentChannels,
+        EvaluationServices? evaluations)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _profileStore = profileStore ?? throw new ArgumentNullException(nameof(profileStore));
@@ -131,6 +166,9 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
         _deploymentOAuth = deploymentOAuth;
         _deploymentChannels = deploymentChannels;
         _evaluations = evaluations;
+        _authProfiles = authProfiles;
+        _profileCredentials = profileCredentials;
+        _profileCachedAccounts = profileCachedAccounts;
     }
     /// <inheritdoc />
     public Task<ManagedAgentCreateResult> CreateManagedAgentAsync(ManagedAgentCreateRequest request, CancellationToken cancellationToken)
@@ -280,13 +318,31 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
         {
             throw new InteractionRequiredException(
                 "Interactive sign-in is required but interaction is disabled (--non-interactive).",
-                remediation: "Re-run `msagent auth login` without --non-interactive on a machine where a browser or the OS broker is available.");
+                remediation: "Run `msagent auth create` for the intended cloud without --non-interactive on a machine where a browser or the OS broker is available.");
         }
 
+        ValidateExplicitTarget(request);
         var flow = AuthLoginFlowSelector.Select(request, _platform);
         var profiles = await _profileStore.GetProfilesAsync(cancellationToken).ConfigureAwait(false);
         var previous = profiles.FirstOrDefault(profile => profile.IsActive);
-        var ring = RequestedRing(request, profiles);
+        var target = RequestedTarget(request, profiles);
+        if (_authProfiles is not null)
+        {
+            var result = await _authProfiles.CreateAsync(new AuthCreateRequest
+            {
+                Target = target, Tenant = request.Tenant, LoginHint = request.Account,
+                Resource = request.Resource, Scopes = request.Scopes,
+                DeviceCode = flow == AuthLoginFlow.DeviceCode,
+            }, cancellationToken).ConfigureAwait(false);
+            return new AuthLoginResult
+            {
+                Status = "signed-in", Account = result.Profile.Account, TenantId = result.Profile.TenantId,
+                Cloud = result.Profile.Cloud, EnvironmentCleared = false,
+            };
+        }
+        if (target.Cloud != _sessionContext.Cloud)
+            throw new UsageException("The legacy session-only host cannot sign in to another cloud. Use a profile-credential host or an explicitly composed compatible session.");
+        var ring = target.Ring;
         var (account, completedFlow) = await SignInAsync(flow, request with { Ring = ring }, cancellationToken).ConfigureAwait(false);
 
         // PAC's corporate-account protection: block a browser (non-broker) sign-in of a Microsoft
@@ -331,7 +387,7 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
             Status = "signed-in",
             Account = account.Username,
             TenantId = account.TenantId,
-            Cloud = PowerPlatformApiRingSelection.CanonicalToken(ring),
+            Cloud = AuthProfileOperations.CloudToken(profile),
             EnvironmentCleared = await _environments
                 .ClearSelectionsOnIdentityChangeAsync(previous, profile, cancellationToken)
                 .ConfigureAwait(false),
@@ -339,30 +395,51 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
     }
 
     /// <summary>
-    /// The ring a sign-in targets. Resolved once and used for both the token request and the stored
+    /// The cloud target a sign-in addresses. Resolved once and used for both the token request and the stored
     /// profile, so the audience the credential was minted for and the cloud the account is recorded
     /// against can never disagree.
     ///
     /// <para>
-    /// An explicit <c>--cloud</c> decides. Otherwise a named account keeps the ring it already has,
-    /// and anything else inherits the active account's ring: this process is already composed for
-    /// that cloud, so signing in against production here would mint a token no command in this
-    /// session could use. An account name matching nothing stored falls back the same way, because an
-    /// unrecognised name is a new sign-in in the cloud the session is already working in. A first
-    /// sign-in, with nothing active, goes to production.
+    /// An explicit target decides; the legacy ring input names a public target. Otherwise an
+    /// unambiguous compatible stored account or active profile supplies the target, with Public as
+    /// the baseline. Login hints are not case-sensitive profile names. Distinct stored identities
+    /// matching a hint require explicit targeting rather than first-match selection.
     /// </para>
     /// </summary>
     /// <param name="request">The command input.</param>
     /// <param name="profiles">The stored profiles, read before the sign-in.</param>
-    /// <returns>The ring the sign-in requests a token for and records.</returns>
-    private static PowerPlatformApiRing RequestedRing(AuthLoginRequest request, IReadOnlyList<AuthProfile> profiles) =>
-        request.Ring
-        ?? Named(request.Account, profiles)?.Ring
-        ?? profiles.FirstOrDefault(profile => profile.IsActive)?.Ring
-        ?? PowerPlatformApiRing.Production;
+    /// <returns>The registered cloud target the sign-in requests and records.</returns>
+    private static PowerPlatformApiTargetConfig RequestedTarget(AuthLoginRequest request, IReadOnlyList<AuthProfile> profiles)
+    {
+        if (request.Target is not null) return AuthProfileOperations.RequireTarget(request.Target);
+        if (request.Ring is { } ring) return PowerPlatformApiRingSelection.TargetFor(ring);
+        var named = profiles.Where(profile =>
+            AuthProfileSelection.NamesAccount(request.Account, profile.HomeAccountId ?? profile.AccountKey, profile.Username)
+            && (request.Tenant is null || string.Equals(request.Tenant, profile.TenantId, StringComparison.OrdinalIgnoreCase))).ToList();
+        if (named.Select(p => (p.Cloud, p.Ring, p.TenantId, p.ClientId, p.Authority,
+                p.HomeAccountId ?? p.AccountKey, p.PrincipalType, p.CredentialMethod)).Distinct().Skip(1).Any())
+            throw new UsageException("The login hint matches distinct stored authentication identities or targets. Supply an explicit cloud target and tenant.");
+        var inherited = named.FirstOrDefault() ?? profiles.SingleOrDefault(p => p.IsActive);
+        return inherited is null ? PowerPlatformApiTargetConfig.Public
+            : PowerPlatformApiTargetSelection.TargetFor(inherited.Cloud, inherited.Ring);
+    }
 
-    private static AuthProfile? Named(string? account, IReadOnlyList<AuthProfile> profiles) =>
-        profiles.FirstOrDefault(profile => AuthProfileSelection.NamesAccount(account, profile.AccountKey, profile.Username));
+    private static void ValidateExplicitTarget(AuthLoginRequest request)
+    {
+        if (request.Ring is { } ring)
+        {
+            try { PowerPlatformApiRingSelection.Require(ring); }
+            catch (ArgumentException) { throw new UsageException("A registered public cloud ring is required."); }
+        }
+        if (request.Target is { } target)
+        {
+            AuthProfileOperations.RequireTarget(target);
+            if (request.Ring is { } requestedRing && requestedRing != target.Ring)
+                throw new UsageException("The explicit authentication target and ring disagree.");
+        }
+        if (request.Scopes is null || request.Resource is not null && request.Scopes.Count != 0)
+            throw new UsageException("Resource and explicit scopes cannot be combined.");
+    }
 
     private async Task<(AuthAccount Account, AuthLoginFlow Flow)> SignInAsync(AuthLoginFlow flow, AuthLoginRequest request, CancellationToken cancellationToken)
     {
@@ -419,7 +496,7 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
         {
             return await WithEnvironmentAsync(
                 new AuthStatusReport { Status = "signed-out", SignedIn = false },
-                cancellationToken).ConfigureAwait(false);
+                active, cancellationToken).ConfigureAwait(false);
         }
 
         // Broker/OS-account profiles: the account lives in the OS broker (WAM), not the enumerable MSAL
@@ -428,7 +505,10 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
         // Reconciling a broker profile against a non-broker enumeration (which structurally cannot see
         // the WAM account) would falsely report `stale` after a successful broker login; silent
         // acquisition still succeeds via the OS-account fallback (MsalSilentTokenProvider).
-        if (AuthProfileSelection.IsBrokerProfile(active))
+        if (active.PrincipalType != AuthPrincipalType.User || AuthProfileSelection.IsBrokerProfile(active)
+            || active.CredentialMethod == AuthCredentialMethod.Broker && active.FlowType is null
+            || active.CredentialMethod is not (AuthCredentialMethod.Broker or AuthCredentialMethod.Browser
+                or AuthCredentialMethod.DeviceCode or AuthCredentialMethod.Password))
         {
             return await WithEnvironmentAsync(
                 new AuthStatusReport
@@ -438,10 +518,20 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
                     Account = active.Username,
                     TenantId = active.TenantId,
                 },
-                cancellationToken).ConfigureAwait(false);
+                active, cancellationToken).ConfigureAwait(false);
         }
 
-        var accounts = await _session.GetAccountsAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<AuthAccount> accounts;
+        if (_profileCredentials?.OwnsCredential(active) == true)
+        {
+            var reader = _profileCachedAccounts
+                ?? throw new AuthProfileStateException("Private profile-cache metadata reading is unavailable.");
+            accounts = await reader.GetAccountsAsync(active, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            accounts = await _session.GetAccountsAsync(cancellationToken).ConfigureAwait(false);
+        }
         var reconciliation = AuthProfileSelection.Reconcile(active, accounts);
 
         var report = reconciliation.State switch
@@ -464,7 +554,7 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
             _ => new AuthStatusReport { Status = "signed-out", SignedIn = false },
         };
 
-        return await WithEnvironmentAsync(report, cancellationToken).ConfigureAwait(false);
+        return await WithEnvironmentAsync(report, active, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -475,21 +565,21 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
     /// </summary>
     private async Task<AuthStatusReport> WithEnvironmentAsync(
         AuthStatusReport report,
+        AuthProfile? active,
         CancellationToken cancellationToken)
     {
-        var active = await _profileStore.GetActiveProfileAsync(cancellationToken).ConfigureAwait(false);
         var ring = active?.Ring ?? PowerPlatformApiRing.Production;
         var withRing = report with
         {
-            Cloud = PowerPlatformApiRingSelection.CanonicalToken(ring),
+            Cloud = active is null ? PowerPlatformApiRingSelection.CanonicalToken(ring) : AuthProfileOperations.CloudToken(active),
         };
 
-        if (_environments.IsRetargeted(ring))
+        if (active is not null && _environments.IsRetargeted(active))
         {
             return withRing;
         }
 
-        var binding = await _environments.GetActiveBindingAsync(cancellationToken).ConfigureAwait(false);
+        var binding = await _environments.GetActiveBindingAsync(active, cancellationToken).ConfigureAwait(false);
 
         return binding is null
             ? withRing
@@ -531,7 +621,7 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
         {
             throw new NotSignedInException(
                 "No AgentHost accounts are stored to switch between.",
-                remediation: "Run `msagent auth login` to sign in first.");
+                remediation: "Run `msagent auth create` to sign in first.");
         }
 
         var requestedRing = ring is { } named ? PowerPlatformApiRingSelection.Require(named) : (PowerPlatformApiRing?)null;
@@ -549,7 +639,7 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
         var active = await _profileStore.GetActiveProfileAsync(cancellationToken).ConfigureAwait(false)
             ?? throw new NotSignedInException(
                 "No AgentHost account is active.",
-                remediation: "Run `msagent auth login` to sign in first.");
+                remediation: "Run `msagent auth create` to sign in first.");
 
         if (requestedRing is { } requested && requested != active.Ring)
         {
@@ -572,11 +662,21 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
     /// <inheritdoc />
     public async Task<AuthLogoutResult> LogoutAsync(CancellationToken cancellationToken)
     {
-        // Clear both halves of the local sign-in state, never opening UI: the profile store and the
-        // AgentHost MSAL token cache (best-effort in the adapter).
+        if (_authProfiles is not null)
+            return await _authProfiles.ClearAsync(cancellationToken).ConfigureAwait(false);
         await _profileStore.ClearAsync(cancellationToken).ConfigureAwait(false);
-        await _session.ClearCacheAsync(cancellationToken).ConfigureAwait(false);
-
+        bool cleanupComplete = false;
+        try
+        {
+            await _environments.ClearSelectionsAsync(cancellationToken).ConfigureAwait(false);
+            await _session.ClearCacheAsync(cancellationToken).ConfigureAwait(false);
+            cleanupComplete = true;
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (Exception primary)
+        {
+            throw AuthProfileOperations.Partial(primary, true, !cleanupComplete, null);
+        }
         return new AuthLogoutResult { Status = "signed-out" };
     }
 

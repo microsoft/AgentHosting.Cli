@@ -6,6 +6,9 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Ports;
 /// </summary>
 public sealed record AmsPackagePublicationTransportRequest
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public EnvironmentResolutionContext? Context { get; init; }
+
     public required Uri Endpoint { get; init; }
     public required string Audience { get; init; }
     public required string TenantId { get; init; }

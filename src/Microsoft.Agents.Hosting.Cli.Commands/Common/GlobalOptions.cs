@@ -38,32 +38,4 @@ public static class GlobalOptions
 
         return args.Any(argument => HelpTokens.Contains(argument, StringComparer.Ordinal));
     }
-
-    /// <summary>The <c>auth</c> verbs that must run whatever the stored sign-in says.</summary>
-    public static IReadOnlyList<string> RingIndependentAuthVerbs => ["login", "logout"];
-
-    /// <summary>
-    /// Whether the arguments name work that runs without a cloud read from the stored sign-in.
-    /// </summary>
-    /// <param name="args">The raw command line.</param>
-    /// <returns><see langword="true"/> when the stored sign-in need not be read to dispatch.</returns>
-    public static bool IsRingIndependent(IReadOnlyList<string> args)
-    {
-        ArgumentNullException.ThrowIfNull(args);
-
-        if (AsksForHelpOrVersion(args))
-        {
-            return true;
-        }
-
-        string[] verbs = [.. args.Where(argument => !argument.StartsWith('-')).Take(2)];
-
-        return verbs.Length switch
-        {
-            0 => true,
-            2 => verbs[0].Equals("auth", StringComparison.Ordinal)
-                && RingIndependentAuthVerbs.Contains(verbs[1], StringComparer.Ordinal),
-            _ => false,
-        };
-    }
 }

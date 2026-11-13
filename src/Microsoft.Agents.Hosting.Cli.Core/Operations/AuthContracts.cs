@@ -30,6 +30,12 @@ public sealed record AuthLoginRequest
     /// profile keeps the ring it already had, and a new profile defaults to production.
     /// </summary>
     public PowerPlatformApiRing? Ring { get; init; }
+
+    /// <summary>
+    /// Optional unified cloud target. When supplied, it must agree with
+    /// <see cref="Microsoft.Agents.Hosting.Cli.Core.Operations.AuthLoginRequest.Ring"/>.
+    /// </summary>
+    public PowerPlatformApiTargetConfig? Target { get; init; }
 }
 
 /// <summary>Result of a completed <see cref="IAgentHostingOperations.LoginAsync"/> call.</summary>

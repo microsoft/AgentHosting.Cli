@@ -48,7 +48,7 @@ authoritative index, and it never executes anything.
 | Requirement | Needed for | Notes |
 |---|---|---|
 | .NET 10 SDK | everything | the harness packs `msagent` from source on each run |
-| A signed-in `msagent` session | everything | run `msagent auth login` before each run |
+| A signed-in `msagent` session | everything | run `msagent auth create` for the intended tenant/cloud before each run |
 | A disposable Copilot Studio environment | the 78 `mcs-agent` scenarios | agents are created **and deleted** here |
 | An Entra object id to share with | the 7 grant/revoke scenarios | `mcs.shareUserObjectId`; an object id only, never a sign-in address |
 | Copilot Credits in that environment | the `eval` pack | `agent eval run` and `agent eval generate` are billed against them |
@@ -89,7 +89,7 @@ This resolves your capabilities and describes what a run *would* do. It executes
 Sign in first, every time:
 
 ```pwsh
-msagent auth login
+msagent auth create
 ```
 
 ```pwsh

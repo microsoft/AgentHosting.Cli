@@ -11,8 +11,8 @@ public sealed class ConsentLinkConnectionConsentFlowTests
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMilliseconds(1);
 
-    private static ConsentLinkConnectionConsentFlow Flow(ScriptedHandler handler, RecordingMessagePresenter presenter, RecordingBrowserLauncher browser, TimeSpan? timeout = null, IOperatorInterrupt? interrupt = null, TimeSpan? interval = null) =>
-        new(new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod, () => handler), presenter, browser, CoreServicesClusterCategory.Prod, interrupt, timeout: timeout ?? TimeSpan.FromSeconds(30), interval: interval ?? Interval);
+    private static ConsentLinkConnectionConsentFlow Flow(ScriptedHandler handler, RecordingMessagePresenter presenter, RecordingBrowserLauncher browser, TimeSpan? timeout = null, IOperatorInterrupt? interrupt = null, TimeProvider? timeProvider = null) =>
+        new(new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod, () => handler), presenter, browser, CoreServicesClusterCategory.Prod, interrupt, timeProvider, timeout: timeout ?? TimeSpan.FromSeconds(30), interval: Interval);
 
     private static ScriptedHandler Handler(bool authenticates = true, string? consentResponse = null)
     {
@@ -259,7 +259,7 @@ public sealed class ConsentLinkConnectionConsentFlowTests
         Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Delete);
     }
 
-    private static ScriptedHandler LostConfirmationHandler(bool authenticatesAnyway)
+    private static ScriptedHandler LostConfirmationHandler(bool authenticatesAnyway, Action? onConfirmation = null)
     {
         var confirmed = false;
 
@@ -283,6 +283,7 @@ public sealed class ConsentLinkConnectionConsentFlowTests
             if (request.Uri.AbsolutePath.EndsWith("/confirmConsentCode", StringComparison.Ordinal))
             {
                 confirmed = authenticatesAnyway;
+                onConfirmation?.Invoke();
 
                 throw new HttpRequestException("the response was lost");
             }
@@ -299,14 +300,23 @@ public sealed class ConsentLinkConnectionConsentFlowTests
     [Fact]
     public async Task Create_WhenTheConfirmationResponseIsLostButTheServiceCommittedIt_KeepsTheConnection()
     {
-        using var handler = LostConfirmationHandler(authenticatesAnyway: true);
-        using var flow = Flow(handler, new RecordingMessagePresenter(), new RecordingBrowserLauncher(), interval: TimeSpan.FromMilliseconds(40));
+        var time = new ManualTimeProvider();
+        var confirmation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var handler = LostConfirmationHandler(authenticatesAnyway: true, onConfirmation: () => confirmation.SetResult());
+        using var flow = Flow(handler, new RecordingMessagePresenter(), new RecordingBrowserLauncher(), timeProvider: time);
 
-        var result = await flow
-            .CreateConnectionAsync(ConnectionFixtures.Environment, "shared_office365", openBrowser: true, CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(20));
+        var creating = flow.CreateConnectionAsync(ConnectionFixtures.Environment, "shared_office365", openBrowser: true, cancellation.Token);
+        await confirmation.Task.WaitAsync(cancellation.Token);
+
+        Assert.Single(handler.Requests, request => request.Method == HttpMethod.Get);
+        time.Advance(Interval);
+
+        var result = await creating.WaitAsync(cancellation.Token);
 
         Assert.Equal(ConnectionConsentStatus.Created, result.Status);
+        Assert.Single(handler.Requests, request => request.Uri.AbsolutePath.EndsWith("/confirmConsentCode", StringComparison.Ordinal));
+        Assert.Equal(2, handler.Requests.Count(request => request.Method == HttpMethod.Get));
         Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Delete);
     }
 

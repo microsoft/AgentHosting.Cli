@@ -1,6 +1,7 @@
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
@@ -179,6 +180,8 @@ public sealed class AuthorityResolverTests
     [InlineData(CloudInstance.UsGovHigh, "https://login.microsoftonline.us")]
     [InlineData(CloudInstance.UsGovDod, "https://login.microsoftonline.us")]
     [InlineData(CloudInstance.China, "https://login.partner.microsoftonline.cn")]
+    [InlineData(CloudInstance.UsNat, "https://login.microsoftonline.eaglex.ic.gov")]
+    [InlineData(CloudInstance.UsSec, "https://login.microsoftonline.microsoft.scloud")]
     public void GetAuthorityHost_MapsEachCloud(CloudInstance cloud, string expectedHost)
     {
         Assert.Equal(expectedHost, AgentHostAuthorityResolver.GetAuthorityHost(cloud));
@@ -200,10 +203,72 @@ public sealed class AuthorityResolverTests
         Assert.Throws<ArgumentException>(
             () => AgentHostAuthorityResolver.ResolveFromUrl(CloudInstance.Public, new Uri(url)));
     }
+
+    [Theory]
+    [InlineData("https://login.microsoftonline.com.attacker.example/organizations")]
+    [InlineData("https://notlogin.microsoftonline.com/organizations")]
+    [InlineData("https://sub.login.microsoftonline.com/organizations")]
+    [InlineData("https://user@login.microsoftonline.com/organizations")]
+    [InlineData("https://login.microsoftonline.com:8443/organizations")]
+    [InlineData("https://login.microsoftonline.us/organizations")]
+    public void ResolveFromUrl_RejectsUntrustedAuthorityBeforeUse(string url) =>
+        Assert.Throws<ArgumentException>(() =>
+            AgentHostAuthorityResolver.ResolveFromUrl(CloudInstance.Public, new Uri(url)));
+
+    [Fact]
+    public void ResolveFromUrl_RejectsUndefinedCloud() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            AgentHostAuthorityResolver.ResolveFromUrl((CloudInstance)99,
+                new Uri("https://login.microsoftonline.com/organizations")));
+
+    [Theory]
+    [InlineData(CloudInstance.UsNat)]
+    [InlineData(CloudInstance.UsSec)]
+    public void NationalAuthoritiesPreserveTenantResolutionPolicy(CloudInstance cloud)
+    {
+        var tenant = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var authority = AgentHostAuthorityResolver.Resolve(cloud, tenant);
+        Assert.Equal(tenant, authority.TenantId);
+        Assert.Equal(new Uri($"{AgentHostAuthorityResolver.GetAuthorityHost(cloud)}/{tenant:D}"), authority.AuthorityUrl);
+        Assert.Equal(authority, AgentHostAuthorityResolver.ResolveFromUrl(cloud, authority.AuthorityUrl) with { TenantId = tenant });
+        Assert.Null(AgentHostAuthorityResolver.Resolve(cloud, Guid.Empty).TenantId);
+        Assert.EndsWith("/organizations", AgentHostAuthorityResolver.Resolve(cloud).AuthorityUrl.AbsoluteUri, StringComparison.Ordinal);
+    }
 }
 
 public sealed class ResourceScopeNormalizerTests
 {
+    [Theory]
+    [InlineData(AuthPrincipalType.User, AuthCredentialMethod.Broker, "https://service.test//.default")]
+    [InlineData(AuthPrincipalType.User, AuthCredentialMethod.Browser, "https://service.test//.default")]
+    [InlineData(AuthPrincipalType.User, AuthCredentialMethod.DeviceCode, "https://service.test//.default")]
+    [InlineData(AuthPrincipalType.User, AuthCredentialMethod.Password, "https://service.test//.default")]
+    [InlineData(AuthPrincipalType.User, AuthCredentialMethod.DefaultAzureCredential, "https://service.test/.default")]
+    [InlineData(AuthPrincipalType.ServicePrincipal, AuthCredentialMethod.ClientSecret, "https://service.test/.default")]
+    [InlineData(AuthPrincipalType.ServicePrincipal, AuthCredentialMethod.Certificate, "https://service.test/.default")]
+    [InlineData(AuthPrincipalType.ServicePrincipal, AuthCredentialMethod.DefaultAzureCredential, "https://service.test/.default")]
+    [InlineData(AuthPrincipalType.ServicePrincipal, AuthCredentialMethod.GitHubFederated, "https://service.test/.default")]
+    [InlineData(AuthPrincipalType.ServicePrincipal, AuthCredentialMethod.AzureDevOpsFederated, "https://service.test/.default")]
+    public void ProfileScopesPreserveCredentialAndPrincipalSeparatorPolicy(
+        AuthPrincipalType principal, AuthCredentialMethod method, string expected)
+    {
+        var profile = new AuthProfile
+        {
+            AccountKey = "scope-test",
+            Username = "scope-test",
+            PrincipalType = principal,
+            CredentialMethod = method,
+        };
+
+        Assert.Equal(expected, PacResourceScopeNormalizer.ForProfile(profile).ToDefaultScope("https://service.test/path"));
+    }
+
+    [Fact]
+    public void ProfileScopeNormalizationRequiresAProfile()
+    {
+        Assert.Throws<ArgumentNullException>(() => PacResourceScopeNormalizer.ForProfile(null!));
+    }
+
     [Fact]
     public void DoubleSlash_IsTheDefault_MatchingPac()
     {

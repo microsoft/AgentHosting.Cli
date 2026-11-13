@@ -277,7 +277,7 @@ public sealed class UpdateCheckTests
     [InlineData("--help")]
     [InlineData("auth", "--help")]
     [InlineData("auth", "status", "--help")]
-    [InlineData("auth", "switch", "-h")]
+    [InlineData("auth", "select", "-h")]
     [InlineData("-?")]
     [InlineData()]
     public async Task Host_HelpShowsNoticeBeforeOutputAndPreservesHelp(params string[] args)

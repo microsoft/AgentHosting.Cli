@@ -147,16 +147,19 @@ public sealed class AgentDeployServiceTests
     [Fact]
     public async Task Deploy_WhenTargetTenantDiffers_RejectsBeforeDeploymentMutation()
     {
+        const string targetTenantId = "99999999-9999-9999-9999-999999999999";
+        var agents = new RecordingAgentReadTransport(BoundAgent());
         var deployments = new RecordingDeploymentTransport(CreatedDeployment);
         var service = Service(
-            new RecordingAgentReadTransport(BoundAgent()),
+            agents,
             deployments,
-            targetTenantId: "99999999-9999-9999-9999-999999999999");
+            targetTenantId: targetTenantId);
 
         var exception = await Assert.ThrowsAsync<EnvironmentTenantMismatchException>(
             () => service.DeployAsync(Request(), default));
 
-        Assert.Contains(TargetEnvironment, exception.Message, StringComparison.Ordinal);
+        Assert.Contains(targetTenantId, exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, agents.Calls);
         Assert.Equal(0, deployments.Calls);
     }
 
@@ -576,8 +579,6 @@ public sealed class AgentDeployServiceTests
                     tenantId: targetTenantId)),
             selectionStore,
             profiles);
-        environments.SelectAsync(HomeEnvironment, default).GetAwaiter().GetResult();
-
         return new AgentDeployService(
             target ?? PowerPlatformApiTargetConfig.Public,
             environments,

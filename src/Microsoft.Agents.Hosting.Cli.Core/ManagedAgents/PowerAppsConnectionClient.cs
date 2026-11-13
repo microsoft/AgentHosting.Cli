@@ -40,7 +40,8 @@ public sealed class PowerAppsConnectionClient : IDisposable
     private static readonly TimeSpan TokenRenewalMargin = TimeSpan.FromMinutes(2);
 
     private readonly ITokenProvider _tokenProvider;
-    private readonly CoreServicesClusterCategory _cluster;
+    private readonly IProfileCredentialProvider? _profileCredentials;
+    private readonly Func<CoreServicesClusterCategory> _cluster;
     private readonly Func<HttpMessageHandler> _handlerFactory;
     private readonly TextWriter? _diagnostics;
     private readonly TimeSpan _requestTimeout;
@@ -49,6 +50,7 @@ public sealed class PowerAppsConnectionClient : IDisposable
     private HttpMessageHandler? _sharedHandler;
     private TokenAcquisitionResult? _cachedToken;
     private string? _cachedTokenTenantId;
+    private EnvironmentResolutionContext? _cachedTokenContext;
 
     /// <summary>Creates the client.</summary>
     /// <param name="tokenProvider">Supplies the Power Apps token the API accepts.</param>
@@ -56,10 +58,25 @@ public sealed class PowerAppsConnectionClient : IDisposable
     /// <param name="handlerFactory">Creates the transport, replaced in tests.</param>
     /// <param name="diagnostics">Receives the redacted detail of what the service answered. Omitted unless the operator asked for it.</param>
     /// <param name="requestTimeout">How long one request may take, headers and body together. Defaults to 100 seconds.</param>
-    public PowerAppsConnectionClient(ITokenProvider tokenProvider, CoreServicesClusterCategory cluster, Func<HttpMessageHandler>? handlerFactory = null, TextWriter? diagnostics = null, TimeSpan? requestTimeout = null)
+    /// <param name="profileCredentials">Acquires service credentials for captured profiles; required for non-legacy contexts.</param>
+    public PowerAppsConnectionClient(ITokenProvider tokenProvider, CoreServicesClusterCategory cluster, Func<HttpMessageHandler>? handlerFactory = null, TextWriter? diagnostics = null, TimeSpan? requestTimeout = null,
+        IProfileCredentialProvider? profileCredentials = null)
+        : this(tokenProvider, () => cluster, handlerFactory, diagnostics, requestTimeout, profileCredentials)
+    {
+    }
+
+    /// <summary>Creates a client that resolves its legacy cluster only when a request needs it.</summary>
+    public static PowerAppsConnectionClient CreateDeferred(ITokenProvider tokenProvider, Func<CoreServicesClusterCategory> cluster,
+        Func<HttpMessageHandler>? handlerFactory = null, TextWriter? diagnostics = null, TimeSpan? requestTimeout = null,
+        IProfileCredentialProvider? profileCredentials = null) =>
+        new(tokenProvider, cluster, handlerFactory, diagnostics, requestTimeout, profileCredentials);
+
+    private PowerAppsConnectionClient(ITokenProvider tokenProvider, Func<CoreServicesClusterCategory> cluster, Func<HttpMessageHandler>? handlerFactory, TextWriter? diagnostics, TimeSpan? requestTimeout,
+        IProfileCredentialProvider? profileCredentials)
     {
         _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
-        _cluster = cluster;
+        _profileCredentials = profileCredentials;
+        _cluster = cluster ?? throw new ArgumentNullException(nameof(cluster));
         _handlerFactory = handlerFactory ?? TransportDefaults.CreateRedirectRejectingHandler;
         _diagnostics = diagnostics;
         _requestTimeout = requestTimeout ?? DefaultRequestTimeout;
@@ -86,7 +103,7 @@ public sealed class PowerAppsConnectionClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(environment);
 
-        return SendAsync(HttpMethod.Put, ConnectionUri(environment.EnvironmentId, connectorId, connectionName), environment.TenantId, CreateBody(environment.EnvironmentId, parameterSetName), cancellationToken);
+        return SendAsync(HttpMethod.Put, ConnectionUri(environment, connectorId, connectionName), environment, CreateBody(environment.EnvironmentId, parameterSetName), cancellationToken);
     }
 
     /// <summary>Asks the service for the links that authenticate a connection.</summary>
@@ -102,8 +119,8 @@ public sealed class PowerAppsConnectionClient : IDisposable
 
         return SendAsync(
             HttpMethod.Post,
-            SubResourceUri(environment.EnvironmentId, connectorId, connectionName, "getConsentLink"),
-            environment.TenantId,
+            SubResourceUri(environment, connectorId, connectionName, "getConsentLink"),
+            environment,
             new JsonObject { ["redirectUrl"] = string.IsNullOrWhiteSpace(redirectUrl) ? NeutralConsentRedirectUrl : redirectUrl }.ToJsonString(),
             cancellationToken);
     }
@@ -120,7 +137,8 @@ public sealed class PowerAppsConnectionClient : IDisposable
         ArgumentNullException.ThrowIfNull(environment);
         ArgumentException.ThrowIfNullOrWhiteSpace(code);
 
-        var (objectId, tenantId) = SignedInPrincipal(await AccessTokenAsync(environment.TenantId, cancellationToken).ConfigureAwait(false));
+        var uri = SubResourceUri(environment, connectorId, connectionName, "confirmConsentCode");
+        var (objectId, tenantId) = SignedInPrincipal(await AccessTokenAsync(environment, cancellationToken).ConfigureAwait(false));
         var body = new JsonObject { ["code"] = code };
 
         if (!string.IsNullOrWhiteSpace(objectId))
@@ -137,8 +155,8 @@ public sealed class PowerAppsConnectionClient : IDisposable
 
         return await SendAsync(
             HttpMethod.Post,
-            SubResourceUri(environment.EnvironmentId, connectorId, connectionName, "confirmConsentCode"),
-            environment.TenantId,
+            uri,
+            environment,
             body.ToJsonString(),
             cancellationToken).ConfigureAwait(false);
     }
@@ -171,7 +189,7 @@ public sealed class PowerAppsConnectionClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(environment);
 
-        return SendAsync(HttpMethod.Get, ConnectionUri(environment.EnvironmentId, connectorId, connectionName), environment.TenantId, null, cancellationToken);
+        return SendAsync(HttpMethod.Get, ConnectionUri(environment, connectorId, connectionName), environment, null, cancellationToken);
     }
 
     /// <summary>Deletes one connection.</summary>
@@ -184,7 +202,7 @@ public sealed class PowerAppsConnectionClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(environment);
 
-        return SendAsync(HttpMethod.Delete, ConnectionUri(environment.EnvironmentId, connectorId, connectionName), environment.TenantId, null, cancellationToken);
+        return SendAsync(HttpMethod.Delete, ConnectionUri(environment, connectorId, connectionName), environment, null, cancellationToken);
     }
 
     private static string CreateBody(string environmentId, string? parameterSetName)
@@ -199,21 +217,21 @@ public sealed class PowerAppsConnectionClient : IDisposable
         return new JsonObject { ["properties"] = properties }.ToJsonString();
     }
 
-    private Uri ConnectionUri(string environmentId, string connectorId, string connectionName) =>
-        new($"{ApiRoot(connectorId)}/connections/{Uri.EscapeDataString(ConnectionConsentLink.NormalizeResourceId(connectionName))}?{Query(environmentId)}");
+    private Uri ConnectionUri(CopilotEnvironmentContext environment, string connectorId, string connectionName) =>
+        new($"{ApiRoot(environment, connectorId)}/connections/{Uri.EscapeDataString(ConnectionConsentLink.NormalizeResourceId(connectionName))}?{Query(environment.EnvironmentId)}");
 
-    private Uri SubResourceUri(string environmentId, string connectorId, string connectionName, string action) =>
-        new($"{ApiRoot(connectorId)}/connections/{Uri.EscapeDataString(ConnectionConsentLink.NormalizeResourceId(connectionName))}/{action}?{Query(environmentId)}");
+    private Uri SubResourceUri(CopilotEnvironmentContext environment, string connectorId, string connectionName, string action) =>
+        new($"{ApiRoot(environment, connectorId)}/connections/{Uri.EscapeDataString(ConnectionConsentLink.NormalizeResourceId(connectionName))}/{action}?{Query(environment.EnvironmentId)}");
 
-    private string ApiRoot(string connectorId) =>
-        $"https://{ConnectionConsentLink.ApiHostFor(_cluster)}/providers/Microsoft.PowerApps/apis/{Uri.EscapeDataString(ConnectionConsentLink.NormalizeResourceId(connectorId))}";
+    private string ApiRoot(CopilotEnvironmentContext environment, string connectorId) =>
+        $"https://{ConnectionConsentLink.ApiHostFor(environment.Context is { } context ? PowerAppsServiceTarget.ClusterFor(context) : _cluster())}/providers/Microsoft.PowerApps/apis/{Uri.EscapeDataString(ConnectionConsentLink.NormalizeResourceId(connectorId))}";
 
     private static string Query(string environmentId) =>
         $"api-version={ConnectionsApiVersion}&$filter={Uri.EscapeDataString($"environment eq '{environmentId}'")}";
 
-    private async Task<PowerAppsConnectionResponse> SendAsync(HttpMethod method, Uri uri, string? tenantId, string? body, CancellationToken cancellationToken)
+    private async Task<PowerAppsConnectionResponse> SendAsync(HttpMethod method, Uri uri, CopilotEnvironmentContext environment, string? body, CancellationToken cancellationToken)
     {
-        var token = await AccessTokenAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        var token = await AccessTokenAsync(environment, cancellationToken).ConfigureAwait(false);
         var correlation = new ServiceCorrelation(Guid.NewGuid().ToString(), null);
 
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -294,11 +312,17 @@ public sealed class PowerAppsConnectionClient : IDisposable
         }
     }
 
-    private async Task<string> AccessTokenAsync(string? tenantId, CancellationToken cancellationToken)
+    private async Task<string> AccessTokenAsync(CopilotEnvironmentContext environment, CancellationToken cancellationToken)
     {
+        var tenantId = environment.TenantId;
+        var context = environment.Context;
+        var resource = context is null ? PowerAppsResource : PowerAppsServiceTarget.AudienceFor(context);
+        if (context is not null && (_profileCredentials is null || string.IsNullOrWhiteSpace(tenantId)))
+            throw new TokenClaimException("A captured PowerApps operation requires profile credentials and an explicit tenant.", TokenClaimFailure.WrongPrincipalMode);
         lock (_gate)
         {
             if (_cachedToken is { } cached
+                && _cachedTokenContext == context
                 && string.Equals(_cachedTokenTenantId, tenantId, StringComparison.OrdinalIgnoreCase)
                 && cached.ExpiresOn - TokenRenewalMargin > DateTimeOffset.UtcNow)
             {
@@ -306,13 +330,23 @@ public sealed class PowerAppsConnectionClient : IDisposable
             }
         }
 
-        var acquired = await _tokenProvider.AcquireTokenSilentAsync(PowerAppsResource, tenantId, cancellationToken).ConfigureAwait(false);
+        TokenAcquisitionResult acquired;
+        if (context is null)
+        {
+            acquired = await _tokenProvider.AcquireTokenSilentAsync(resource, tenantId, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var scope = PacResourceScopeNormalizer.ForProfile(context.Profile).ToDefaultScope(resource);
+            acquired = await _profileCredentials!.AcquireAsync(context.Profile, [scope], tenantId, cancellationToken).ConfigureAwait(false);
+        }
         var token = AcquiredTokenTenant.Require(acquired, tenantId);
 
         lock (_gate)
         {
             _cachedToken = acquired;
             _cachedTokenTenantId = tenantId;
+            _cachedTokenContext = context;
         }
 
         return token;

@@ -62,7 +62,8 @@ public sealed class WorkflowInitService
         WorkflowRegistrationGuard.RequireUnregistered(_agents, _locator, projectDirectory, folder.WorkflowId);
 
         var environment = await _environmentResolver.ResolveAsync(null, cancellationToken).ConfigureAwait(false);
-        var caller = await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false);
+        environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
+        var caller = await _principals.ResolveAsync(environment, cancellationToken).ConfigureAwait(false);
 
         _workflows.WriteConnectionReferenceDeclaration(workspaceRoot);
 

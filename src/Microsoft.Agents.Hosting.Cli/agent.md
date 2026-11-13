@@ -40,7 +40,7 @@ values or injected readers; it does not read process environment variables.
 | `AH_CLI_GRAPH_REDIRECT_URI` | Registered HTTP loopback redirect for a Graph client override. |
 | `AH_CLI_ARM_CLIENT_ID` | Consent-capable public client for managed-identity provisioning. Defaults to the Azure CLI public client. |
 | `AH_CLI_ARM_REDIRECT_URI` | Registered HTTP loopback redirect for an ARM client override. |
-| `AH_CLI_CONFIG_DIR` | Override the profile/config directory, normally under `LocalApplicationData`. Rings share the directory but use ring-bound selection files. |
+| `AH_CLI_CONFIG_DIR` | Override the profile/config directory, normally under `LocalApplicationData`. |
 | `AH_CLI_SKIP_UPDATE_CHECK` | `true` (case-insensitive) or `1` disables version checks and notices. |
 | `AH_CLI_ALLOW_UNPROTECTED_CACHE` | Allow an unprotected token cache when protected storage is unavailable. |
 | `AH_CLI_FEATURES` | Semicolon-separated, case-insensitive, enable-only feature overrides; see [feature controls](#feature-controls). |
@@ -88,43 +88,28 @@ Direct command-host construction remains offline unless the internal update
 seam is explicitly supplied. Offline tests inject HTTP handlers, temporary
 directories, and a manual clock.
 
-## Selecting a deployment ring
+## Authentication profiles, clouds and environments
 
-`msagent auth login --cloud` records the account's Power Platform API ring.
-`msagent auth switch --cloud` retargets the active account without sign-in.
-The host resolves that stored ring before building its clients; selecting a
-nonproduction ring does not require code changes or a different build.
+Authentication profiles capture the selected identity and registered cloud
+coordinates. Use `auth create` to authenticate and create or replace a profile,
+and `auth select` to activate a stored profile without authenticating.
+`auth list`, `auth who`, and `auth status` inspect metadata without renewing
+credentials. `auth login` and `auth logout` are legacy commands gated by
+`LegacyAuth`, which is off by default. See the [authentication command
+reference](../Microsoft.Agents.Hosting.Cli.Docs/Command_Auth.md) for credential,
+storage, and lifecycle details.
 
-```powershell
-msagent auth login --cloud preprod
-msagent auth switch --cloud test
-msagent auth status
-```
+Authentication has one `--cloud` selector: `Public`, `Preprod`, `Test`, `UsGov`,
+`UsGovHigh`, `UsGovDod`, `China`, `UsNat`, or `UsSec`. Profile creation defaults
+to `Public`; explicitly select the intended cloud when creating a sovereign or
+nonproduction profile. A registered cloud does not guarantee every downstream
+service route is available.
 
-| Ring | Global endpoint | Environment selection file |
-|---|---|---|
-| `prod` | `https://api.powerplatform.com` | `environment-selection-csharp.json` |
-| `preprod` | `https://api.preprod.powerplatform.com` | `environment-selection-csharp-preprod.json` |
-| `test` | `https://api.test.powerplatform.com` | `environment-selection-csharp-test.json` |
-
-Omitting `--cloud` on a later login preserves that account's ring. A new account
-inherits the current session's ring; the first sign-in defaults to `prod`.
-Unknown values produce a usage error (exit 2), not a fallback. Login resolves
-the ring once for both the token audience and stored profile.
-
-A switch takes effect for clients built by the next invocation. The switching
-process's existing clients still target the previous ring: environment operations
-refuse rather than use that old target, and status reports the new ring without
-the selection it left behind.
-
-## The environment selection follows the account
-
-Environment selection belongs to the account and cloud that selected it.
-Login and switching discard every stored selection when the active account or
-cloud changes, including after logout, and report that reset. Switching clouds
-and back cannot resurrect an old selection. Signing the same account into the
-same cloud preserves it. An unreadable selection is discarded rather than
-blocking sign-in.
+Environment targeting follows explicit command environment, compatible owned
+override, profile default, then a missing-target error. `env select` updates the
+selected profile's default; select the intended profile first when changing a
+different profile. Foreign or incompatible overrides are not silently adopted.
+See the [environment command reference](../Microsoft.Agents.Hosting.Cli.Docs/Command_Env.md).
 
 ## Feature controls
 
@@ -147,6 +132,8 @@ The source of truth is [featureflags.json](featureflags.json):
 | `AmsFeatures` | `off` | CodeAgent creation, AMS package upload, and package-revision deployment. |
 | `AzureBotServiceFeatures` | `off` | `abs` and resolved CodeAgent deployment routes backed by Azure Bot Service. |
 | `IdentityFeatures` | `off` | The user-facing `identity` command group. |
+| `LegacyAuth` | `off` | Only `auth login` and `auth logout`; profile commands and `auth status` remain available. |
+| `appusersupport` | `off` | Application identity profile creation through `auth create`, including secret, certificate, DefaultAzureCredential, and federation options. Existing application profiles remain usable. |
 | `LiveTestFeatures` | `on` | The `test` group: `test ask` and `test playground`. |
 | `EvaluationFeatures` | `on` | `agent eval` and its `testset` subgroup. |
 
@@ -160,6 +147,15 @@ Multiple `[RequiredFeatureFlag]` attributes are ANDed. A disabled parent removes
 all descendants before help, parsing, and dispatch. Feature-controlled options
 are removed too. Mixed commands enforce the resolved route immediately before
 handler dispatch, so a stored CodeAgent record cannot bypass a disabled route.
+
+`appusersupport` hides `--applicationId`, `--clientSecret`, `--certificateDiskPath`,
+`--certificatePassword`, `--managedIdentity`, `--githubFederated`, and
+`--azureDevOpsFederated`, including their aliases, from `auth create` help and
+parsing. Direct command dispatch also rejects these options before authentication
+or profile mutation. Enable it for an approved developer session with
+`$env:AH_CLI_FEATURES = "appusersupport"`. Shared profile settings and user sign-in
+remain available; selection, renewal, and cleanup of existing application profiles
+are unchanged. Core authentication adapters remain registered and embeddable.
 
 The shared MCS, authentication, environment, and local deployment surfaces remain
 available. A bare `agent create` retains the CodeAgent route and reports AMS as

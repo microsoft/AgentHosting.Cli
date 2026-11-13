@@ -3,5 +3,7 @@
   "azureBotServiceFeatures": "off",
   "identityFeatures": "off",
   "liveTestFeatures": "on",
-  "evaluationFeatures": "on"
+  "evaluationFeatures": "on",
+  "legacyAuth": "off",
+  "appusersupport": "off"
 }

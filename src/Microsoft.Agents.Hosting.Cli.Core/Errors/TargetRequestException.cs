@@ -168,7 +168,7 @@ public sealed class TargetRequestException : AgentHostingException
 
             return new TargetRequestException(
                 $"Authentication for {audienceLabel} was rejected (token missing, invalid, or expired).{detail} " +
-                $"Run `{binaryName} auth login` and retry.",
+                $"Run `{binaryName} auth create` for the intended account and cloud, then retry.",
                 ExitCodes.NotSignedIn,
                 TargetErrorKind.AuthExpired,
                 status,

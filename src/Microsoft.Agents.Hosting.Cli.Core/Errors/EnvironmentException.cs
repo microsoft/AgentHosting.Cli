@@ -106,6 +106,10 @@ public enum TokenClaimFailure
 
     /// <summary><c>scp</c> does not carry the delegated permission the operation needs (exit 1).</summary>
     MissingPermission,
+
+    WrongPrincipalMode,
+
+    MissingObjectId,
 }
 
 /// <summary>
@@ -129,6 +133,8 @@ public sealed class TokenClaimException : AgentHostingException
         TokenClaimFailure.WrongApplication => ErrorCodes.Authentication.TokenClaimWrongApplication,
         TokenClaimFailure.WrongTenant => ErrorCodes.Authentication.TokenClaimWrongTenant,
         TokenClaimFailure.MissingPermission => ErrorCodes.Authentication.TokenClaimMissingPermission,
+        TokenClaimFailure.WrongPrincipalMode => ErrorCodes.Authentication.TokenClaimWrongPrincipalMode,
+        TokenClaimFailure.MissingObjectId => ErrorCodes.Authentication.TokenClaimMissingObjectId,
         _ => ErrorCodes.Authentication.TokenClaimMissingPermission,
     };
 
@@ -136,7 +142,8 @@ public sealed class TokenClaimException : AgentHostingException
     {
         TokenClaimFailure.WrongAudience or
         TokenClaimFailure.WrongApplication or
-        TokenClaimFailure.WrongTenant => ExitCodes.Usage,
+        TokenClaimFailure.WrongTenant or
+        TokenClaimFailure.WrongPrincipalMode => ExitCodes.Usage,
         _ => ExitCodes.Failure,
     };
 
@@ -146,6 +153,19 @@ public sealed class TokenClaimException : AgentHostingException
         TokenClaimFailure.WrongAudience => "wrong-audience",
         TokenClaimFailure.WrongApplication => "wrong-application",
         TokenClaimFailure.WrongTenant => "tenant-mismatch",
+        TokenClaimFailure.WrongPrincipalMode => "principal-mode-mismatch",
+        TokenClaimFailure.MissingObjectId => "principal-object-id-missing",
         _ => "permission-denied",
     };
+}
+
+/// <summary>The operation requires a user principal; no service-principal wire contract is assumed.</summary>
+public sealed class UserPrincipalRequiredException : AgentHostingException
+{
+    public UserPrincipalRequiredException()
+        : base("This registry, ownership, or consent operation requires a user authentication profile.",
+            ExitCodes.Usage, "user-principal-required",
+            "Select a user authentication profile before retrying.", errorCode: ErrorCodes.Authentication.UserPrincipalRequired)
+    {
+    }
 }

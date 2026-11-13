@@ -49,7 +49,7 @@ Replace `<environment-id>` with an ID returned by `env list`. Run each command
 separately and inspect the result before continuing.
 
 ```text
-msagent auth login
+msagent auth create
 msagent auth status
 msagent env list
 msagent env select <environment-id>

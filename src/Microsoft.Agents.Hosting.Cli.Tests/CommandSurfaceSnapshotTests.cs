@@ -115,7 +115,7 @@ public sealed class CommandSurfaceSnapshotTests
     [Fact]
     public void EveryGroupChildSetIsPinned()
     {
-        Assert.Equal(["login", "status", "switch", "logout"], Children(Help("auth")));
+        Assert.Equal(["create", "login", "status", "list", "select", "delete", "name", "logout", "clear", "who"], Children(Help("auth")));
         Assert.Equal(["list", "select"], Children(Help("env")));
         Assert.Equal(["package", "create", "init", "list", "show", "pull", "delete", "deploy", "share", "unshare"], Children(Help("agent")));
         Assert.Equal(["show"], Children(Help("agent", "share")));
@@ -141,9 +141,18 @@ public sealed class CommandSurfaceSnapshotTests
     [MemberData(nameof(EveryCommandPath))]
     public void EveryOptionKeepsItsAlias(string[] path)
     {
+        IReadOnlyDictionary<string, string> aliases = path switch
+        {
+            ["auth", "create"] => AuthCreateAliases,
+            ["auth", "select" or "delete" or "name"] => AuthProfileAliases,
+            _ => PinnedAliases,
+        };
+
         foreach (var (option, alias) in OptionAliases(Help(path)))
         {
-            Assert.Equal(PinnedAliases[option], alias);
+            Assert.Equal(aliases.TryGetValue(option, out var localAlias)
+                    ? localAlias
+                    : PinnedAliases[option], alias);
         }
     }
 
@@ -196,13 +205,37 @@ public sealed class CommandSurfaceSnapshotTests
 
     private static IEnumerable<(string Option, string Alias)> OptionAliases(string help)
     {
-        foreach (Match match in Regex.Matches(help, @"^\s+(-[A-Za-z?][A-Za-z0-9-]*),?\s+(--[a-z][a-z0-9-]*)", RegexOptions.Multiline))
+        foreach (Match match in Regex.Matches(help, @"^\s+(-[A-Za-z?][A-Za-z0-9-]*),?\s+(--[A-Za-z][A-Za-z0-9-]*)", RegexOptions.Multiline))
         {
             yield return (match.Groups[2].Value, match.Groups[1].Value);
         }
     }
 
     internal static IReadOnlyDictionary<string, string> CurrentAliases => PinnedAliases;
+
+    private static readonly Dictionary<string, string> AuthCreateAliases = new(StringComparer.Ordinal)
+    {
+        ["--name"] = "-n",
+        ["--environment"] = "-env",
+        ["--cloud"] = "-ci",
+        ["--tenant"] = "-t",
+        ["--deviceCode"] = "-dc",
+        ["--username"] = "-un",
+        ["--password"] = "-pw",
+        ["--applicationId"] = "-id",
+        ["--clientSecret"] = "-cs",
+        ["--certificateDiskPath"] = "-cdp",
+        ["--certificatePassword"] = "-cp",
+        ["--managedIdentity"] = "-mi",
+        ["--githubFederated"] = "-ghf",
+        ["--azureDevOpsFederated"] = "-adof",
+    };
+
+    private static readonly Dictionary<string, string> AuthProfileAliases = new(StringComparer.Ordinal)
+    {
+        ["--index"] = "-i",
+        ["--name"] = "-n",
+    };
 
     private static readonly IReadOnlyDictionary<string, string> PinnedAliases = new Dictionary<string, string>(StringComparer.Ordinal)
     {

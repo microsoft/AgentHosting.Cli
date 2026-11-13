@@ -71,6 +71,37 @@ public sealed class BrokerFallbackTests
             },
             "WAM_provider_error_3399614476");
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TheReasonPreservesOnlyTheEntraCodeFromSensitiveBrokerDetails(bool telemetry)
+    {
+        const string details = "AADSTS500011: synthetic-user@example.test secret-bearing-broker-details";
+        var failure = new MsalServiceException("WAM_provider_error_3399614466", telemetry ? "WAM Error" : details)
+        {
+            AdditionalExceptionData = new Dictionary<string, string>
+            {
+                [MsalException.BrokerErrorStatus] = "IncorrectConfiguration",
+                [MsalException.BrokerTelemetry] = telemetry ? details : "",
+            },
+        };
+
+        await AssertUnavailableAsync(failure,
+            "WAM_provider_error_3399614466, broker status IncorrectConfiguration, Entra error AADSTS500011");
+    }
+
+    [Theory]
+    [InlineData("""{"server_error_code":500011,"silent_message":"synthetic-user@example.test secret-details"}""")]
+    [InlineData("""{"wam_telemetry":"{\"server_error_code\":500011,\"silent_message\":\"synthetic-user@example.test secret-details\"}"}""")]
+    public Task TheReasonPreservesTheEntraCodeWhenBrokerTelemetryRedactsItsMessage(string telemetry) =>
+        AssertUnavailableAsync(new MsalServiceException("WAM_provider_error_3399614466", "(pii)")
+        {
+            AdditionalExceptionData = new Dictionary<string, string>
+            {
+                [MsalException.BrokerTelemetry] = telemetry,
+            },
+        }, "WAM_provider_error_3399614466, Entra error AADSTS500011");
+
     [Fact]
     public async Task AnOperatorCancellation_StopsSignIn_InsteadOfFallingBack()
     {
@@ -78,8 +109,8 @@ public sealed class BrokerFallbackTests
 
         Assert.Equal("Sign-in was canceled (authentication_canceled).", canceled.Message);
         Assert.Equal(ExitCodes.Failure, canceled.ExitCode);
-        Assert.Contains("msagent auth login", canceled.Remediation);
-        Assert.Contains("--device-code", canceled.Remediation);
+        Assert.Contains("msagent auth create", canceled.Remediation);
+        Assert.Contains("--deviceCode", canceled.Remediation);
     }
 
     [Fact]
@@ -99,7 +130,7 @@ public sealed class BrokerFallbackTests
         Assert.Equal(reason, unavailable.Reason);
         Assert.Equal($"The operating-system broker could not sign you in ({reason}).", unavailable.Message);
         Assert.Equal(ExitCodes.Failure, unavailable.ExitCode);
-        Assert.Contains("--device-code", unavailable.Remediation);
+        Assert.Contains("msagent auth create --deviceCode", unavailable.Remediation);
     }
 }
 

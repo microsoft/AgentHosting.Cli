@@ -29,6 +29,66 @@ namespace Microsoft.Agents.Hosting.Cli.Hosting;
 /// </summary>
 public sealed class AgentHostCli
 {
+    internal static bool IsRingIndependent(IReadOnlyList<string> args)
+    {
+        var flags = FeatureFlags.LoadFromAssemblyFolder(typeof(AgentHostCli).Assembly);
+        var json = CreateGlobalBooleanOption("--json", "");
+        var nonInteractive = CreateGlobalBooleanOption("--non-interactive", "");
+        var builder = new CommandTreeBuilder(new CliOutputRenderer(TextWriter.Null, TextWriter.Null, false),
+            ParseOnlyServices.Instance, flags, json, nonInteractive);
+        var root = new RootCommand();
+        root.Add(json);
+        root.Add(nonInteractive);
+        root.Add(CreateGlobalBooleanOption("--debug", ""));
+        root.Add(CreateGlobalBooleanOption("--no-color", ""));
+        foreach (var option in root.Options.OfType<VersionOption>())
+            option.Aliases.Add(OptionCatalog.Alias("--version"));
+        foreach (var group in CommandReflector.Discover(typeof(EnvGroup).Assembly, flags))
+            root.Add(builder.Build(group));
+        var parsed = root.Parse(ExpandEmptyAssignments(root, [.. args]));
+        var command = parsed.CommandResult.Command;
+        if (parsed.Errors.Count != 0) return false;
+        return command == root && parsed.Errors.Count == 0
+            || command.Parents.OfType<Command>().Any(parent => parent.Name == "auth")
+            || command.Name == "auth"
+            || root.Options.OfType<HelpOption>().Any(option => ReferenceEquals(parsed.Action, option.Action))
+            || root.Options.OfType<VersionOption>().Any(option => ReferenceEquals(parsed.Action, option.Action));
+    }
+    internal static bool ResolveInteractionAllowed(string[] args, IFeatureFlags? featureFlags = null)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        var flags = featureFlags ?? FeatureFlags.LoadFromAssemblyFolder(typeof(AgentHostCli).Assembly);
+        var json = CreateGlobalBooleanOption("--json", "");
+        var debug = CreateGlobalBooleanOption("--debug", "");
+        var noColor = CreateGlobalBooleanOption("--no-color", "");
+        var nonInteractive = CreateGlobalBooleanOption("--non-interactive", "");
+        // Use command metadata too: an option value must not become a global flag.
+        var builder = new CommandTreeBuilder(new CliOutputRenderer(TextWriter.Null, TextWriter.Null, false),
+            ParseOnlyServices.Instance, flags, json, debug, nonInteractive);
+        var root = new RootCommand();
+        root.Add(json);
+        root.Add(debug);
+        root.Add(noColor);
+        root.Add(nonInteractive);
+        foreach (var option in root.Options.OfType<VersionOption>())
+            option.Aliases.Add(OptionCatalog.Alias("--version"));
+        foreach (var group in CommandReflector.Discover(typeof(EnvGroup).Assembly, flags))
+            root.Add(builder.Build(group));
+
+        var parsed = root.Parse(ExpandEmptyAssignments(root, args));
+        return parsed.Errors.Count == 0 && !parsed.GetValue(nonInteractive);
+    }
+
+    private static Option<bool> CreateGlobalBooleanOption(string name, string description) =>
+        new(name, OptionCatalog.Alias(name)) { Description = description, Recursive = true };
+
+    private sealed class ParseOnlyServices : IServiceProvider
+    {
+        internal static ParseOnlyServices Instance { get; } = new();
+        public object? GetService(Type serviceType) =>
+            throw new InvalidOperationException("Bootstrap parsing must not activate command services.");
+    }
+
     private static Regex UsageExecutable(string rootName) =>
         new($@"(?m)(^Usage:\r?\n\s*){Regex.Escape(rootName)}(?=\s|$)", RegexOptions.CultureInvariant);
 
@@ -105,26 +165,10 @@ public sealed class AgentHostCli
 
         var renderer = new CliOutputRenderer(stdout, stderr, color);
 
-        var jsonOption = new Option<bool>("--json", OptionCatalog.Alias("--json"))
-        {
-            Description = "Emit machine-readable JSON output.",
-            Recursive = true,
-        };
-        var debugOption = new Option<bool>("--debug", OptionCatalog.Alias("--debug"))
-        {
-            Description = "Display debugging information, such as redacted API responses, on stderr.",
-            Recursive = true,
-        };
-        var noColorOption = new Option<bool>("--no-color", OptionCatalog.Alias("--no-color"))
-        {
-            Description = "Disable colored output.",
-            Recursive = true,
-        };
-        var nonInteractiveOption = new Option<bool>("--non-interactive", OptionCatalog.Alias("--non-interactive"))
-        {
-            Description = "Do not open a browser or broker sign-in, fail instead.",
-            Recursive = true,
-        };
+        var jsonOption = CreateGlobalBooleanOption("--json", "Emit machine-readable JSON output.");
+        var debugOption = CreateGlobalBooleanOption("--debug", "Display debugging information, such as redacted API responses, on stderr.");
+        var noColorOption = CreateGlobalBooleanOption("--no-color", "Disable colored output.");
+        var nonInteractiveOption = CreateGlobalBooleanOption("--non-interactive", "Do not open a browser or broker sign-in, fail instead.");
         var treeBuilder = new CommandTreeBuilder(
             renderer,
             _services,
@@ -165,20 +209,13 @@ public sealed class AgentHostCli
 
         var channelMutationCommands = AddDeploymentChannelHelp(root);
 
-        var parseResult = root.Parse(args);
+        var parseResult = root.Parse(ExpandEmptyAssignments(root, args));
         HelpOption[] helpOptions = [.. root.Options.OfType<HelpOption>()];
         VersionOption[] versionOptions = [.. root.Options.OfType<VersionOption>()];
         bool invokesHelp = helpOptions.Any(option =>
             ReferenceEquals(parseResult.Action, option.Action));
         bool invokesVersion = versionOptions.Any(option =>
             ReferenceEquals(parseResult.Action, option.Action));
-        bool requestsTerminatingOption =
-            helpOptions.Any(option =>
-                parseResult.GetResult(option) is { Implicit: false })
-            || versionOptions.Any(option =>
-                parseResult.GetResult(option) is { Implicit: false });
-        bool hasTerminatingOptionConflict =
-            requestsTerminatingOption && !invokesHelp && !invokesVersion;
         var json = parseResult.GetValue(jsonOption);
         await using CommandTelemetrySession telemetry =
             await _telemetryFactory.CreateAsync(
@@ -206,7 +243,7 @@ public sealed class AgentHostCli
         }
 
         // The selected parser action, rather than raw token spelling, distinguishes actual help
-        // from a value such as `auth switch --account --help`. Unmatched tokens still make an invalid
+        // from a value such as `auth select --name --help`. Unmatched tokens still make an invalid
         // command path a usage error even when --help is present.
         if (invokesHelp && parseResult.UnmatchedTokens.Count == 0)
         {
@@ -239,25 +276,27 @@ public sealed class AgentHostCli
 
         if (parseResult.Errors.Count > 0)
         {
-            if (hasTerminatingOptionConflict && !channelMutationCommands.Contains(parseResult.CommandResult.Command))
-            {
-                int conflictExitCode =
-                    await parseResult.InvokeAsync(
-                        invocationConfiguration,
-                        cancellationToken);
-                telemetry.RecordHost(
-                    CommandTelemetryHostCategory.ParserRejection);
-                return conflictExitCode;
-            }
-
-            var message = FormatChannelParseErrors(parseResult, channelMutationCommands)
-                + " Run `msagent --help` for usage.";
+            var message = treeBuilder.SafeParserDiagnostic(
+                parseResult, args,
+                channelMutationCommands.Contains(parseResult.CommandResult.Command)
+                    ? FormatChannelParseErrors(parseResult, channelMutationCommands)
+                    : null);
             int exitCode = renderer.RenderUsageError(message, json);
             telemetry.RecordHost(CommandTelemetryHostCategory.ParserRejection);
             return exitCode;
         }
 
-        int result = await parseResult.InvokeAsync(invocationConfiguration, cancellationToken);
+        int result;
+        try
+        {
+            result = await parseResult.InvokeAsync(invocationConfiguration, cancellationToken);
+        }
+        catch (OperationCanceledException failure) when (cancellationToken.IsCancellationRequested
+            && CliOutputRenderer.HasAuthPartialState(failure))
+        {
+            // The handler already rendered the recognized durable state before propagating cancellation.
+            return 130;
+        }
         if (invokesVersion)
         {
             telemetry.RecordHost(CommandTelemetryHostCategory.Version);
@@ -266,6 +305,17 @@ public sealed class AgentHostCli
         return result;
     }
 
+    private static string[] ExpandEmptyAssignments(Command root, string[] args)
+    {
+        var valueOptions = ValueOptionNames(root).ToHashSet(StringComparer.Ordinal);
+        return args.SelectMany(token => token.Length > 1 && token[^1] is '=' or ':'
+            && valueOptions.Contains(token[..^1]) ? new[] { token[..^1], "" } : new[] { token }).ToArray();
+    }
+
+    private static IEnumerable<string> ValueOptionNames(Command command) =>
+        command.Options.Where(option => option.ValueType == typeof(string))
+            .SelectMany(option => new[] { option.Name }.Concat(option.Aliases))
+            .Concat(command.Subcommands.SelectMany(ValueOptionNames));
     private async Task<OAuthProviderDefinition[]> GetOAuthProviderHelpAsync(
         ParseResult parseResult,
         bool json,

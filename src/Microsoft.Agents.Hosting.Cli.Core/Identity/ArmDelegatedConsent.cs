@@ -70,13 +70,23 @@ public sealed class ArmConsentClientConfiguration
 {
     private ArmConsentClientConfiguration(string clientId, string redirectUri)
     {
-        ClientId = clientId;
-        RedirectUri = redirectUri;
+        _clientId = clientId;
+        _redirectUri = redirectUri;
     }
 
-    public string ClientId { get; }
+    private readonly string? _clientId;
+    private readonly string? _redirectUri;
+    private readonly Lazy<ArmConsentClientConfiguration>? _deferred;
 
-    public string RedirectUri { get; }
+    private ArmConsentClientConfiguration(Func<ArmConsentClientConfiguration> resolve) => _deferred = new(resolve);
+
+    public string ClientId => _deferred?.Value.ClientId ?? _clientId!;
+
+    public string RedirectUri => _deferred?.Value.RedirectUri ?? _redirectUri!;
+
+    /// <summary>Captures resolved host inputs, validating only when a consent operation uses them.</summary>
+    public static ArmConsentClientConfiguration ResolveDeferred(string? clientIdOverride, string? redirectUriOverride = null) =>
+        new(() => Resolve(clientIdOverride, redirectUriOverride));
 
     public static ArmConsentClientConfiguration Default { get; } =
         new(ArmDelegatedConsent.DefaultArmClientId, ArmDelegatedConsent.DefaultRedirectUri);

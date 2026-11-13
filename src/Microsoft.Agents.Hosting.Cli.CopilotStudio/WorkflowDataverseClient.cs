@@ -30,10 +30,10 @@ public sealed class WorkflowDataverseClient : IWorkflowStorePort
         TranslateAsync(async () => Describe(await _synchronizer.ReadLocalAsync(Workspace(workspaceRoot), cancellationToken).ConfigureAwait(false)));
 
     /// <inheritdoc />
-    public Task<WorkflowDocument?> GetAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) => ConnectedAsync(environment, async () => await _synchronizer.GetAsync(workflowId, cancellationToken).ConfigureAwait(false) is { } workflow ? Describe(workflow) : null);
+    public Task<WorkflowDocument?> GetAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) => ConnectedAsync(environment, async () => await _synchronizer.GetAsync(workflowId, cancellationToken).ConfigureAwait(false) is { } workflow ? Describe(workflow) : null, cancellationToken);
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<WorkflowDocument>> ListAsync(CopilotEnvironmentContext environment, string? nameFilter, int? maximumCount, CancellationToken cancellationToken) => ConnectedAsync(environment, async () => (IReadOnlyList<WorkflowDocument>)[.. (await _synchronizer.ListAsync(nameFilter, maximumCount, cancellationToken).ConfigureAwait(false)).Select(Describe)]);
+    public Task<IReadOnlyList<WorkflowDocument>> ListAsync(CopilotEnvironmentContext environment, string? nameFilter, int? maximumCount, CancellationToken cancellationToken) => ConnectedAsync(environment, async () => (IReadOnlyList<WorkflowDocument>)[.. (await _synchronizer.ListAsync(nameFilter, maximumCount, cancellationToken).ConfigureAwait(false)).Select(Describe)], cancellationToken);
 
     /// <inheritdoc />
     public Task<WorkflowDownloadOutcome> DownloadAsync(CopilotEnvironmentContext environment, Guid workflowId, string workspaceRoot, CancellationToken cancellationToken, bool overwriteLocalChanges = false)
@@ -52,7 +52,7 @@ public sealed class WorkflowDataverseClient : IWorkflowStorePort
                 Changed = download.Changed,
                 Warnings = download.Warning.Length == 0 ? [] : [download.Warning],
             };
-        });
+        }, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -72,7 +72,7 @@ public sealed class WorkflowDataverseClient : IWorkflowStorePort
                 Warning = upsert.Warning,
                 UnboundConnectionReferences = upsert.UnboundConnectionReferences,
             };
-        });
+        }, cancellationToken);
 
     public Task RequireNoUnpulledChangesAsync(CopilotEnvironmentContext environment, string workspaceRoot, CancellationToken cancellationToken) =>
         ConnectedAsync(environment, async () =>
@@ -80,25 +80,26 @@ public sealed class WorkflowDataverseClient : IWorkflowStorePort
             await _synchronizer.RequireNoUnpulledChangesAsync(Workspace(workspaceRoot), environment.EnvironmentId, cancellationToken).ConfigureAwait(false);
 
             return true;
-        });
+        }, cancellationToken);
 
     /// <inheritdoc />
     public void WriteConnectionReferenceDeclaration(string workspaceRoot) => WorkflowDefinitionFile.WriteConnectionReferenceDeclaration(workspaceRoot);
 
     /// <inheritdoc />
-    public Task<bool> DeleteAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) => ConnectedAsync(environment, () => _synchronizer.DeleteAsync(workflowId, null, cancellationToken));
+    public Task<bool> DeleteAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) => ConnectedAsync(environment, () => _synchronizer.DeleteAsync(workflowId, null, cancellationToken), cancellationToken);
 
     /// <inheritdoc />
-    public Task<string> GetAgentUseWarningAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) => ConnectedAsync(environment, async () => (await _synchronizer.GetAgentUseAsync(workflowId, cancellationToken).ConfigureAwait(false)).Warning);
+    public Task<string> GetAgentUseWarningAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken) => ConnectedAsync(environment, async () => (await _synchronizer.GetAgentUseAsync(workflowId, cancellationToken).ConfigureAwait(false)).Warning, cancellationToken);
 
     private static IFileAccessor Workspace(string workspaceRoot) => WorkflowWorkspace.OpenWorkspace(workspaceRoot);
 
     private static Task<T> TranslateAsync<T>(Func<Task<T>> operation) => WorkflowFailureTranslation.TranslateAsync(operation);
 
-    private Task<T> ConnectedAsync<T>(CopilotEnvironmentContext environment, Func<Task<T>> operation) => TranslateAsync(async () =>
+    private Task<T> ConnectedAsync<T>(CopilotEnvironmentContext environment, Func<Task<T>> operation, CancellationToken cancellationToken) => TranslateAsync(async () =>
     {
         ArgumentNullException.ThrowIfNull(environment);
-        DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, environment);
+        using var lease = await DataverseTargeting.EnterAsync(_dataverseClient, cancellationToken).ConfigureAwait(false);
+        using var scope = DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, environment);
 
         return await operation().ConfigureAwait(false);
     });

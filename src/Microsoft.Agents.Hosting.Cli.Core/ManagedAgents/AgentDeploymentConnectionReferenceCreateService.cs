@@ -50,6 +50,8 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
 
         var target = await _targets.ResolveAsync(request, Verb, cancellationToken).ConfigureAwait(false);
         var environment = target.Environment;
+        environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
+        target = target with { Environment = environment };
         var resolution = await _connectorResolver.RequireAsync(environment, request.Connector, ConnectionCommandHints.ListConnectors(request, environmentId: null), cancellationToken).ConfigureAwait(false);
         var connector = resolution.Connector;
 
@@ -97,7 +99,7 @@ public sealed class AgentDeploymentConnectionReferenceCreateService
             return Describe(request, logicalName, connector.InternalId, environment.EnvironmentId, null, null, ready: false, [$"The reference was declared, but the service did not report it, so nothing was bound. Run `{ConnectionCommandHints.BindReference(request, logicalName)}` once it appears."]);
         }
 
-        plan[index] = ConnectionReadinessPlanner.Plan(plan[index].View, await _principals.ResolveUsernameAsync(cancellationToken).ConfigureAwait(false));
+        plan[index] = ConnectionReadinessPlanner.Plan(plan[index].View, await _principals.ResolveUsernameAsync(environment, cancellationToken).ConfigureAwait(false));
 
         var group = new ConnectorGroup(ConnectionConsentLink.NormalizeOptionalResourceId(plan[index].View.ConnectorId), [index]);
         var diagnostics = new List<string>();

@@ -31,6 +31,8 @@ public sealed class CommandTreeBuilder
     private readonly HashSet<Command> _telemetrySuppressedCommands = [];
     private readonly HashSet<Command> _groups = [];
     private readonly Dictionary<Command, IReadOnlyList<string>> _usageLines = [];
+    private readonly HashSet<Command> _sensitiveCommands = [];
+    private readonly HashSet<string> _sensitiveOptions = new(StringComparer.Ordinal);
 
     /// <summary>Creates the builder.</summary>
     /// <param name="renderer">Renders results and failures.</param>
@@ -116,6 +118,21 @@ public sealed class CommandTreeBuilder
 
     internal IReadOnlyList<string> UsageLines(Command command) =>
         command is not null && _usageLines.TryGetValue(command, out var lines) ? lines : [];
+
+    internal string SafeParserDiagnostic(
+        ParseResult result,
+        IReadOnlyList<string> args,
+        string? commandSpecificDiagnostic = null)
+    {
+        // A malformed or dash-prefixed secret can become an unmatched token or even an option.
+        // Do not use parser message bodies for a credential command or credential-bearing argv.
+        bool sensitive = _sensitiveCommands.Contains(result.CommandResult.Command)
+            || args.Any(token => _sensitiveOptions.Any(option => token.StartsWith(option, StringComparison.OrdinalIgnoreCase)));
+        return sensitive
+            ? "Invalid authentication arguments. Check credential options and mutually exclusive modes with `msagent auth create --help`."
+            : (commandSpecificDiagnostic ?? string.Join(" ", result.Errors.Select(error => error.Message)))
+                + " Run `msagent --help` for usage.";
+    }
 
     private Command BuildGroup(
         CommandGroupMetadata group,
@@ -208,7 +225,15 @@ public sealed class CommandTreeBuilder
             _telemetrySuppressedCommands.Add(command);
         }
         var symbols = new Dictionary<string, Symbol>(inherited, StringComparer.Ordinal);
-        var declaredSymbols = Visible(metadata.Implementation.Symbols);
+        var allSymbols = metadata.Implementation.Symbols;
+        foreach (var option in allSymbols.OfType<CommandOption>().Where(option => option.IsSensitive))
+        {
+            _sensitiveCommands.Add(command);
+            _sensitiveOptions.Add(option.Name);
+            if (option.ShortAlias is { } alias) _sensitiveOptions.Add(alias);
+            foreach (var extra in option.ExtraAliases) _sensitiveOptions.Add(extra);
+        }
+        var declaredSymbols = Visible(allSymbols);
         var declaredNames = declaredSymbols.Select(symbol => symbol.Name).ToHashSet(StringComparer.Ordinal);
 
         foreach (var declared in OrderForHelp(declaredSymbols))
@@ -354,7 +379,7 @@ public sealed class CommandTreeBuilder
 
             return exitCode;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException failure) when (cancellationToken.IsCancellationRequested)
         {
             if (streamingOutputOwned)
             {
@@ -362,7 +387,8 @@ public sealed class CommandTreeBuilder
             }
 
             telemetry.RecordOutcome(CommandTelemetryOutcome.Cancellation);
-
+            if (CliOutputRenderer.HasAuthPartialState(failure))
+                _renderer.RenderAuthCancellation(failure, json);
             throw;
         }
         catch (OperationCanceledException failure)
@@ -373,7 +399,8 @@ public sealed class CommandTreeBuilder
             }
 
             int exitCode =
-                _renderer.RenderFailure(new TransportTimeoutException(failure), json);
+                _renderer.RenderFailure(new TransportTimeoutException(failure), json,
+                    suppressExceptionDetails: true, partialState: failure);
             telemetry.RecordOutcome(CommandTelemetryOutcome.Timeout);
 
             return exitCode;
@@ -388,7 +415,8 @@ public sealed class CommandTreeBuilder
                     telemetry, OutcomeForFailure(failure), (failure as AgentHostingException)?.ErrorCode);
             }
 
-            int exitCode = _renderer.RenderFailure(failure, json);
+            int exitCode = _renderer.RenderFailure(failure, json,
+                suppressExceptionDetails: _sensitiveCommands.Contains(parseResult.CommandResult.Command));
             if (!renderingSuccess)
             {
                 telemetry.RecordOutcome(OutcomeForFailure(failure), (failure as AgentHostingException)?.ErrorCode);
@@ -484,7 +512,7 @@ public sealed class CommandTreeBuilder
         }
     }
 
-    private Symbol Materialise(CommandSymbol declared)
+    internal Symbol Materialise(CommandSymbol declared)
     {
         if (declared is CommandArgument argument)
         {
@@ -492,7 +520,8 @@ public sealed class CommandTreeBuilder
         }
 
         var option = (CommandOption)declared;
-        var key = $"{option.Name}\u0000{option.Description}\u0000{option.ValueType.FullName}\u0000{option.IsRequired}\u0000{option.IsSwitch}\u0000{option.Recursive}\u0000{option.AllowMultipleArgumentsPerToken}";
+        var aliases = string.Join("\u0000", option.ExtraAliases.Order(StringComparer.Ordinal));
+        var key = $"{option.Name}\u0000{option.Description}\u0000{option.ValueType.FullName}\u0000{option.IsRequired}\u0000{option.IsSwitch}\u0000{option.Recursive}\u0000{option.AllowMultipleArgumentsPerToken}\u0000{option.ShortAlias}\u0000{aliases}\u0000{option.IsSensitive}";
 
         if (_shared.TryGetValue(key, out var existing))
         {
@@ -503,7 +532,7 @@ public sealed class CommandTreeBuilder
         {
             { IsSwitch: true } when option.ValueType == typeof(bool?) => new Option<bool?>(option.Name) { Description = option.Description, Recursive = option.Recursive },
             { IsSwitch: true } => new Option<bool>(option.Name) { Description = option.Description, Recursive = option.Recursive },
-            _ when option.ValueType == typeof(int?) => new Option<int?>(option.Name) { Description = option.Description, Recursive = option.Recursive },
+            _ when option.ValueType == typeof(int?) => new Option<int?>(option.Name) { Description = option.Description, Recursive = option.Recursive, Required = option.IsRequired },
             _ when option.ValueType == typeof(string[]) => new Option<string[]>(option.Name)
             {
                 Description = option.Description,

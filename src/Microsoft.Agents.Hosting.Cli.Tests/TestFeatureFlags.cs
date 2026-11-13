@@ -7,7 +7,9 @@ internal sealed class TestFeatureFlags(params FeatureName[] enabled) : IFeatureF
     internal static IFeatureFlags AllProductSurfaces { get; } = new TestFeatureFlags(
         FeatureName.AmsFeatures,
         FeatureName.AzureBotServiceFeatures,
-        FeatureName.IdentityFeatures);
+        FeatureName.IdentityFeatures,
+        FeatureName.LegacyAuth,
+        FeatureName.AppUserSupport);
 
     internal static IFeatureFlags Everything { get; } = new TestFeatureFlags([.. Enum.GetValues<FeatureName>()]);
 

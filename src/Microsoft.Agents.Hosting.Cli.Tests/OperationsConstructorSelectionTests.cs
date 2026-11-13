@@ -5,14 +5,9 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 /// <summary>
-/// Pins the shape that decides which constructor dependency injection picks.
-///
-/// <para>The facade carries two constructors: the one embedders were already compiled against, and
-/// one that also takes the evaluation stack. Container constructor selection resolves this by taking
-/// the longest constructor whose parameters it can all supply, and it is unambiguous only while one
-/// parameter list is a prefix of the other. Were that to stop holding, the container could silently
-/// choose the shorter one and every evaluation command would fail at runtime with a configuration
-/// error, which no compile-time check would catch.</para>
+/// Pins the legacy constructor signatures and the distinct explicit profile-injection arity.
+/// The Auth composition root supplies optional services explicitly rather than relying on
+/// automatic longest-constructor selection.
 /// </summary>
 public sealed class OperationsConstructorSelectionTests
 {
@@ -23,7 +18,7 @@ public sealed class OperationsConstructorSelectionTests
     [Fact]
     public void TheFacadeOffersTheLegacyConstructorAndOneCarryingEvaluations()
     {
-        Assert.Equal(2, Constructors.Length);
+        Assert.Equal(3, Constructors.Length);
         Assert.DoesNotContain(Constructors[0].GetParameters(), parameter => parameter.ParameterType == typeof(EvaluationServices));
         Assert.Contains(Constructors[1].GetParameters(), parameter => parameter.ParameterType == typeof(EvaluationServices));
     }
@@ -43,6 +38,8 @@ public sealed class OperationsConstructorSelectionTests
     [Fact]
     public void TheLongestConstructorLeavesNoParameterTheContainerMustGuessAt()
     {
-        Assert.DoesNotContain(Constructors[1].GetParameters(), parameter => parameter.HasDefaultValue);
+        var explicitParameters = Constructors[^1].GetParameters();
+        Assert.True(explicitParameters.Length > Constructors[1].GetParameters().Length);
+        Assert.DoesNotContain(explicitParameters, parameter => parameter.HasDefaultValue);
     }
 }

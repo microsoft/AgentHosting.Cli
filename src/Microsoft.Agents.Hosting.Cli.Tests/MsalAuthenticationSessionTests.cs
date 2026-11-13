@@ -13,6 +13,32 @@ public sealed class MsalAuthenticationSessionTests
 
     private static readonly string DefaultScope = new PacResourceScopeNormalizer().DefaultResourceScope(PowerPlatformApiRing.Production);
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExplicitInteractiveSignInRejectsHeadlessBeforeClientConfigurationOrCallback(bool broker)
+    {
+        var options = new AgentHostAuthOptions
+        {
+            ConfigDirectory = "unused",
+            ClientId = Guid.Empty.ToString(),
+            InteractionAllowed = false,
+        };
+        var session = new MsalAuthenticationSession(
+            new MsalPublicClientProvider(options, FakePlatformInfo.Linux(), new FakeSecureTokenCacheProbe(false)),
+            options);
+        var callbacks = 0;
+        var failure = await Assert.ThrowsAsync<InteractionRequiredException>(() => broker
+            ? session.LoginWithBrokerAsync(new AuthLoginRequest(), default)
+            : session.LoginWithDeviceCodeAsync(new AuthLoginRequest(), _ =>
+            {
+                callbacks++;
+                return Task.CompletedTask;
+            }, default));
+        Assert.Equal(3, failure.ExitCode);
+        Assert.Equal(0, callbacks);
+    }
+
     [Fact]
     public async Task SilentBrokerSignIn_RequiresARequest() =>
         await Assert.ThrowsAsync<ArgumentNullException>(() => Session().LoginWithBrokerSilentlyAsync(null!, CancellationToken.None));

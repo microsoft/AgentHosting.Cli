@@ -50,7 +50,7 @@ internal sealed class InMemoryEnvironmentSelectionStore : IEnvironmentSelectionS
 }
 
 /// <summary>An in-memory <see cref="IAuthProfileStore"/> seeded with zero or one active profile.</summary>
-internal sealed class InMemoryAuthProfileStore : IAuthProfileStore
+internal sealed class InMemoryAuthProfileStore : IAuthProfileManagementStore
 {
     private readonly List<AuthProfile> _profiles = [];
     private string? _activeKey;
@@ -62,6 +62,8 @@ internal sealed class InMemoryAuthProfileStore : IAuthProfileStore
         var store = new InMemoryAuthProfileStore();
         var profile = new AuthProfile
         {
+            ProfileId = $"{username}-profile",
+            Revision = 1,
             AccountKey = $"{username}-key",
             Username = username,
             TenantId = tenantId,
@@ -82,10 +84,43 @@ internal sealed class InMemoryAuthProfileStore : IAuthProfileStore
 
     public Task UpsertAsync(AuthProfile profile, CancellationToken cancellationToken)
     {
+        var existing = _profiles.FirstOrDefault(p => p.AccountKey == profile.AccountKey);
+        profile = profile with
+        {
+            ProfileId = existing?.ProfileId ?? (string.IsNullOrEmpty(profile.ProfileId) ? profile.AccountKey + "-profile" : profile.ProfileId),
+            Revision = (existing?.Revision ?? 0) + 1,
+            DefaultEnvironment = profile.DefaultEnvironment ?? existing?.DefaultEnvironment,
+        };
         _profiles.RemoveAll(p => p.AccountKey == profile.AccountKey);
         _profiles.Add(profile);
         _activeKey = profile.AccountKey;
         return Task.CompletedTask;
+    }
+
+    public async Task<AuthProfile> CreateAsync(AuthProfile profile, CancellationToken cancellationToken)
+    {
+        await UpsertAsync(profile, cancellationToken);
+        return (await GetActiveProfileAsync(cancellationToken))!;
+    }
+
+    public Task<AuthProfile> SelectAsync(AuthProfileSelector selector, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<AuthProfile> UpdateAsync(AuthProfileSelector selector, AuthProfileUpdate update, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<AuthProfile> UpdateAsync(string profileId, long expectedRevision, AuthProfileUpdate update, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<AuthProfileDeletion> DeleteAsync(AuthProfileSelector selector, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public async Task<AuthProfile> SetDefaultEnvironmentAsync(
+        string profileId, long expectedRevision, ActiveEnvironment environment, CancellationToken cancellationToken)
+    {
+        var profile = await GetActiveProfileAsync(cancellationToken);
+        if (profile is null || profile.ProfileId != profileId || profile.Revision != expectedRevision)
+            throw new Core.Errors.UsageException("The captured profile changed.");
+        var updated = profile with
+        {
+            DefaultEnvironment = EnvironmentProfileBinding.BindDefault(profile, environment),
+            Revision = profile.Revision + 1,
+        };
+        _profiles[_profiles.FindIndex(p => p.ProfileId == profileId)] = updated;
+        return updated;
     }
 
     public Task SetActiveAsync(string accountKey, CancellationToken cancellationToken)

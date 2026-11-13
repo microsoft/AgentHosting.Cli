@@ -111,6 +111,10 @@ public static class ErrorCodes
         public const int TokenClaimWrongApplication = 12014;
         public const int TokenClaimWrongTenant = 12015;
         public const int TokenClaimMissingPermission = 12016;
+        public const int TokenClaimWrongPrincipalMode = 12017;
+        public const int TokenClaimMissingObjectId = 12018;
+        public const int UserPrincipalRequired = 12019;
+        public const int OwnedCredentialCleanup = 12020;
     }
 
     /// <summary>Error identifiers for the Environment area (prefix 13).</summary>
@@ -286,5 +290,6 @@ public static class ErrorCodes
         public const int Usage = 99002;
         public const int PendingImplementation = 99003;
         public const int TransportTimeout = 99004;
+        public const int AuthenticationContextInvalid = 99005;
     }
 }

@@ -52,7 +52,7 @@ public sealed class ManagedAgentCreateServiceTests
             ManagedAgentFixtures.Materialiser(workspacePort),
             new AgentConfigLocator(),
             ManagedAgentFixtures.Identities(),
-            new ManagedAgentPrincipalResolver(InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant)),
+            ManagedAgentFixtures.Principals(),
             workspacePort);
     }
 

@@ -43,7 +43,7 @@ Below are recipes that agents can use to achieve a specific outcome
 
 ```
 # Authenticate
-msagent auth login
+msagent auth create
 
 # Select target environment
 msagent env list
@@ -73,7 +73,7 @@ environment, explicitly distinguish the source from the target:
 
 ```
 # Authenticate
-msagent auth login
+msagent auth create
 
 # Inspect available environments
 msagent env list

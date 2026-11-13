@@ -108,7 +108,7 @@ Global options:
 ### Sign in
 
 ```bash
-msagent auth login
+msagent auth create
 ```
 
 ### Check authentication status
@@ -217,45 +217,79 @@ This is especially useful for coding agents that need to inspect tool output pro
 
 ## Non-interactive mode
 
-Use `--non-interactive` for scripts, CI pipelines, or controlled automation that should not open a browser or interactive sign-in flow:
+Use `--non-interactive=true` for scripts that must not open identity UI. Explicit interactive
+create/login, including device code, return 12007 / exit 3 before cache enumeration; a cached account
+does not bypass this. `--json` alone is not non-interactive. Eligible workload credentials still
+require appropriate tenant permissions:
 
 ```bash
-msagent auth login --non-interactive
+msagent auth create --managedIdentity --non-interactive=true
 ```
 
-## Selecting a deployment ring
+## Authentication profiles and clouds
 
-By default every command targets the production Power Platform API. The ring is recorded on the
-signed-in account, so you set it where you sign in:
+Create an owned profile, then use token-free metadata commands to inspect and select it:
 
 ```bash
-msagent auth login --cloud preprod     # sign in, targeting preprod
-msagent auth switch --cloud test       # retarget the active account; no sign-in
-msagent auth status                    # shows the ring in use
+msagent auth create -n Dev -ci Public
+msagent auth list
+msagent auth select --name Dev
+msagent auth who
+msagent auth name --index 1 --name Development
+msagent auth delete --index 1
 ```
 
-Omitting `--cloud` on a later `auth login` keeps the ring the account already had; signing in a new
-account inherits the ring the session is already on, and the very first sign-in defaults to `prod`. An
-unrecognized value fails with a usage error rather than falling back to production.
+Names are 1–30 characters and case-sensitive unique. List positions are transient and 1-based.
+Select accepts exactly one `--index` or `--name`, or an interactive metadata picker without selectors.
+List and picker rows show full profile tenant IDs (`(none)` when missing) and use the application
+ID for non-user profiles without an account name, without authenticating.
+Delete requires exactly one selector. Renaming an inactive profile does not activate it.
+`auth clear` repairs corrupt metadata and removes only owned
+msagent profiles/credentials/caches, not PAC/Azure/broker state or source certificates.
 
-`auth switch --cloud` takes effect from the next command: the one running it keeps addressing the
-ring it started in, and says so instead of quietly using it.
+Create uses `--cloud` / `-ci`: `Public` (default), `Preprod`, `Test`, `UsGov`, `UsGovHigh`,
+`UsGovDod`, `China`, `UsNat`, `UsSec`. Authentication has no separate ring option.
+Unsupported China derived routes and UsNat/UsSec Copilot Studio gateways
+fail closed; a stored profile does not prove downstream service support.
 
-## The environment selection follows the account
+Create's other local aliases are `--name -n`, `--environment -env`, `--tenant -t`,
+`--deviceCode -dc`, `--username -un`, `--password -pw`, `--applicationId -id`,
+`--clientSecret -cs`, `--certificateDiskPath -cdp`, `--certificatePassword -cp`,
+`--managedIdentity -mi`, `--githubFederated -ghf`, `--azureDevOpsFederated -adof`.
+Credential modes are exclusive; username/password must be paired. Client secret, PFX certificate
+and federation require explicit tenant/application GUIDs. DefaultAzureCredential is configured
+source selection, not a guarantee that managed identity wins. Developer-source renewal cannot
+launch Azure CLI/PowerShell/azd when interaction is forbidden. ROPC cannot satisfy MFA and its
+password is not persisted for renewal.
 
-The selected environment belongs to the account that selected it, in the cloud it was selected for.
-Signing in or switching to a different account, or to a different cloud, clears it and tells you so,
-so `auth status` never reports a target you did not choose:
+Passwords/secrets in arguments can be exposed by shell history and process inspection despite CLI
+redaction. Owned client secrets, PFX passwords and caches require protected native storage; a
+token-cache-only plaintext baseline never permits plaintext credentials. Federation assertions
+are not persisted. GitHub federation uses `ACTIONS_ID_TOKEN_REQUEST_URL`/`TOKEN`; Azure DevOps
+uses `MSAGENT_ADO_ID_TOKEN_REQUEST_URL`/`TOKEN`, both with audience `api://AzureADTokenExchange`.
+Native storage and sovereign downstream operation require platform/service validation.
+Installing .NET alone does not establish protected-store, system-browser or broker readiness;
+locked or headless sessions may still be unavailable.
+
+`auth status` keeps its existing JSON/exit contract.
+Status/list/select/who never acquire tokens or unlock native stores. Caller cancellation returns
+130 and can report safe committed/cleanup guidance; it does not promise rollback. Inspect metadata
+before another mutation and retry intended owned cleanup with `auth clear` after repairing storage.
+Partial deletion reports the profile selected at commit, or that no active profile remained.
+
+## The environment selection follows the profile
+
+Target precedence is an explicit command environment, a compatible owned override, the profile's
+default, then a missing-target error. `env select` updates the selected profile's default:
 
 ```bash
-msagent env select fa5c1b48-…        # selected by op@contoso.com
-msagent auth login                   # signs in other@contoso.com
-# Signed in as other@contoso.com (prod).
-# Cleared the selected environment because the active account or cloud changed. Run `msagent env select` to choose one.
+msagent env list
+msagent env select <environment-id>
+msagent auth who
 ```
 
-Signing the same account in again, against the same cloud, keeps the selection. Every cloud's
-selection is cleared, so switching clouds and back cannot resurrect an old target.
+Foreign/incompatible overrides are not silently adopted. To change another profile's default,
+first select that profile with `auth select`, then use `env select`.
 
 ## Telemetry
 

@@ -92,7 +92,7 @@ public sealed class Assertions
         var resource = arm ? "AzureResourceManager" : graph ? "MicrosoftGraph" : "Unspecified";
         var remedy = arm ? "run one `abs` command interactively once and complete the browser prompt"
             : graph ? "a tenant administrator must grant consent for the Graph application permissions"
-            : "msagent auth login";
+            : "msagent auth create for the intended account and cloud";
 
         return new ScenarioBlockedException(
             $"exit 3 · consent required for {resource} · {remedy}",

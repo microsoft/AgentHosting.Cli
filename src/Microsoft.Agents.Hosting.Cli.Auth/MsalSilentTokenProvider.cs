@@ -26,16 +26,22 @@ public sealed class MsalSilentTokenProvider :
     private readonly MsalPublicClientProvider _clientProvider;
     private readonly IAuthProfileStore _profileStore;
     private readonly IAuthenticationResultObserver? _resultObserver;
+    private readonly IProfileCredentialProvider? _profileCredentials;
+    private readonly IProfileSelectedAccountTokenAcquisition? _selectedCredentials;
     private readonly PacResourceScopeNormalizer _scopeNormalizer = new();
 
     public MsalSilentTokenProvider(
         MsalPublicClientProvider clientProvider,
         IAuthProfileStore profileStore,
-        IAuthenticationResultObserver? resultObserver = null)
+        IAuthenticationResultObserver? resultObserver = null,
+        IProfileCredentialProvider? profileCredentials = null,
+        IProfileSelectedAccountTokenAcquisition? selectedCredentials = null)
     {
         _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
         _profileStore = profileStore ?? throw new ArgumentNullException(nameof(profileStore));
         _resultObserver = resultObserver;
+        _profileCredentials = profileCredentials;
+        _selectedCredentials = selectedCredentials;
     }
 
     private static TimeSpan? RetryAfterOf(MsalServiceException failure) =>
@@ -66,9 +72,6 @@ public sealed class MsalSilentTokenProvider :
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(scopes);
-        AuthenticationResultObservation? observation =
-            AuthenticationResultTenantObserver.BeginObservation(
-                _resultObserver);
         var requestedScopes = scopes
             .Where(scope => !string.IsNullOrWhiteSpace(scope))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -83,8 +86,19 @@ public sealed class MsalSilentTokenProvider :
         {
             throw new NotSignedInException(
                 "No active AgentHost account is available for silent token acquisition.",
-                remediation: "Run `msagent auth login` to sign in, then retry.");
+                remediation: "Run `msagent auth create` to sign in, then retry.");
         }
+        return await AcquireForProfileAsync(active, requestedScopes, targetTenantId, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<TokenAcquisitionResult> AcquireForProfileAsync(
+        AuthProfile active, IReadOnlyList<string> requestedScopes, string? targetTenantId, CancellationToken cancellationToken)
+    {
+        var observation = AuthenticationResultTenantObserver.BeginObservation(_resultObserver);
+        if (active.CredentialReference is not null)
+            return await (_profileCredentials ?? throw new AuthProfileStateException("Owned profile credential adapters are not configured."))
+                .AcquireAsync(active, requestedScopes, targetTenantId, cancellationToken).ConfigureAwait(false);
+        EnsureLegacyUser(active);
 
         var useBroker = string.Equals(active.FlowType, "broker", StringComparison.OrdinalIgnoreCase);
         // WAM's operating-system account must use a tenant-specific client authority. Applying the
@@ -95,7 +109,9 @@ public sealed class MsalSilentTokenProvider :
             targetTenantId);
 
         var client = await _clientProvider
-            .GetClientAsync(useBroker, tenantRouting.ClientAuthorityTenantId, cancellationToken)
+            .GetClientAsync(useBroker, tenantRouting.ClientAuthorityTenantId, cancellationToken,
+                clientIdOverride: active.ClientId is null ? null : ProfileCredentialValidation.ParseGuid(active.ClientId, "profile client id"),
+                cloudOverride: active.Cloud)
             .ConfigureAwait(false);
 
         try
@@ -167,7 +183,7 @@ public sealed class MsalSilentTokenProvider :
         return !string.IsNullOrWhiteSpace(targetTenantId)
             ? new InteractionRequiredException(
                 $"Could not silently obtain the requested access token for tenant {targetTenantId}.",
-                remediation: $"Run `msagent auth login --tenant {targetTenantId}` with an account that can access that tenant, or correct `--tenant`.")
+                remediation: $"Run `msagent auth create --tenant {targetTenantId}` for the intended cloud with an account that can access that tenant, or correct `--tenant`.")
             : new InteractionRequiredException(
                 "A cached AgentHost session exists but interaction is required to obtain a fresh token.");
     }
@@ -199,6 +215,22 @@ public sealed class MsalSilentTokenProvider :
         {
             return null;
         }
+        return await TryAcquireForProfileAsync(active, resource, targetTenantId, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Selected-cache-only acquisition for already captured authentication coordinates.</summary>
+    public async Task<TokenAcquisitionResult?> TryAcquireForProfileAsync(
+        AuthProfile active, string resource, string targetTenantId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(active);
+        ArgumentException.ThrowIfNullOrWhiteSpace(resource);
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetTenantId);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (active.PrincipalType != AuthPrincipalType.User || !ProfileCredentialValidation.IsPublicUser(active.CredentialMethod) ||
+            active.CredentialMethod == AuthCredentialMethod.Broker) return null;
+        if (active.CredentialReference is not null)
+            return _selectedCredentials is null ? null : await _selectedCredentials.TryAcquireSelectedTokenAsync(
+                active, [_scopeNormalizer.ToDefaultScope(resource)], targetTenantId, cancellationToken).ConfigureAwait(false);
 
         // Metadata-only authentication deliberately uses the non-broker client. It may refresh the
         // exact selected account from the application cache, but it never asks WAM for the operating
@@ -207,7 +239,9 @@ public sealed class MsalSilentTokenProvider :
             .GetClientAsync(
                 useBroker: false,
                 tenantId: null,
-                cancellationToken)
+                cancellationToken,
+                clientIdOverride: active.ClientId is null ? null : ProfileCredentialValidation.ParseGuid(active.ClientId, "profile client id"),
+                cloudOverride: active.Cloud)
             .ConfigureAwait(false);
         IAccount? account = FindExactAccount(
             await client.GetAccountsAsync().ConfigureAwait(false),
@@ -252,13 +286,19 @@ public sealed class MsalSilentTokenProvider :
             : accounts.FirstOrDefault(account => IsExactAccount(account, selectedAccountKey));
     }
 
+    internal static void EnsureLegacyUser(AuthProfile profile)
+    {
+        if (profile.PrincipalType != AuthPrincipalType.User || !ProfileCredentialValidation.IsPublicUser(profile.CredentialMethod))
+            throw new AuthProfileStateException("A workload or Azure credential profile requires its protected owned reference.");
+    }
+
     internal static void EnsureActiveAccount(IAccount? account, string activeAccountKey)
     {
         if (!IsExactAccount(account, activeAccountKey))
         {
             throw new InteractionRequiredException(
                 "The operating-system broker no longer holds the active AgentHost account and offered a different account instead.",
-                remediation: "Run `msagent auth login` to sign in again with the account you want to use.");
+                remediation: "Run `msagent auth create` for the intended cloud to sign in again with the account you want to use.");
         }
     }
 

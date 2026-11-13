@@ -14,21 +14,24 @@ public sealed class DataverseWebApiClient
 {
     private const int MaximumCollectionPages = 1000;
 
-    private readonly ISyncDataverseClient _dataverseClient;
     private readonly AgentHostDataverseHttpClientAccessor _httpClientAccessor;
 
     /// <summary>Creates the client.</summary>
-    /// <param name="dataverseClient">The sync library's Dataverse client, targeted before each request.</param>
+    /// <param name="dataverseClient">The sync library's Dataverse client, retained for constructor compatibility.</param>
     /// <param name="httpClientAccessor">Creates authenticated clients for the target organization.</param>
     public DataverseWebApiClient(ISyncDataverseClient dataverseClient, AgentHostDataverseHttpClientAccessor httpClientAccessor)
     {
-        _dataverseClient = dataverseClient ?? throw new ArgumentNullException(nameof(dataverseClient));
+        ArgumentNullException.ThrowIfNull(dataverseClient);
         _httpClientAccessor = httpClientAccessor ?? throw new ArgumentNullException(nameof(httpClientAccessor));
     }
 
     /// <summary>Targets the organization behind an environment without issuing a request.</summary>
     /// <param name="environment">The environment to target.</param>
-    public void Connect(CopilotEnvironmentContext environment) => DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, environment);
+    // Retained as an instance method for existing callers; raw requests now bind their own clients.
+#pragma warning disable CA1822
+    public void Connect(CopilotEnvironmentContext environment) =>
+        DataverseOperationScope.Set(environment.DataverseOrganization, environment.TenantId, environment.Context);
+#pragma warning restore CA1822
 
     /// <summary>Sends one request against the environment's organization.</summary>
     /// <param name="environment">The environment whose organization is addressed.</param>
@@ -41,9 +44,7 @@ public sealed class DataverseWebApiClient
     {
         ArgumentNullException.ThrowIfNull(environment);
 
-        Connect(environment);
-
-        using var client = _httpClientAccessor.CreateClient();
+        using var client = _httpClientAccessor.CreateClient(environment);
         using var request = new HttpRequestMessage(method, new Uri(environment.DataverseOrganization, relativeUrl));
         request.Headers.Add("OData-MaxVersion", "4.0");
         request.Headers.Add("OData-Version", "4.0");
@@ -167,7 +168,10 @@ public sealed class DataverseWebApiClient
     /// <param name="response">The failed response.</param>
     /// <param name="cancellationToken">Cancels the read.</param>
     /// <returns>The redacted description.</returns>
-    public static async Task<string> DescribeFailureAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    public static async Task<string> DescribeFailureAsync(HttpResponseMessage response, CancellationToken cancellationToken) =>
+        (await DescribeFailureWithCodeAsync(response, cancellationToken).ConfigureAwait(false)).Description;
+
+    internal static async Task<(string Description, string? Code)> DescribeFailureWithCodeAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(response);
 
@@ -176,7 +180,7 @@ public sealed class DataverseWebApiClient
 
         if (string.IsNullOrWhiteSpace(body))
         {
-            return status;
+            return (status, null);
         }
 
         try
@@ -187,17 +191,18 @@ public sealed class DataverseWebApiClient
                 || !document.RootElement.TryGetProperty("error", out var error)
                 || error.ValueKind != JsonValueKind.Object)
             {
-                return status;
+                return (status, null);
             }
 
             var message = ReadString(error, "message");
             var code = ReadString(error, "code");
 
-            return string.IsNullOrWhiteSpace(message) ? status : string.IsNullOrWhiteSpace(code) ? $"{status} {message}" : $"{status} {message} ({code})";
+            var description = string.IsNullOrWhiteSpace(message) ? status : string.IsNullOrWhiteSpace(code) ? $"{status} {message}" : $"{status} {message} ({code})";
+            return (description, code);
         }
         catch (JsonException)
         {
-            return status;
+            return (status, null);
         }
     }
 

@@ -205,7 +205,7 @@ public sealed class ManagedAgentPrincipalResolverTests
     [Fact]
     public async Task ResolveReturnsTheSignedInPrincipal()
     {
-        var resolver = new ManagedAgentPrincipalResolver(InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant));
+        var resolver = ManagedAgentFixtures.Principals();
 
         var principal = await resolver.ResolveAsync(CancellationToken.None);
 

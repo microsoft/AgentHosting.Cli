@@ -35,13 +35,21 @@ dotnet tool update microsoft.agents.hosting.cli --prerelease -g
 
 # Get started: Create your first agent
 
-Sign in and select a Power Platform environment:
+Authenticate by creating a profile, then select a Power Platform environment:
 
 ```powershell
-msagent auth login
+msagent auth create --name Dev
 msagent env list
 msagent env select <environment-id>
 ```
+
+Use `msagent auth list`, then `msagent auth select --name Dev` (or `--index <position>`) to
+choose a saved profile without signing in. `auth who` shows token-free profile/environment metadata.
+See the [authentication reference](src/Microsoft.Agents.Hosting.Cli.Docs/Command_Auth.md) for
+clouds, local aliases, workload credentials, secret-argument limitations and owned-state repair.
+`auth status` remains available. Use `auth delete` to remove one profile or `auth clear` to
+clear all owned authentication state. Legacy `auth login` and `auth logout` are disabled by
+default; their opt-in compatibility behavior is documented in the authentication reference.
 
 Create a local agent definition with a name, description, and instructions:
 

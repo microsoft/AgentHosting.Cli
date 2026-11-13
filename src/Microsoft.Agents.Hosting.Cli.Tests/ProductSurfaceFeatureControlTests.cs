@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
+using Microsoft.Agents.Hosting.Cli.Commands.Commands.Auth;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
@@ -12,6 +13,26 @@ public sealed class ProductSurfaceFeatureControlTests
 {
     private static readonly IFeatureFlags AllProductSurfacesDisabled =
         new TestFeatureFlags();
+
+    [Fact]
+    public async Task DirectApplicationDispatchRequiresOptIn()
+    {
+        foreach (var row in AuthProfileCommandHostTests.ApplicationOptions())
+        {
+            var value = (string?)row[2];
+            var input = new DictionaryCommandInput(new Dictionary<string, string?>
+            {
+                [(string)row[0]] = value ?? "true",
+            });
+            var services = new SingleServiceProvider(typeof(IFeatureFlags), AllProductSurfacesDisabled);
+
+            var failure = await Assert.ThrowsAsync<CommandUsageException>(() =>
+                new AuthCreateCommand().ExecuteAsync(input, services, default));
+
+            Assert.Contains("AppUserSupport", failure.Message);
+            if (value is not null) Assert.DoesNotContain(value, failure.Message);
+        }
+    }
 
     [Fact]
     public void DisabledProductSurfaces_AreAbsentFromGroupAndOptionHelp()
@@ -412,7 +433,7 @@ public sealed class ProductSurfaceFeatureControlTests
     {
         public string? GetString(string name) => values.GetValueOrDefault(name);
 
-        public bool GetSwitch(string name) => false;
+        public bool GetSwitch(string name) => bool.TryParse(values.GetValueOrDefault(name), out var value) && value;
 
         public bool? GetOptionalSwitch(string name) => null;
 

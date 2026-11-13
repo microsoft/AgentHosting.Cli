@@ -237,7 +237,7 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
                 "Select the intended account and tenant, then invoke the command again.");
         if (failure is NotSignedInException or InteractionRequiredException)
             return ("failed", 3, "authentication-required", "A selected signed-in user is required.",
-                "Run `msagent auth login` for the intended account; allow consent or remove --non-interactive.");
+                "Run `msagent auth create` for the intended account and cloud; allow consent or remove --non-interactive.");
         if (failure is AuthenticationException)
             return ("failed", 1, "authentication-failed", "Delegated authentication failed.",
                 "Check the selected account, public-client registration, and delegated consent.");

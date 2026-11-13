@@ -49,6 +49,7 @@ public sealed class AgentCreateService
                 new AmsAgentCreationTransportRequest
                 {
                     Endpoint = target.Endpoint,
+                    Context = environment.Context,
                     RouteMode = target.RouteMode,
                     Audience = environment.ApiAudience,
                     TenantId = environment.TenantId,

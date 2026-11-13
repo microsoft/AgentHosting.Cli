@@ -13,15 +13,33 @@ public sealed class PowerPlatformApiEnvironmentGeographyClient :
     IEnvironmentGeographyClient
 {
     private readonly HttpClient _http;
-    private readonly ISelectedAccountTokenProvider _tokenProvider;
+    private readonly ISelectedAccountTokenProvider? _tokenProvider;
     private readonly PowerPlatformApiTargetConfig _target;
     private readonly PpapiTokenClaimsValidator _claimsValidator;
+    private readonly IProfileResourceTokenProvider? _profileTokens;
+    private readonly EnvironmentResolutionContext? _context;
+
+    /// <summary>Creates a geography client bound to an explicit profile and resource target.</summary>
+    /// <param name="httpClient">The injected HTTP transport.</param>
+    /// <param name="profileTokens">Profile-bound resource acquisition.</param>
+    /// <param name="context">The immutable authentication coordinates.</param>
+    public PowerPlatformApiEnvironmentGeographyClient(HttpClient httpClient,
+        IProfileResourceTokenProvider profileTokens, EnvironmentResolutionContext context)
+    {
+        _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _profileTokens = profileTokens ?? throw new ArgumentNullException(nameof(profileTokens));
+        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _target = context.Target;
+        _claimsValidator = new();
+    }
 
     public PowerPlatformApiEnvironmentGeographyClient(
         HttpClient httpClient,
         ISelectedAccountTokenProvider tokenProvider,
         PowerPlatformApiTargetConfig target,
-        PpapiTokenClaimsValidator claimsValidator)
+        PpapiTokenClaimsValidator claimsValidator,
+        IProfileResourceTokenProvider? profileTokens = null,
+        EnvironmentResolutionContext? context = null)
     {
         _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _tokenProvider = tokenProvider
@@ -29,6 +47,8 @@ public sealed class PowerPlatformApiEnvironmentGeographyClient :
         _target = target ?? throw new ArgumentNullException(nameof(target));
         _claimsValidator = claimsValidator
             ?? throw new ArgumentNullException(nameof(claimsValidator));
+        _profileTokens = profileTokens;
+        _context = context;
     }
 
     public async Task<string?> GetGeographyAsync(
@@ -41,9 +61,15 @@ public sealed class PowerPlatformApiEnvironmentGeographyClient :
             return null;
         }
 
-        TokenAcquisitionResult? token = await _tokenProvider
+        var captured = _profileTokens is not null ? ResourceTokenContext.Require(_context) : null;
+        var resourceTarget = captured?.Target ?? _target;
+        TokenAcquisitionResult? token = _profileTokens is not null
+            ? (await _profileTokens.AcquireAsync(
+                captured!,
+                resourceTarget.Audience, target.TenantId, [PowerPlatformApiPermissions.EnvironmentsRead], cancellationToken).ConfigureAwait(false)).Token
+            : await _tokenProvider!
             .TryAcquireTokenSilentAsync(
-                _target.Audience,
+                resourceTarget.Audience,
                 target.TenantId,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -52,15 +78,15 @@ public sealed class PowerPlatformApiEnvironmentGeographyClient :
             return null;
         }
 
-        _claimsValidator.Validate(
+        if (_profileTokens is null) _claimsValidator.Validate(
             token.AccessToken,
-            _target.Audience,
+            resourceTarget.Audience,
             target.TenantId,
             PowerPlatformApiPermissions.EnvironmentsRead);
 
         Uri environmentEndpoint =
             PowerPlatformApiDiscovery.GetEnvironmentEndpoint(
-                _target,
+                resourceTarget,
                 target.EnvironmentId);
         var requestUri = new Uri(
             environmentEndpoint,

@@ -62,6 +62,7 @@ public sealed class AgentDeploymentCreateService
 
         var targetEnvironmentId = string.IsNullOrWhiteSpace(request.EnvironmentId) ? agent.EnvironmentId : request.EnvironmentId.Trim();
         var target = await _environmentResolver.ResolveAsync(targetEnvironmentId, cancellationToken).ConfigureAwait(false);
+        target = await _principals.BindUserAsync(target, cancellationToken).ConfigureAwait(false);
         var schemaName = ResolveSchemaName(projectDirectory, agent);
 
         var stored = _deployments.Add(projectDirectory, new AgentDeploymentRecord
@@ -74,7 +75,7 @@ public sealed class AgentDeploymentCreateService
             TenantId = agent.TenantId,
             HomeEnvironmentId = agent.EnvironmentId,
             EnvironmentId = targetEnvironmentId,
-            CreatedBy = await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false),
+            CreatedBy = await _principals.ResolveAsync(target, cancellationToken).ConfigureAwait(false),
             IsQuarantined = false,
             IsEnabled = true,
             EntityTag = string.Empty,

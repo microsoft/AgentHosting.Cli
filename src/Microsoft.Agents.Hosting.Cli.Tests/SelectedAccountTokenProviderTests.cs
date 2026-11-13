@@ -62,7 +62,7 @@ public sealed class SelectedAccountTokenProviderTests
                     CancellationToken.None));
 
         Assert.Equal(
-            "Run `msagent auth login` to sign in, then retry.",
+            "Run `msagent auth create` to sign in, then retry.",
             failure.Remediation);
         Assert.Equal(0, cacheProbe.CallCount);
     }
@@ -76,12 +76,12 @@ public sealed class SelectedAccountTokenProviderTests
         var noAccount = Assert.Throws<InteractionRequiredException>(() => MsalSilentTokenProvider.EnsureActiveAccount(null, "selected"));
 
         Assert.Equal("The operating-system broker no longer holds the active AgentHost account and offered a different account instead.", otherAccount.Message);
-        Assert.Equal("Run `msagent auth login` to sign in again with the account you want to use.", otherAccount.Remediation);
+        Assert.Equal("Run `msagent auth create` for the intended cloud to sign in again with the account you want to use.", otherAccount.Remediation);
         Assert.Equal(otherAccount.Message, noAccount.Message);
     }
 
     [Fact]
-    public void TenantInteractionRequiredNamesTheRenamedLoginCommand()
+    public void TenantInteractionRequiredNamesTheAvailableCreateCommand()
     {
         const string tenantId =
             "11111111-1111-1111-1111-111111111111";
@@ -91,7 +91,7 @@ public sealed class SelectedAccountTokenProviderTests
                 tenantId);
 
         Assert.Equal(
-            $"Run `msagent auth login --tenant {tenantId}` with an account that can access that tenant, or correct `--tenant`.",
+            $"Run `msagent auth create --tenant {tenantId}` for the intended cloud with an account that can access that tenant, or correct `--tenant`.",
             failure.Remediation);
     }
 

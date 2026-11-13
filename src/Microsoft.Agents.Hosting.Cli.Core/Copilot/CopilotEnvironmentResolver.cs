@@ -29,6 +29,11 @@ public sealed class CopilotEnvironmentResolver
     public async Task<CopilotEnvironmentContext> ResolveAsync(string? environmentId, CancellationToken cancellationToken) =>
         ToContext(await _environments.ResolveForCommandAsync(environmentId, cancellationToken).ConfigureAwait(false));
 
+    /// <summary>Resolves an additional target without reading another active profile.</summary>
+    public async Task<CopilotEnvironmentContext> ResolveForContextAsync(
+        EnvironmentResolutionContext context, string environmentId, CancellationToken cancellationToken) =>
+        ToContext(await _environments.ResolveForProfileAsync(context.Profile, environmentId, cancellationToken).ConfigureAwait(false));
+
     /// <summary>
     /// Every environment the operator can reach, resolved from one listing.
     /// </summary>
@@ -56,21 +61,25 @@ public sealed class CopilotEnvironmentResolver
         }
 
         throw Uri.TryCreate(environment.InstanceUrl, UriKind.Absolute, out var untrusted)
-            ? _cloudMap.UntrustedDataverseOrganization(untrusted, environment.EnvironmentId)
+            ? Map(environment).UntrustedDataverseOrganization(untrusted, environment.EnvironmentId)
             : CopilotStudioException.EnvironmentMissingInstanceUrl(environment.EnvironmentId);
     }
 
     private CopilotEnvironmentContext? TryToContext(PowerPlatformEnvironment environment) =>
         Uri.TryCreate(environment.InstanceUrl, UriKind.Absolute, out var dataverseOrganization)
-        && _cloudMap.IsTrustedDataverseOrganization(dataverseOrganization)
+        && Map(environment).IsTrustedDataverseOrganization(dataverseOrganization)
             ? new CopilotEnvironmentContext
             {
                 EnvironmentId = environment.EnvironmentId,
+                Context = environment.Context,
                 TenantId = environment.TenantId,
                 DataverseOrganization = dataverseOrganization,
                 AgentManagementUrl = Uri.TryCreate(environment.AgentManagementUrl, UriKind.Absolute, out var agentManagement) ? agentManagement : null,
             }
             : null;
+
+    private PowerPlatformCloudMap Map(PowerPlatformEnvironment environment) =>
+        environment.Context is { } captured ? PowerPlatformCloudMap.ForTarget(captured.Target) : _cloudMap;
 }
 
 /// <summary>The environments a tenant-wide command can and cannot reach.</summary>

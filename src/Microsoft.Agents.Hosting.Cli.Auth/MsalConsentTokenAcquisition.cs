@@ -16,19 +16,22 @@ public sealed class MsalConsentTokenAcquisition
     private readonly IInteractionPolicy _interactionPolicy;
     private readonly IInteractiveMessagePresenter _messagePresenter;
     private readonly IAuthenticationResultObserver? _resultObserver;
+    private readonly IProfileConsentTokenAcquisition? _profileCredentials;
 
     public MsalConsentTokenAcquisition(
         MsalPublicClientProvider clientProvider,
         IAuthProfileStore profileStore,
         IInteractionPolicy interactionPolicy,
         IInteractiveMessagePresenter messagePresenter,
-        IAuthenticationResultObserver? resultObserver = null)
+        IAuthenticationResultObserver? resultObserver = null,
+        IProfileConsentTokenAcquisition? profileCredentials = null)
     {
         _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
         _profileStore = profileStore ?? throw new ArgumentNullException(nameof(profileStore));
         _interactionPolicy = interactionPolicy ?? throw new ArgumentNullException(nameof(interactionPolicy));
         _messagePresenter = messagePresenter ?? throw new ArgumentNullException(nameof(messagePresenter));
         _resultObserver = resultObserver;
+        _profileCredentials = profileCredentials;
     }
 
     /// <summary>Acquires a token for <paramref name="clientId"/> and <paramref name="scopes"/>, silently first unless <paramref name="trySilentFirst"/> is off and otherwise through interactive consent, raising an <see cref="InteractionRequiredException"/> built from the interaction arguments when consent is needed but interaction is disabled.</summary>
@@ -61,8 +64,12 @@ public sealed class MsalConsentTokenAcquisition
         {
             throw new NotSignedInException(
                 "No active AgentHost account is available for consent token acquisition.",
-                remediation: "Run `msagent auth login` to sign in, then retry.");
+                remediation: "Run `msagent auth create` to sign in, then retry.");
         }
+        if (active.CredentialReference is not null)
+            return await (_profileCredentials ?? throw new AuthProfileStateException("Owned profile consent adapters are not configured."))
+                .AcquireConsentAsync(active, clientId, redirectUri, requestedScopes, targetTenantId, cancellationToken, trySilentFirst).ConfigureAwait(false);
+        MsalSilentTokenProvider.EnsureLegacyUser(active);
 
         var useBroker = ConsentInteractiveFlowSelector.UseBroker(
             active,

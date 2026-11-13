@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Identity.Client;
 
@@ -36,6 +37,22 @@ internal static class BrokerFailure
         if (msal.AdditionalExceptionData?.TryGetValue(MsalException.BrokerErrorStatus, out var status) == true && !string.IsNullOrWhiteSpace(status))
         {
             parts.Add($"broker status {status}");
+        }
+
+        foreach (var detail in new[] { msal.Message, msal.AdditionalExceptionData?.GetValueOrDefault(MsalException.BrokerTelemetry) })
+        {
+            var entraError = Regex.Match(detail ?? "", @"\bAADSTS[0-9]{5,10}\b", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+            if (entraError.Success)
+            {
+                parts.Add($"Entra error {entraError.Value}");
+                break;
+            }
+            var serverError = Regex.Match(detail ?? "", @"server_error_code\\?""\s*:\s*([1-9][0-9]{4,9})\b", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+            if (serverError.Success)
+            {
+                parts.Add($"Entra error AADSTS{serverError.Groups[1].Value}");
+                break;
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(msal.CorrelationId))

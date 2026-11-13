@@ -1,0 +1,73 @@
+name: macOS offline and installed-package acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main", "rel/**" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            architecture: x64
+            rid: osx-x64
+          - runner: macos-15
+            architecture: arm64
+            rid: osx-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Reject tracked local agent artifacts
+        shell: pwsh
+        run: ./.github/scripts/verify-no-local-agent-artifacts.ps1
+      - name: Use physical temporary directory
+        shell: bash
+        run: |
+          temporary_directory="$(cd "$RUNNER_TEMP" && pwd -P)"
+          echo "TMPDIR=$temporary_directory" >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+          architecture: ${{ matrix.architecture }}
+      - uses: dotnet/nbgv@705dad19ab067f12f4e9eeaa60812e01edef5d25 # v0.5.2
+        with:
+          path: src
+          setAllVars: true
+      - name: Restore
+        run: dotnet restore Microsoft.Agents.Hosting.Cli.proj
+      - name: Build Debug
+        run: dotnet build Microsoft.Agents.Hosting.Cli.proj --no-restore -c Debug
+      - name: Main offline suite
+        id: offline-tests
+        timeout-minutes: 15
+        run: >-
+          dotnet test src/Microsoft.Agents.Hosting.Cli.Tests/Microsoft.Agents.Hosting.Cli.Tests.csproj
+          --no-build --no-restore -c Debug --logger trx --results-directory artifacts/offline-tests
+          --blame-hang-timeout 5m --blame-hang-dump-type none
+      - name: Upload offline test diagnostics
+        if: ${{ always() && (steps.offline-tests.outcome == 'failure' || steps.offline-tests.outcome == 'cancelled') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: offline-test-diagnostics-${{ matrix.rid }}
+          path: |
+            artifacts/offline-tests/**/*.trx
+            artifacts/offline-tests/**/Sequence_*.xml
+          retention-days: 7
+      - name: Core-only embedding suite
+        run: dotnet test src/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests/Microsoft.Agents.Hosting.Cli.Core.Embedding.Tests.csproj --no-build --no-restore -c Debug
+      - name: Package all seven RID inputs
+        shell: pwsh
+        run: ./.github/scripts/build-authentication-packages.ps1 -Configuration Debug
+      - name: Actual isolated installed tool
+        shell: pwsh
+        run: ./.github/scripts/verify-authentication-package.ps1 -ExpectedRid ${{ matrix.rid }} -Configuration Debug

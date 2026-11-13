@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Auth;
 
@@ -26,6 +28,8 @@ public sealed record PpapiTokenClaims
     /// </summary>
     public string? ObjectId { get; init; }
 
+    public string? IdentityType { get; init; }
+
     /// <summary>The permissions carried by the space-delimited <c>scp</c> claim.</summary>
     public IReadOnlyList<string> Scopes { get; init; } = [];
 
@@ -43,7 +47,7 @@ public sealed record PpapiTokenClaims
 /// reading a 401 back. Reading is therefore deliberately narrow: split the compact JWT, base64url
 /// decode the payload, and take four claims.
 ///
-/// Every failure path throws <see cref="TokenClaimException"/> with a message that names no token
+/// Every failure path throws <see cref="Microsoft.Agents.Hosting.Cli.Core.Errors.TokenClaimException"/> with a message that names no token
 /// material — not the token, not a segment, not a fragment of one.
 ///
 /// An encrypted (JWE) token is rejected rather than read: its second segment is an encrypted key, not
@@ -53,6 +57,7 @@ public static class PpapiTokenClaimsReader
 {
     private const int SignedSegmentCount = 3;
     private const int EncryptedSegmentCount = 5;
+    private const int MaximumTokenLength = 128 * 1024;
 
     /// <summary>Reads the claim set from <paramref name="accessToken"/>.</summary>
     public static PpapiTokenClaims Read(string accessToken)
@@ -60,6 +65,11 @@ public static class PpapiTokenClaimsReader
         if (string.IsNullOrWhiteSpace(accessToken))
         {
             throw Malformed("the access token is empty");
+        }
+
+        if (accessToken.Length > MaximumTokenLength)
+        {
+            throw Malformed("the access token exceeds the bounded claim-reader limit");
         }
 
         var segments = accessToken.Split('.');
@@ -85,12 +95,22 @@ public static class PpapiTokenClaimsReader
 
         try
         {
-            using var document = JsonDocument.Parse(payload);
+            using var document = JsonDocument.Parse(payload, new JsonDocumentOptions { MaxDepth = 16 });
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
             {
                 throw Malformed("the access token payload is not a JSON object");
             }
+
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in root.EnumerateObject())
+            {
+                if (!names.Add(property.Name))
+                    throw Malformed("the access token payload contains duplicate claims");
+            }
+            if (root.TryGetProperty("idtyp", out var identityType)
+                && identityType.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                throw Malformed("the principal mode claim is not a string");
 
             return new PpapiTokenClaims
             {
@@ -98,6 +118,7 @@ public static class PpapiTokenClaimsReader
                 ApplicationId = ReadString(root, "appid") ?? ReadString(root, "azp"),
                 TenantId = ReadString(root, "tid"),
                 ObjectId = ReadString(root, "oid"),
+                IdentityType = ReadString(root, "idtyp"),
                 Scopes = ReadScopes(root),
             };
         }
@@ -138,7 +159,7 @@ public static class PpapiTokenClaimsReader
         new(
             $"The Power Platform API access token could not be read: {reason}.",
             TokenClaimFailure.Malformed,
-            remediation: "Run `msagent auth logout` then `msagent auth login` to obtain a fresh token, and retry.");
+            remediation: "Run `msagent auth clear` to clear owned authentication state, then `msagent auth create` for the intended cloud to obtain a fresh token, and retry.");
 }
 
 /// <summary>
@@ -156,7 +177,7 @@ public sealed class PpapiTokenClaimsValidator
 
     /// <param name="expectedApplicationId">
     /// The application id the token's <c>appid</c> must carry. Defaults to
-    /// <see cref="PowerPlatformApiPermissions.AgentHostCliApplicationId"/>; tests supply their own.
+    /// <see cref="Microsoft.Agents.Hosting.Cli.Core.Auth.PowerPlatformApiPermissions.AgentHostCliApplicationId"/>; tests supply their own.
     /// </param>
     public PpapiTokenClaimsValidator(string? expectedApplicationId = null)
     {
@@ -167,7 +188,7 @@ public sealed class PpapiTokenClaimsValidator
 
     /// <summary>
     /// Validates <paramref name="accessToken"/>'s claims and returns the non-secret claim set. Throws
-    /// <see cref="TokenClaimException"/> on the first violated rule.
+    /// <see cref="Microsoft.Agents.Hosting.Cli.Core.Errors.TokenClaimException"/> on the first violated rule.
     /// </summary>
     public PpapiTokenClaims Validate(
         string accessToken,
@@ -220,10 +241,47 @@ public sealed class PpapiTokenClaimsValidator
                 TokenClaimFailure.WrongTenant,
                 remediation: string.IsNullOrWhiteSpace(expectedTenantId)
                     ? "Re-select the environment with `msagent env select <environment-id>` so its tenant is recorded."
-                    : $"Run `msagent auth login --tenant {expectedTenantId}` with an account in that tenant, or select an environment in the signed-in tenant.");
+                    : $"Run `msagent auth create --tenant {expectedTenantId}` for the intended cloud with an account in that tenant, or select an environment in the signed-in tenant.");
         }
 
         ValidatePermission(claims, requiredPermission);
+    }
+
+    /// <summary>Checks the exact captured profile, resource tenant, and applicable authorization mode.</summary>
+    public PpapiTokenClaims ValidateForProfile(
+        string accessToken, string expectedAudience, string expectedTenantId,
+        AuthProfile profile, IReadOnlyList<string> requiredPermissions)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        ArgumentNullException.ThrowIfNull(requiredPermissions);
+        var expectedClient = profile.CredentialMethod == AuthCredentialMethod.DefaultAzureCredential
+            || profile.PrincipalType == AuthPrincipalType.ServicePrincipal
+                ? profile.ClientId
+                : _expectedApplicationId;
+        if (string.IsNullOrWhiteSpace(expectedClient))
+            throw new TokenClaimException("The captured authentication profile has no bound client application.",
+                TokenClaimFailure.WrongApplication);
+        var claims = PpapiTokenClaimsReader.Read(accessToken);
+        new PpapiTokenClaimsValidator(expectedClient).ValidateAudienceAndApplication(claims, expectedAudience);
+        if (string.IsNullOrWhiteSpace(expectedTenantId)
+            || !string.Equals(claims.TenantId, expectedTenantId, StringComparison.OrdinalIgnoreCase))
+            throw new TokenClaimException("The access token does not belong to the captured resource tenant.",
+                TokenClaimFailure.WrongTenant);
+
+        var workload = profile.PrincipalType == AuthPrincipalType.ServicePrincipal;
+        var appOnly = claims.Scopes.Count == 0
+            && (claims.IdentityType is null || string.Equals(claims.IdentityType, "app", StringComparison.OrdinalIgnoreCase));
+        var delegated = claims.Scopes.Count > 0
+            && (claims.IdentityType is null || string.Equals(claims.IdentityType, "user", StringComparison.OrdinalIgnoreCase));
+        if (workload ? !appOnly : profile.PrincipalType != AuthPrincipalType.User || !delegated)
+            throw new TokenClaimException("The access token principal mode does not match the captured authentication profile.",
+                TokenClaimFailure.WrongPrincipalMode);
+        if (!workload)
+        {
+            foreach (var permission in requiredPermissions)
+                ValidatePermission(claims, permission);
+        }
+        return claims;
     }
 
     private void ValidateAudienceAndApplication(PpapiTokenClaims claims, string expectedAudience)
@@ -241,7 +299,7 @@ public sealed class PpapiTokenClaimsValidator
             throw new TokenClaimException(
                 $"The access token was issued to application '{claims.ApplicationId ?? "<none>"}', not the AgentHostCLI application '{_expectedApplicationId}'.",
                 TokenClaimFailure.WrongApplication,
-                remediation: "Set AH_CLI_CLIENT_ID to the AgentHostCLI application id, then run `msagent auth login` again.");
+                remediation: "Set AH_CLI_CLIENT_ID to the AgentHostCLI application id, then run `msagent auth create` again for the intended cloud.");
         }
     }
 

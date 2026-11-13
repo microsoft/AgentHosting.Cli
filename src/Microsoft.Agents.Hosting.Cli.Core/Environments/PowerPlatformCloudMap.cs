@@ -16,6 +16,12 @@ public static partial class DataverseHostPatterns
     /// <summary>China organizations, operated by 21Vianet.</summary>
     public static readonly Regex China = ChinaPattern();
 
+    /// <summary>United States national cloud organizations.</summary>
+    public static readonly Regex UnitedStatesNational = UnitedStatesNationalPattern();
+
+    /// <summary>United States secure cloud organizations.</summary>
+    public static readonly Regex UnitedStatesSecure = UnitedStatesSecurePattern();
+
     [GeneratedRegex(@"^[a-z0-9-]+\.crm[0-9]*\.dynamics\.com$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CommercialDynamicsPattern();
 
@@ -24,6 +30,12 @@ public static partial class DataverseHostPatterns
 
     [GeneratedRegex(@"^[a-z0-9-]+\.crm[0-9]*\.dynamics\.cn$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ChinaPattern();
+
+    [GeneratedRegex(@"\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.crm[0-9]{0,60}\.dynamics\.eaglex\.ic\.gov\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex UnitedStatesNationalPattern();
+
+    [GeneratedRegex(@"\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.crm[0-9]{0,60}\.dynamics\.microsoft\.scloud\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex UnitedStatesSecurePattern();
 }
 
 /// <summary>
@@ -39,9 +51,8 @@ public static partial class DataverseHostPatterns
 /// <c>api.powerplatform.com.attacker.example</c>. Non-default ports and embedded user information are
 /// rejected outright.
 ///
-/// Only <see cref="CloudInstance.Public"/> is exercised by version zero; the sovereign entries are
-/// carried so a non-public target touches this one type, and they are unverified against a live
-/// sovereign service.
+/// Policies cover registered public and sovereign targets without discovering new trust from an
+/// inventory response. National and secure cloud gateway policies remain empty until verified.
 /// </summary>
 public sealed class PowerPlatformCloudMap
 {
@@ -65,6 +76,13 @@ public sealed class PowerPlatformCloudMap
 
     private static readonly PowerPlatformCloudMap ChinaCloud =
         new(CloudInstance.China, ["api.powerplatform.partner.microsoftonline.cn"], ["island.powerapps.cn"], DataverseHostPatterns.China);
+
+    // Studio gateway suffixes for these clouds are not verified; an empty policy fails closed.
+    private static readonly PowerPlatformCloudMap UsNatCloud =
+        new(CloudInstance.UsNat, ["api.powerplatform.eaglex.ic.gov"], [], DataverseHostPatterns.UnitedStatesNational);
+
+    private static readonly PowerPlatformCloudMap UsSecCloud =
+        new(CloudInstance.UsSec, ["api.powerplatform.microsoft.scloud"], [], DataverseHostPatterns.UnitedStatesSecure);
 
     private PowerPlatformCloudMap(CloudInstance cloud, IReadOnlyList<string> trustedHostSuffixes, IReadOnlyList<string> trustedAgentManagementHostSuffixes, Regex trustedDataverseHostPattern)
     {
@@ -99,6 +117,8 @@ public sealed class PowerPlatformCloudMap
         CloudInstance.UsGovHigh => UsGovHighCloud,
         CloudInstance.UsGovDod => UsGovDodCloud,
         CloudInstance.China => ChinaCloud,
+        CloudInstance.UsNat => UsNatCloud,
+        CloudInstance.UsSec => UsSecCloud,
         _ => throw new ArgumentOutOfRangeException(nameof(cloud), cloud, "Unknown Power Platform cloud."),
     };
 

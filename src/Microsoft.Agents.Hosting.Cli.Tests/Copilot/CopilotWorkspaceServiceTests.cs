@@ -1,6 +1,7 @@
 using Microsoft.Agents.Hosting.Cli.Core.Copilot;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
@@ -306,6 +307,29 @@ public sealed class CopilotWorkspaceServiceTests
 
         Assert.Equal("up-to-date", result.Status);
         Assert.Equal(0, result.ChangeCount);
+    }
+
+    [Fact]
+    public async Task Pull_WithoutEnvironmentBindingPreservesLegacyWorkspaceCoordinates()
+    {
+        CopilotWorkspaceInfo? located = null;
+        var workspaces = new ManagedAgents.RecordingPullWorkspacePort
+        {
+            OnRead = (workspace, _) => Task.FromResult(located = workspace with
+            {
+                TenantId = EnvironmentFixtures.FabrikamTenant,
+            }),
+        };
+        var service = new CopilotWorkspaceService(workspaces,
+            CopilotTestFixtures.Locator(workspaces, new FakeCopilotFileSystem()));
+
+        var result = await service.PullAsync(new CopilotPullRequest(), default);
+
+        var pulled = Assert.Single(workspaces.PulledWorkspaces);
+        Assert.Same(located, pulled);
+        Assert.Null(pulled.Context);
+        Assert.Equal(EnvironmentFixtures.FabrikamTenant, pulled.TenantId);
+        Assert.Equal("up-to-date", result.Status);
     }
 
     [Fact]

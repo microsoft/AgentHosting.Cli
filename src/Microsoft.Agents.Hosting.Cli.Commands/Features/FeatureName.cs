@@ -17,4 +17,10 @@ public enum FeatureName
 
     /// <summary>Copilot Studio evaluation commands.</summary>
     EvaluationFeatures,
+
+    /// <summary>Legacy authentication login and logout commands.</summary>
+    LegacyAuth,
+
+    /// <summary>Application identity profile creation and workload credential options.</summary>
+    AppUserSupport,
 }

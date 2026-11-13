@@ -49,6 +49,7 @@ public sealed class AgentDeploymentConnectionCreateService
 
         var target = await _targets.ResolveAsync(request, request.EnvironmentId, Verb, cancellationToken).ConfigureAwait(false);
         var environment = target.Environment;
+        environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
         var resolution = await _connectorResolver.RequireAsync(environment, request.Connector, ConnectionCommandHints.ListConnectors(request, request.EnvironmentId), cancellationToken).ConfigureAwait(false);
         var connector = resolution.Connector;
         var diagnostics = await DescribeExistingAsync(environment, resolution, cancellationToken).ConfigureAwait(false);
@@ -82,7 +83,7 @@ public sealed class AgentDeploymentConnectionCreateService
 
     private async Task<IReadOnlyList<string>> DescribeExistingAsync(CopilotEnvironmentContext environment, ConnectorResolution resolution, CancellationToken cancellationToken)
     {
-        var principal = await _principals.ResolveUsernameAsync(cancellationToken).ConfigureAwait(false);
+        var principal = await _principals.ResolveUsernameAsync(environment, cancellationToken).ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(principal))
         {

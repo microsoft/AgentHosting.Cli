@@ -8,17 +8,20 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Auth;
 
 /// <summary>
 /// The on-disk shape of the AgentHost auth profile store. A single active pointer over a list of
-/// profiles — the AgentHost adaptation of PAC's <c>AuthProfiles</c>, which keeps a per-<c>AuthKind</c>
-/// "Current" dictionary. The demonstrator has one auth kind, so the dictionary collapses to one
-/// <see cref="ActiveAccountKey"/>.
+/// Universal profiles. Version 1 is accepted for read-only in-memory migration; mutations write
+/// version 2 with opaque identities. No PAC profile or credential cache is imported.
 /// </summary>
 internal sealed class AuthProfilesDocument
 {
-    /// <summary>Persisted schema version. Only version 1 is understood by this build.</summary>
+    /// <summary>Missing versions denote the original version 1 schema.</summary>
     public int SchemaVersion { get; set; } = 1;
 
-    /// <summary>The home-account id of the single active profile, or <see langword="null"/> when signed out.</summary>
+    /// <summary>Version 1 legacy active pointer; omitted from version 2 writes.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ActiveAccountKey { get; set; }
+
+    /// <summary>Version 2 opaque identity of the active profile, or null when signed out.</summary>
+    public string? ActiveProfileId { get; set; }
 
     /// <summary>The persisted profiles. Never token material.</summary>
     public List<StoredAuthProfile> Profiles { get; set; } = [];
@@ -27,6 +30,17 @@ internal sealed class AuthProfilesDocument
 /// <summary>A single persisted profile record. Contains no token or secret material.</summary>
 internal sealed class StoredAuthProfile
 {
+    public string ProfileId { get; set; } = string.Empty;
+    public string? Name { get; set; }
+    public long Revision { get; set; }
+    public string? HomeAccountId { get; set; }
+    public AuthCredentialMethod? CredentialMethod { get; set; }
+    public AuthPrincipalType PrincipalType { get; set; } = AuthPrincipalType.User;
+    public string? ConnectionUrl { get; set; }
+    public string? CredentialReference { get; set; }
+    public string? CertificatePath { get; set; }
+    public string? CertificateThumbprint { get; set; }
+    public ActiveEnvironment? DefaultEnvironment { get; set; }
     public string AccountKey { get; set; } = string.Empty;
     public string Username { get; set; } = string.Empty;
     public string? TenantId { get; set; }
@@ -86,7 +100,8 @@ internal sealed class OptionalProfileStringConverter : JsonConverter<string>
 
 /// <summary>
 /// Source-generated <c>System.Text.Json</c> metadata for the persisted profile store.
-/// <see cref="CloudInstance"/> is written as a string so the file stays stable if the enum is reordered.
+/// <see cref="Microsoft.Agents.Hosting.Cli.Core.Auth.CloudInstance"/> is written as a string
+/// so the file stays stable if the enum is reordered.
 /// </summary>
 [JsonSourceGenerationOptions(
     WriteIndented = true,

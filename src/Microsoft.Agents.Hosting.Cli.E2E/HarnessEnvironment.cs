@@ -74,7 +74,7 @@ public sealed class HarnessEnvironment
         if (!signedIn)
         {
             Console.Error.WriteLine($"Not signed in: {signedInDetail}");
-            Console.Error.WriteLine("Run `msagent auth login`, then try again.");
+            Console.Error.WriteLine("Run `msagent auth create` for the intended account and cloud, then try again.");
             return null;
         }
 

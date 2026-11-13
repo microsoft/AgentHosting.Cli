@@ -17,9 +17,17 @@ public sealed class PowerAppsConnectionAdapter : IConnectionLifecyclePort, IDisp
     /// <param name="tokenProvider">Supplies the Power Apps token the API accepts.</param>
     /// <param name="cluster">The cluster category the environment belongs to.</param>
     /// <param name="handlerFactory">Creates the transport, replaced in tests.</param>
-    public PowerAppsConnectionAdapter(ITokenProvider tokenProvider, CoreServicesClusterCategory cluster, Func<HttpMessageHandler>? handlerFactory = null)
+    /// <param name="profileCredentials">Acquires service credentials for captured profiles.</param>
+    public PowerAppsConnectionAdapter(ITokenProvider tokenProvider, CoreServicesClusterCategory cluster, Func<HttpMessageHandler>? handlerFactory = null,
+        IProfileCredentialProvider? profileCredentials = null)
+        : this(tokenProvider, () => cluster, handlerFactory, profileCredentials)
     {
-        _client = new PowerAppsConnectionClient(tokenProvider, cluster, handlerFactory);
+    }
+
+    internal PowerAppsConnectionAdapter(ITokenProvider tokenProvider, Func<CoreServicesClusterCategory> cluster, Func<HttpMessageHandler>? handlerFactory = null,
+        IProfileCredentialProvider? profileCredentials = null)
+    {
+        _client = PowerAppsConnectionClient.CreateDeferred(tokenProvider, cluster, handlerFactory, profileCredentials: profileCredentials);
     }
 
     /// <summary>Disposes the transport shared by every request this adapter sent.</summary>

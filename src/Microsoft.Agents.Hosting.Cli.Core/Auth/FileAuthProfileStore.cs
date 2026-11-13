@@ -1,4 +1,10 @@
+using System.Diagnostics;
+using System.Security.AccessControl;
+using System.Security.Cryptography;
+using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
@@ -6,43 +12,17 @@ using Microsoft.Agents.Hosting.Cli.Core.Ports;
 namespace Microsoft.Agents.Hosting.Cli.Core.Auth;
 
 /// <summary>
-/// Atomic, file-backed implementation of <see cref="IAuthProfileStore"/>. It maintains a single active
-/// AgentHost profile over the multi-account MSAL cache and is the AgentHost adaptation of PAC's
-/// <c>FileBasedAuthProfilesManager</c> and <c>AuthProfilesManagerBase</c>.
-///
-/// It holds only non-secret account metadata; the MSAL token cache is a separate secure store
-/// (<see cref="AgentHostTokenCache"/>). No token is acquired or read here.
-///
-/// Deliberate adaptations from PAC:
-/// <list type="bullet">
-///   <item>a single <c>ActiveAccountKey</c> replaces PAC's per-<c>AuthKind</c> "Current" dictionary;</item>
-///   <item>writes are atomic (temp file + replace) rather than PAC's in-place <c>File.WriteAllText</c>;</item>
-///   <item>invalid JSON, an unsupported schema version, duplicate keys, or an inconsistent active
-///   pointer are surfaced as a typed <see cref="AuthProfileStateException"/> — never silently treated
-///   as "signed out."</item>
-/// </list>
+/// Token-free, atomic Universal profile persistence implementing
+/// <see cref="Microsoft.Agents.Hosting.Cli.Core.Ports.IAuthProfileManagementStore"/>.
+/// Short interprocess transactions protect read-modify-write operations. Reads migrate version 1
+/// in memory only; successful mutations persist version 2. Credential caches are never accessed.
 /// </summary>
-public sealed class FileAuthProfileStore :
-    IAuthProfileStore,
-    IAuthProfileTelemetryStore
+public sealed class FileAuthProfileStore : IAuthProfileManagementStore, IAuthProfileTelemetryStore, IAuthProfileCreationStore
 {
-    private const int SupportedSchemaVersion = 1;
-
     private readonly string _profilesFilePath;
     private readonly IAuthProfileStateObserver? _stateObserver;
     private readonly AuthProfileMutationRevision _mutationRevision;
-    private readonly object _gate = new();
 
-    /// <param name="profilesFilePath">
-    /// Absolute path to the profile JSON file. The host resolves this under the AgentHost config
-    /// directory; Core never reads the environment itself.
-    /// </param>
-    /// <param name="stateObserver">
-    /// Optional observer for already-required active-profile mutations.
-    /// </param>
-    /// <param name="mutationRevision">
-    /// Optional process-local revision shared with authentication observation.
-    /// </param>
     public FileAuthProfileStore(
         string profilesFilePath,
         IAuthProfileStateObserver? stateObserver = null,
@@ -53,345 +33,695 @@ public sealed class FileAuthProfileStore :
             throw new ArgumentException("Profiles file path is required.", nameof(profilesFilePath));
         }
 
-        _profilesFilePath = profilesFilePath;
+        _profilesFilePath = Path.GetFullPath(profilesFilePath);
         _stateObserver = stateObserver;
-        _mutationRevision =
-            mutationRevision ?? new AuthProfileMutationRevision();
+        _mutationRevision = mutationRevision ?? new AuthProfileMutationRevision();
     }
 
     /// <inheritdoc />
-    public Task<AuthProfile?> GetActiveProfileAsync(CancellationToken cancellationToken)
-    {
-        lock (_gate)
-        {
-            var document = ReadDocument();
-            if (document.ActiveAccountKey is null)
-            {
-                return Task.FromResult<AuthProfile?>(null);
-            }
+    public async Task<AuthProfile?> GetActiveProfileAsync(CancellationToken cancellationToken) =>
+        Active(await ReadDocumentAsync(cancellationToken).ConfigureAwait(false));
 
-            var active = document.Profiles.First(p => p.AccountKey == document.ActiveAccountKey);
-            return Task.FromResult<AuthProfile?>(ToProfile(active, isActive: true));
-        }
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<AuthProfile>> GetProfilesAsync(CancellationToken cancellationToken)
+    {
+        var document = await ReadDocumentAsync(cancellationToken).ConfigureAwait(false);
+        return document.Profiles.Select(p => ToProfile(p, p.ProfileId == document.ActiveProfileId)).ToList();
     }
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<AuthProfile>> GetProfilesAsync(CancellationToken cancellationToken)
-    {
-        lock (_gate)
-        {
-            var document = ReadDocument();
-            IReadOnlyList<AuthProfile> profiles = document.Profiles
-                .Select(p => ToProfile(p, isActive: p.AccountKey == document.ActiveAccountKey))
-                .ToList();
-            return Task.FromResult(profiles);
-        }
-    }
+    /// <remarks>
+    /// A captured opaque ID and revision permit a guarded compatibility ring update.
+    /// Only active, unbound legacy user credentials may retarget their ring; the old default is
+    /// discarded and the connection URL is refreshed. New profiles retain full identity matching.
+    /// </remarks>
+    public async Task UpsertAsync(AuthProfile profile, CancellationToken cancellationToken) =>
+        _ = await CreateCoreAsync(profile, legacyUpsert: true, cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc />
-    public Task UpsertAsync(AuthProfile profile, CancellationToken cancellationToken)
+    public async Task<AuthProfile> CreateAsync(AuthProfile profile, CancellationToken cancellationToken) =>
+        (await CreateCoreAsync(profile, legacyUpsert: false, cancellationToken).ConfigureAwait(false)).Committed;
+
+    /// <inheritdoc />
+    public Task<AuthProfileCreation> CreateWithReplacementAsync(AuthProfile profile, CancellationToken cancellationToken) =>
+        CreateCoreAsync(profile, legacyUpsert: false, cancellationToken);
+
+    private Task<AuthProfileCreation> CreateCoreAsync(AuthProfile profile, bool legacyUpsert, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(profile);
-
         if (string.IsNullOrWhiteSpace(profile.AccountKey))
         {
-            throw new ArgumentException("Profile account key is required.", nameof(profile));
+            throw new UsageException("Profile account metadata is required.");
         }
 
-        long revision;
-        lock (_gate)
+        AuthProfileName.Validate(profile.Name);
+        var incoming = ToStored(profile);
+        if (legacyUpsert && profile.CredentialMethod == AuthCredentialMethod.Broker)
         {
-            var document = ReadDocument();
-
-            document.Profiles.RemoveAll(p => p.AccountKey == profile.AccountKey);
-            document.Profiles.Add(ToStored(profile));
-
-            // PAC's Create() marks the last-in profile as current; login likewise upserts and activates
-            // the matching profile.
-            document.ActiveAccountKey = profile.AccountKey;
-
-            WriteDocument(document);
-            revision = _mutationRevision.Advance();
+            // Older callers carry the acquired flow rather than the new credential-method contract.
+            incoming.CredentialMethod = LegacyMethod(profile.FlowType);
         }
 
-        ObserveActiveProfile(profile with { IsActive = true }, revision);
-        return Task.CompletedTask;
-    }
-
-    /// <inheritdoc />
-    public Task SetActiveAsync(string accountKey, CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(accountKey))
+        ValidateCoordinates(incoming, persisted: false);
+        return MutateAsync(document =>
         {
-            throw new ArgumentException("Account key is required.", nameof(accountKey));
-        }
-
-        AuthProfile active;
-        long revision;
-        lock (_gate)
-        {
-            var document = ReadDocument();
-
-            StoredAuthProfile? stored =
-                document.Profiles.FirstOrDefault(p => p.AccountKey == accountKey);
-            if (stored is null)
+            var existing = document.Profiles.SingleOrDefault(p => Identity(p) == Identity(incoming));
+            bool retargeting = false;
+            if (legacyUpsert && !string.IsNullOrEmpty(profile.ProfileId))
             {
-                throw new AuthenticationException(
-                    $"No AgentHost profile is stored for account key '{accountKey}'.",
-                    ExitCodes.Usage,
-                    remediation: "Run `msagent auth status` to list stored accounts, or `msagent auth login` to sign in.");
+                var captured = document.Profiles.SingleOrDefault(p => p.ProfileId == profile.ProfileId);
+                if (captured is null || captured.Revision != profile.Revision)
+                    throw new UsageException("The captured authentication profile changed. Resolve that exact profile and retry.");
+                if ((captured.Ring ?? PowerPlatformApiRing.Production) != incoming.Ring)
+                {
+                    var retargetedIdentity = ToStored(ToProfile(captured, true) with { Ring = profile.Ring });
+                    if (captured.ProfileId != document.ActiveProfileId
+                        || captured.PrincipalType != AuthPrincipalType.User
+                        || captured.CredentialMethod is not (AuthCredentialMethod.Broker or AuthCredentialMethod.Browser or AuthCredentialMethod.DeviceCode)
+                        || captured.CredentialReference is not null || incoming.CredentialReference is not null
+                        || Identity(retargetedIdentity) != Identity(incoming)
+                        || (existing is not null && existing.ProfileId != captured.ProfileId))
+                        throw new UsageException("The captured profile cannot be retargeted by legacy ring selection. Select or create a validated profile for the requested target.");
+
+                    existing = captured;
+                    retargeting = true;
+                    incoming.DefaultEnvironment = null;
+                    incoming.ConnectionUrl = ConnectionUrl(incoming);
+                }
+            }
+            var replaced = existing is null ? null : ToProfile(existing, existing.ProfileId == document.ActiveProfileId);
+            incoming.ProfileId = existing?.ProfileId ?? Guid.NewGuid().ToString("N");
+            incoming.Revision = NextRevision(existing?.Revision ?? 0);
+            RequireUniqueName(document, incoming.Name, incoming.ProfileId);
+            if (existing is not null)
+            {
+                document.Profiles.Remove(existing);
+                // Legacy sign-in callers do not carry profile-owned selection metadata.
+                if (legacyUpsert)
+                {
+                    incoming.Name ??= existing.Name;
+                }
+
+                if (!retargeting)
+                    incoming.DefaultEnvironment ??= existing.DefaultEnvironment;
+                incoming.CredentialReference ??= existing.CredentialReference;
             }
 
-            document.ActiveAccountKey = accountKey;
-            WriteDocument(document);
-            active = ToProfile(stored, isActive: true);
-            revision = _mutationRevision.Advance();
-        }
+            if (incoming.DefaultEnvironment is not null && profile.DefaultEnvironment is not null)
+            {
+                incoming.DefaultEnvironment = EnvironmentProfileBinding.BindDefault(ToProfile(incoming, true), incoming.DefaultEnvironment);
+            }
 
-        ObserveActiveProfile(active, revision);
-        return Task.CompletedTask;
+            document.Profiles.Add(incoming);
+            Activate(document, incoming, incrementSelected: false);
+            return new AuthProfileCreation(ToProfile(incoming, true), replaced);
+        }, cancellationToken);
     }
 
     /// <inheritdoc />
-    public Task ClearAsync(CancellationToken cancellationToken)
-    {
-        long revision;
-        lock (_gate)
+    public Task<AuthProfile> SelectAsync(AuthProfileSelector selector, CancellationToken cancellationToken) =>
+        MutateAsync(document =>
         {
-            if (File.Exists(_profilesFilePath))
+            var selected = Resolve(document, selector);
+            Activate(document, selected);
+            return ToProfile(selected, true);
+        }, cancellationToken);
+
+    /// <inheritdoc />
+    public async Task SetActiveAsync(string accountKey, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(accountKey))
+        {
+            throw new UsageException("An account key or opaque profile id is required.");
+        }
+
+        await MutateAsync(document =>
+        {
+            var matches = document.Profiles
+                .Where(p => p.ProfileId == accountKey || p.AccountKey == accountKey)
+                .Take(2)
+                .ToList();
+            if (matches.Count > 1)
+            {
+                throw new UsageException("The account key or profile id matches multiple profiles. Select a profile by its exact name or index.");
+            }
+
+            var selected = matches.SingleOrDefault() ?? throw new AuthenticationException(
+                "No AgentHost profile is stored for the specified account key or profile id.",
+                ExitCodes.Usage,
+                remediation: "Run `msagent auth status` to list stored profiles.");
+
+            Activate(document, selected);
+            return ToProfile(selected, true);
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public Task<AuthProfile> UpdateAsync(
+        AuthProfileSelector selector, AuthProfileUpdate update, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(update);
+        if (update.Name is { Length: > 0 })
+        {
+            AuthProfileName.Validate(update.Name);
+        }
+
+        return MutateAsync(document =>
+        {
+            var selected = Resolve(document, selector);
+            return ApplyUpdate(document, selected, update);
+        }, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<AuthProfile> UpdateAsync(
+        string profileId, long expectedRevision, AuthProfileUpdate update, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(update);
+        if (update.Name is { Length: > 0 }) AuthProfileName.Validate(update.Name);
+        return MutateAsync(document =>
+        {
+            var selected = document.Profiles.SingleOrDefault(p => p.ProfileId == profileId);
+            if (selected is null || selected.Revision != expectedRevision)
+                throw new UsageException("The captured authentication profile changed. Resolve that exact profile and retry.");
+            return ApplyUpdate(document, selected, update);
+        }, cancellationToken);
+    }
+
+    private static AuthProfile ApplyUpdate(AuthProfilesDocument document, StoredAuthProfile selected, AuthProfileUpdate update)
+    {
+        if (update.Name is not null)
+        {
+            string? name = update.Name.Length == 0 ? null : update.Name;
+            RequireUniqueName(document, name, selected.ProfileId);
+            selected.Name = name;
+        }
+        if (update.DefaultEnvironment is not null)
+            selected.DefaultEnvironment = EnvironmentProfileBinding.BindDefault(ToProfile(selected, selected.ProfileId == document.ActiveProfileId), update.DefaultEnvironment);
+        selected.Revision = NextRevision(selected.Revision);
+        return ToProfile(selected, selected.ProfileId == document.ActiveProfileId);
+    }
+
+    /// <inheritdoc />
+    public Task<AuthProfileDeletion> DeleteAsync(AuthProfileSelector selector, CancellationToken cancellationToken) =>
+        MutateAsync(document =>
+        {
+            var selected = Resolve(document, selector);
+            bool wasActive = selected.ProfileId == document.ActiveProfileId;
+            var deleted = ToProfile(selected, wasActive);
+            document.Profiles.Remove(selected);
+            if (wasActive)
+            {
+                document.ActiveProfileId = null;
+                if (document.Profiles.Count > 0)
+                {
+                    Activate(document, document.Profiles[0]);
+                }
+            }
+
+            return new AuthProfileDeletion(deleted, Active(document));
+        }, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<AuthProfile> SetDefaultEnvironmentAsync(
+        string profileId, long expectedRevision, ActiveEnvironment environment, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(environment);
+        return MutateAsync(document =>
+        {
+            var selected = document.Profiles.FirstOrDefault(p => p.ProfileId == profileId);
+            if (selected is null || selected.ProfileId != document.ActiveProfileId || selected.Revision != expectedRevision)
+            {
+                throw new UsageException("The authentication profile changed while selecting the environment. Resolve the active profile and retry.");
+            }
+
+            selected.DefaultEnvironment = EnvironmentProfileBinding.BindDefault(ToProfile(selected, true), environment);
+            selected.Revision = NextRevision(selected.Revision);
+            return ToProfile(selected, true);
+        }, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task ClearAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        long revision;
+        using (await AcquireLockAsync(cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
             {
                 File.Delete(_profilesFilePath);
             }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw StateIo("cleared", ex);
+            }
 
             revision = _mutationRevision.Advance();
         }
 
-        ObserveActiveProfile(profile: null, revision);
-        return Task.CompletedTask;
+        ObserveActiveProfile(null, revision);
     }
 
     /// <inheritdoc />
-    public ValueTask<AuthProfileTelemetryContext?> GetActiveTelemetryContextAsync(
-        CancellationToken cancellationToken)
+    public async ValueTask<AuthProfileTelemetryContext?> GetActiveTelemetryContextAsync(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var document = ReadDocument(optionalSnapshot: true);
-        if (document.ActiveAccountKey is null)
+        var active = Active(await ReadDocumentAsync(cancellationToken).ConfigureAwait(false));
+        if (active is null || !TryParseNonemptyGuid(active.AuthenticatedTenantId, out Guid tenantId))
         {
-            return ValueTask.FromResult<AuthProfileTelemetryContext?>(null);
+            return null;
         }
 
-        StoredAuthProfile active = document.Profiles.First(
-            profile => profile.AccountKey == document.ActiveAccountKey);
-        if (!TryParseNonemptyGuid(active.AuthenticatedTenantId, out Guid tenantId))
-        {
-            return ValueTask.FromResult<AuthProfileTelemetryContext?>(null);
-        }
-
-        Guid? principalObjectId = null;
-        if (!string.IsNullOrWhiteSpace(active.PrincipalObjectId))
-        {
-            if (TryParseNonemptyGuid(
-                    active.PrincipalObjectId,
-                    out Guid parsedPrincipal))
-            {
-                principalObjectId = parsedPrincipal;
-            }
-        }
-
-        return ValueTask.FromResult<AuthProfileTelemetryContext?>(
-            new(
-                active.AccountKey,
-                active.ClientId,
-                active.Authority,
-                active.Cloud,
-                tenantId,
-                principalObjectId));
+        Guid? principal = TryParseNonemptyGuid(active.PrincipalObjectId, out Guid parsed) ? parsed : null;
+        return new(active.AccountKey, active.ClientId, active.Authority, active.Cloud, tenantId, principal);
     }
 
-    private AuthProfilesDocument ReadDocument(bool optionalSnapshot = false)
+    private async Task<T> MutateAsync<T>(Func<AuthProfilesDocument, T> mutate, CancellationToken cancellationToken)
     {
-        if (!File.Exists(_profilesFilePath))
+        cancellationToken.ThrowIfCancellationRequested();
+        T result;
+        AuthProfile? active;
+        long revision;
+        using (await AcquireLockAsync(cancellationToken).ConfigureAwait(false))
         {
-            // A missing file is a clean "signed out" state, not corruption.
-            return new AuthProfilesDocument();
+            var document = await ReadDocumentAsync(cancellationToken).ConfigureAwait(false);
+            result = mutate(document);
+            await WriteDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+            active = Active(document);
+            revision = _mutationRevision.Advance();
         }
 
+        // Observers can re-enter the store or block; never hold a file lock across callbacks.
+        ObserveActiveProfile(active, revision);
+        return result;
+    }
+
+    private async Task<FileStream> AcquireLockAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var elapsed = Stopwatch.StartNew();
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_profilesFilePath)!);
+                // The sibling stays on disk: unlinking a lock file allows two owners of different inodes.
+                return OpenOwnerOnly(_profilesFilePath + ".lock", FileMode.OpenOrCreate);
+            }
+            catch (IOException ex) when (IsLockContention(ex, OperatingSystem.IsMacOS()))
+            {
+                if (elapsed.Elapsed >= TimeSpan.FromSeconds(5))
+                {
+                    throw StateIo("locked", ex);
+                }
+
+                await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw StateIo("locked", ex);
+            }
+        }
+    }
+
+    internal static bool IsLockContention(IOException exception, bool isMacOS) =>
+        (exception.HResult & 0xffff) is 32 or 33 or 11 ||
+        // Darwin EWOULDBLOCK is raw errno 35; the same errno is EDEADLK on Linux.
+        (isMacOS && exception.HResult == 35);
+
+    private async Task<AuthProfilesDocument> ReadDocumentAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         string json;
         try
         {
-            if (optionalSnapshot)
-            {
-                using var stream = new FileStream(
-                    _profilesFilePath,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.Read | FileShare.Delete);
-                using var reader = new StreamReader(stream);
-                json = reader.ReadToEnd();
-            }
-            else
-            {
-                json = File.ReadAllText(_profilesFilePath);
-            }
+            using var stream = new FileStream(_profilesFilePath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            json = await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (FileNotFoundException) when (optionalSnapshot)
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
-            return new AuthProfilesDocument();
+            return new AuthProfilesDocument { SchemaVersion = 2 };
         }
-        catch (DirectoryNotFoundException) when (optionalSnapshot)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return new AuthProfilesDocument();
-        }
-        catch (IOException ex)
-        {
-            throw new AuthProfileStateException(
-                $"The AgentHost auth profile store could not be read: {ex.Message}",
-                remediation: "Run `msagent auth logout` to reset the local sign-in state.");
+            throw StateIo("read", ex);
         }
 
         AuthProfilesDocument? document;
         try
         {
+            using var parsed = JsonDocument.Parse(json);
+            RejectDuplicateProperties(parsed.RootElement, AuthProfileJsonContext.Default.AuthProfilesDocument);
             document = JsonSerializer.Deserialize(json, AuthProfileJsonContext.Default.AuthProfilesDocument);
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
-            throw new AuthProfileStateException(
-                $"The AgentHost auth profile store is not valid JSON: {ex.Message}",
-                remediation: "Run `msagent auth logout` to reset the local sign-in state.");
+            throw Corrupt("the profile store is not valid JSON");
         }
 
-        return Validate(document);
+        return ValidateAndMigrate(document);
     }
 
-    private static AuthProfilesDocument Validate(AuthProfilesDocument? document)
+    private static void RejectDuplicateProperties(JsonElement element, JsonTypeInfo metadata)
+    {
+        if (element.ValueKind != JsonValueKind.Object || metadata.Kind != JsonTypeInfoKind.Object)
+        {
+            return;
+        }
+
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in element.EnumerateObject())
+        {
+            var mapped = metadata.Properties.FirstOrDefault(p => string.Equals(p.Name, property.Name, StringComparison.Ordinal));
+            if (mapped is null)
+            {
+                // Unknown fields and their entire payloads are ignored by the persisted schema.
+                continue;
+            }
+
+            if (!keys.Add(property.Name))
+            {
+                throw Corrupt("duplicate JSON property");
+            }
+
+            if (mapped.PropertyType == typeof(List<StoredAuthProfile>) && property.Value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var profile in property.Value.EnumerateArray())
+                {
+                    RejectDuplicateProperties(profile, AuthProfileJsonContext.Default.StoredAuthProfile);
+                }
+            }
+            else if (AuthProfileJsonContext.Default.GetTypeInfo(mapped.PropertyType) is { Kind: JsonTypeInfoKind.Object } nested)
+            {
+                RejectDuplicateProperties(property.Value, nested);
+            }
+        }
+    }
+
+    private static AuthProfilesDocument ValidateAndMigrate(AuthProfilesDocument? document)
     {
         if (document is null)
         {
             throw Corrupt("the profile store deserialized to null");
         }
 
-        if (document.SchemaVersion != SupportedSchemaVersion)
+        if (document.SchemaVersion is not (1 or 2))
         {
-            throw Corrupt($"unsupported schema version {document.SchemaVersion} (expected {SupportedSchemaVersion})");
+            throw Corrupt($"unsupported schema version {document.SchemaVersion}");
         }
 
-        document.Profiles ??= [];
-
-        if (document.Profiles.Any(p => string.IsNullOrWhiteSpace(p.AccountKey)))
+        if (document.Profiles is null || document.Profiles.Any(p => p is null || string.IsNullOrWhiteSpace(p.AccountKey)))
         {
-            throw Corrupt("a stored profile has an empty account key");
+            throw Corrupt("a stored profile or account key is missing");
         }
 
-        var duplicateKey = document.Profiles
-            .GroupBy(p => p.AccountKey, StringComparer.Ordinal)
-            .FirstOrDefault(g => g.Count() > 1);
-        if (duplicateKey is not null)
+        bool legacy = document.SchemaVersion == 1;
+        if (legacy && document.ActiveProfileId is not null)
         {
-            throw Corrupt($"duplicate account key '{duplicateKey.Key}'");
+            throw Corrupt("a version 1 document contains a version 2 active pointer");
         }
 
-        if (document.ActiveAccountKey is not null &&
-            !document.Profiles.Any(p => p.AccountKey == document.ActiveAccountKey))
+        if (legacy && document.Profiles.GroupBy(p => p.AccountKey, StringComparer.Ordinal).Any(g => g.Count() > 1))
         {
-            throw Corrupt($"active pointer '{document.ActiveAccountKey}' does not match any stored profile");
+            throw Corrupt("duplicate legacy account keys");
         }
 
+        foreach (var profile in document.Profiles)
+        {
+            ValidateCoordinates(profile, persisted: true);
+            profile.HomeAccountId ??=
+                profile.PrincipalType == AuthPrincipalType.User
+                && profile.CredentialMethod != AuthCredentialMethod.DefaultAzureCredential
+                    ? profile.AccountKey
+                    : null;
+            profile.CredentialMethod ??= LegacyMethod(profile.FlowType);
+            profile.ConnectionUrl ??= ConnectionUrl(profile);
+            if (legacy)
+            {
+                profile.ProfileId = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Identity(profile))));
+                profile.Revision = 1;
+            }
+            else if (string.IsNullOrWhiteSpace(profile.ProfileId) || profile.Revision < 1)
+            {
+                throw Corrupt("a profile identity or revision is missing or invalid");
+            }
+
+            if (!AuthProfileName.IsValid(profile.Name))
+            {
+                throw Corrupt("a profile name is invalid");
+            }
+        }
+
+        if (document.Profiles.GroupBy(p => p.ProfileId, StringComparer.Ordinal).Any(g => g.Count() > 1) ||
+            document.Profiles.GroupBy(Identity, StringComparer.Ordinal).Any(g => g.Count() > 1) ||
+            document.Profiles.Where(p => p.Name is not null).GroupBy(p => p.Name, StringComparer.Ordinal).Any(g => g.Count() > 1))
+        {
+            throw Corrupt("duplicate profile identities or names");
+        }
+
+        if (legacy)
+        {
+            if (document.ActiveAccountKey is not null)
+            {
+                document.ActiveProfileId = document.Profiles.FirstOrDefault(p => p.AccountKey == document.ActiveAccountKey)?.ProfileId
+                    ?? throw Corrupt("the legacy active pointer does not match any stored profile");
+            }
+            else
+            {
+                document.ActiveProfileId = null;
+            }
+        }
+        else if (document.ActiveAccountKey is not null)
+        {
+            throw Corrupt("a version 2 document contains a legacy active pointer");
+        }
+
+        if (document.ActiveProfileId is not null && !document.Profiles.Any(p => p.ProfileId == document.ActiveProfileId))
+        {
+            throw Corrupt("the active pointer does not match any stored profile");
+        }
+
+        document.SchemaVersion = 2;
+        document.ActiveAccountKey = null;
         return document;
     }
 
-    private void WriteDocument(AuthProfilesDocument document)
+    private async Task WriteDocumentAsync(AuthProfilesDocument document, CancellationToken cancellationToken)
     {
-        var directory = Path.GetDirectoryName(_profilesFilePath);
-        if (!string.IsNullOrEmpty(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        var json = JsonSerializer.Serialize(document, AuthProfileJsonContext.Default.AuthProfilesDocument);
-
-        // Atomic replace: write a sibling temp file, then move it over the target so a crash mid-write
-        // can never leave a partially written profile store (PAC writes in place).
         var tempPath = _profilesFilePath + ".tmp-" + Guid.NewGuid().ToString("N");
         try
         {
-            File.WriteAllText(tempPath, json);
+            await using (var stream = OpenOwnerOnly(tempPath, FileMode.CreateNew))
+            {
+                await JsonSerializer.SerializeAsync(stream, document, AuthProfileJsonContext.Default.AuthProfilesDocument, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
             File.Move(tempPath, _profilesFilePath, overwrite: true);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            TryDeleteTemp(tempPath);
-            throw new AuthProfileStateException(
-                $"The AgentHost auth profile store could not be written: {ex.Message}",
-                remediation: "Verify the AgentHost config directory is writable, then retry.");
+            throw StateIo("written", ex);
         }
-    }
-
-    private static void TryDeleteTemp(string tempPath)
-    {
-        try
+        finally
         {
-            if (File.Exists(tempPath))
+            try
             {
                 File.Delete(tempPath);
             }
-        }
-        catch (IOException)
-        {
-            // Best-effort cleanup; the failure to write is already being reported.
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Preserve the original mutation failure; the unique sibling cannot become active state.
+            }
         }
     }
 
-    private static AuthProfileStateException Corrupt(string reason) =>
-        new(
-            $"The AgentHost auth profile store is corrupt: {reason}.",
-            remediation: "Run `msagent auth logout` to reset the local sign-in state.");
+    private static FileStream OpenOwnerOnly(string path, FileMode mode)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            var owner = identity.User ?? throw new UnauthorizedAccessException("The current file owner could not be resolved.");
+            var security = new FileSecurity();
+            security.SetOwner(owner);
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            security.AddAccessRule(new FileSystemAccessRule(owner, FileSystemRights.FullControl, AccessControlType.Allow));
+            return new FileInfo(path).Create(mode, FileSystemRights.FullControl, FileShare.None, 4096, FileOptions.Asynchronous, security);
+        }
+
+        return new FileStream(path, new FileStreamOptions
+        {
+            Mode = mode,
+            Access = FileAccess.ReadWrite,
+            Share = FileShare.None,
+            Options = FileOptions.Asynchronous,
+            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+        });
+    }
+
+    private static StoredAuthProfile Resolve(AuthProfilesDocument document, AuthProfileSelector selector)
+    {
+        ArgumentNullException.ThrowIfNull(selector);
+        if (selector.Index.HasValue == (selector.Name is not null))
+        {
+            throw new UsageException("Specify exactly one profile index or name.");
+        }
+
+        if (selector.Index is int index)
+        {
+            return index >= 1 && index <= document.Profiles.Count
+                ? document.Profiles[index - 1]
+                : throw new UsageException("The profile index is outside the stored profile list.");
+        }
+
+        if (string.IsNullOrEmpty(selector.Name))
+        {
+            throw new UsageException("A profile selector name must not be empty.");
+        }
+
+        return document.Profiles.SingleOrDefault(p => string.Equals(p.Name, selector.Name, StringComparison.Ordinal))
+            ?? throw new UsageException("No profile matches the exact specified name.");
+    }
+
+    private static void Activate(AuthProfilesDocument document, StoredAuthProfile selected, bool incrementSelected = true)
+    {
+        if (document.ActiveProfileId != selected.ProfileId)
+        {
+            var previous = document.Profiles.FirstOrDefault(p => p.ProfileId == document.ActiveProfileId);
+            if (previous is not null)
+            {
+                previous.Revision = NextRevision(previous.Revision);
+            }
+        }
+
+        if (incrementSelected)
+        {
+            selected.Revision = NextRevision(selected.Revision);
+        }
+
+        document.ActiveProfileId = selected.ProfileId;
+    }
+
+    private static long NextRevision(long revision) =>
+        revision >= 0 && revision < long.MaxValue
+            ? revision + 1
+            : throw new UsageException("The profile revision cannot be advanced.");
+
+    private static void RequireUniqueName(AuthProfilesDocument document, string? name, string id)
+    {
+        if (name is not null && document.Profiles.Any(p => p.ProfileId != id && string.Equals(p.Name, name, StringComparison.Ordinal)))
+        {
+            throw new UsageException("A profile already has the exact specified name.");
+        }
+    }
+
+    private static void ValidateCoordinates(StoredAuthProfile profile, bool persisted)
+    {
+        var ring = profile.Ring ?? PowerPlatformApiRing.Production;
+        string? invalid = !PowerPlatformApiRingSelection.IsDeclared(ring) ? $"undeclared Power Platform API ring {(int)ring}"
+            : !Enum.IsDefined(profile.Cloud) ? "undeclared identity cloud"
+            : profile.CredentialMethod.HasValue && !Enum.IsDefined(profile.CredentialMethod.Value) ? "undeclared credential method"
+            : !Enum.IsDefined(profile.PrincipalType) ? "undeclared principal type"
+            : profile.Cloud != CloudInstance.Public && ring != PowerPlatformApiRing.Production ? "non-public clouds do not support non-production rings"
+            : null;
+        if (invalid is not null)
+        {
+            throw persisted ? Corrupt(invalid) : new UsageException(invalid);
+        }
+    }
+
+    private static string ConnectionUrl(StoredAuthProfile profile)
+    {
+        var target = PowerPlatformApiRingSelection.TargetFor(profile.Ring ?? PowerPlatformApiRing.Production);
+        if (profile.Cloud != CloudInstance.Public)
+        {
+            target = target with
+            {
+                Cloud = profile.Cloud,
+                GlobalEndpoint = new Uri("https://" + PowerPlatformCloudMap.ForCloud(profile.Cloud).TrustedHostSuffixes[0]),
+            };
+        }
+
+        return target.GlobalEndpoint.AbsoluteUri.TrimEnd('/');
+    }
+
+    private static AuthCredentialMethod LegacyMethod(string? flow) => flow switch
+    {
+        "interactive" or "browser" => AuthCredentialMethod.Browser,
+        "device-code" => AuthCredentialMethod.DeviceCode,
+        _ => AuthCredentialMethod.Broker,
+    };
+
+    private static string Identity(StoredAuthProfile profile)
+    {
+        string?[] dimensions =
+        [
+            profile.PrincipalType == AuthPrincipalType.User ? profile.HomeAccountId ?? profile.AccountKey : profile.AccountKey,
+            profile.ClientId, profile.TenantId, profile.Authority, profile.Cloud.ToString(),
+            (profile.Ring ?? PowerPlatformApiRing.Production).ToString(),
+            (profile.CredentialMethod ?? AuthCredentialMethod.Broker).ToString(),
+            profile.PrincipalType.ToString(), profile.CertificateThumbprint, profile.CertificatePath,
+        ];
+        return string.Join('|', dimensions.Select(value => FormattableString.Invariant($"{value?.Length ?? -1}:{value}")));
+    }
+
+    private static AuthProfile? Active(AuthProfilesDocument document) =>
+        document.ActiveProfileId is null ? null : ToProfile(document.Profiles.First(p => p.ProfileId == document.ActiveProfileId), true);
 
     private static AuthProfile ToProfile(StoredAuthProfile stored, bool isActive) => new()
     {
-        AccountKey = stored.AccountKey,
-        Username = stored.Username,
-        TenantId = stored.TenantId,
-        ClientId = stored.ClientId,
-        Authority = stored.Authority,
-        Cloud = stored.Cloud,
-        Ring = ReadRing(stored),
-        FlowType = stored.FlowType,
-        AuthenticatedTenantId = stored.AuthenticatedTenantId,
-        PrincipalObjectId = stored.PrincipalObjectId,
+        ProfileId = stored.ProfileId, Name = stored.Name, Revision = stored.Revision,
+        HomeAccountId = stored.HomeAccountId, CredentialMethod = stored.CredentialMethod ?? AuthCredentialMethod.Broker,
+        PrincipalType = stored.PrincipalType, ConnectionUrl = stored.ConnectionUrl,
+        CredentialReference = stored.CredentialReference, CertificatePath = stored.CertificatePath,
+        CertificateThumbprint = stored.CertificateThumbprint, DefaultEnvironment = stored.DefaultEnvironment,
+        AccountKey = stored.AccountKey, Username = stored.Username, TenantId = stored.TenantId,
+        ClientId = stored.ClientId, Authority = stored.Authority, Cloud = stored.Cloud,
+        Ring = stored.Ring ?? PowerPlatformApiRing.Production, FlowType = stored.FlowType,
+        AuthenticatedTenantId = stored.AuthenticatedTenantId, PrincipalObjectId = stored.PrincipalObjectId,
         IsActive = isActive,
     };
 
-    /// <summary>
-    /// The ring a stored profile signs in against.
-    /// </summary>
-    /// <remarks>
-    /// A profile written before the ring became selectable carries no ring and signed in against
-    /// production, so an absent value defaults. A value present but undefined is refused rather than
-    /// defaulted: silently reading it as production would point a command at the wrong cloud's
-    /// endpoints while the stored state still claims otherwise.
-    /// </remarks>
-    private static PowerPlatformApiRing ReadRing(StoredAuthProfile stored) => stored.Ring switch
+    private static StoredAuthProfile ToStored(AuthProfile profile)
     {
-        null => PowerPlatformApiRing.Production,
-        var ring when PowerPlatformApiRingSelection.IsDeclared(ring.Value) => ring.Value,
-        var ring => throw Corrupt($"profile '{stored.Username}' records '{(int)ring.Value}', which is not a Power Platform API cloud"),
-    };
+        var stored = new StoredAuthProfile
+        {
+            Name = profile.Name,
+            HomeAccountId = profile.HomeAccountId ??
+                (profile.PrincipalType == AuthPrincipalType.User
+                && profile.CredentialMethod != AuthCredentialMethod.DefaultAzureCredential
+                    ? profile.AccountKey
+                    : null),
+            CredentialMethod = profile.CredentialMethod, PrincipalType = profile.PrincipalType,
+            ConnectionUrl = profile.ConnectionUrl, CredentialReference = profile.CredentialReference,
+            CertificatePath = profile.CertificatePath, CertificateThumbprint = profile.CertificateThumbprint,
+            DefaultEnvironment = profile.DefaultEnvironment, AccountKey = profile.AccountKey,
+            Username = profile.Username, TenantId = profile.TenantId, ClientId = profile.ClientId,
+            Authority = profile.Authority, Cloud = profile.Cloud, Ring = profile.Ring, FlowType = profile.FlowType,
+            AuthenticatedTenantId = profile.AuthenticatedTenantId, PrincipalObjectId = profile.PrincipalObjectId,
+        };
+        ValidateCoordinates(stored, persisted: false);
+        stored.ConnectionUrl ??= ConnectionUrl(stored);
+        return stored;
+    }
 
-    private static StoredAuthProfile ToStored(AuthProfile profile) => new()
-    {
-        AccountKey = profile.AccountKey,
-        Username = profile.Username,
-        TenantId = profile.TenantId,
-        ClientId = profile.ClientId,
-        Authority = profile.Authority,
-        Cloud = profile.Cloud,
-        Ring = PowerPlatformApiRingSelection.Require(profile.Ring),
-        FlowType = profile.FlowType,
-        AuthenticatedTenantId = profile.AuthenticatedTenantId,
-        PrincipalObjectId = profile.PrincipalObjectId,
-    };
+    private static AuthProfileStateException Corrupt(string reason) =>
+        new($"The AgentHost auth profile store is corrupt: {reason}.",
+            remediation: "Run `msagent auth clear` to reset the owned local sign-in state.");
+
+    private static AuthProfileStateException StateIo(string operation, Exception ex) =>
+        new($"The AgentHost auth profile store could not be {operation}: {ex.Message}",
+            remediation: "Verify the AgentHost config directory is writable, or run `msagent auth clear` to reset owned local state.");
 
     private void ObserveActiveProfile(AuthProfile? profile, long revision)
     {
@@ -406,7 +736,7 @@ public sealed class FileAuthProfileStore :
         }
         catch (Exception)
         {
-            // Metadata-free lifecycle observation must not change product authentication semantics.
+            // Optional observation must not change product semantics.
         }
 
         try
@@ -418,11 +748,10 @@ public sealed class FileAuthProfileStore :
         }
         catch (Exception)
         {
-            // Optional profile observation must not change product authentication semantics.
+            // Optional observation must not change product semantics.
         }
     }
 
     private static bool TryParseNonemptyGuid(string? value, out Guid parsed) =>
         Guid.TryParse(value, out parsed) && parsed != Guid.Empty;
-
 }

@@ -46,6 +46,7 @@ public sealed class WorkflowActivationPass
     public async Task<WorkflowActivationOutcome> RunAsync(CopilotEnvironmentContext environment, string workspaceDirectory, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(environment);
+        environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -111,7 +112,7 @@ public sealed class WorkflowActivationPass
     /// <returns>How many references were bound, and the ones left for the operator.</returns>
     private async Task<(int Bound, IReadOnlyList<ConnectionPlanItem> Unresolved)> BindUnambiguousAsync(CopilotEnvironmentContext environment, string workspaceDirectory, CopilotConnectionSnapshot snapshot, CancellationToken cancellationToken)
     {
-        var principal = await _principals.ResolveUsernameAsync(cancellationToken).ConfigureAwait(false);
+        var principal = await _principals.ResolveUsernameAsync(environment, cancellationToken).ConfigureAwait(false);
         var plan = snapshot.References.Select(view => ConnectionReadinessPlanner.Plan(view, principal)).ToArray();
         var bindings = plan
             .Where(item => item.State == ConnectionReadinessPlanner.Bound)

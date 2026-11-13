@@ -76,8 +76,6 @@ public sealed class DataverseCatalogAdapter : ICopilotCatalogPort
     {
         ArgumentNullException.ThrowIfNull(environment);
 
-        DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, environment);
-
         if (Guid.TryParse(botIdOrSchemaName, out var parsed))
         {
             using var document = await SendAsync(environment, HttpMethod.Get, $"{BotsRoute}({parsed})?$select=botid", cancellationToken).ConfigureAwait(false);
@@ -85,6 +83,8 @@ public sealed class DataverseCatalogAdapter : ICopilotCatalogPort
             return document is null ? null : parsed.ToString();
         }
 
+        using var lease = await DataverseTargeting.EnterAsync(_dataverseClient, cancellationToken).ConfigureAwait(false);
+        using var scope = DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, environment);
         var resolved = await _dataverseClient.GetAgentIdBySchemaNameAsync(botIdOrSchemaName, cancellationToken).ConfigureAwait(false);
 
         return resolved == Guid.Empty ? null : resolved.ToString();

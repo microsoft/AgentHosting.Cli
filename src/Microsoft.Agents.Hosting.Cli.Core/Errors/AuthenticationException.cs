@@ -12,6 +12,12 @@ public class AuthenticationException : AgentHostingException
         : base(message, exitCode, errorKind: null, remediation: remediation, errorCode: errorCode)
     {
     }
+
+    protected AuthenticationException(string message, int exitCode, string? errorKind,
+        string? remediation, Exception? innerException, int errorCode)
+        : base(message, exitCode, errorKind, remediation, innerException, errorCode)
+    {
+    }
 }
 
 /// <summary>
@@ -60,7 +66,7 @@ public sealed class AuthProfileStateException : AuthenticationException
 /// <summary>
 /// Interactive consent returned an account other than the active AgentHost profile. Rejecting the
 /// token prevents subsequent Graph or ARM mutations from running under an identity the operator did
-/// not select through <c>msagent auth login</c>.
+/// not select through <c>msagent auth create</c>.
 /// </summary>
 public sealed class ActiveAccountMismatchException : AuthenticationException
 {
@@ -68,7 +74,7 @@ public sealed class ActiveAccountMismatchException : AuthenticationException
         : base(
             "The account returned by interactive consent does not match the active AgentHost account.",
             ExitCodes.Failure,
-            "Run `msagent auth login` for the intended account, then retry the command without switching accounts.",
+            "Run `msagent auth create` for the intended account and cloud, then retry the command without switching accounts.",
             ErrorCodes.Authentication.ActiveAccountMismatch)
     {
     }
@@ -114,7 +120,7 @@ public sealed class InteractionRequiredException : AuthenticationException
         : base(
             message,
             ExitCodes.NotSignedIn,
-            remediation ?? "Run `msagent auth login` to sign in interactively, then retry.",
+            remediation ?? "Run `msagent auth create` to sign in interactively for the intended cloud, then retry.",
             ErrorCodes.Authentication.InteractionRequired)
     {
         Resource = resource;
@@ -170,7 +176,7 @@ public sealed class BrokerUnavailableException : AuthenticationException
 {
     /// <summary>Creates the failure from a short, secret-free <paramref name="reason"/> naming what the broker reported.</summary>
     public BrokerUnavailableException(string reason)
-        : base($"The operating-system broker could not sign you in ({reason}).", ExitCodes.Failure, "Run `msagent auth login --device-code` to sign in without the operating-system broker.", ErrorCodes.Authentication.BrokerUnavailable)
+        : base($"The operating-system broker could not sign you in ({reason}).", ExitCodes.Failure, "Run `msagent auth create --deviceCode` for the intended cloud to sign in without the operating-system broker.", ErrorCodes.Authentication.BrokerUnavailable)
     {
         Reason = reason;
     }
@@ -184,7 +190,7 @@ public sealed class SignInCanceledException : AuthenticationException
 {
     /// <summary>Creates the failure from a short, secret-free <paramref name="reason"/> naming what the broker reported.</summary>
     public SignInCanceledException(string reason)
-        : base($"Sign-in was canceled ({reason}).", ExitCodes.Failure, "Run `msagent auth login` again to choose an account, or `msagent auth login --device-code` to sign in with a code instead.", ErrorCodes.Authentication.SignInCanceled)
+        : base($"Sign-in was canceled ({reason}).", ExitCodes.Failure, "Run `msagent auth create` again for the intended cloud to choose an account, or `msagent auth create --deviceCode` to sign in with a code instead.", ErrorCodes.Authentication.SignInCanceled)
     {
     }
 }

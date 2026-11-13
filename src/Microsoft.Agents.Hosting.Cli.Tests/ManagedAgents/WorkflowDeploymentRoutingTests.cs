@@ -8,7 +8,9 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
 public sealed class WorkflowDeploymentRoutingTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "ah-wf-routing-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(
+        AgentConfigLocator.PhysicalPath(Path.GetTempPath()),
+        "ah-wf-routing-" + Guid.NewGuid().ToString("N"));
     private readonly JsonAgentConfigStore _store = ManagedAgentFixtures.Store();
     private readonly DeploymentAgentTypeResolver _resolver;
 

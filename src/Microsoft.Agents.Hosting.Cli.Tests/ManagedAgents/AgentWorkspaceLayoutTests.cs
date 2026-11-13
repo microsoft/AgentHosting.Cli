@@ -5,7 +5,9 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
 public sealed class AgentWorkspaceLayoutTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "ah-layout-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(
+        AgentConfigLocator.PhysicalPath(Path.GetTempPath()),
+        "ah-layout-" + Guid.NewGuid().ToString("N"));
 
     private readonly AgentConfigLocator _locator = new();
 
@@ -243,7 +245,9 @@ public sealed class AgentWorkspaceLayoutTests : IDisposable
 [Collection("CurrentDirectory")]
 public sealed class EnclosingProjectDirectoryTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "ah-enclosing-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(
+        AgentConfigLocator.PhysicalPath(Path.GetTempPath()),
+        "ah-enclosing-" + Guid.NewGuid().ToString("N"));
     private readonly AgentConfigLocator _locator = new();
 
     private string Project()

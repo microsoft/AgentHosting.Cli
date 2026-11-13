@@ -4,7 +4,6 @@ using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Identity.Client;
-using Microsoft.Identity.Client.Extensions.Msal;
 
 namespace Microsoft.Agents.Hosting.Cli.Auth;
 
@@ -14,20 +13,27 @@ public sealed class MsalAuthenticationSession : IAuthenticationSession
     private readonly MsalPublicClientProvider _clientProvider;
     private readonly AgentHostAuthOptions _options;
     private readonly IAuthenticationResultObserver? _resultObserver;
+    private readonly IOwnedProfileCredentialCleanup? _ownedCleanup;
     private readonly PacResourceScopeNormalizer _scopeNormalizer = new();
 
     public MsalAuthenticationSession(
         MsalPublicClientProvider clientProvider,
         AgentHostAuthOptions options,
-        IAuthenticationResultObserver? resultObserver = null)
+        IAuthenticationResultObserver? resultObserver = null,
+        IOwnedProfileCredentialCleanup? ownedCleanup = null)
     {
         _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _resultObserver = resultObserver;
+        _ownedCleanup = ownedCleanup;
     }
 
     /// <inheritdoc />
-    public Task<AuthAccount> LoginWithBrokerAsync(AuthLoginRequest request, CancellationToken cancellationToken) => SignInAsync(request, useBroker: true, client => MacOsMainThread.InvokeAsync(client, () => AcquireInteractiveTokenAsync(client, BuildScopes(request), request.Account, cancellationToken)), cancellationToken);
+    public Task<AuthAccount> LoginWithBrokerAsync(AuthLoginRequest request, CancellationToken cancellationToken)
+    {
+        EnsureInteraction(request, cancellationToken);
+        return SignInAsync(request, useBroker: true, client => MacOsMainThread.InvokeAsync(client, () => AcquireInteractiveTokenAsync(client, BuildScopes(request), request.Account, cancellationToken)), cancellationToken);
+    }
 
     /// <inheritdoc />
     public Task<AuthAccount> LoginWithBrokerSilentlyAsync(AuthLoginRequest request, CancellationToken cancellationToken)
@@ -42,7 +48,18 @@ public sealed class MsalAuthenticationSession : IAuthenticationSession
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(deviceCodeCallback);
+        EnsureInteraction(request, cancellationToken);
         return SignInAsync(request, useBroker: false, client => client.AcquireTokenWithDeviceCode(BuildScopes(request), deviceCodeResult => deviceCodeCallback(deviceCodeResult.Message)).ExecuteAsync(cancellationToken), cancellationToken);
+    }
+
+    private void EnsureInteraction(AuthLoginRequest request, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.NonInteractive || !_options.InteractionAllowed)
+        {
+            throw new InteractionRequiredException("Explicit interactive sign-in is not allowed in this invocation.");
+        }
     }
 
     /// <inheritdoc />
@@ -57,44 +74,11 @@ public sealed class MsalAuthenticationSession : IAuthenticationSession
     }
 
     /// <inheritdoc />
-    public Task ClearCacheAsync(CancellationToken cancellationToken)
+    public async Task ClearCacheAsync(CancellationToken cancellationToken)
     {
-        // Best-effort and never builds a client (works with no client id configured): clear the
-        // protected store (Keychain/Keyring/DPAPI), then the unprotected-file variant, then delete the
-        // cache file — mirroring PAC's ClearCaches. Any per-store failure is expected on platforms whose
-        // secret store is unavailable and is intentionally swallowed.
-        var descriptor = AgentHostCacheDescriptor.Create(_options.ConfigDirectory);
-
-        TryClear(descriptor, useUnprotectedFile: false);
-        TryClear(descriptor, useUnprotectedFile: true);
-
-        try
-        {
-            if (File.Exists(descriptor.CacheFilePath))
-            {
-                File.Delete(descriptor.CacheFilePath);
-            }
-        }
-        catch (IOException)
-        {
-            // Best-effort: a locked/absent file is acceptable for logout.
-        }
-
-        return Task.CompletedTask;
-    }
-
-    private static void TryClear(AgentHostCacheDescriptor descriptor, bool useUnprotectedFile)
-    {
-        try
-        {
-            var properties = MsalCacheStorage.Build(descriptor, useUnprotectedFile);
-            Storage.Create(properties).Clear(ignoreExceptions: true);
-        }
-        catch (Exception)
-        {
-            // Clearing is best-effort: the secret store may be unavailable (for example a keyring is not
-            // installed, or is inaccessible over SSH). The subsequent file delete still runs.
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_ownedCleanup is not null) await _ownedCleanup.ClearOwnedCredentialsAsync(cancellationToken).ConfigureAwait(false);
+        await _clientProvider.ClearLegacyCacheAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<AuthAccount> SignInAsync(AuthLoginRequest request, bool useBroker, Func<IPublicClientApplication, Task<AuthenticationResult>> acquire, CancellationToken cancellationToken)

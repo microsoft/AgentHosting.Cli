@@ -18,13 +18,14 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 /// </summary>
 public sealed class ManagedAgentCompositionTests
 {
-    private static ServiceProvider BuildProvider()
+    private static ServiceProvider BuildProvider(PowerPlatformApiTargetConfig? apiTarget = null)
     {
+        apiTarget ??= PowerPlatformApiTargetConfig.Public;
         var services = new ServiceCollection();
 
         services.AddSingleton<IClock>(new FixedClock(ManagedAgentFixtures.Now));
         services.AddSingleton<ITokenProvider>(new RecordingTokenProvider());
-        services.AddAgentHostCopilotStudio(TextWriter.Null, PowerPlatformApiRingSelection.Default);
+        services.AddAgentHostCopilotStudio(TextWriter.Null, apiTarget);
 
         services.AddSingleton<IEnvironmentClient>(new FakeEnvironmentClient(EnvironmentFixtures.Environment("env-1", instanceUrl: CopilotTestFixtures.DataverseOrganization)));
         services.AddSingleton<IEnvironmentSelectionStore, InMemoryEnvironmentSelectionStore>();
@@ -71,19 +72,19 @@ public sealed class ManagedAgentCompositionTests
         services.AddSingleton<IConnectionSelectionPrompt>(_ => new ScriptedSelectionPrompt());
         services.AddSingleton(_ => new ConnectionCreationFlow(ManagedAgentFixtures.ConnectorReadiness(), new ScriptedConsentFlow()));
         services.AddSingleton<ConnectionBindingCoordinator>();
-        services.AddSingleton(sp => new AgentDeploymentConnectionService(
+        services.AddSingleton(sp => AgentDeploymentConnectionService.CreateDeferred(
             sp.GetRequiredService<AgentDeploymentConnectionResolver>(),
             sp.GetRequiredService<ICopilotConnectionPort>(),
             sp.GetRequiredService<ConnectionBindingCoordinator>(),
             sp.GetRequiredService<IConnectionSelectionPrompt>(),
             sp.GetRequiredService<WorkflowStateCache>(),
             sp.GetRequiredService<ManagedAgentPrincipalResolver>(),
-            CoreServicesClusterCategory.Prod));
-        services.AddSingleton(sp => new AgentDeploymentConnectionReader(
+            () => PowerAppsServiceTarget.ClusterFor(apiTarget)));
+        services.AddSingleton(sp => AgentDeploymentConnectionReader.CreateDeferred(
             sp.GetRequiredService<AgentDeploymentConnectionResolver>(),
             sp.GetRequiredService<ICopilotConnectionPort>(),
             sp.GetRequiredService<WorkflowStateCache>(),
-            CoreServicesClusterCategory.Prod));
+            () => PowerAppsServiceTarget.ClusterFor(apiTarget)));
         services.AddSingleton<AgentDeploymentConnectorListService>();
         services.AddSingleton<ConnectorResolver>();
         services.AddSingleton(sp => new AgentDeploymentConnectionCreateService(
@@ -112,6 +113,15 @@ public sealed class ManagedAgentCompositionTests
         services.AddSingleton<ManagedAgentServices>();
 
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = false });
+    }
+
+    [Theory]
+    [InlineData(CloudInstance.UsNat)]
+    [InlineData(CloudInstance.UsSec)]
+    public void NationalTargetDoesNotResolveStudioClustersWhenActivatingTheFacadeDependencyGraph(CloudInstance cloud)
+    {
+        using var provider = BuildProvider(PowerPlatformApiTargetSelection.TargetFor(cloud, PowerPlatformApiRing.Production));
+        Assert.NotNull(provider.GetRequiredService<ManagedAgentServices>());
     }
 
     [Theory]

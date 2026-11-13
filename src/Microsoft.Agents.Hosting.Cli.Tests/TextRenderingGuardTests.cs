@@ -67,5 +67,8 @@ public sealed class TextRenderingGuardTests
     private static bool IsRenderSupported(Type type) =>
         typeof(ITextGridRenderable).IsAssignableFrom(type)
         || typeof(IDeploymentResult).IsAssignableFrom(type)
+        || type == typeof(AuthProfileListResult)
+        || type == typeof(AuthProfileOperationResult)
+        || type == typeof(AuthWhoResult)
         || type.IsArray;
 }

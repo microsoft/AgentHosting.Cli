@@ -25,17 +25,20 @@ public sealed class AmsAgentCreationAdapter : IAmsAgentCreationTransport
     private readonly ITokenProvider _tokenProvider;
     private readonly PpapiTokenClaimsValidator _claimsValidator;
     private readonly string _binaryName;
+    private readonly IProfileResourceTokenProvider? _profileTokens;
 
     public AmsAgentCreationAdapter(
         HttpClient httpClient,
         ITokenProvider tokenProvider,
         PpapiTokenClaimsValidator? claimsValidator = null,
-        string binaryName = "msagent")
+        string binaryName = "msagent",
+        IProfileResourceTokenProvider? profileTokens = null)
     {
         _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
         _claimsValidator = claimsValidator ?? new PpapiTokenClaimsValidator();
         _binaryName = string.IsNullOrWhiteSpace(binaryName) ? "msagent" : binaryName;
+        _profileTokens = profileTokens;
     }
 
     public async Task<AmsAgentCreationResult> CreateAsync(
@@ -46,15 +49,17 @@ public sealed class AmsAgentCreationAdapter : IAmsAgentCreationTransport
 
         var url = BuildCollectionUrl(request);
 
-        var token = await _tokenProvider
-            .AcquireTokenSilentAsync(request.Audience, request.TenantId, cancellationToken)
-            .ConfigureAwait(false);
+        if (_profileTokens is null) ResourceTokenContext.RequireBinding(_tokenProvider, request.Context);
+        var token = _profileTokens is not null
+            ? (await _profileTokens.AcquireAsync(ResourceTokenContext.Require(request.Context),
+                request.Audience, request.TenantId, [PowerPlatformApiPermissions.AppsCreate], cancellationToken).ConfigureAwait(false)).Token
+            : await _tokenProvider.AcquireTokenSilentAsync(request.Audience, request.TenantId, cancellationToken).ConfigureAwait(false);
 
-        _claimsValidator.Validate(
+        if (_profileTokens is null) ResourceTokenContext.ValidateLegacy(_claimsValidator, _tokenProvider, request.Context,
             token.AccessToken,
             request.Audience,
             request.TenantId,
-            PowerPlatformApiPermissions.AppsCreate);
+            [PowerPlatformApiPermissions.AppsCreate]);
 
         var clientRequestId = Guid.NewGuid().ToString();
         using var message = new HttpRequestMessage(HttpMethod.Post, url);
