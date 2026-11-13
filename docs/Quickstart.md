@@ -32,15 +32,15 @@ for the nine cloud values, workload limitations and safe owned-state cleanup.
 Create an agent locally in your directory. This will build out the initial components of a copilot studio agent on your machine. Nothing is deployed to copilot studio until later with the deploy command.
 
 ```
-msagent agent create --agent-type MCSAgent --name "Incident Management Agent" --description "helps manage issues" --initial-prompt "Support customers with logging their initial ticket and triage" --project "project1" --json
+msagent agent create --agent-type MCSAgent --name "Incident Management Agent" --description "helps manage issues" --initial-prompt "Support customers with logging their initial ticket and triage" --project "IncidentManagement" --json
 ```
 
-This command creates a new agent, creates a new 'project' called project1, and scaffolds all the required files for your agent
+This command creates a new agent, creates a new 'project' called IncidentManagement, and scaffolds all the required files for your agent
 
 Work from that project for the remaining commands:
 
 ```powershell
-Set-Location project1
+Set-Location IncidentManagement
 ```
 
 # Edit your agent
