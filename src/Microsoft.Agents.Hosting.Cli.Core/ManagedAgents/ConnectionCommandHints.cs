@@ -75,9 +75,7 @@ public static class ConnectionCommandHints
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var scope = string.IsNullOrWhiteSpace(environmentId) ? Selectors(request, agentId) : EnvironmentScope(environmentId);
-
-        return DeleteConnectionCore(scope, connectorId, connectionId, force);
+        return DeleteConnectionCore(string.IsNullOrWhiteSpace(environmentId) ? Selectors(request, agentId) : EnvironmentScope(environmentId), connectorId, connectionId, force);
     }
 
     public static string DeleteConnection(string environmentId, string connectorId, string connectionId) =>

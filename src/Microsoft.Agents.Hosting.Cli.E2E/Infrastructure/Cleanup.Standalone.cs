@@ -38,7 +38,7 @@ public sealed partial class Cleanup
             }
         }
 
-        var cloneFailure = await DeleteThroughCloneAsync(environmentId, workflowId, typedName, cancellationToken).ConfigureAwait(false);
+        var cloneFailure = await DeleteThroughCloneAsync(environmentId, workflowId, cancellationToken).ConfigureAwait(false);
 
         return (await StandaloneWorkflowPresenceAsync(environmentId, workflowId, cancellationToken).ConfigureAwait(false)).Exists == false
             ? null
@@ -124,51 +124,17 @@ public sealed partial class Cleanup
         }
     }
 
-    private async Task<string?> DeleteThroughCloneAsync(string environmentId, string workflowId, string? typedName, CancellationToken cancellationToken)
+    private async Task<string?> DeleteThroughCloneAsync(string environmentId, string workflowId, CancellationToken cancellationToken)
     {
         var directory = Path.Combine(ScratchRoot(), $"delete-{workflowId[..8]}-{Guid.NewGuid().ToString()[..4]}");
-        Directory.CreateDirectory(directory);
 
         try
         {
-            var cloned = await _msagent.RunAsync(
-                ["agent", "create", "--agent-type", "MCSWorkflow", "--mcs-clone-workflow-id", workflowId, "--mcs-clone-environment-id", environmentId, "--environment-id", environmentId, "--json", "--non-interactive"],
-                directory,
-                timeout: TimeSpan.FromMinutes(10),
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-
-            if (cloned.ExitCode != 0)
-            {
-                return $"the clone made to delete the flow exited {cloned.ExitCode}: {Summarize(cloned)}";
-            }
-
-            using var document = JsonDocument.Parse(cloned.StdOut);
-            var root = document.RootElement;
-            var agentId = PropertyText(root, "agentId");
-            var projectDirectory = PropertyText(root, "projectDirectory") is { Length: > 0 } written && Directory.Exists(written) ? written : directory;
-            var deploymentName = PropertyText(root, "deploymentName");
-            var name = PropertyText(root, "displayName") ?? typedName;
-
-            if (agentId is not { Length: > 0 })
-            {
-                return "the clone made to delete the flow reported no record";
-            }
-
-            string[] selector = deploymentName is { Length: > 0 }
-                ? ["agent", "delete", "--agent-id", agentId, "--deployment-name", deploymentName, "--json", "--non-interactive"]
-                : ["agent", "delete", "--agent-id", agentId, "--json", "--non-interactive"];
-
-            var deleted = await _msagent.RunAsync(selector, projectDirectory, stdin: name, TimeSpan.FromMinutes(5), cancellationToken: cancellationToken).ConfigureAwait(false);
-
-            return deleted.ExitCode == 0 ? null : $"agent delete through a clone exited {deleted.ExitCode}: {Summarize(deleted)}";
-        }
-        catch (JsonException exception)
-        {
-            return $"the clone made to delete the flow printed no readable result: {exception.Message}";
+            return await DeleteWorkflowAsync(_msagent, workflowId, environmentId, directory, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            TryDeleteDirectory(directory);
+            FileTree.TryDeleteDirectory(directory);
         }
     }
 
@@ -364,23 +330,6 @@ public sealed partial class Cleanup
 
     private static string? PropertyText(JsonElement element, string name) =>
         TryProperty(element, name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-
-    private static void TryDeleteDirectory(string directory)
-    {
-        try
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-    }
 
     private sealed record Carrier(string ProjectDirectory, string AgentId, string DeploymentName, string? Failure)
     {

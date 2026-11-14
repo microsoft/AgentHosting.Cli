@@ -1,6 +1,6 @@
 # Creating new Agents
 
-Creating new agents using the msagent CLI means creating a local definition of the copilot studio agent and making it ready on your machine in your working directory. This can be done in 3 ways:
+Creating new agents using the msagent CLI means creating a local definition of the copilot studio agent and making it ready on your machine in your working directory. This can be done in 4 ways:
 
 ## Create new
 
@@ -16,6 +16,14 @@ This creates a new copilot studio definition on your working directory using the
 
 ```
 msagent agent create --mcs-clone-agent-id <agent-id> --mcs-clone-environment-id <env-id>
+```
+
+## Copy
+
+This creates a new, independent copilot studio agent or standalone workflow from an existing one: a local definition in your working directory, or an agent or workflow as it is in its environment. The copy gets its own name, schema name, and identities and is registered in your project.
+
+```
+msagent agent copy --mcs-clone-agent-id <agent-id> --environment-id <env-id> --agent-name "My Agent copy"
 ```
 
 ## Initialize

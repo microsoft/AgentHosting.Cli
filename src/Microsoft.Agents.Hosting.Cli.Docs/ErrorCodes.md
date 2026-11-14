@@ -294,6 +294,7 @@ mean a change partially completed or its result is uncertain.
 | [17031](ErrorCodes/17031.md) | A persistent duplicate-reference refusal stopped the component push. |
 | [17032](ErrorCodes/17032.md) | A persistent missing-reference refusal stopped the component push. |
 | [17033](ErrorCodes/17033.md) | A persistent duplicate-component refusal stopped the component push. |
+| [17034](ErrorCodes/17034.md) | The deploy would overwrite shared environment variables the target environment already holds. |
 
 ## Evaluation
 

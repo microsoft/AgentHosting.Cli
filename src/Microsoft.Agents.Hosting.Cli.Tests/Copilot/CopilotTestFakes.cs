@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Copilot;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
@@ -5,10 +6,13 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Yaml;
 using Microsoft.Agents.Platform.Content.Exceptions;
 using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 using Microsoft.CopilotStudio.Sync.Dataverse;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
@@ -155,6 +159,8 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
 
     public bool? LastPushOverwrite { get; private set; }
 
+    public bool? LastPushOverwriteSharedEnvironmentVariables { get; private set; }
+
     public int PullCalls { get; private set; }
 
     public int CloneCalls { get; private set; }
@@ -253,10 +259,11 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
 
     public IReadOnlyList<string> UploadedFileNamesReturns { get; init; } = [];
 
-    public Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
+    public Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, bool overwriteSharedEnvironmentVariables, CancellationToken cancellationToken)
     {
         PushCalls++;
         LastPushOverwrite = overwrite;
+        LastPushOverwriteSharedEnvironmentVariables = overwriteSharedEnvironmentVariables;
         PushedDirectories.Add(workspace.WorkspacePath);
 
         if (PushThrows is not null)
@@ -398,6 +405,42 @@ internal static class CopilotTestFixtures
 
     public static RecordingWorkspaceSynchronizer FailingOnce(Exception failure) =>
         new() { PushLocalChangesThrows = failure, PushLocalChangesThrowsOnlyOnce = true };
+
+    public static BotDefinition AgentDefinition(string schemaName, params string[] environmentVariableSchemaNames) =>
+        BotDefinition.Empty.WithEntity(new BotEntity.Builder { SchemaName = new BotEntitySchemaName(schemaName) }.Build()).WithEnvironmentVariables(environmentVariableSchemaNames.Select(environmentVariableSchemaName => EnvironmentVariable(environmentVariableSchemaName)));
+
+    public static DialogComponent GreetingTopic(string agentSchemaName, string activity) =>
+        new(schemaName: $"{agentSchemaName}.topic.Greeting", displayName: "Greeting", description: string.Empty, id: Guid.NewGuid(), parentBotComponentId: default, dialog: CodeSerializer.Deserialize<BotElement>($"kind: AdaptiveDialog\nbeginDialog:\n  kind: OnRecognizedIntent\n  id: main\n  intent: {{}}\n  actions:\n    - kind: SendActivity\n      id: sendMessage\n      activity: \"{activity}\"\n") as DialogBase);
+
+    public static string WriteEnvironmentVariableFile(string workspaceDirectory, string schemaName, string defaultValue = "local")
+    {
+        var file = Path.Combine(Directory.CreateDirectory(Path.Combine(workspaceDirectory, "environmentvariables")).FullName, $"{schemaName}.mcs.yml");
+        using var writer = File.CreateText(file);
+        CodeSerializer.Serialize(writer, EnvironmentVariable(schemaName, defaultValue));
+        return file;
+    }
+
+    public static ServiceProvider SyncServices()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<ITokenProvider>(new RecordingTokenProvider());
+        services.AddAgentHostCopilotStudio(TextWriter.Null, PowerPlatformApiRingSelection.Default);
+
+        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = false });
+    }
+
+    public static PvaComponentChangeSet Writing(string environmentVariableSchemaName)
+    {
+        var changeSet = new PvaComponentChangeSet(null, null, null).ToBuilder();
+        changeSet.EnvironmentVariableChanges.Add(new EnvironmentVariableInsert(EnvironmentVariable(environmentVariableSchemaName)));
+        return changeSet.Build();
+    }
+
+    public static EnvironmentVariableDependencyCheck TargetHolding(params string[] environmentVariableSchemaNames) =>
+        new(ImmutableArray<WorkspaceDiagnostic>.Empty, [.. environmentVariableSchemaNames]);
+
+    private static EnvironmentVariableDefinition EnvironmentVariable(string schemaName, string defaultValue = "local") =>
+        new(displayName: schemaName, schemaName: schemaName, defaultValue: defaultValue, type: EnvironmentVariableType.String);
 
     public static SyncConnectionAdapter ConnectionAdapter(
         IConnectionManagementService? connections = null,

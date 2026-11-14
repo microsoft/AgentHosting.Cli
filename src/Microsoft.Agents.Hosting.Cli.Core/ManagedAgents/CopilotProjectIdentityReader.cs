@@ -17,7 +17,7 @@ public sealed record ProjectIdentity
     /// <summary>The project's description, when it declares one.</summary>
     public string? Description { get; init; }
 
-    /// <summary>The shape the project was authored as: <see cref="CopilotAuthoringModes.CliCopilot"/> or <see cref="CopilotAuthoringModes.Classic"/>.</summary>
+    /// <summary>The shape the project was authored as: <see cref="Microsoft.Agents.Hosting.Cli.Core.Copilot.CopilotAuthoringModes.CliCopilot"/> or <see cref="Microsoft.Agents.Hosting.Cli.Core.Copilot.CopilotAuthoringModes.Classic"/>.</summary>
     public required string AuthoringMode { get; init; }
 }
 

@@ -263,6 +263,7 @@ public static class ErrorCodes
         public const int DuplicateConnectionReference = 17031;
         public const int MissingConnectionReference = 17032;
         public const int DuplicateComponent = 17033;
+        public const int SharedEnvironmentVariablesRequireOverwrite = 17034;
     }
 
     /// <summary>Error identifiers for the Evaluation area (prefix 18).</summary>

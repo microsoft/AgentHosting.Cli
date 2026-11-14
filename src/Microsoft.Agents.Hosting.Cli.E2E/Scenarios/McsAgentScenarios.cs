@@ -27,6 +27,7 @@ public static class McsAgentScenarios
     private static readonly Capability[] WorkspaceClassic = [Capability.WorkspaceClassic];
 
     private const string TestDeploymentName = "e2e-test";
+    private const string SchemaNameOverrideDeploymentName = "e2e-schema-name";
     private const string BasePrompt = "Would you like to end our conversation?";
 
     /// <summary>Every mcs-agent scenario, in the order the run executes them.</summary>
@@ -476,23 +477,22 @@ public static class McsAgentScenarios
 
         yield return Builder.Make("MA-86", "agent deploy refuses another --schema-name for a CLI agent, and a classic agent's interrupted first deploy leaves the agent it created deletable", DevBoth, SafetyTier.Creating, run: async context =>
         {
-            const string deploymentName = "e2e";
             var cli = context.Workspaces.CliAgent(context.ScenarioId, "cli");
             var otherSchemaName = $"{cli.SchemaName}x";
             await McsSteps.InitAsync(context, cli).ConfigureAwait(false);
-            context.Assert.ExitZero(await McsSteps.CreateSlotAsync(context, cli, deploymentName, context.DevEnvironmentId).ConfigureAwait(false), "deployment create for the CLI agent");
+            context.Assert.ExitZero(await McsSteps.CreateSlotAsync(context, cli, SchemaNameOverrideDeploymentName, context.DevEnvironmentId).ConfigureAwait(false), "deployment create for the CLI agent");
 
-            context.Assert.Refused(await McsSteps.RawDeployAsync(context, cli, deploymentName, "--schema-name", otherSchemaName).ConfigureAwait(false), 2, $"{AgentConfigLocator.ProjectSettingsFileName} declares schema name {cli.SchemaName}", "--schema-name on a CLI agent");
+            context.Assert.Refused(await McsSteps.RawDeployAsync(context, cli, SchemaNameOverrideDeploymentName, "--schema-name", otherSchemaName).ConfigureAwait(false), 2, $"{AgentConfigLocator.ProjectSettingsFileName} declares schema name {cli.SchemaName}", "--schema-name on a CLI agent");
             context.Assert.False((await context.Cloud.AgentsAsync(context.DevEnvironmentId).ConfigureAwait(false)).Any(listed => string.Equals(listed.SchemaName, otherSchemaName, StringComparison.OrdinalIgnoreCase) || string.Equals(listed.SchemaName, cli.SchemaName, StringComparison.OrdinalIgnoreCase)), "the refused deploy created no agent under either schema name");
 
             var classic = context.Workspaces.ClassicAgent(context.ScenarioId, "classic");
             var overridden = classic with { SchemaName = $"{classic.SchemaName}o" };
             await McsSteps.GuardSchemaNameAsync(context, overridden, context.DevEnvironmentId).ConfigureAwait(false);
             await McsSteps.InitAsync(context, classic).ConfigureAwait(false);
-            context.Assert.ExitZero(await McsSteps.CreateSlotAsync(context, classic, deploymentName, context.DevEnvironmentId).ConfigureAwait(false), "deployment create for the classic agent");
-            McsSteps.RecordIntent(context, overridden, deploymentName);
+            context.Assert.ExitZero(await McsSteps.CreateSlotAsync(context, classic, SchemaNameOverrideDeploymentName, context.DevEnvironmentId).ConfigureAwait(false), "deployment create for the classic agent");
+            McsSteps.RecordIntent(context, overridden, SchemaNameOverrideDeploymentName);
 
-            var killed = await McsSteps.DeployCommandAsync(context, classic, deploymentName, new ProcessInterruption(WhenState: () => RecordedAgentId(classic) is not null), ["--schema-name", overridden.SchemaName]).ConfigureAwait(false);
+            var killed = await McsSteps.DeployCommandAsync(context, classic, SchemaNameOverrideDeploymentName, new ProcessInterruption(WhenState: () => RecordedAgentId(classic) is not null), ["--schema-name", overridden.SchemaName]).ConfigureAwait(false);
             var registry = CopySteps.Registry(classic.ConfigPath);
             var recorded = registry.ManagedAgents.Single();
             var agentId = recorded.McsAgentId ?? throw new E2EException($"the interrupted deploy of {classic.AgentName} recorded no cloud agent (exit {killed.ExitCode}).");
@@ -501,7 +501,7 @@ public static class McsAgentScenarios
             context.Ledger.ResolveMcsAgent(overridden.SchemaName, agentId);
             context.Transcript.Note($"killed once the record named {agentId}: interrupted {killed.Interrupted}, exit {killed.ExitCode}, after {killed.Duration.TotalSeconds:N1}s");
             context.Assert.Equal(overridden.SchemaName, recorded.McsSchemaName, "the record names the schema name the agent was created under");
-            context.Assert.ExitZero(await McsSteps.DeleteDeploymentAsync(context, classic, deploymentName, deleteCloudAgent: true).ConfigureAwait(false), "deployment delete --delete-deployed-mcs-agent");
+            context.Assert.ExitZero(await McsSteps.DeleteDeploymentAsync(context, classic, SchemaNameOverrideDeploymentName, deleteCloudAgent: true).ConfigureAwait(false), "deployment delete --delete-deployed-mcs-agent");
             await context.Assert.EventuallyAsync(() => context.Cloud.AgentGoneAsync(context.DevEnvironmentId, agentId), TimeSpan.FromMinutes(3), "the agent the interrupted deploy created is deleted").ConfigureAwait(false);
             context.Ledger.MarkDeleted(agentId);
 

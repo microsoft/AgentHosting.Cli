@@ -134,10 +134,7 @@ public static class Commands
 
         var msagent = new MsagentCli(binary, transcript, CrashDumps.DirectoryFor(runDirectory), config.Mcs.ForbiddenEnvironmentIds);
         var azure = new AzureCli(transcript);
-        var standalone = await StandaloneForCleanupAsync(ledger, config, runDirectory, transcript, cancellationToken).ConfigureAwait(false);
-        var cleanup = new Cleanup(msagent, azure, new CloudProbe(msagent, azure), transcript, standalone);
-        ledger.ReopenOrphans();
-        var orphans = await cleanup.RunAsync(ledger, cancellationToken).ConfigureAwait(false);
+        var orphans = await new Cleanup(msagent, azure, new CloudProbe(msagent, azure), transcript, ReopenForCleanup(ledger) ? await StandaloneForCleanupAsync(config, runDirectory, transcript, cancellationToken).ConfigureAwait(false) : null).RunAsync(ledger, cancellationToken).ConfigureAwait(false);
 
         new Reporter(!options.NoColour).Summary(
             RunReport.From(runId, DateTimeOffset.UtcNow, TimeSpan.Zero, new MsagentBinary(binary, "cleanup", "unknown"), [], ledger.Entries),
@@ -146,13 +143,18 @@ public static class Commands
         return orphans.Count > 0 ? 3 : 0;
     }
 
-    private static async Task<StandaloneServices?> StandaloneForCleanupAsync(Ledger ledger, E2EConfig config, string runDirectory, Transcript transcript, CancellationToken cancellationToken)
+    /// <summary>Returns a previous run's orphaned entries to the outstanding set and reports whether a standalone-workflow resource is outstanding afterwards.</summary>
+    /// <param name="ledger">The previous run's ledger.</param>
+    /// <returns>Whether cleanup needs the standalone-workflow services that verify its deletions.</returns>
+    public static bool ReopenForCleanup(Ledger ledger)
     {
-        if (!ledger.Outstanding.Any(entry => entry.Kind is ResourceKind.StandaloneWorkflow or ResourceKind.StandaloneConnectionReference))
-        {
-            return null;
-        }
+        ledger.ReopenOrphans();
 
+        return ledger.Outstanding.Any(entry => entry.Kind is ResourceKind.StandaloneWorkflow or ResourceKind.StandaloneConnectionReference);
+    }
+
+    private static async Task<StandaloneServices> StandaloneForCleanupAsync(E2EConfig config, string runDirectory, Transcript transcript, CancellationToken cancellationToken)
+    {
         var standalone = new StandaloneServices(config, runDirectory, transcript, Path.Combine(HarnessEnvironment.ProjectDirectory, "fixtures", Capabilities.StandaloneFixturesFolder));
         var probed = await standalone.ProbeAsync(
             Capabilities.Resolve(config, Path.Combine(HarnessEnvironment.ProjectDirectory, "fixtures"), signedIn: true, "signed in", AzureCli.IsPresent()),

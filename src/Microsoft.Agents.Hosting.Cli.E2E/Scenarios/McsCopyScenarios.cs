@@ -545,7 +545,7 @@ public static partial class McsCopyScenarios
             context.Assert.NoDifferences(CopySteps.LeftInCopyState(project), ".config\\copy holds only .gitignore and copy.lock, and nothing of the killed attempt");
         });
 
-        yield return Builder.Make("MC-33", "--agent-name of an existing cloud agent or workflow in another case is refused and writes nothing", BothAndWorkflow, SafetyTier.ReadOnly, timeout: Long, run: async context =>
+        yield return Builder.Make("MC-33", "--agent-name of an existing cloud agent or workflow in another case is refused and writes nothing", BothAndWorkflow, SafetyTier.Creating, timeout: Long, run: async context =>
         {
             var cli = await CopySteps.FixtureSeedAsync(context, SessionAgentKind.FixtureCli).ConfigureAwait(false);
             var source = await CopySteps.FixtureSourceAsync(context, classic: true).ConfigureAwait(false);
@@ -572,7 +572,7 @@ public static partial class McsCopyScenarios
 
             context.Assert.True(copy.DraftWorkflows.Count > 0, "the copied workflows await activation as drafts");
             await CopySteps.AssertWorkflowsExistAsync(context, copy.EnvironmentId, CopySteps.OwnedIdentities(copy, CopyIdentityKinds.Workflow), "the copy").ConfigureAwait(false);
-            context.Assert.Equal(Shape(await CopySteps.BaselineAsync(context, seed).ConfigureAwait(false)), Shape(TreeSnapshot.Take(clone, CopySteps.CloneState)), "the copy has its source's components");
+            context.Assert.Equal(Shape((await CopySteps.BaselineAsync(context, seed).ConfigureAwait(false)).CloneDirectory), Shape(clone), "the copy has its source's components");
 
             var workflowSeed = await CopySteps.WorkflowSeedAsync(context).ConfigureAwait(false);
             await FirstDeployAsync(context, workflowSeed, CopySteps.CloudSource(workflowSeed), "workflow").ConfigureAwait(false);
@@ -582,12 +582,12 @@ public static partial class McsCopyScenarios
         {
             var seed = await CopySteps.FixtureSeedAsync(context, SessionAgentKind.FixtureClassic).ConfigureAwait(false);
             var source = await CopySteps.ClonedSourceAsync(context, seed).ConfigureAwait(false);
-            var before = TreeSnapshot.Take(source.Root);
+            var before = CopySteps.SnapshotLocalSource(source);
             var (copy, _, clone) = await FirstDeployAsync(context, seed, CopySteps.LocalSource(source)).ConfigureAwait(false);
 
             context.Assert.True(CopySteps.OwnedIdentities(copy, CopyIdentityKinds.AIModel).Count > 0, "the prompts are copied under new model ids");
             context.Assert.True(CopySteps.OwnedIdentities(copy, CopyIdentityKinds.Connector).Count > 0, "the custom connector is copied");
-            context.Assert.Equal(Shape(await CopySteps.BaselineAsync(context, seed).ConfigureAwait(false)), Shape(TreeSnapshot.Take(clone, CopySteps.CloneState)), "the copy has its source's components, child agent and knowledge included");
+            context.Assert.Equal(Shape((await CopySteps.BaselineAsync(context, seed).ConfigureAwait(false)).CloneDirectory), Shape(clone), "the copy has its source's components, child agent and knowledge included");
             CopySteps.AssertLocalSourceIntact(context, source, before);
         });
 
@@ -765,7 +765,7 @@ public static partial class McsCopyScenarios
                 var corpus = await CopySteps.CorpusSeedAsync(context, folder.Name).ConfigureAwait(false);
 
                 context.Transcript.Note($"timing: {folder.Name} bring-up with its checks {corpus.Seconds:N0}s");
-                context.Assert.Equal(Shape(TreeSnapshot.Take(corpus.Copy.WorkspaceDirectory, CopySteps.CloneState)), Shape(TreeSnapshot.Take(corpus.CloneDirectory, CopySteps.CloneState)), $"the deployed {folder.Name} holds every component its copy holds");
+                context.Assert.Equal(Shape(corpus.Copy.WorkspaceDirectory), Shape(corpus.CloneDirectory), $"the deployed {folder.Name} holds every component its copy holds");
                 context.Assert.NoDifferences([.. CopySteps.OwnedIdentities(corpus.Copy, CopyIdentityKinds.ConnectorInternalId).Except(ConnectorProperties(corpus.CloneDirectory, "connectorinternalid"), StringComparer.OrdinalIgnoreCase).Select(internalId => $"no connector of the deployed {folder.Name} has the internal id {internalId}")], $"the deployed {folder.Name} holds its copied connectors under the internal ids the copy predicted for this environment");
 
                 if (folder.ChecksPushedComponentCount)
@@ -1080,7 +1080,7 @@ public static partial class McsCopyScenarios
             context.Assert.NoDifferences(CopySteps.LeftInCopyState(project), ".config\\copy holds only .gitignore and copy.lock");
         });
 
-        yield return Builder.Make("MC-104", "four concurrent cloud copies of one agent get distinct identities and leave the source unchanged", Cli, SafetyTier.ReadOnly, timeout: Long, run: async context =>
+        yield return Builder.Make("MC-104", "four concurrent cloud copies of one agent get distinct identities and leave the source unchanged", Cli, SafetyTier.Creating, timeout: Long, run: async context =>
         {
             var seed = await CopySteps.FixtureSeedAsync(context, SessionAgentKind.FixtureCli).ConfigureAwait(false);
             await CopySteps.BaselineAsync(context, seed).ConfigureAwait(false);
@@ -1203,14 +1203,13 @@ public static partial class McsCopyScenarios
         context.Assert.NoDifferences(TreeSnapshot.Take(deployedCopy.ProjectDirectory).DifferencesFrom(deployedBefore), CopySteps.Labelled(deployedCopy, "the deployed copy's project is byte-identical"));
     }
 
-    private static string Shape(TreeSnapshot snapshot) => string.Join(", ", snapshot.Files.Keys.Select(ShapeOf).OfType<string>().GroupBy(kind => kind, StringComparer.Ordinal).OrderBy(group => group.Key, StringComparer.Ordinal).Select(group => $"{group.Key}={group.Count()}"));
+    public static string Shape(string directory) => string.Join(", ", TreeSnapshot.Take(directory, CopySteps.CloneState).Files.Keys.Select(ShapeOf).OfType<string>().Concat(Enumerable.Repeat("connector", ConnectorProperties(directory, "connectorinternalid").Distinct(StringComparer.OrdinalIgnoreCase).Count())).GroupBy(kind => kind, StringComparer.Ordinal).OrderBy(group => group.Key, StringComparer.Ordinal).Select(group => $"{group.Key}={group.Count()}"));
 
     private static string? ShapeOf(string relativePath) => Path.GetFileName(relativePath) switch
     {
         "prompt.json" => "prompt",
         "workflow.json" => "workflow",
         "agent.mcs.yml" => "agent",
-        "openapidefinition.json" => "connector",
         "SKILL.md" => "skill",
         var name when name.EndsWith(".mcs.yml", StringComparison.OrdinalIgnoreCase) => "component",
         _ when relativePath.Split(Path.DirectorySeparatorChar).Contains("knowledge", StringComparer.OrdinalIgnoreCase) => "knowledge",

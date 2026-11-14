@@ -14,21 +14,29 @@ public sealed class AtomicFileTests : IDisposable
     private string[] TemporaryFiles() => Directory.GetFiles(_workspace.Root, "*.tmp");
 
     [Fact]
-    public async Task WriteAllText_WhileAReaderBrieflyHoldsTheTarget_ReplacesItOnceTheReaderLetsGo()
+    public void WriteAllText_WhileAReaderBrieflyHoldsTheTarget_ReplacesItOnceTheReaderLetsGo()
     {
         File.WriteAllText(Target, "old");
-        using var opened = new SemaphoreSlim(0);
-        var reader = Task.Run(async () =>
+        using var reader = new FileStream(Target, FileMode.Open, FileAccess.Read, FileShare.Read);
+        Exception? failure = null;
+        var writer = new Thread(() =>
         {
-            using var stream = new FileStream(Target, FileMode.Open, FileAccess.Read, FileShare.Read);
-            opened.Release();
-            await Task.Delay(TimeSpan.FromMilliseconds(100));
+            try
+            {
+                AtomicFile.WriteAllText(Target, "new");
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
         });
 
-        await opened.WaitAsync();
-        AtomicFile.WriteAllText(Target, "new");
-        await reader;
+        writer.Start();
+        Assert.True(SpinWait.SpinUntil(() => !writer.IsAlive || (TemporaryFiles().Length > 0 && writer.ThreadState.HasFlag(ThreadState.WaitSleepJoin)), TimeSpan.FromSeconds(30)));
+        reader.Dispose();
+        writer.Join();
 
+        Assert.Null(failure);
         Assert.Equal("new", File.ReadAllText(Target));
         Assert.Empty(TemporaryFiles());
     }

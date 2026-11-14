@@ -33,6 +33,9 @@ public static class CopilotErrorKinds
     /// <summary>Local and remote both changed the same components; a pull is required first.</summary>
     public const string PushConflictsRequirePull = "push-conflicts-require-pull";
 
+    /// <summary>A deploy would replace the values of shared environment variables the target environment already holds.</summary>
+    public const string SharedEnvironmentVariablesRequireOverwrite = "shared-environment-variables-require-overwrite";
+
     /// <summary>A destructive command was invoked without confirmation.</summary>
     public const string ConfirmationRequired = "confirmation-required";
 
@@ -235,6 +238,20 @@ public sealed class CopilotStudioException : AgentHostingException
         ExitCodes.Usage,
         CopilotErrorKinds.PushConflictsRequirePull,
         "There is a conflict with a remote change. Run `msagent agent pull` to get the latest changes and resolve the conflict, then deploy again — or re-run with --overwrite to replace the cloud with your local content.");
+
+    /// <summary>A deploy would replace the values of shared environment variables the target environment already holds.</summary>
+    /// <param name="schemaNames">The schema names of the shared environment variables.</param>
+    /// <param name="files">The workspace files that change them.</param>
+    /// <param name="environmentId">The environment that holds them.</param>
+    /// <param name="innerException">The sync library's refusal, when the push itself refused.</param>
+    /// <returns>The typed failure.</returns>
+    public static CopilotStudioException SharedEnvironmentVariablesRequireOverwrite(IReadOnlyCollection<string> schemaNames, IReadOnlyCollection<string> files, string environmentId, Exception? innerException = null) => new(
+        ErrorCodes.CopilotStudio.SharedEnvironmentVariablesRequireOverwrite,
+        $"This deploy would overwrite {schemaNames.Count} shared environment variable{(schemaNames.Count == 1 ? string.Empty : "s")} that {environmentId} already holds: {string.Join(", ", schemaNames)}.",
+        ExitCodes.Usage,
+        CopilotErrorKinds.SharedEnvironmentVariablesRequireOverwrite,
+        $"Re-run `msagent agent deploy` with --overwrite to replace {(schemaNames.Count == 1 ? "its value" : "their values")} in {environmentId}, or discard the local change to {string.Join(", ", files)}.",
+        innerException);
 
     /// <summary>A destructive command was invoked without confirmation.</summary>
     /// <param name="operation">The operation that requires confirmation.</param>

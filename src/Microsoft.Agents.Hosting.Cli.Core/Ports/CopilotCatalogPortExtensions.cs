@@ -3,7 +3,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Ports;
 
-/// <summary>Reads built on <see cref="ICopilotCatalogPort"/>.</summary>
+/// <summary>Reads built on <see cref="Microsoft.Agents.Hosting.Cli.Core.Ports.ICopilotCatalogPort"/>.</summary>
 public static class CopilotCatalogPortExtensions
 {
     /// <summary>Reads an agent, or nothing when the service reports that it does not exist.</summary>

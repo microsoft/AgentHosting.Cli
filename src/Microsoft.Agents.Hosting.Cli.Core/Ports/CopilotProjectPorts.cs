@@ -22,7 +22,7 @@ public interface ICopilotNamingRules
     bool IsValidPublisherPrefix(string publisherPrefix);
 
     /// <summary>Derives an agent's schema name from its display name under a publisher prefix.</summary>
-    /// <param name="publisherPrefix">A publisher prefix <see cref="IsValidPublisherPrefix"/> accepts.</param>
+    /// <param name="publisherPrefix">A publisher prefix <see cref="Microsoft.Agents.Hosting.Cli.Core.Ports.ICopilotNamingRules.IsValidPublisherPrefix(System.String)"/> accepts.</param>
     /// <param name="displayName">The agent's display name.</param>
     /// <returns>The schema name, or <see langword="null"/> when the display name holds no ASCII letter or digit.</returns>
     string? DeriveAgentSchemaName(string publisherPrefix, string displayName);

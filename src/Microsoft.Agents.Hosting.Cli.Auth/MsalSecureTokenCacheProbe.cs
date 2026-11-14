@@ -5,7 +5,7 @@ using Microsoft.Identity.Client.Extensions.Msal;
 
 namespace Microsoft.Agents.Hosting.Cli.Auth;
 
-/// <summary>The live <see cref="ISecureTokenCacheProbe"/>, which round-trips a probe item through the platform secret store.</summary>
+/// <summary>The live <see cref="Microsoft.Agents.Hosting.Cli.Core.Ports.ISecureTokenCacheProbe"/>, which round-trips a probe item through the platform secret store.</summary>
 public sealed class MsalSecureTokenCacheProbe : ISecureTokenCacheProbe
 {
     private const int MaximumAttempts = 3;

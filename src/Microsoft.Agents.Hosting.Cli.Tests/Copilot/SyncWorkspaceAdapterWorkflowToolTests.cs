@@ -22,6 +22,7 @@ public sealed class SyncWorkspaceAdapterWorkflowToolTests
     private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
         new(
             synchronizer,
+            synchronizer,
             new RecordingRetargetService(),
             new StubSolutionVersionsClient(),
             new StubComponentCollectionClient(),
@@ -54,7 +55,7 @@ public sealed class SyncWorkspaceAdapterWorkflowToolTests
         var synchronizer = Declaring(WorkflowToolComponent("Empty Workflow Id Tool", EmptySchemaName, Guid.Empty));
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.WorkflowToolIdEmpty, failure.ErrorKind);
         Assert.Equal(ExitCodes.Usage, failure.ExitCode);
@@ -69,7 +70,7 @@ public sealed class SyncWorkspaceAdapterWorkflowToolTests
         var synchronizer = Declaring(WorkflowToolComponent("Empty Workflow Id Tool", EmptySchemaName, Guid.Empty));
 
         await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
         Assert.Equal(0, synchronizer.UpsertWorkflowCalls);
@@ -83,7 +84,7 @@ public sealed class SyncWorkspaceAdapterWorkflowToolTests
         var synchronizer = Declaring(WorkflowToolComponent("Empty Workflow Id Tool", EmptySchemaName, Guid.Empty));
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: true, CancellationToken.None));
+            () => Create(synchronizer).PushAsync(Workspace(), overwrite: true, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.WorkflowToolIdEmpty, failure.ErrorKind);
         Assert.Equal(0, synchronizer.PushLocalChangesCalls);
@@ -98,7 +99,7 @@ public sealed class SyncWorkspaceAdapterWorkflowToolTests
             WorkflowToolComponent("Agent Flow 3", ResolvedSchemaName, Guid.Parse("6e5229e3-e343-f111-88b5-7ced8d3b6119")));
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Contains("2 workflow tools", failure.Message, StringComparison.Ordinal);
         Assert.Contains(EmptySchemaName, failure.Message, StringComparison.Ordinal);
@@ -113,7 +114,7 @@ public sealed class SyncWorkspaceAdapterWorkflowToolTests
             WorkflowToolComponent("Agent Flow 3", ResolvedSchemaName, Guid.Parse("6e5229e3-e343-f111-88b5-7ced8d3b6119")),
             ConnectorToolComponent());
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
         Assert.Empty(outcome.Warnings);
@@ -124,7 +125,7 @@ public sealed class SyncWorkspaceAdapterWorkflowToolTests
     {
         var synchronizer = Declaring(ConnectorToolComponent());
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
     }

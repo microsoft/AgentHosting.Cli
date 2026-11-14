@@ -154,10 +154,7 @@ public sealed class WorkflowCreateService
 
     private string PrepareWorkspaceRoot(string projectDirectory, string displayName, string folderName)
     {
-        if (_agents.List(projectDirectory).FirstOrDefault(agent => string.Equals(agent.DisplayName, displayName, StringComparison.OrdinalIgnoreCase)) is { } duplicate)
-        {
-            throw ManagedAgentException.AlreadyRegistered(duplicate.DisplayName, duplicate.AgentId, _locator.ConfigFilePath(projectDirectory));
-        }
+        _registration.RequireNameIsFree(projectDirectory, displayName);
 
         var workspaceRoot = Path.Combine(projectDirectory, folderName);
 

@@ -233,18 +233,7 @@ public sealed class ManagedAgentException : AgentHostingException
             : $"Select --deployment-id or --deployment-name for '{displayName}', for example:{Environment.NewLine}  msagent agent deploy {agentSelector} --deployment-id {CommandArgument(deployments[0].DeploymentId)}";
     }
 
-    private static string CommandArgument(string value) => OperatingSystem.IsWindows() ? PowerShellCommandArgument(value) : PosixCommandArgument(value);
-
-    internal static string PowerShellCommandArgument(string value) => QuotedCommandArgument(value, "$`\"", "''");
-
-    internal static string PosixCommandArgument(string value) => QuotedCommandArgument(value, "$`\"\\!", "'\\''");
-
-    private static string QuotedCommandArgument(string value, string doubleQuotedSpecialCharacters, string singleQuotedApostrophe)
-    {
-        var argument = TerminalText.Sanitize(value);
-
-        return argument.AsSpan().ContainsAny(doubleQuotedSpecialCharacters) ? $"'{argument.Replace("'", singleQuotedApostrophe, StringComparison.Ordinal)}'" : $"\"{argument}\"";
-    }
+    private static string CommandArgument(string value) => CommandLineArgument.Quote(TerminalText.Sanitize(value));
 
     private static string DeploymentNames(IEnumerable<AgentDeploymentRecord> deployments) => string.Join(", ", deployments.Select(deployment => TerminalText.Sanitize(deployment.DeploymentName)));
 
@@ -892,14 +881,14 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <returns>The typed failure.</returns>
     public static ManagedAgentException DeployRecordedNowhere(string schemaName, string environmentId, string targetAgentId, string deploymentName, Exception innerException) => RecordedNowhere(ErrorCodes.Deployment.DeployRecordedNowhere, $"Agent '{schemaName}' ({targetAgentId}) was pushed to {environmentId}, but deployment '{deploymentName}' could not be marked as deployed: {innerException.Message}", $"The cloud content is already updated. Re-run `msagent agent deploy --deployment-name {deploymentName}` to record it; the push is idempotent, so nothing is sent twice that the service still holds.", innerException);
 
-    /// <summary>The agent was created or attached in the environment, but its record could not be updated before anything was pushed.</summary>
+    /// <summary>The agent was created or attached in the environment, but its record could not be updated before its components were pushed.</summary>
     /// <param name="schemaName">The agent that was created or attached.</param>
     /// <param name="environmentId">The environment holding the agent.</param>
     /// <param name="targetAgentId">The cloud agent the record could not be pointed at.</param>
     /// <param name="deploymentName">The deployment that was targeted.</param>
     /// <param name="innerException">The failure that stopped the record from being written.</param>
     /// <returns>The typed failure.</returns>
-    public static ManagedAgentException DeployRecordedNowhereBeforePush(string schemaName, string environmentId, string targetAgentId, string deploymentName, Exception innerException) => RecordedNowhere(ErrorCodes.Deployment.DeployRecordedNowhereBeforePush, $"Agent '{schemaName}' ({targetAgentId}) was created or attached in {environmentId}, but its record could not be updated, so nothing was pushed yet: {innerException.Message}", $"Re-run `msagent agent deploy --deployment-name {deploymentName}` to record the agent and push its content.", innerException);
+    public static ManagedAgentException DeployRecordedNowhereBeforePush(string schemaName, string environmentId, string targetAgentId, string deploymentName, Exception innerException) => RecordedNowhere(ErrorCodes.Deployment.DeployRecordedNowhereBeforePush, $"Agent '{schemaName}' ({targetAgentId}) was created or attached in {environmentId}, and the custom connectors, connection references, workflows, and AI prompts its workspace declares may already be there, but its record could not be updated, so its components were not pushed yet: {innerException.Message}", $"Re-run `msagent agent deploy --deployment-name {deploymentName}` to record the agent and push its content.", innerException);
 
     private static ManagedAgentException RecordedNowhere(int errorCode, string message, string remediation, Exception innerException) => new(errorCode, message, ExitCodes.Failure, "deploy-recorded-nowhere", remediation, innerException);
 

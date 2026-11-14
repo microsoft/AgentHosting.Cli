@@ -134,6 +134,7 @@ public sealed class ManagedAgentDeployService
                     SchemaName = schemaName,
                     AllowRetarget = workspace is not null,
                     ExpectedAgentId = adoptable,
+                    OverwriteSharedEnvironmentVariables = request.Overwrite,
                 },
                 cancellationToken).ConfigureAwait(false);
 
@@ -155,7 +156,7 @@ public sealed class ManagedAgentDeployService
         }
 
         _progress.Report("Pushing changes");
-        var pushed = await PushAsync(projectDirectory, workspaceDirectory, deployment.DeploymentType, request.Overwrite || targetAgentCreated, target.EnvironmentId, schemaName, DescribeTarget(action, targetAgentCreated), cancellationToken).ConfigureAwait(false);
+        var pushed = await PushAsync(projectDirectory, workspaceDirectory, deployment.DeploymentType, request.Overwrite || targetAgentCreated, request.Overwrite, target.EnvironmentId, schemaName, DescribeTarget(action, targetAgentCreated), cancellationToken).ConfigureAwait(false);
         var deployedOn = _clock.UtcNow;
         var deployedBy = await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false);
 
@@ -230,7 +231,7 @@ public sealed class ManagedAgentDeployService
     private static IEnumerable<string> ExceptSupersededWorkflows(IReadOnlyList<string> warnings, bool passReported) =>
         passReported ? warnings.Where(warning => !DeployWarningText.IsRestatedByWorkflowCounts(warning)) : warnings;
 
-    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings, IReadOnlyList<string> CollectionWarnings)> PushAsync(string projectDirectory, string workspaceDirectory, string stage, bool overwrite, string environmentId, string schemaName, string targetDescription, CancellationToken cancellationToken)
+    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings, IReadOnlyList<string> CollectionWarnings)> PushAsync(string projectDirectory, string workspaceDirectory, string stage, bool overwrite, bool overwriteSharedEnvironmentVariables, string environmentId, string schemaName, string targetDescription, CancellationToken cancellationToken)
     {
         var collectionWarnings = new List<string>();
         var componentCount = 0;
@@ -250,30 +251,30 @@ public sealed class ManagedAgentDeployService
                 continue;
             }
 
-            var pushedCollection = await PushWorkspaceAsync(collection, stage, overwrite, environmentId, schemaName, targetDescription, cancellationToken).ConfigureAwait(false);
+            var pushedCollection = await PushWorkspaceAsync(collection, stage, overwrite, overwriteSharedEnvironmentVariables, environmentId, schemaName, targetDescription, cancellationToken).ConfigureAwait(false);
             componentCount += pushedCollection.ComponentCount;
             uploadedFileCount += pushedCollection.UploadedFileCount;
             auxiliaryCount += pushedCollection.AuxiliaryCount;
             collectionWarnings.AddRange(pushedCollection.Warnings);
         }
 
-        var pushed = await PushWorkspaceAsync(workspaceDirectory, stage, overwrite, environmentId, schemaName, targetDescription, cancellationToken).ConfigureAwait(false);
+        var pushed = await PushWorkspaceAsync(workspaceDirectory, stage, overwrite, overwriteSharedEnvironmentVariables, environmentId, schemaName, targetDescription, cancellationToken).ConfigureAwait(false);
 
         return (componentCount + pushed.ComponentCount, uploadedFileCount + pushed.UploadedFileCount, auxiliaryCount + pushed.AuxiliaryCount, pushed.Warnings, collectionWarnings);
     }
 
-    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings)> PushWorkspaceAsync(string workspaceDirectory, string stage, bool overwrite, string environmentId, string schemaName, string targetDescription, CancellationToken cancellationToken)
+    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings)> PushWorkspaceAsync(string workspaceDirectory, string stage, bool overwrite, bool overwriteSharedEnvironmentVariables, string environmentId, string schemaName, string targetDescription, CancellationToken cancellationToken)
     {
         try
         {
             var pushed = await _workspaces.PushAsync(
-                new CopilotPushRequest { ProjectDirectory = workspaceDirectory, Overwrite = overwrite || stage != DeploymentStages.Dev },
+                new CopilotPushRequest { ProjectDirectory = workspaceDirectory, Overwrite = overwrite || stage != DeploymentStages.Dev, OverwriteSharedEnvironmentVariables = overwriteSharedEnvironmentVariables },
                 cancellationToken).ConfigureAwait(false);
 
             return (pushed.ComponentCount, pushed.UploadedFileCount, pushed.AuxiliaryChangeCount, pushed.Warnings);
         }
         catch (CopilotStudioException failure) when (
-            failure.ErrorKind is CopilotErrorKinds.PushConflictsRequirePull or CopilotErrorKinds.WorkspaceFilesUnreadable or CopilotErrorKinds.WorkflowToolIdEmpty or CopilotErrorKinds.MissingConnectionReference)
+            failure.ErrorKind is CopilotErrorKinds.PushConflictsRequirePull or CopilotErrorKinds.SharedEnvironmentVariablesRequireOverwrite or CopilotErrorKinds.WorkspaceFilesUnreadable or CopilotErrorKinds.WorkflowToolIdEmpty or CopilotErrorKinds.MissingConnectionReference)
         {
             throw;
         }

@@ -628,7 +628,7 @@ public sealed record ManagedAgentDeleteResult : ITextGridRenderable
     /// <summary>The environment the deleted cloud agent lived in.</summary>
     public string? EnvironmentId { get; init; }
 
-    /// <summary>The cloud agent the delete targets in <see cref="EnvironmentId"/>, when one exists.</summary>
+    /// <summary>The cloud agent the delete targets in <see cref="Microsoft.Agents.Hosting.Cli.Core.Operations.ManagedAgentDeleteResult.EnvironmentId"/>, when one exists.</summary>
     public string? McsAgentId { get; init; }
 
     /// <summary>The deployment that selected the target, when one did.</summary>

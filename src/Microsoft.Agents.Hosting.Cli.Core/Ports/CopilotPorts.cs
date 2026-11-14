@@ -215,9 +215,10 @@ public interface ICopilotWorkspacePort
     /// Whether to re-image the cloud baseline and push again when the service reports the agent
     /// changed underneath. The baseline is always taken from the service, never from local content.
     /// </param>
+    /// <param name="overwriteSharedEnvironmentVariables">Whether the push may replace the values of shared environment variables the target environment already holds.</param>
     /// <param name="cancellationToken">Cancels the push.</param>
     /// <returns>The changes that were uploaded, and anything the service declined.</returns>
-    Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken);
+    Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, bool overwriteSharedEnvironmentVariables, CancellationToken cancellationToken);
 }
 
 /// <summary>Agent inventory and lifecycle operations against an environment.</summary>
@@ -310,6 +311,9 @@ public sealed record CopilotAttachCommand
     /// one. A different agent under that name is a conflict rather than something to adopt.
     /// </summary>
     public string? ExpectedAgentId { get; init; }
+
+    /// <summary>Whether the attach may go ahead when the workspace would replace the values of shared environment variables the target environment already holds.</summary>
+    public bool OverwriteSharedEnvironmentVariables { get; init; }
 }
 
 /// <summary>The agent an attach created or adopted.</summary>

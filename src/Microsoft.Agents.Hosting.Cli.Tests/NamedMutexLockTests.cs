@@ -66,19 +66,27 @@ public sealed class NamedMutexLockTests
     }
 
     [Fact]
-    public async Task TryAcquire_WaitsWithinItsPatienceForTheHolderToRelease()
+    public void TryAcquire_WaitsWithinItsPatienceForTheHolderToRelease()
     {
-        Task<bool> waiting;
+        var taken = false;
+        using var attempting = new ManualResetEventSlim();
+        var contender = new Thread(() =>
+        {
+            attempting.Set();
+            taken = TakeAndRelease(TimeSpan.FromSeconds(30));
+        });
 
         using (HeldNamedMutex.OnAnotherThread(_prefix, "project"))
         {
-            waiting = Task.Factory.StartNew(() => TakeAndRelease(TimeSpan.FromSeconds(30)), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            contender.Start();
+            attempting.Wait();
 
-            await Task.Delay(100);
-            Assert.False(waiting.IsCompleted);
+            Assert.True(SpinWait.SpinUntil(() => !contender.IsAlive || contender.ThreadState.HasFlag(ThreadState.WaitSleepJoin), TimeSpan.FromSeconds(30)));
+            Assert.True(contender.IsAlive);
         }
 
-        Assert.True(await waiting);
+        contender.Join();
+        Assert.True(taken);
     }
 
     [Fact]

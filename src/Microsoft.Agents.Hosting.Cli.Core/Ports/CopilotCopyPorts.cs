@@ -32,13 +32,13 @@ public static class CopilotCopySourceKinds
 }
 
 /// <summary>One identity a copy maps from its source to itself.</summary>
-/// <param name="Kind">One of <see cref="CopilotCopyIdentityKinds"/>.</param>
+/// <param name="Kind">One of <see cref="Microsoft.Agents.Hosting.Cli.Core.Ports.CopilotCopyIdentityKinds"/>.</param>
 /// <param name="Source">The source's identity.</param>
 /// <param name="Destination">The copy's identity.</param>
 public sealed record CopilotCopyIdentity(string Kind, string Source, string Destination);
 
 /// <summary>A resource named by its kind and identity.</summary>
-/// <param name="Kind">One of <see cref="CopilotCopyIdentityKinds"/>.</param>
+/// <param name="Kind">One of <see cref="Microsoft.Agents.Hosting.Cli.Core.Ports.CopilotCopyIdentityKinds"/>.</param>
 /// <param name="Identity">The resource's identifier, or a connection reference's logical name.</param>
 public sealed record CopilotCopyLink(string Kind, string Identity);
 

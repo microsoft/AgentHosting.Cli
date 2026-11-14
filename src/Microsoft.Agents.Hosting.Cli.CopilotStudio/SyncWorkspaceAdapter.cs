@@ -23,6 +23,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     private const string ComponentEntity = "botcomponent";
     private const int UnreadableResponseAttempts = 4;
     private readonly IWorkspaceSynchronizer _synchronizer;
+    private readonly IEnvironmentVariableDependencyValidator _environmentVariableValidator;
     private readonly IWorkspaceRetargetService _retargetService;
     private readonly ISyncDataverseClient _dataverseClient;
     private readonly ISyncComponentCollectionDataverseClient _componentCollections;
@@ -33,6 +34,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
 
     /// <summary>Creates the adapter.</summary>
     /// <param name="synchronizer">The sync library's workspace synchronizer.</param>
+    /// <param name="environmentVariableValidator">Lists the shared environment variables a push would overwrite.</param>
     /// <param name="retargetService">Re-images the cloud baseline before a push is resent.</param>
     /// <param name="dataverseClient">The sync library's Dataverse client.</param>
     /// <param name="componentCollections">Resolves component collections by schema name.</param>
@@ -40,9 +42,10 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     /// <param name="httpClientAccessor">Targets the Dataverse organization for a given operation.</param>
     /// <param name="changeMapper">Translates sync library changes into transport-neutral records.</param>
     /// <param name="delay">Waits between push attempts.</param>
-    public SyncWorkspaceAdapter(IWorkspaceSynchronizer synchronizer, IWorkspaceRetargetService retargetService, ISyncDataverseClient dataverseClient, ISyncComponentCollectionDataverseClient componentCollections, IOperationContextProvider operationContexts, AgentHostDataverseHttpClientAccessor httpClientAccessor, CopilotChangeMapper changeMapper, Func<TimeSpan, CancellationToken, Task>? delay = null)
+    public SyncWorkspaceAdapter(IWorkspaceSynchronizer synchronizer, IEnvironmentVariableDependencyValidator environmentVariableValidator, IWorkspaceRetargetService retargetService, ISyncDataverseClient dataverseClient, ISyncComponentCollectionDataverseClient componentCollections, IOperationContextProvider operationContexts, AgentHostDataverseHttpClientAccessor httpClientAccessor, CopilotChangeMapper changeMapper, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         _synchronizer = synchronizer ?? throw new ArgumentNullException(nameof(synchronizer));
+        _environmentVariableValidator = environmentVariableValidator ?? throw new ArgumentNullException(nameof(environmentVariableValidator));
         _retargetService = retargetService ?? throw new ArgumentNullException(nameof(retargetService));
         _dataverseClient = dataverseClient ?? throw new ArgumentNullException(nameof(dataverseClient));
         _componentCollections = componentCollections ?? throw new ArgumentNullException(nameof(componentCollections));
@@ -299,7 +302,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     }
 
     /// <inheritdoc />
-    public async Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
+    public async Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, bool overwriteSharedEnvironmentVariables, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(workspace);
 
@@ -309,7 +312,12 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
         var localDefinition = await WorkspaceDefinitionReader.ReadAsync(_synchronizer, workspaceFolder, checkKnowledgeFiles: true, cancellationToken).ConfigureAwait(false);
         await WorkspaceDefinitionReader.RequireSynchronizableAsync(_synchronizer, workspaceFolder, localDefinition, cancellationToken).ConfigureAwait(false);
         WorkflowToolIds.RequireNotEmpty(localDefinition);
-        var (_, localChanges) = await _synchronizer.GetLocalChangesAsync(workspaceFolder, localDefinition, _dataverseClient, syncInfo, cancellationToken).ConfigureAwait(false);
+        var (localChangeSet, localChanges) = await _synchronizer.GetLocalChangesAsync(workspaceFolder, localDefinition, _dataverseClient, syncInfo, cancellationToken).ConfigureAwait(false);
+
+        if (!overwriteSharedEnvironmentVariables)
+        {
+            await _environmentVariableValidator.RefuseUnapprovedOverwritesAsync(localChangeSet.EnvironmentVariableChanges.OfType<EnvironmentVariableUpsert>().Select(upsert => upsert.EnvironmentVariable), workspaceFolder, localDefinition, compareWithCloudCache: true, _dataverseClient, workspace.EnvironmentId, cancellationToken).ConfigureAwait(false);
+        }
 
         CloudFlowMetadata? cloudFlowMetadata = null;
         var aiPrompts = ImmutableArray<SyncDataverseClient.AIPromptMetadata>.Empty;
@@ -332,7 +340,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
             warnings.AddRange(SyncResponseGuards.DescribeRefusedPrompts(promptResponses));
         }
 
-        await PushComponentsAsync(workspaceFolder, operationContext, localDefinition, syncInfo, DeclaredConnectionReferences.WithProvisioned(cloudFlowMetadata, provisionedReferences), aiPrompts, workspace.EnvironmentId, overwrite, warnings, cancellationToken).ConfigureAwait(false);
+        await PushComponentsAsync(workspaceFolder, operationContext, localDefinition, syncInfo, DeclaredConnectionReferences.WithProvisioned(cloudFlowMetadata, provisionedReferences), aiPrompts, workspace.EnvironmentId, overwrite, overwriteSharedEnvironmentVariables, warnings, cancellationToken).ConfigureAwait(false);
 
         var accepted = localChanges.WithoutFailedAssets(pushedConnectors, workflowResponses, promptResponses);
         var componentCount = accepted.Count(change => IsComponentChange(change.ChangeKind));
@@ -364,18 +372,18 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
 
     private static bool IsComponentChange(string changeKind) => TypeUtility.TryParseBotElementKind(changeKind, out var kind) && typeof(BotComponentBase).IsAssignableFrom(TypeUtility.TypeFromKind(kind));
 
-    private async Task PushComponentsAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, DefinitionBase localDefinition, AgentSyncInfo syncInfo, CloudFlowMetadata? cloudFlowMetadata, ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts, string environmentId, bool overwrite, List<string> priorWarnings, CancellationToken cancellationToken)
+    private async Task PushComponentsAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, DefinitionBase localDefinition, AgentSyncInfo syncInfo, CloudFlowMetadata? cloudFlowMetadata, ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts, string environmentId, bool overwrite, bool overwriteSharedEnvironmentVariables, List<string> priorWarnings, CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                await _synchronizer.PushLocalChangesAsync(workspaceFolder, operationContext, localDefinition, _dataverseClient, syncInfo, cloudFlowMetadata, aiPrompts, cancellationToken, overwriteRemoteChanges: overwrite).ConfigureAwait(false);
+                await _synchronizer.PushLocalChangesAsync(workspaceFolder, operationContext, localDefinition, _dataverseClient, syncInfo, cloudFlowMetadata, aiPrompts, cancellationToken, overwriteRemoteChanges: overwrite, approvedEnvironmentVariableOverwrites: SharedEnvironmentVariableOverwrites.ApprovedOverwrites(overwriteSharedEnvironmentVariables)).ConfigureAwait(false);
                 return;
             }
             catch (WorkspaceValidationException failure)
             {
-                throw WorkspaceDefinitionReader.FilesUnreadable(failure);
+                throw SharedEnvironmentVariableOverwrites.Translate(failure, environmentId);
             }
             catch (InvalidOperationException failure) when (failure.Message.Contains(MissingParentAgentMarker, StringComparison.OrdinalIgnoreCase))
             {

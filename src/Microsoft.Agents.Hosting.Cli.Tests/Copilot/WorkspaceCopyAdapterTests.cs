@@ -1,8 +1,9 @@
-using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
+using Microsoft.CopilotStudio.Sync;
 using Microsoft.CopilotStudio.Sync.Copy;
 using Microsoft.CopilotStudio.Sync.Dataverse;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,7 +32,7 @@ public sealed class WorkspaceCopyAdapterTests : IDisposable
         var topicName = new string('t', 70);
         using var workspace = TemporaryWorkspace.Classic(schemaName: "con_source", displayName: "Source Agent");
         workspace.AddFile(Path.Combine("topics", $"{topicName}.mcs.yml"), "mcs.metadata:\n  componentName: Greeting\nkind: AdaptiveDialog\nbeginDialog:\n  kind: OnRecognizedIntent\n  id: main\n  intent:\n    triggerQueries:\n      - Hello\n\n  actions:\n    - kind: SendActivity\n      id: sendMessage_abmysR\n      activity: Welcome.\n");
-        using var provider = BuildProvider();
+        using var provider = CopilotTestFixtures.SyncServices();
 
         var proposal = await provider.GetRequiredService<ICopilotCopyPort>().ProposeSchemaNameAsync(workspace.Root, "con_source", "A very long display name for the copy", CancellationToken.None);
 
@@ -156,6 +157,36 @@ public sealed class WorkspaceCopyAdapterTests : IDisposable
         Assert.Empty(preparation.RewrittenFiles);
     }
 
+    [Fact]
+    public async Task ACopyDeployedBesideItsSource_IsRefusedBeforeItsAgentIsCreatedRatherThanOverwritingTheSourcesSharedEnvironmentVariable()
+    {
+        new EmbeddedTemplateScaffolder().Scaffold(new CopilotScaffoldCommand
+        {
+            ProjectDirectory = _workspace,
+            TemplateFolder = "cli-copilot",
+            DisplayName = "Source Agent",
+            SchemaName = "con_source",
+            Instructions = "Be helpful.",
+        });
+        var sharedVariableFile = CopilotTestFixtures.WriteEnvironmentVariableFile(_workspace, "cr9_shared", "source-local-edit");
+
+        using var provider = CopilotTestFixtures.SyncServices();
+        var dataverseClient = new RecordingAgentCreationClient();
+        dataverseClient.EnvironmentVariables.Add(new SyncDataverseClient.EnvironmentVariableDefinitionInfo { DefinitionId = Guid.Parse("22222222-2222-2222-2222-222222222222"), SchemaName = "cr9_shared", Version = 200 });
+        var attach = new WorkspaceReattachAdapter(provider.GetRequiredService<IWorkspaceSynchronizer>(), provider.GetRequiredService<IEnvironmentVariableDependencyValidator>(), new RecordingRetargetService(), dataverseClient, new StubOperationContextProvider(), new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()));
+
+        var preparation = await provider.GetRequiredService<ICopilotCopyPort>().PrepareAsync(CopyCommand(), CancellationToken.None);
+
+        Assert.Empty(preparation.Blockers);
+        Assert.True(File.Exists(sharedVariableFile));
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => attach.AttachAsync(new CopilotAttachCommand { Environment = ManagedAgentFixtures.EnvironmentContext(), ProjectDirectory = _workspace, DisplayName = "Copy Agent", SchemaName = "con_copy" }, CancellationToken.None));
+
+        Assert.Equal(CopilotErrorKinds.SharedEnvironmentVariablesRequireOverwrite, failure.ErrorKind);
+        Assert.Contains("cr9_shared", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(0, dataverseClient.CreateCalls);
+    }
+
     private CopilotCopyPrepareCommand CopyCommand() => new()
     {
         WorkspaceDirectory = _workspace,
@@ -164,14 +195,6 @@ public sealed class WorkspaceCopyAdapterTests : IDisposable
         SchemaName = "con_copy",
     };
 
-    private static ServiceProvider BuildProvider()
-    {
-        var services = new ServiceCollection();
-        services.AddSingleton<ITokenProvider>(new RecordingTokenProvider());
-        services.AddAgentHostCopilotStudio(TextWriter.Null, PowerPlatformApiRingSelection.Default);
-
-        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = false });
-    }
 
     private sealed class RecordingCopyService : IWorkspaceCopyService
     {

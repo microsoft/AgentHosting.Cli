@@ -6,6 +6,7 @@ using Microsoft.Agents.Platform.Content;
 using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 using Microsoft.CopilotStudio.Sync.Dataverse;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
@@ -32,9 +33,10 @@ public sealed class WorkspaceReattachAdapterTests : IDisposable
         }
     }
 
-    private static WorkspaceReattachAdapter Create(RecordingWorkspaceSynchronizer synchronizer, RecordingRetargetService retargetService, RecordingAgentCreationClient? dataverseClient = null) =>
+    private static WorkspaceReattachAdapter Create(RecordingWorkspaceSynchronizer synchronizer, RecordingRetargetService retargetService, RecordingAgentCreationClient? dataverseClient = null, IEnvironmentVariableDependencyValidator? environmentVariableValidator = null) =>
         new(
             synchronizer,
+            environmentVariableValidator ?? synchronizer,
             retargetService,
             dataverseClient ?? new RecordingAgentCreationClient(),
             new StubOperationContextProvider(),
@@ -95,6 +97,117 @@ connectionReferences:
         Assert.Equal(0, dataverseClient.CreateCalls);
         Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
         Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.UpsertWorkflowForAgentAsync), synchronizer.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Attach_WhenTheWorkspaceWouldOverwriteASharedEnvironmentVariableTheTargetHolds_CreatesNoAgentAndSendsNothing(bool retargeting)
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer
+        {
+            SyncInfoAvailable = retargeting,
+            DefinitionReturns = CopilotTestFixtures.AgentDefinition("con_contosohelpdesk", "cr9_shared"),
+            EnvironmentVariableCheck = CopilotTestFixtures.TargetHolding("cr9_shared"),
+        };
+        var dataverseClient = new RecordingAgentCreationClient();
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
+            () => Create(synchronizer, new RecordingRetargetService(), dataverseClient).AttachAsync(Command() with { AllowRetarget = true }, CancellationToken.None));
+
+        Assert.Equal(CopilotErrorKinds.SharedEnvironmentVariablesRequireOverwrite, failure.ErrorKind);
+        Assert.Equal("This deploy would overwrite 1 shared environment variable that env-1 already holds: cr9_shared.", failure.Message);
+        Assert.Equal(retargeting, Assert.Single(synchronizer.EnvironmentVariableChecksComparedWithTheCloudCache));
+        Assert.Equal(0, dataverseClient.CreateCalls);
+        Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
+    }
+
+    [Fact]
+    public async Task Attach_WhenTheTargetLacksAnEnvironmentVariableTheWorkspaceUsesBesideASharedOverwrite_RefusesTheMissingVariableBeforeCreatingTheAgent()
+    {
+        CopilotTestFixtures.WriteEnvironmentVariableFile(_directory, "cr9_shared");
+        using var provider = CopilotTestFixtures.SyncServices();
+        var synchronizer = new RecordingWorkspaceSynchronizer
+        {
+            SyncInfoAvailable = false,
+            DefinitionReturns = CopilotTestFixtures.AgentDefinition("con_contosohelpdesk", "cr9_shared").WithComponents([CopilotTestFixtures.GreetingTopic("con_contosohelpdesk", "{Env.cr9_shared} {Env.cr9_missing}")]),
+        };
+        var dataverseClient = new RecordingAgentCreationClient();
+        dataverseClient.EnvironmentVariables.Add(new SyncDataverseClient.EnvironmentVariableDefinitionInfo { DefinitionId = Guid.NewGuid(), SchemaName = "cr9_shared" });
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
+            () => Create(synchronizer, new RecordingRetargetService(), dataverseClient, provider.GetRequiredService<IEnvironmentVariableDependencyValidator>()).AttachAsync(Command(), CancellationToken.None));
+
+        Assert.Equal(CopilotErrorKinds.WorkspaceFilesUnreadable, failure.ErrorKind);
+        Assert.Contains("'cr9_missing' does not exist in the target environment", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(0, dataverseClient.CreateCalls);
+        Assert.DoesNotContain(nameof(RecordingAgentCreationClient.GetAgentIdBySchemaNameAsync), dataverseClient.Calls);
+        Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Attach_WhenTheTargetManagesASharedEnvironmentVariableTheWorkspaceChanges_RefusesItRatherThanAskingForOverwriteAndCreatesNoAgent(bool alongsideAnUnmanagedOverwrite)
+    {
+        string[] workspaceVariables = alongsideAnUnmanagedOverwrite ? ["cr9_managed", "cr9_shared"] : ["cr9_managed"];
+        foreach (var schemaName in workspaceVariables)
+        {
+            CopilotTestFixtures.WriteEnvironmentVariableFile(_directory, schemaName);
+        }
+
+        using var provider = CopilotTestFixtures.SyncServices();
+        var synchronizer = new RecordingWorkspaceSynchronizer
+        {
+            SyncInfoAvailable = false,
+            DefinitionReturns = CopilotTestFixtures.AgentDefinition("con_contosohelpdesk", workspaceVariables),
+        };
+        var dataverseClient = new RecordingAgentCreationClient();
+        dataverseClient.EnvironmentVariables.Add(new SyncDataverseClient.EnvironmentVariableDefinitionInfo { DefinitionId = Guid.NewGuid(), SchemaName = "cr9_managed", IsManaged = true });
+        dataverseClient.EnvironmentVariables.Add(new SyncDataverseClient.EnvironmentVariableDefinitionInfo { DefinitionId = Guid.NewGuid(), SchemaName = "cr9_shared" });
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(
+            () => Create(synchronizer, new RecordingRetargetService(), dataverseClient, provider.GetRequiredService<IEnvironmentVariableDependencyValidator>()).AttachAsync(Command(), CancellationToken.None));
+
+        Assert.Equal(CopilotErrorKinds.WorkspaceFilesUnreadable, failure.ErrorKind);
+        Assert.Contains("'cr9_managed' is managed in the target environment", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("cr9_shared", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(0, dataverseClient.CreateCalls);
+        Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
+    }
+
+    [Fact]
+    public async Task Attach_WhenOverwritingSharedEnvironmentVariables_CreatesTheAgentWithoutAskingTheTargetWhichItHolds()
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer
+        {
+            SyncInfoAvailable = false,
+            DefinitionReturns = CopilotTestFixtures.AgentDefinition("con_contosohelpdesk", "cr9_shared"),
+            EnvironmentVariableCheck = CopilotTestFixtures.TargetHolding("cr9_shared"),
+        };
+        var dataverseClient = new RecordingAgentCreationClient();
+
+        await Create(synchronizer, new RecordingRetargetService(), dataverseClient).AttachAsync(Command() with { OverwriteSharedEnvironmentVariables = true }, CancellationToken.None);
+
+        Assert.Empty(synchronizer.EnvironmentVariableChecksComparedWithTheCloudCache);
+        Assert.Equal(1, dataverseClient.CreateCalls);
+    }
+
+    [Fact]
+    public async Task Attach_OfAWorkspaceHoldingOnlyItsOwnEnvironmentVariables_CreatesTheAgentWithoutAskingTheTargetWhichItHolds()
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer
+        {
+            SyncInfoAvailable = false,
+            DefinitionReturns = CopilotTestFixtures.AgentDefinition("con_contosohelpdesk", "con_contosohelpdesk.greeting"),
+            EnvironmentVariableCheck = CopilotTestFixtures.TargetHolding("con_contosohelpdesk.greeting"),
+        };
+        var dataverseClient = new RecordingAgentCreationClient();
+
+        await Create(synchronizer, new RecordingRetargetService(), dataverseClient).AttachAsync(Command(), CancellationToken.None);
+
+        Assert.Empty(synchronizer.EnvironmentVariableChecksComparedWithTheCloudCache);
+        Assert.Equal(1, dataverseClient.CreateCalls);
     }
 
     [Fact]
@@ -608,6 +721,14 @@ internal sealed class RecordingAgentCreationClient : RecordingConnectionReferenc
     public Exception? SchemaProbeThrows { get; init; }
 
     public List<string> EnsuredConnectionReferences => EnsuredLogicalNames;
+
+    public List<EnvironmentVariableDefinitionInfo> EnvironmentVariables { get; } = [];
+
+    public override Task<EnvironmentVariableDefinitionInfo[]> GetEnvironmentVariableDefinitionsBySchemaNamesAsync(IEnumerable<string> schemaNames, CancellationToken cancellationToken)
+    {
+        Calls.Add(nameof(GetEnvironmentVariableDefinitionsBySchemaNamesAsync));
+        return Task.FromResult(EnvironmentVariables.Where(definition => schemaNames.Contains(definition.SchemaName, StringComparer.OrdinalIgnoreCase)).ToArray());
+    }
 
     public override Task<SolutionInfo> GetSolutionVersionsAsync(CancellationToken cancellationToken)
     {

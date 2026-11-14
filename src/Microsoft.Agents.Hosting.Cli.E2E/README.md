@@ -242,20 +242,9 @@ The `eval` pack adds evaluation test sets to the ledger — recorded by name, be
 creates them, and deleted with `agent eval testset delete --force`.
 
 The `copy` pack records each copy before its first deploy, by its schema name until the deploy names
-the agent it created. Cleanup deletes each copy with `agent delete --all-resources`, which removes its
+the agent it created, together with the workflow ids the copy assigned, which the deploy creates its
+workflows under. Cleanup deletes each copy with `agent delete --all-resources`, which removes its
 agent and every workflow, prompt, connection reference, and custom connector its workspace names.
-When that delete fails, the copy
-is reported as an orphan while its agent is still found (by id or by schema name, so a copy whose
-deploy never reported its agent's id is not missed). Once the agent is gone, cleanup falls back to the
-copy's workspace: the workflows it names are deleted through the standalone-workflow path, and the
-other resources are listed in yellow as **retained**, with their ids, rather than as orphans. After the ledger, cleanup
-sweeps each copy environment for workflows named after this run's copies that no copy's cleanup removed
-(for example ones of a copy whose project folder is gone), notes each as `LEAK:` in the
-transcript, and deletes it. `cleanup --run-id` retries entries an earlier cleanup left orphaned. The
-copy pack, and the workflow scenarios that run `agent init` (which takes no `--environment-id`, so the
-record's home environment is the selected one), select the dev environment for the run and restore
-your selection afterwards.
-
 ---
 
 ## Fixtures

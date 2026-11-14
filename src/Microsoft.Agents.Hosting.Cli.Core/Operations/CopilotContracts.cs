@@ -113,6 +113,9 @@ public sealed record CopilotPushRequest
     /// tell whose edit is newer and the remote one may be somebody else's.
     /// </summary>
     public bool Overwrite { get; init; }
+
+    /// <summary>Whether the push may replace the values of shared environment variables the target environment already holds.</summary>
+    public bool OverwriteSharedEnvironmentVariables { get; init; }
 }
 
 /// <summary>Result of <c>msagent agent deploy</c>.</summary>

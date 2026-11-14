@@ -20,6 +20,7 @@ public sealed class SyncWorkspaceAdapterPushOutcomeTests
     private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
         new(
             synchronizer,
+            synchronizer,
             new RecordingRetargetService(),
             new StubSolutionVersionsClient(),
             new StubComponentCollectionClient(),
@@ -33,7 +34,7 @@ public sealed class SyncWorkspaceAdapterPushOutcomeTests
         var synchronizer = new RecordingWorkspaceSynchronizer();
         synchronizer.LocalChanges.Add(new Change { Name = "Greeting", SchemaName = "cr_agent.topic.Greeting", ChangeKind = "DialogComponent", ChangeType = ChangeType.Update });
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.CloneChangesAsync), synchronizer.Calls);
         Assert.Empty(outcome.Warnings);
@@ -46,7 +47,7 @@ public sealed class SyncWorkspaceAdapterPushOutcomeTests
         synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Escalate" });
         synchronizer.PromptResponses.Add(new Microsoft.CopilotStudio.Sync.Dataverse.SyncDataverseClient.AIPromptResponse { PromptName = "Summarize" });
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, outcome.AuxiliaryChangeCount);
     }
@@ -60,7 +61,7 @@ public sealed class SyncWorkspaceAdapterPushOutcomeTests
         synchronizer.LocalChanges.Add(new Change { Name = "Escalate", SchemaName = $"{WorkflowLayout.SchemaNamePrefix}{workflowId}.metadata", ChangeKind = "CloudFlowDefinition", ChangeType = ChangeType.Update });
         synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowId = workflowId, WorkflowName = "Escalate" });
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal($"{WorkflowLayout.SchemaNamePrefix}{workflowId}", Assert.Single(outcome.Changes).SchemaName);
         Assert.Equal(0, outcome.AuxiliaryChangeCount);
@@ -69,7 +70,7 @@ public sealed class SyncWorkspaceAdapterPushOutcomeTests
     [Fact]
     public async Task Push_WithNothingAuxiliaryToSend_ReportsNone()
     {
-        var outcome = await Create(new RecordingWorkspaceSynchronizer()).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(new RecordingWorkspaceSynchronizer()).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(0, outcome.AuxiliaryChangeCount);
     }
@@ -94,7 +95,7 @@ public sealed class SyncWorkspaceAdapterPushOutcomeTests
             Created("BotComponentCollection", "con_collection"),
         ]);
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(4, outcome.ComponentCount);
         Assert.Equal(10, outcome.Changes.Count);
@@ -105,7 +106,7 @@ public sealed class SyncWorkspaceAdapterPushOutcomeTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer { UploadedFileNames = ["SKILL.md", "File 1.txt"] };
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(["SKILL.md", "File 1.txt"], outcome.UploadedFileNames);
     }
@@ -113,7 +114,7 @@ public sealed class SyncWorkspaceAdapterPushOutcomeTests
     [Fact]
     public async Task Push_WithNoFilesUploaded_ReportsNone()
     {
-        var outcome = await Create(new RecordingWorkspaceSynchronizer()).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(new RecordingWorkspaceSynchronizer()).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Empty(outcome.UploadedFileNames);
     }

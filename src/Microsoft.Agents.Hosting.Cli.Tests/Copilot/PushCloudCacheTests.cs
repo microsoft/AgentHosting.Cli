@@ -17,6 +17,7 @@ public sealed class PushCloudCacheTests
     private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer, RecordingRetargetService retarget, RecordingConnectionReferenceClient? dataverseClient = null) =>
         new(
             synchronizer,
+            synchronizer,
             retarget,
             dataverseClient ?? new RecordingConnectionReferenceClient(),
             new StubComponentCollectionClient(),
@@ -29,7 +30,7 @@ public sealed class PushCloudCacheTests
     {
         var retarget = new RecordingRetargetService();
 
-        await Create(CopilotTestFixtures.FailingOnce(CopilotTestFixtures.MissingEntity()), retarget).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(CopilotTestFixtures.FailingOnce(CopilotTestFixtures.MissingEntity()), retarget).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.False(retarget.LastSyncWorkflowsAndPrompts);
         Assert.NotNull(retarget.LastCloudFlowMetadata);
@@ -40,7 +41,7 @@ public sealed class PushCloudCacheTests
         using var workspace = new ClassicWorkspace();
         var retarget = new RecordingRetargetService();
 
-        await Create(CopilotTestFixtures.FailingOnce(CopilotTestFixtures.MissingEntity()), retarget).PushAsync(workspace.Info, overwrite: false, CancellationToken.None);
+        await Create(CopilotTestFixtures.FailingOnce(CopilotTestFixtures.MissingEntity()), retarget).PushAsync(workspace.Info, overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         return retarget;
     }
@@ -63,7 +64,7 @@ public sealed class PushCloudCacheTests
         var retarget = new RecordingRetargetService();
         var dataverseClient = new RecordingConnectionReferenceClient();
 
-        await Create(CopilotTestFixtures.FailingOnce(CopilotTestFixtures.MissingEntity()), retarget, dataverseClient).PushAsync(workspace.Info, overwrite: false, CancellationToken.None);
+        await Create(CopilotTestFixtures.FailingOnce(CopilotTestFixtures.MissingEntity()), retarget, dataverseClient).PushAsync(workspace.Info, overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         var reference = Assert.Single(retarget.LastCloudFlowMetadata!.ConnectionReferences);
         var row = dataverseClient.References["crf9a_Classic.shared_teams.0add1954"];
@@ -78,7 +79,7 @@ public sealed class PushCloudCacheTests
         using var workspace = new ClassicWorkspace();
         var before = SnapshotWorkspace(workspace.Info.WorkspacePath);
 
-        await Create(CopilotTestFixtures.FailingOnce(CopilotTestFixtures.MissingEntity()), new RecordingRetargetService()).PushAsync(workspace.Info, overwrite: false, CancellationToken.None);
+        await Create(CopilotTestFixtures.FailingOnce(CopilotTestFixtures.MissingEntity()), new RecordingRetargetService()).PushAsync(workspace.Info, overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(before, SnapshotWorkspace(workspace.Info.WorkspacePath));
     }
@@ -91,7 +92,7 @@ public sealed class PushCloudCacheTests
         var retarget = new RecordingRetargetService();
 
         await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer, retarget, new RecordingConnectionReferenceClient { OmitProvisionedReferences = true }).PushAsync(workspace.Info, overwrite: false, CancellationToken.None));
+            () => Create(synchronizer, retarget, new RecordingConnectionReferenceClient { OmitProvisionedReferences = true }).PushAsync(workspace.Info, overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Equal(0, synchronizer.PushLocalChangesCalls);
         Assert.Empty(retarget.Calls);

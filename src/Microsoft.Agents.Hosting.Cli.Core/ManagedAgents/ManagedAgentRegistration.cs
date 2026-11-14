@@ -35,12 +35,21 @@ public sealed class ManagedAgentRegistration
     {
         ArgumentNullException.ThrowIfNull(registeredAgents);
 
+        RequireNameIsFree(registeredAgents, projectDirectory, name);
+        WorkspaceDirectoryGuard.RequireEmpty(workspaceDirectory, projectChoosesDestination);
+    }
+
+    /// <summary>Rejects a display name another record in the project already carries, before anything is written.</summary>
+    /// <param name="projectDirectory">The project the record is registered in.</param>
+    /// <param name="name">The record's display name.</param>
+    public void RequireNameIsFree(string projectDirectory, string name) => RequireNameIsFree(_agents.List(projectDirectory), projectDirectory, name);
+
+    private void RequireNameIsFree(IEnumerable<ManagedAgentRecord> registeredAgents, string projectDirectory, string name)
+    {
         if (registeredAgents.FirstOrDefault(agent => string.Equals(agent.DisplayName, name, StringComparison.OrdinalIgnoreCase)) is { } duplicate)
         {
             throw ManagedAgentException.AlreadyRegistered(duplicate.DisplayName, duplicate.AgentId, _locator.ConfigFilePath(projectDirectory));
         }
-
-        WorkspaceDirectoryGuard.RequireEmpty(workspaceDirectory, projectChoosesDestination);
     }
 
     /// <summary>Adds an MCS agent record.</summary>

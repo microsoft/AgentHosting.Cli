@@ -10,24 +10,26 @@ public sealed class FileSystemRetryTests : IDisposable
     public void Dispose() => _workspace.Dispose();
 
     [Fact]
-    public async Task WhileHeld_MovesADirectoryOnceAFileInsideItIsNoLongerHeld()
+    public void WhileHeld_MovesADirectoryOnceAFileInsideItIsNoLongerHeld()
     {
         var source = Path.Combine(_workspace.Root, "staging");
         var destination = Path.Combine(_workspace.Root, "workspace");
         Directory.CreateDirectory(source);
         File.WriteAllText(Path.Combine(source, "agent.mcs.yml"), "kind: AdaptiveDialog");
-        using var opened = new SemaphoreSlim(0);
-        var scanner = Task.Run(async () =>
+        using var scanner = new FileStream(Path.Combine(source, "agent.mcs.yml"), FileMode.Open, FileAccess.Read, FileShare.Read);
+        var attempts = 0;
+
+        FileSystemRetry.WhileHeld(() =>
         {
-            using var stream = new FileStream(Path.Combine(source, "agent.mcs.yml"), FileMode.Open, FileAccess.Read, FileShare.Read);
-            opened.Release();
-            await Task.Delay(TimeSpan.FromMilliseconds(100));
+            if (++attempts == 2)
+            {
+                scanner.Dispose();
+            }
+
+            Directory.Move(source, destination);
         });
 
-        await opened.WaitAsync();
-        FileSystemRetry.WhileHeld(() => Directory.Move(source, destination));
-        await scanner;
-
+        Assert.Equal(OperatingSystem.IsWindows() ? 2 : 1, attempts);
         Assert.False(Directory.Exists(source));
         Assert.Equal("kind: AdaptiveDialog", File.ReadAllText(Path.Combine(destination, "agent.mcs.yml")));
     }

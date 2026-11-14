@@ -18,6 +18,8 @@ public sealed record WorkflowSeed(string Name, string WorkflowId, string Environ
 
 public sealed record CorpusSeed(CopySeed Seed, ManagedAgentCopyResult Copy, ManagedAgentDeployResult Deployed, string CloneDirectory, double Seconds);
 
+public sealed record CloudBaseline(string CloneDirectory, TreeSnapshot Snapshot);
+
 public static class CopySteps
 {
     public const string DeploymentName = "copy-dev";
@@ -112,6 +114,7 @@ public static class CopySteps
         else
         {
             context.Ledger.RecordCopy(SchemaNameOf(copy), copy.DisplayName, copy.EnvironmentId, copy.ProjectDirectory, copy.WorkspaceDirectory, copy.AgentId, deploymentName, context.ScenarioId);
+            context.Ledger.RecordCopyWorkflows(OwnedIdentities(copy, CopyIdentityKinds.Workflow), copy.DisplayName, copy.EnvironmentId, context.ScenarioId);
         }
 
         var result = await McsSteps.DeployCommandAsync(context, WorkspaceOf(context, copy), deploymentName, null, ["--agent-name", copy.DisplayName, .. extraArguments], CommandTimeout).ConfigureAwait(false);
@@ -284,14 +287,18 @@ public static class CopySteps
         context.Session.SettledAsync(CorpusSeedPool, agentFolder, async () =>
         {
             var source = await CorpusSourceAsync(context, agentFolder).ConfigureAwait(false);
-            var before = TreeSnapshot.Take(source.Root);
+            var before = SnapshotLocalSource(source);
             var ((copy, deployed, clone), seconds) = await TimeAsync(() => VerifiedFirstDeployAsync(context, LocalSource(source), "seed")).ConfigureAwait(false);
             AssertLocalSourceIntact(context, source, before);
 
             return new CorpusSeed(SeedOf(agentFolder, copy, deployed), copy, deployed, clone, seconds);
         });
 
-    public static void AssertLocalSourceIntact(ScenarioContext context, Workspace source, TreeSnapshot before) => context.Assert.NoDifferences(TreeSnapshot.Take(source.Root).DifferencesFrom(before), $"the local source {source.AgentName} is byte-identical");
+    public static void AssertLocalSourceIntact(ScenarioContext context, Workspace source, TreeSnapshot before) => context.Assert.NoDifferences(SnapshotLocalSource(source).DifferencesFrom(before), $"the local source {source.AgentName} is byte-identical");
+
+    public static TreeSnapshot SnapshotLocalSource(Workspace source) => TreeSnapshot.Take(LocalSourceDirectory(source));
+
+    public static string LocalSourceDirectory(Workspace source) => Registry(source.ConfigPath).ManagedAgents.FirstOrDefault(agent => string.Equals(agent.AgentId, source.RecordId, StringComparison.OrdinalIgnoreCase)) is { } record && new AgentConfigLocator().AgentWorkspaceDirectory(source.ProjectDirectory, record.AgentLocation) is { } directory ? directory : throw new E2EException($"{source.ConfigPath} registers no workspace for {source.AgentName}.");
 
     public static IReadOnlyList<string> LeftBesideTheProjectLock(string project) => LeftBesideTheLock(project, project);
 
@@ -338,14 +345,19 @@ public static class CopySteps
         return McsSteps.CreatedWorkspace(context.ScenarioId, directory, created, seed.SchemaName) with { DeployForbidden = true };
     }
 
-    public static Task<TreeSnapshot> BaselineAsync(ScenarioContext context, CloudSeed seed) =>
-        context.Session.PooledAsync(BaselinePool, seed.CloudId, async () => TreeSnapshot.Take(await CloneSeedAsync(context, seed, $"baseline-{seed.Name}").ConfigureAwait(false), CloneState));
+    public static Task<CloudBaseline> BaselineAsync(ScenarioContext context, CloudSeed seed) =>
+        context.Session.PooledAsync(BaselinePool, seed.CloudId, async () =>
+        {
+            var directory = await CloneSeedAsync(context, seed, $"baseline-{seed.Name}").ConfigureAwait(false);
+
+            return new CloudBaseline(directory, TreeSnapshot.Take(directory, CloneState));
+        });
 
     public static async Task AssertSourceIntactAsync(ScenarioContext context, CloudSeed seed)
     {
         var baseline = await BaselineAsync(context, seed).ConfigureAwait(false);
 
-        context.Assert.NoDifferences(TreeSnapshot.Take(await CloneSeedAsync(context, seed, $"recheck-{seed.Name}").ConfigureAwait(false), CloneState).DifferencesFrom(baseline), $"{seed.Name} is unchanged in the cloud");
+        context.Assert.NoDifferences(TreeSnapshot.Take(await CloneSeedAsync(context, seed, $"recheck-{seed.Name}").ConfigureAwait(false), CloneState).DifferencesFrom(baseline.Snapshot), $"{seed.Name} is unchanged in the cloud");
     }
 
     public static Task<string> CloneAsync(ScenarioContext context, string agentId, string environmentId, string label) => McsSteps.CloneAsync(context, agentId, environmentId, Unique(label));

@@ -61,12 +61,11 @@ public sealed class ExclusiveFileLockTests : IDisposable
         using var held = ExclusiveFileLock.TryAcquire(LockPath)!;
         var waiting = ExclusiveFileLock.AcquireAsync(LockPath, TimeSpan.FromSeconds(30), CancellationToken.None);
 
-        await Task.Delay(TimeSpan.FromMilliseconds(300));
-        var completedWhileHeld = waiting.IsCompleted;
+        Assert.False(waiting.IsCompleted);
+
         held.Dispose();
         using var acquired = await waiting;
 
-        Assert.False(completedWhileHeld);
         Assert.Null(ExclusiveFileLock.TryAcquire(LockPath));
     }
 

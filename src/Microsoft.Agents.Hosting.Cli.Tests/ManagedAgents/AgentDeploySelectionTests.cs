@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
+using Microsoft.Agents.Hosting.Cli.Core;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
@@ -38,7 +39,7 @@ public sealed class AgentDeploySelectionTests : IDisposable
         Assert.Equal("Agent 'Tmp1' has no deployment records. Create a deployment before deploying.", failure.Message);
         Assert.Equal(ExitCodes.Usage, failure.ExitCode);
         Assert.Equal(
-            $"Create a deployment for 'Tmp1':{Environment.NewLine}  msagent deployment create --project \"{_workspace.Root}\" --agent-id \"agent-1\" --deployment-name development --deployment-type dev{Environment.NewLine}Then deploy:{Environment.NewLine}  msagent agent deploy --project \"{_workspace.Root}\" --agent-id \"agent-1\" --deployment-name development",
+            $"Create a deployment for 'Tmp1':{Environment.NewLine}  msagent deployment create --project {QuotedRoot} --agent-id agent-1 --deployment-name development --deployment-type dev{Environment.NewLine}Then deploy:{Environment.NewLine}  msagent agent deploy --project {QuotedRoot} --agent-id agent-1 --deployment-name development",
             failure.Remediation);
     }
 
@@ -56,7 +57,7 @@ public sealed class AgentDeploySelectionTests : IDisposable
         Assert.Equal("deployment-selector-required", failure.ErrorKind);
         Assert.Equal($"No deployment selected for agent 'Tmp1'.{Environment.NewLine}Available deployments: development", failure.Message);
         Assert.Contains("--deployment-id or --deployment-name", failure.Remediation, StringComparison.Ordinal);
-        Assert.Contains("--deployment-id \"deployment-1\"", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains("--deployment-id deployment-1", failure.Remediation, StringComparison.Ordinal);
         Assert.DoesNotContain("msagent deployment create", failure.Remediation, StringComparison.Ordinal);
     }
 
@@ -99,8 +100,8 @@ public sealed class AgentDeploySelectionTests : IDisposable
         Assert.Contains($"Tmp2 (agent-2): {(secondHasDeployment ? "second-development" : "no deployment records")}", failure.Message, StringComparison.Ordinal);
         Assert.Equal(firstHasDeployment || secondHasDeployment ? "deployment-selector-required" : "deployment-records-empty", failure.ErrorKind);
         Assert.Equal(!firstHasDeployment && !secondHasDeployment, failure.Message.Contains("None of the agents in this folder has deployment records.", StringComparison.Ordinal));
-        Assert.Contains($"msagent {(firstHasDeployment ? "agent deploy" : "deployment create")} --project \"{_workspace.Root}\" --agent-id \"agent-1\"", failure.Remediation, StringComparison.Ordinal);
-        Assert.Contains($"msagent {(secondHasDeployment ? "agent deploy" : "deployment create")} --project \"{_workspace.Root}\" --agent-id \"agent-2\"", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains($"msagent {(firstHasDeployment ? "agent deploy" : "deployment create")} --project {QuotedRoot} --agent-id agent-1", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains($"msagent {(secondHasDeployment ? "agent deploy" : "deployment create")} --project {QuotedRoot} --agent-id agent-2", failure.Remediation, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -317,7 +318,7 @@ public sealed class AgentDeploySelectionTests : IDisposable
         Assert.Contains("Tmp1 (agent-1): no deployment records", failure.Message, StringComparison.Ordinal);
         Assert.Contains("Code Agent (code-agent): CodeAgent", failure.Message, StringComparison.Ordinal);
         Assert.Contains("package-revision", failure.Remediation, StringComparison.Ordinal);
-        Assert.DoesNotContain("--agent-id \"code-agent\"", failure.Remediation, StringComparison.Ordinal);
+        Assert.DoesNotContain("--agent-id code-agent", failure.Remediation, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -332,7 +333,7 @@ public sealed class AgentDeploySelectionTests : IDisposable
 
         Assert.Equal("deployment-records-empty", failure.ErrorKind);
         Assert.Equal("Agent 'Tmp1' has no deployment records. Create a deployment before deploying.", failure.Message);
-        Assert.Contains($"msagent deployment create --project \"{_workspace.Root}\" --agent-id \"agent-1\"", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains($"msagent deployment create --project {QuotedRoot} --agent-id agent-1", failure.Remediation, StringComparison.Ordinal);
         Assert.DoesNotContain("code-deployment", failure.Remediation, StringComparison.Ordinal);
         Assert.DoesNotContain("code-production", failure.Remediation, StringComparison.Ordinal);
     }
@@ -366,7 +367,7 @@ public sealed class AgentDeploySelectionTests : IDisposable
 
         Assert.Equal("deployment-selector-required", failure.ErrorKind);
         Assert.Equal($"No deployment selected for agent 'Tmp1'.{Environment.NewLine}Available deployments: development", failure.Message);
-        Assert.Contains($"msagent agent deploy --project \"{_workspace.Root}\" --agent-id \"agent-1\" --deployment-id \"deployment-1\"", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains($"msagent agent deploy --project {QuotedRoot} --agent-id agent-1 --deployment-id deployment-1", failure.Remediation, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -388,27 +389,13 @@ public sealed class AgentDeploySelectionTests : IDisposable
             ManagedAgentException.DeploymentSelectionFailed(@"C:\projects\$HOME", [ManagedAgentFixtures.Agent("agent`1", "Tmp1")], []).Remediation);
     }
 
-    [Theory]
-    [InlineData("agent-1", "\"agent-1\"", "\"agent-1\"")]
-    [InlineData("/tmp/O'Brien/agent", "\"/tmp/O'Brien/agent\"", "\"/tmp/O'Brien/agent\"")]
-    [InlineData("/tmp/O'Brien/$HOME", "'/tmp/O''Brien/$HOME'", "'/tmp/O'\\''Brien/$HOME'")]
-    [InlineData("agent`1", "'agent`1'", "'agent`1'")]
-    [InlineData("deploy\"ment", "'deploy\"ment'", "'deploy\"ment'")]
-    [InlineData(@"C:\Users\O'Brien\agent", @"""C:\Users\O'Brien\agent""", @"'C:\Users\O'\''Brien\agent'")]
-    [InlineData("Sales!Bot", "\"Sales!Bot\"", "'Sales!Bot'")]
-    public void PowerShellAndPosixShellsEachReadTheQuotedArgumentBackUnchanged(string value, string powerShellArgument, string posixArgument)
-    {
-        Assert.Equal(powerShellArgument, ManagedAgentException.PowerShellCommandArgument(value));
-        Assert.Equal(posixArgument, ManagedAgentException.PosixCommandArgument(value));
-    }
-
     [Fact]
     public void BothRecoveryCommandsQuoteTheProjectForThisPlatformsShell()
     {
         var project = OperatingSystem.IsWindows() ? "'/tmp/O''Brien/$HOME'" : "'/tmp/O'\\''Brien/$HOME'";
 
         Assert.Equal(
-            $"Create a deployment for 'Tmp1':{Environment.NewLine}  msagent deployment create --project {project} --agent-id \"agent-1\" --deployment-name development --deployment-type dev{Environment.NewLine}Then deploy:{Environment.NewLine}  msagent agent deploy --project {project} --agent-id \"agent-1\" --deployment-name development",
+            $"Create a deployment for 'Tmp1':{Environment.NewLine}  msagent deployment create --project {project} --agent-id agent-1 --deployment-name development --deployment-type dev{Environment.NewLine}Then deploy:{Environment.NewLine}  msagent agent deploy --project {project} --agent-id agent-1 --deployment-name development",
             ManagedAgentException.DeploymentSelectionFailed("/tmp/O'Brien/$HOME", [ManagedAgentFixtures.Agent("agent-1", "Tmp1")], []).Remediation);
     }
 
@@ -546,8 +533,10 @@ public sealed class AgentDeploySelectionTests : IDisposable
         });
 
         Assert.Equal("deployment-records-empty", failure.ErrorKind);
-        Assert.Contains($"--project \"{_workspace.Root}\"", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains($"--project {QuotedRoot}", failure.Remediation, StringComparison.Ordinal);
     }
+
+    private string QuotedRoot => CommandLineArgument.Quote(_workspace.Root);
 
     private void RegisterAgent(string agentId = "agent-1", string name = "Tmp1", string agentType = AgentTypes.McsAgent) =>
         _config.Add(_workspace.Root, ManagedAgentFixtures.Agent(agentId, name) with { AgentType = agentType, AgentLocation = agentId });

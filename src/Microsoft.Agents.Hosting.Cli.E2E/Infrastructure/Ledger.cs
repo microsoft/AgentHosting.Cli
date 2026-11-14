@@ -19,6 +19,7 @@ public enum ResourceKind
     StandaloneConnectionReference,
     McsCopy,
     McsCopyRow,
+    McsCopyWorkflow,
 }
 
 /// <summary>Where a resource stands: created and still present, removed, left behind, or deliberately kept because nothing can delete it.</summary>
@@ -356,6 +357,19 @@ public sealed class Ledger
         }
 
         return Record(ResourceKind.McsCopy, schemaName, displayName, scenarioId, new CleanupPlan { Via = "agent delete --all-resources", ProjectDirectory = projectDirectory, WorkspaceDirectory = workspaceDirectory, DeploymentName = deploymentName, EnvironmentId = environmentId, SchemaName = schemaName, AgentId = managedAgentId }, resolved: false);
+    }
+
+    /// <summary>Records, before a copy's deploy, the workflow ids the copy assigned, which become the ids of the workflows the deploy creates.</summary>
+    /// <param name="workflowIds">The workflow ids the copy assigned.</param>
+    /// <param name="copyDisplayName">The copy the workflows belong to.</param>
+    /// <param name="environmentId">The environment the copy deploys into.</param>
+    /// <param name="scenarioId">The scenario that deploys the copy.</param>
+    public void RecordCopyWorkflows(IReadOnlyList<string> workflowIds, string copyDisplayName, string environmentId, string scenarioId)
+    {
+        foreach (var workflowId in workflowIds)
+        {
+            Record(ResourceKind.McsCopyWorkflow, workflowId, $"workflow of {copyDisplayName}", scenarioId, new CleanupPlan { Via = "agent create --mcs-clone-workflow-id, then agent delete", EnvironmentId = environmentId, WorkflowId = workflowId });
+        }
     }
 
     /// <summary>Records a row a copy left in its environment that no msagent command could delete.</summary>

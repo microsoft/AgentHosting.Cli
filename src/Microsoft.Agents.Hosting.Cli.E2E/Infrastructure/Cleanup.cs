@@ -6,6 +6,12 @@ using Microsoft.CopilotStudio.Sync.Copy;
 
 namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 
+/// <summary>What the copy-workflow sweep does in one environment.</summary>
+/// <param name="Gone">The recorded copy workflows the listing proves gone.</param>
+/// <param name="Remaining">The recorded copy workflows still listed, or all of them when the listing is unknown.</param>
+/// <param name="Unproven">The listed workflows named after this run's copies that no ledger entry records, which the sweep leaves in place.</param>
+public sealed record CopyWorkflowSweep(IReadOnlyList<LedgerEntry> Gone, IReadOnlyList<LedgerEntry> Remaining, IReadOnlyList<(string WorkflowId, string DisplayName)> Unproven);
+
 /// <summary>Removes everything the ledger records, and only that.</summary>
 public sealed partial class Cleanup
 {
@@ -42,10 +48,10 @@ public sealed partial class Cleanup
         _standalone = standalone;
     }
 
-    /// <summary>Walks the ledger newest-first within each cleanup phase, removing or restoring each outstanding entry, then sweeps the workflows named after this run's copies that outlived their cleanup.</summary>
+    /// <summary>Walks the ledger newest-first within each cleanup phase, removing or restoring each outstanding entry, then removes the recorded copy workflows still listed and notes the unrecorded ones named after this run's copies.</summary>
     public async Task<IReadOnlyList<LedgerEntry>> RunAsync(Ledger ledger, CancellationToken cancellationToken = default)
     {
-        foreach (var entry in ledger.Outstanding.OrderBy(CleanupPhase).ThenByDescending(candidate => candidate.Sequence))
+        foreach (var entry in ledger.Outstanding.Where(candidate => candidate.Kind != ResourceKind.McsCopyWorkflow).OrderBy(CleanupPhase).ThenByDescending(candidate => candidate.Sequence))
         {
             await RemoveAsync(ledger, entry, cancellationToken).ConfigureAwait(false);
         }
@@ -53,6 +59,28 @@ public sealed partial class Cleanup
         await SweepCopyWorkflowsAsync(ledger, cancellationToken).ConfigureAwait(false);
 
         return ledger.Entries.Where(entry => entry.State == ResourceState.Orphaned).ToArray();
+    }
+
+    /// <summary>Sorts one environment's outstanding copy workflows by what its listing proves, and finds the listed workflows named after this run's copies that no ledger entry records.</summary>
+    /// <param name="ledger">The run's ledger.</param>
+    /// <param name="environmentId">The environment that was listed.</param>
+    /// <param name="listed">The environment's workflows, or null when the listing failed or was truncated.</param>
+    /// <returns>The recorded copy workflows proven gone, those cleanup still removes, and the unrecorded ones it leaves in place.</returns>
+    public static CopyWorkflowSweep PlanCopyWorkflowSweep(Ledger ledger, string environmentId, IReadOnlyList<(string WorkflowId, string DisplayName)>? listed)
+    {
+        var recorded = ledger.Outstanding.Where(entry => entry.Kind == ResourceKind.McsCopyWorkflow && string.Equals(entry.Cleanup.EnvironmentId, environmentId, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+        if (listed is null)
+        {
+            return new CopyWorkflowSweep([], recorded, []);
+        }
+
+        var listedIds = listed.Select(workflow => workflow.WorkflowId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var present = recorded.ToLookup(entry => listedIds.Contains(entry.Id));
+        var marker = $" {ledger.RunId[^4..]} ";
+        var known = ledger.Entries.SelectMany(entry => new[] { entry.Id, entry.Cleanup.WorkflowId }).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return new CopyWorkflowSweep([.. present[false]], [.. present[true]], [.. listed.Where(workflow => workflow.DisplayName.StartsWith(CopyNamePrefix, StringComparison.Ordinal) && workflow.DisplayName.Contains(marker, StringComparison.Ordinal) && !known.Contains(workflow.WorkflowId))]);
     }
 
     private static int CleanupPhase(LedgerEntry entry) => entry.Kind switch
@@ -64,20 +92,26 @@ public sealed partial class Cleanup
 
     private async Task SweepCopyWorkflowsAsync(Ledger ledger, CancellationToken cancellationToken)
     {
-        var marker = $" {ledger.RunId[^4..]} ";
-
-        foreach (var environment in ledger.Entries.Where(entry => entry.Kind == ResourceKind.McsCopy).Select(entry => entry.Cleanup.EnvironmentId).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var environment in ledger.Entries.Where(entry => entry.Kind is ResourceKind.McsCopy or ResourceKind.McsCopyWorkflow).Select(entry => entry.Cleanup.EnvironmentId).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var leaked = (await _cloud.WorkflowsAsync(environment, cancellationToken).ConfigureAwait(false)).Where(workflow => workflow.DisplayName.StartsWith(CopyNamePrefix, StringComparison.Ordinal) && workflow.DisplayName.Contains(marker, StringComparison.Ordinal)).ToArray();
+            var listed = await _cloud.CompleteWorkflowsAsync(environment, cancellationToken).ConfigureAwait(false);
+            var sweep = PlanCopyWorkflowSweep(ledger, environment, listed);
 
-            foreach (var workflow in leaked)
+            if (listed is null)
             {
-                _transcript.Note($"LEAK: workflow {workflow.WorkflowId} ({workflow.DisplayName}) in {environment} outlived its copy's cleanup; the sweep deletes it");
+                _transcript.Note($"the workflows in {environment} could not be listed in full, so each recorded copy workflow there is removed by id and no unrecorded one can be reported");
             }
 
-            foreach (var failure in await RemoveWorkflowsAsync([.. leaked.Select(workflow => workflow.WorkflowId)], environment, cancellationToken).ConfigureAwait(false))
+            foreach (var entry in sweep.Gone)
             {
-                _transcript.Note($"LEAK not removed: {failure}");
+                ledger.MarkDeleted(entry.Id);
+            }
+
+            await Parallel.ForEachAsync(sweep.Remaining, new ParallelOptions { MaxDegreeOfParallelism = WorkflowDeleteParallelism, CancellationToken = cancellationToken }, async (entry, token) => await RemoveAsync(ledger, entry, token).ConfigureAwait(false)).ConfigureAwait(false);
+
+            foreach (var workflow in sweep.Unproven)
+            {
+                _transcript.Note($"UNPROVEN: workflow {workflow.WorkflowId} ({workflow.DisplayName}) in {environment} is named after this run's copies, but no ledger entry records it, so cleanup leaves it in place");
             }
         }
     }
@@ -93,6 +127,7 @@ public sealed partial class Cleanup
                 ResourceKind.McsAgent => await RemoveMcsAgentAsync(entry, cancellationToken).ConfigureAwait(false),
                 ResourceKind.McsWorkflow => await RemoveMcsWorkflowAsync(entry, cancellationToken).ConfigureAwait(false),
                 ResourceKind.McsCopy => await RemoveCopyAsync(ledger, entry, cancellationToken).ConfigureAwait(false),
+                ResourceKind.McsCopyWorkflow => entry.Cleanup.EnvironmentId is { Length: > 0 } environment ? await RemoveWorkflowsAsync([entry.Id], environment, cancellationToken).ConfigureAwait(false) : "the ledger entry has no environment",
                 ResourceKind.AzureBot => await RemoveAzureBotAsync(entry, cancellationToken).ConfigureAwait(false),
                 ResourceKind.EntraApp => await RemoveEntraAppAsync(entry, cancellationToken).ConfigureAwait(false),
                 ResourceKind.LocalWorkspace => RemoveLocalWorkspace(entry, ledger),
@@ -145,7 +180,7 @@ public sealed partial class Cleanup
 
         if (!Directory.Exists(project))
         {
-            return await StillPresentAsync(entry, cancellationToken).ConfigureAwait(false) ? $"the project directory {project} is gone, so the CLI cannot address the agent" : null;
+            return entry.Cleanup.EnvironmentId is not { Length: > 0 } environment || await AgentListedAsync(entry, environment, cancellationToken).ConfigureAwait(false) ? $"the project directory {project} is gone, so the CLI cannot address the agent" : null;
         }
 
         var result = await _msagent.RunAsync(
@@ -174,7 +209,7 @@ public sealed partial class Cleanup
 
         if (!Directory.Exists(project))
         {
-            return await CopyAgentPresentAsync(entry, environment, cancellationToken).ConfigureAwait(false) ? $"the project directory {project} is gone, so the CLI cannot address the copy" : null;
+            return await AgentListedAsync(entry, environment, cancellationToken).ConfigureAwait(false) ? $"the project directory {project} is gone, so the CLI cannot address the copy" : null;
         }
 
         var deleted = await _msagent.RunAsync(["agent", "delete", "--agent-id", managedAgentId, "--all-resources"], project, entry.DisplayName, TimeSpan.FromMinutes(10), cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -184,7 +219,7 @@ public sealed partial class Cleanup
             return null;
         }
 
-        if (await CopyAgentPresentAsync(entry, environment, cancellationToken).ConfigureAwait(false))
+        if (await AgentListedAsync(entry, environment, cancellationToken).ConfigureAwait(false))
         {
             return $"the copy's agent is still listed after agent delete --all-resources exited {deleted.ExitCode}: {Summarize(deleted)}";
         }
@@ -196,23 +231,21 @@ public sealed partial class Cleanup
             ledger.RecordRetainedCopyRow(row.Kind, row.Identity, environment, entry.Id, entry.CreatedBy, $"agent delete --all-resources exited {deleted.ExitCode}: {Summarize(deleted)}");
         }
 
-        var failures = await RemoveWorkflowsAsync([.. rows.Where(row => row.Kind == CopyIdentityKinds.Workflow).Select(row => row.Identity)], environment, cancellationToken).ConfigureAwait(false);
-
-        return failures.Count == 0 ? null : string.Join("; ", failures);
+        return await RemoveWorkflowsAsync([.. rows.Where(row => row.Kind == CopyIdentityKinds.Workflow).Select(row => row.Identity)], environment, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<bool> CopyAgentPresentAsync(LedgerEntry entry, string environment, CancellationToken cancellationToken)
+    private async Task<bool> AgentListedAsync(LedgerEntry entry, string environment, CancellationToken cancellationToken)
     {
         var (withId, withSchemaName) = await _cloud.CountAgentsAsync(environment, entry.Id, entry.Cleanup.SchemaName ?? entry.Id, cancellationToken).ConfigureAwait(false);
 
         return withId + withSchemaName > 0;
     }
 
-    private async Task<IReadOnlyList<string>> RemoveWorkflowsAsync(IReadOnlyList<string> workflowIds, string environment, CancellationToken cancellationToken)
+    private async Task<string?> RemoveWorkflowsAsync(IReadOnlyList<string> workflowIds, string environment, CancellationToken cancellationToken)
     {
         if (workflowIds.Count == 0)
         {
-            return [];
+            return null;
         }
 
         var scratch = Directory.CreateTempSubdirectory("ahe2e-teardown-").FullName;
@@ -233,28 +266,49 @@ public sealed partial class Cleanup
             FileTree.TryDeleteDirectory(scratch);
         }
 
-        return [.. failures];
+        return failures.IsEmpty ? null : string.Join("; ", failures);
     }
 
     /// <summary>Deletes a standalone workflow by cloning a local record that addresses it into a directory, then deleting that record's cloud flow; returns why it failed, or null.</summary>
+    /// <param name="msagent">Runs the clone and the delete.</param>
+    /// <param name="workflowId">The workflow to delete.</param>
+    /// <param name="environment">The environment that holds it.</param>
+    /// <param name="directory">The directory the clone is written into, which the caller removes.</param>
+    /// <param name="cancellationToken">Cancels the commands.</param>
+    /// <returns>Why the workflow could not be deleted, or null when it was deleted or was already gone.</returns>
     public static async Task<string?> DeleteWorkflowAsync(MsagentCli msagent, string workflowId, string environment, string directory, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(directory);
 
-        var (cloned, addressed) = await RetriedAsync(() => msagent.RunAsync(["agent", "create", "--agent-type", AgentTypes.McsWorkflow, "--mcs-clone-workflow-id", workflowId, "--mcs-clone-environment-id", environment, "--json", "--non-interactive"], directory, timeout: TimeSpan.FromMinutes(10), cancellationToken: cancellationToken), SucceededOrGone, cancellationToken).ConfigureAwait(false);
+        var (cloned, addressed) = await RetriedAsync(() => msagent.RunAsync(["agent", "create", "--agent-type", AgentTypes.McsWorkflow, "--mcs-clone-workflow-id", workflowId, "--mcs-clone-environment-id", environment, "--environment-id", environment, "--json", "--non-interactive"], directory, timeout: TimeSpan.FromMinutes(10), cancellationToken: cancellationToken), SucceededOrGone, cancellationToken).ConfigureAwait(false);
 
         if (cloned.ExitCode != 0)
         {
-            return addressed ? null : $"copied workflow {workflowId} could not be addressed for deletion: {Summarize(cloned)}";
+            return addressed ? null : $"the clone made to delete workflow {workflowId} exited {cloned.ExitCode}: {Summarize(cloned)}";
         }
 
-        var created = cloned.Json<ManagedAgentCreateResult>();
-        var (deleted, settled) = await RetriedAsync(() => msagent.RunAsync(["agent", "delete", "--agent-id", created.AgentId], created.ProjectDirectory is { Length: > 0 } project && Directory.Exists(project) ? project : directory, created.DisplayName, TimeSpan.FromMinutes(5), cancellationToken: cancellationToken), SucceededOrGone, cancellationToken).ConfigureAwait(false);
+        if (CreatedRecord(cloned) is not { AgentId.Length: > 0 } created)
+        {
+            return $"the clone made to delete workflow {workflowId} reported no readable record: {Summarize(cloned)}";
+        }
 
-        return settled ? null : $"copied workflow {workflowId}: agent delete exited {deleted.ExitCode}: {Summarize(deleted)}";
+        var (deleted, settled) = await RetriedAsync(() => msagent.RunAsync(created.DeploymentName is { Length: > 0 } deployment ? ["agent", "delete", "--agent-id", created.AgentId, "--deployment-name", deployment, "--json", "--non-interactive"] : ["agent", "delete", "--agent-id", created.AgentId, "--json", "--non-interactive"], created.ProjectDirectory is { Length: > 0 } project && Directory.Exists(project) ? project : directory, created.DisplayName, TimeSpan.FromMinutes(5), cancellationToken: cancellationToken), SucceededOrGone, cancellationToken).ConfigureAwait(false);
+
+        return settled ? null : $"agent delete through the clone of workflow {workflowId} exited {deleted.ExitCode}: {Summarize(deleted)}";
     }
 
-    /// <summary>Deletes a standalone workflow through the local record that addresses it, or through a fresh clone when that record cannot.</summary>
+    private static ManagedAgentCreateResult? CreatedRecord(MsagentResult cloned)
+    {
+        try
+        {
+            return cloned.Json<ManagedAgentCreateResult>();
+        }
+        catch (E2EException)
+        {
+            return null;
+        }
+    }
+
     private async Task<string?> RemoveMcsWorkflowAsync(LedgerEntry entry, CancellationToken cancellationToken)
     {
         if (entry.Cleanup.ProjectDirectory is not { Length: > 0 } project || entry.Cleanup.AgentId is not { Length: > 0 } agentId)
@@ -276,7 +330,7 @@ public sealed partial class Cleanup
 
         var fallback = await RemoveWorkflowsAsync([entry.Id], environment, cancellationToken).ConfigureAwait(false);
 
-        return fallback.Count == 0 ? null : $"{failure}; deleting it through a fresh clone also failed: {string.Join("; ", fallback)}";
+        return fallback is null ? null : $"{failure}; deleting it through a fresh clone also failed: {fallback}";
     }
 
     private async Task<string?> DeleteThroughRecordAsync(LedgerEntry entry, string project, string agentId, CancellationToken cancellationToken)
@@ -311,10 +365,6 @@ public sealed partial class Cleanup
         return true;
     }
 
-    /// <summary>
-    /// How many times a workflow cleanup command is attempted, because Dataverse and the token cache fail
-    /// transiently often enough that one failure would otherwise be reported as a leaked flow.
-    /// </summary>
     private const int DeleteAttempts = 2;
 
     private static readonly TimeSpan DeleteRetryDelay = TimeSpan.FromSeconds(5);
@@ -622,7 +672,7 @@ public sealed partial class Cleanup
         ResourceKind.McsWorkflow => $"cd {CommandLineArgument.Quote(entry.Cleanup.ProjectDirectory ?? string.Empty)} && msagent agent delete --agent-id {entry.Cleanup.AgentId}",
         ResourceKind.McsCopy => $"cd {CommandLineArgument.Quote(entry.Cleanup.ProjectDirectory ?? string.Empty)} && msagent agent delete --agent-id {entry.Cleanup.AgentId} --all-resources",
         ResourceKind.McsCopyRow => $"delete {entry.DisplayName} {entry.Id} from environment {entry.Cleanup.EnvironmentId} in the maker portal; no copy record addresses it any more",
-        ResourceKind.StandaloneWorkflow => $"msagent agent create --agent-type MCSWorkflow --mcs-clone-workflow-id {entry.Cleanup.WorkflowId} --mcs-clone-environment-id {entry.Cleanup.EnvironmentId} --environment-id {entry.Cleanup.EnvironmentId} --project <empty directory>, then msagent agent delete in that directory",
+        ResourceKind.StandaloneWorkflow or ResourceKind.McsCopyWorkflow => $"msagent agent create --agent-type MCSWorkflow --mcs-clone-workflow-id {entry.Cleanup.WorkflowId} --mcs-clone-environment-id {entry.Cleanup.EnvironmentId} --environment-id {entry.Cleanup.EnvironmentId} --project <empty directory>, then msagent agent delete in that directory",
         ResourceKind.StandaloneConnectionReference => $"declare {entry.Cleanup.Correlation} ({entry.Cleanup.ConnectorId}) in a workflow workspace with a deployment targeting {entry.Cleanup.EnvironmentId}, then msagent deployment connection remove --connection-reference {entry.Cleanup.Correlation} --force",
         ResourceKind.LocalWorkspace => $"remove the directory {entry.Id}",
         ResourceKind.ConfigEdit => $"msagent env select {entry.Cleanup.PriorValue}",

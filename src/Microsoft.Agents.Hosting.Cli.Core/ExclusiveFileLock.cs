@@ -28,7 +28,7 @@ public sealed class ExclusiveFileLock : IDisposable
 
     /// <summary>Takes the lock on a file, waiting while another holder has it.</summary>
     /// <param name="path">The lock file, in a directory that exists.</param>
-    /// <param name="timeout">How long to wait for another holder to release the lock before a <see cref="TimeoutException"/> is thrown.</param>
+    /// <param name="timeout">How long to wait for another holder to release the lock before a <see cref="System.TimeoutException"/> is thrown.</param>
     /// <param name="cancellationToken">Stops the wait.</param>
     /// <returns>The lock.</returns>
     public static async Task<ExclusiveFileLock> AcquireAsync(string path, TimeSpan timeout, CancellationToken cancellationToken)

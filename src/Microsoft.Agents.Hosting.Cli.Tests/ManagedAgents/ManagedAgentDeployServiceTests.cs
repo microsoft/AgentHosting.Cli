@@ -1077,6 +1077,75 @@ public sealed class ManagedAgentDeployServiceTests
     }
 
     [Fact]
+    public async Task Deploy_WhenItCreatesTheCloudAgent_StillRefusesToOverwriteSharedEnvironmentVariables()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var attach = Connecting(workspaces);
+
+        var result = await Create(store, workspaces, attach).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None);
+
+        Assert.True(result.TargetAgentCreated);
+        Assert.True(workspaces.LastPushOverwrite);
+        Assert.False(attach.LastCommand!.OverwriteSharedEnvironmentVariables);
+        Assert.False(workspaces.LastPushOverwriteSharedEnvironmentVariables);
+    }
+
+    [Fact]
+    public async Task Deploy_AProductionSlot_StillRefusesToOverwriteSharedEnvironmentVariables()
+    {
+        var (workspace, store) = Registered(DeploymentStages.Prod, "env-1");
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort();
+        workspaces.LocalChanges.Add(CopilotTestFixtures.Change("con_greeting"));
+
+        await Create(store, workspaces, Connecting(workspaces)).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "prod" },
+            CancellationToken.None);
+
+        Assert.True(workspaces.LastPushOverwrite);
+        Assert.False(workspaces.LastPushOverwriteSharedEnvironmentVariables);
+    }
+
+    [Fact]
+    public async Task Deploy_WithOverwrite_LetsTheAttachAndThePushOverwriteSharedEnvironmentVariables()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var attach = Connecting(workspaces);
+
+        await Create(store, workspaces, attach).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev", Overwrite = true },
+            CancellationToken.None);
+
+        Assert.True(attach.LastCommand!.OverwriteSharedEnvironmentVariables);
+        Assert.True(workspaces.LastPushOverwriteSharedEnvironmentVariables);
+    }
+
+    [Fact]
+    public async Task Deploy_WhenThePushRefusesToOverwriteSharedEnvironmentVariables_ReportsThatRefusalUnwrapped()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var refusal = CopilotStudioException.SharedEnvironmentVariablesRequireOverwrite(["cr9_shared"], ["environmentvariables/cr9_shared.mcs.yml"], "env-1");
+        var workspaces = new FakeCopilotWorkspacePort { PushThrows = refusal };
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(store, workspaces, Connecting(workspaces)).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None));
+
+        Assert.Same(refusal, failure);
+    }
+
+    [Fact]
     public async Task Deploy_ReportsTheFilesThePushUploaded()
     {
         var (workspace, store) = Registered();
@@ -1389,8 +1458,9 @@ public sealed class ManagedAgentDeployServiceTests
             CancellationToken.None));
 
         Assert.Equal("deploy-recorded-nowhere", failure.ErrorKind);
-        Assert.Contains($"'con_agent' ({attach.AgentId}) was created or attached in env-1", failure.Message, StringComparison.Ordinal);
-        Assert.Contains("nothing was pushed yet", failure.Message, StringComparison.Ordinal);
+        Assert.Contains($"'con_agent' ({attach.AgentId}) was created or attached in env-1, and the custom connectors, connection references, workflows, and AI prompts its workspace declares may already be there", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("so its components were not pushed yet", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("nothing was pushed", failure.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("was pushed to", failure.Message, StringComparison.Ordinal);
         Assert.Equal("Re-run `msagent agent deploy --deployment-name dev` to record the agent and push its content.", failure.Remediation);
         Assert.IsType<IOException>(failure.InnerException);

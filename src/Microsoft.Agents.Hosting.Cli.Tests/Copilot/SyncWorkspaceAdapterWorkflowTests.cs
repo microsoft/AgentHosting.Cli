@@ -20,6 +20,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
         new(
             synchronizer,
+            synchronizer,
             new RecordingRetargetService(),
             new StubSolutionVersionsClient(),
             new StubComponentCollectionClient(),
@@ -40,7 +41,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     {
         var synchronizer = SynchronizerWithWorkflow();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.UpsertWorkflowCalls);
     }
@@ -50,7 +51,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     {
         var synchronizer = SynchronizerWithWorkflow(errorMessage: "this is not a valid connection");
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Contains(outcome.Warnings, warning => warning.Contains("Escalate", StringComparison.Ordinal));
         Assert.Contains(outcome.Warnings, warning => warning.Contains("this is not a valid connection", StringComparison.Ordinal));
@@ -61,7 +62,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     {
         var synchronizer = SynchronizerWithWorkflow(errorMessage: "this is not a valid connection");
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
         Assert.Equal(1, synchronizer.UploadKnowledgeFilesCalls);
@@ -72,7 +73,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     {
         var synchronizer = SynchronizerWithWorkflow(errorMessage: "this is not a valid connection");
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.UpsertAIPromptsCalls);
     }
@@ -83,7 +84,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         var synchronizer = new RecordingWorkspaceSynchronizer();
         synchronizer.ConnectorRowIds["cre98_weather"] = Guid.NewGuid();
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Contains(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
         Assert.Equal(0, outcome.AuxiliaryChangeCount);
@@ -97,7 +98,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         synchronizer.LocalChanges.Add(ConnectorChange());
         synchronizer.ConnectorRowIds["cre98_weather"] = ConnectorId;
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(CustomConnectorLayout.ChangeKind, Assert.Single(outcome.Changes).ComponentType);
         Assert.Equal(0, outcome.AuxiliaryChangeCount);
@@ -112,7 +113,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         synchronizer.LocalChanges.Add(new Change { Name = "Greeting", SchemaName = "cre98_agent.topic.Greeting", ChangeKind = "DialogComponent", ChangeType = ChangeType.Update });
         synchronizer.FailedConnectors.Add(ConnectorChange() with { ChangeType = ChangeType.Update });
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal("cre98_agent.topic.Greeting", Assert.Single(outcome.Changes).SchemaName);
     }
@@ -125,7 +126,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         synchronizer.LocalChanges.Add(ConnectorChange() with { Uri = $"connectors/Weather_{ConnectorId}/openapidefinition.json", SchemaName = $"{CustomConnectorLayout.SchemaNamePrefix}{ConnectorId}.openapidefinition" });
         synchronizer.LocalChanges.Add(ConnectorChange() with { Uri = $"connectors/Weather_{ConnectorId}/connectionparameters.json", SchemaName = $"{CustomConnectorLayout.SchemaNamePrefix}{ConnectorId}.connectionparameters" });
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         var change = Assert.Single(outcome.Changes);
         Assert.Equal(CustomConnectorLayout.SchemaNamePrefix + ConnectorId, change.SchemaName);
@@ -138,7 +139,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         var synchronizer = new RecordingWorkspaceSynchronizer();
         synchronizer.LocalChanges.Add(ConnectorChange() with { Uri = $"connectors/Weather_{ConnectorId}/iconblob.png", SchemaName = $"{CustomConnectorLayout.SchemaNamePrefix}{ConnectorId}.iconblob" });
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         var change = Assert.Single(outcome.Changes);
         Assert.Equal(CustomConnectorLayout.SchemaNamePrefix + ConnectorId, change.SchemaName);
@@ -152,7 +153,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(overwrite, synchronizer.LastConnectorPushOverwroteRemoteChanges);
     }
@@ -165,7 +166,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         synchronizer.FailedConnectors.Add(ConnectorChange() with { ChangeType = ChangeType.Update });
         synchronizer.ConnectorFailureReasons.Add(reason);
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(reason, Assert.Single(outcome.Warnings));
     }
@@ -180,7 +181,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         synchronizer.LocalChanges.Add(new Change { Name = "Greeting", SchemaName = "cre98_agent.topic.Greeting", ChangeKind = "DialogComponent", ChangeType = ChangeType.Update });
         synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowId = workflowId, WorkflowName = "Escalate", ErrorMessage = "the flow definition is invalid" });
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal("cre98_agent.topic.Greeting", Assert.Single(outcome.Changes).SchemaName);
     }
@@ -201,7 +202,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         var connectors = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync));
         var workflows = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.UpsertWorkflowForAgentAsync));
@@ -216,7 +217,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         var synchronizer = new RecordingWorkspaceSynchronizer();
         synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Escalate", IsDisabled = true });
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Contains(outcome.Warnings, warning => warning.Contains("Escalate", StringComparison.Ordinal) && warning.Contains("disabled", StringComparison.Ordinal));
     }
@@ -237,7 +238,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         var synchronizer = Failing(DuplicateComponent);
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.DuplicateComponent, failure.ErrorKind);
         Assert.Contains("crf9a_agentD1.file.abcmain2.txt_0Sh", failure.Message, StringComparison.Ordinal);
@@ -259,7 +260,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         });
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.PushFailedAfterRefusedComponents, failure.ErrorKind);
         Assert.Contains("1 component", failure.Message, StringComparison.Ordinal);
@@ -273,7 +274,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     public async Task Push_WhenAComponentFailsWithNothingRefused_KeepsTheOriginalFailure()
     {
         var failure = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => Create(Failing("something else went wrong")).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+            () => Create(Failing("something else went wrong")).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Equal("something else went wrong", failure.Message);
     }
@@ -283,7 +284,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     {
         var failure = await Assert.ThrowsAsync<InvalidOperationException>(
             () => Create(Failing("Entity 'Workflow' With Id = abc Does Not Exist"))
-                .PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+                .PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Contains("Does Not Exist", failure.Message, StringComparison.Ordinal);
     }
@@ -293,7 +294,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     {
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(
             () => Create(Failing(DuplicateConnectionReference))
-                .PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+                .PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.DuplicateConnectionReference, failure.ErrorKind);
         Assert.Contains("did not complete", failure.Message, StringComparison.Ordinal);
@@ -309,7 +310,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         var synchronizer = Failing(DuplicateConnectionReference);
 
         await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Equal(2, synchronizer.PushLocalChangesCalls);
     }
@@ -318,7 +319,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     public async Task Push_WhenADuplicateClearsOnRetry_CompletesWithoutWarning()
     {
         var outcome = await Create(Failing(DuplicateConnectionReference, onlyOnce: true))
-            .PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+            .PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Empty(outcome.Warnings);
     }
@@ -334,7 +335,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         });
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+            () => Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Contains("1 component", failure.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("Flow F1", failure.Message, StringComparison.Ordinal);
@@ -347,7 +348,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         var synchronizer = new RecordingWorkspaceSynchronizer();
         synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Escalate", IsDisabled = false });
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Empty(outcome.Warnings);
     }
@@ -359,7 +360,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
         synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Accepted" });
         synchronizer.WorkflowResponses.Add(new WorkflowResponse { WorkflowName = "Refused", ErrorMessage = "the flow definition is invalid" });
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Contains(outcome.Warnings, warning => warning.Contains("Refused", StringComparison.Ordinal));
         Assert.DoesNotContain(outcome.Warnings, warning => warning.Contains("Accepted", StringComparison.Ordinal));
@@ -370,7 +371,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     {
         var synchronizer = SynchronizerWithWorkflow();
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Empty(outcome.Warnings);
     }
@@ -380,7 +381,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     {
         var synchronizer = SynchronizerWithWorkflow();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
     }
@@ -390,7 +391,7 @@ public sealed class SyncWorkspaceAdapterWorkflowTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
     }
