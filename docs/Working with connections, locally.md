@@ -7,23 +7,47 @@ There are over 1500+ connectors and many of which are provided by Microsoft, suc
 Copilot Studio uses connectors as a tool itself, or within workflows (which can be used standalone, referenced by an agent, or with the new preview feature, hooks)
 
 - Connectors: The API definition
-- Connections: the authentication detail, held on the Power Platform
+- Connections: authenticated connector credentials held in a Power Platform environment
 - Connection references: Used by copilot studio to manage the connection and the tool definition
 - Tool definition: Tool definition information such as what tool, when it should be triggered and additional information for copilot studio
 
 The connection is not and will never be on your local machine. These are credentials used to authenticate with the connector and is used by copilot studio runtime when triggering the tool definition with the connection reference.
 
-This means the connection must either be available on your power platform tenant before you begin work and wish to use a connector and define it locally by using it within connection references and tool definitions, or you can create it when the command below is used to trigger the binding and you will be prompted to create the credential which will then be available going forward, and bound.
+The connection must exist in the target environment and be usable by the
+appropriate identity. Local files declare references and tool definitions; they
+do not carry the cloud connection's credentials. Binding maps a logical reference
+to an authorized connection in that environment. A connection in development
+does not automatically provide credentials in test or production.
 
 ## Option 1: Create your connections before you start
 
 You can ensure your connections are available before you want to use with your agent. Go to make.powerapps.com and click connections and create the connections for the tools/connectors you wish to use.
 
-## Option 2: Create your connections when you deploy
+## Option 2: Create and bind connections as part of deployment setup
 
 This is common and sometimes easier if you’re working in the terminal
 
-Create your connections as part of the deploy step and using it with GitHub Copilot, this will allow the CLI to create the binding and you will be prompted to create the connection in your browser by providing consent to the tool, and then it would be bound and can be used by the agent. You should only need to do this once until it requires a refresh.
+Use the connection commands to inspect references, create a connection when
+needed, and bind it. Deploying source alone does not guarantee connection creation,
+consent, or a usable binding:
+
+```text
+msagent deployment connection list --deployment-name develop
+msagent deployment connection update --deployment-name develop
+msagent deployment connection list --deployment-name develop
+```
+
+For an agent, these commands need the cloud agent to exist; creating a local
+deployment record alone is not enough. Deploy a draft to establish it, then
+inspect diagnostics. A missing workflow reference can leave a deployment
+incomplete: binding the exact reference and retrying can be required before the
+deploy fully succeeds. See [workflow connection readiness](Working%20with%20workflows.md#connection-references-and-deployment).
+
+Complete connector consent when requested and inspect `ready`, status, and
+diagnostics rather than relying only on the command's exit code. Credentials can
+expire, consent can be revoked, and connection access can change. Binding can
+also activate eligible workflows; confirm their intended effects before running
+it. Coding assistants can help issue commands but cannot grant consent for you.
 
 ## Managing issues with connections
 
@@ -66,6 +90,11 @@ msagent deployment connection update -an "<agent-name>" -dn <deployment-name> --
 # Remove a connection reference and/or delete the connection
 msagent deployment connection remove -an "<agent-name>" -dn <deployment-name>
 ```
+
+Removing a local reference, unbinding a reference, and deleting a cloud
+connection are different effects. A connection can be shared by other tools or
+flows; review the selection and intended removal before confirming. See the
+reference for the supported removal options and scope.
 
 The full list of commands for connections can be found here: [MSAgent CLI connection command reference](../src/Microsoft.Agents.Hosting.Cli.Docs/Command_Deployment_Connection.md)
 

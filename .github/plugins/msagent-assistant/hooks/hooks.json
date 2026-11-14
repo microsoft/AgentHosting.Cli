@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"var p=require('path'),r=process.env.CLAUDE_PLUGIN_ROOT;if(!r)throw Error('Missing Claude plugin root');require(p.join(require('fs').realpathSync(r),'hooks','set-env-vars.bundle.js'))\"",
+            "bash": "node -e \"var p=require('path'),r=process.env.COPILOT_PLUGIN_ROOT;if(!r)throw Error('Missing Copilot plugin root');delete process.env.CLAUDE_ENV_FILE;require(p.join(require('fs').realpathSync(r),'hooks','set-env-vars.bundle.js'))\"",
+            "powershell": "node -e \"var p=require('path'),r=process.env.COPILOT_PLUGIN_ROOT;if(!r)throw Error('Missing Copilot plugin root');delete process.env.CLAUDE_ENV_FILE;require(p.join(require('fs').realpathSync(r),'hooks','set-env-vars.bundle.js'))\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -6,9 +6,9 @@ This document is provided in case the agent.md file has not been downloaded or m
 
 - The PAC CLI is the power platform CLI and is the older version of the CLI made to interact with copilot studio. Whilst it is fully supported, using it together with msagent CLI can cause unexpected issues and conflicts, as they work differently. Never combine the two CLI's when working with copilot studio within a local folder directory.
 
-## CodeAgent is not supported
+## Select the Copilot Studio project type explicitly
 
-- You may see placeholders in the CLI such as `codeagent` which is a different type and is not yet supported.
+- Use `--agent-type MCSAgent` for conversational agents and `--agent-type MCSWorkflow` for standalone workflows. Do not rely on an omitted agent type selecting the intended scaffold.
 
 ## When testing locally
 
@@ -16,7 +16,10 @@ This document is provided in case the agent.md file has not been downloaded or m
 
 ## Authenticating with copilot studio when testing locally
 
-- The CLI brokers the authentication between the local machine and accessing Copilot Studio, which must be using integrated auth or manual authentication using Azure Entra Active Directory v2 when using non-interactive or copilot studio client with agent playground. If using DirectLine with the agent playground it uses DirectLine tokens which must be obtained from the Copilot Studio UI under the settings area. The CLI user will be required to give the CLI permissions to access Copilot Studio on their behalf, and this will be needed to be granted in the browser by the person giving consent. This should only be needed once and refreshed periodically.
+- `test ask` uses the selected CLI account and delegated invoke permission. Sign in interactively first; `--non-interactive` prevents new interactive authentication, not authorization checks or consent requirements.
+- The default Playground transport uses the CLI account for endpoint discovery, then the Playground authenticates its own session. It can still require user interaction with `--non-interactive`.
+- Direct Line Playground requires a published no-auth agent and an interactive terminal. Enter the token endpoint or Direct Line secret only at its native masked prompt, never in chat, command arguments, or source files. This path does not require CLI Entra sign-in.
+- Consent and access can change. Do not promise one-time consent or ask the assistant to grant it for the user. See the [testing guide](Testing%20your%20Agent%20from%20your%20local%20machine.md).
 
 ## Workflows and disambiguating the different types
 
@@ -26,8 +29,13 @@ This document is provided in case the agent.md file has not been downloaded or m
 
 - Workflows are created and can be referenced by an agent as a tool, or in the new preview feature for hooks. Workflows can also be used standalone, without an agent. 
 
-[Guidance coming soon on what to look for if these types of workflows and how they are portable and referenceable or should be kept separate]
+Use `MCSWorkflow` for an independent cloud flow; an agent-callable workflow belongs
+under the agent's `workflows` directory and needs a matching workflow tool.
+Preserve workflow IDs, metadata, input/output names, and connector references.
+See [Working with workflows](Working%20with%20workflows.md) for authoring shape,
+registration, activation, and connection-readiness details.
 
 ## Understand the different types of copilot studio harness 
 
-- There are two types of copilot studio agent, one which is a standard harness agent and one which is a github copilot harness agent. They are defined by their type in the Dataverse schema definition [here](comingsoon). Features and functionality are different based on copilot studio types, and the msagent cli should only be used with github copilot harness agents. For working with standard harness agents, it is recommended to use the PAC CLI, including for scenarios of migration from standard to github copilot harness.
+- `--mcs-agent-type CLI` is the default scaffold for GitHub Copilot-backed agents; `--mcs-agent-type Classic` explicitly selects the standard/classic scaffold. Both use `--agent-type MCSAgent`. The assistant authoring the files is separate from the deployed runtime.
+- The scaffold selector is not a migration command. Do not change runtime identity or mix agent-management CLIs to convert an existing agent. Clone existing cloud content through `msagent` and preserve its identities unless a supported operation explicitly changes them. See the [agent command reference](../src/Microsoft.Agents.Hosting.Cli.Docs/Command_Agent.md#creating-a-new-mcs-agent).
