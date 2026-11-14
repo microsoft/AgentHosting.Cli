@@ -207,7 +207,7 @@ public sealed class ManagedAgentCopyServiceTests
         var projectEntries = Entries(projectDirectory);
 
         Assert.Equal(
-            $"The copy's workspace {Path.Combine(projectDirectory, copyFolder)} would overlap the source's workspace {sourceWorkspace}. Choose another --agent-name.",
+            $"The copy's workspace {Path.Combine(projectDirectory, copyFolder)} would overlap the source's workspace {AgentConfigLocator.PhysicalPath(sourceWorkspace)}. Choose another --agent-name.",
             (await Assert.ThrowsAsync<UsageException>(() => Create(store, copies).CopyAsync(new ManagedAgentCopyRequest { Name = newName, Project = projectDirectory }, CancellationToken.None))).Message);
         Assert.Empty(copies.Prepared);
         Assert.Empty(copies.Proposals);
@@ -891,7 +891,7 @@ public sealed class ManagedAgentCopyServiceTests
             return;
         }
 
-        await AssertCopyIsRefusedForOverlappingTheSourceAsync(store, projectDirectory, project, "source-project", "source-project");
+        await AssertCopyIsRefusedForOverlappingTheSourceAsync(store, projectDirectory, projectDirectory, "source-project", "source-project");
     }
 
     [Theory]
