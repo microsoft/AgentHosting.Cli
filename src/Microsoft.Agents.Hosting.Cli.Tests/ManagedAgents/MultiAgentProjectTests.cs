@@ -32,6 +32,7 @@ public sealed class MultiAgentProjectTests
             new CopilotCatalogService(catalog, environments, locator, new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
             ManagedAgentFixtures.Principals(),
             ManagedAgentFixtures.ActivationPass(),
+            ManagedAgentFixtures.AgentNames(),
             new FixedClock(ManagedAgentFixtures.Now));
     }
 
@@ -293,6 +294,6 @@ public sealed class MultiAgentProjectTests
             new AgentConfigLocator(),
             CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem()),
             ManagedAgentFixtures.Resolver(),
-            new CopilotProjectIdentityReader(new AgentConfigLocator()));
+            ManagedAgentFixtures.Identities());
     }
 }

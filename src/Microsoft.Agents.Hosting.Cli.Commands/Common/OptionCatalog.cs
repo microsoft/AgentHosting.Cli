@@ -31,6 +31,7 @@ public static class OptionCatalog
         ["--agent-id"] = "-aid",
         ["--agent-name"] = "-an",
         ["--agent-type"] = "-at",
+        ["--all-resources"] = "-alr",
         ["--app-id"] = "-app",
         ["--app-object-id"] = "-aoid",
         ["--async"] = "-as",

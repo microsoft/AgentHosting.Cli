@@ -6,6 +6,8 @@ namespace Microsoft.Agents.Hosting.Cli.CopilotStudio;
 /// <summary>Finds workflow folders by delegating to the sync library's workspace layout.</summary>
 public sealed class WorkflowWorkspaceAdapter : IWorkflowWorkspacePort
 {
+    private static readonly string[] ProjectFolderNames = [WorkflowWorkspace.WorkflowsFolderName, DeclaredConnectionReferences.InfrastructureFolderName];
+
     /// <inheritdoc />
     public IReadOnlyList<LocalWorkflow> FindAll(string workspaceRoot) =>
         [.. WorkflowWorkspace.FindAll(workspaceRoot).Select(folder => new LocalWorkflow(folder.WorkflowId, folder.FolderName, folder.FolderPath))];
@@ -30,6 +32,9 @@ public sealed class WorkflowWorkspaceAdapter : IWorkflowWorkspacePort
 
     /// <inheritdoc />
     public bool HasAgentProject(string directory) => Directory.Exists(directory) && WorkflowWorkspace.HasAgentProject(WorkflowWorkspace.OpenWorkspace(directory));
+
+    /// <inheritdoc />
+    public bool IsProjectFolder(string folderName) => ProjectFolderNames.Contains(folderName, StringComparer.OrdinalIgnoreCase);
 
     /// <inheritdoc />
     public string ProjectFolderName(string displayName) => WorkspaceFolderNames.ForProject(displayName);

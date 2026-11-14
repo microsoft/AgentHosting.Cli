@@ -27,7 +27,7 @@ public sealed class ManagedAgentShareServiceTests
                 EnvironmentFixtures.Environment("env-1", instanceUrl: CopilotTestFixtures.DataverseOrganization),
                 EnvironmentFixtures.Environment("env-2", instanceUrl: CopilotTestFixtures.DataverseOrganization)),
             catalog,
-            new CopilotProjectIdentityReader(new AgentConfigLocator()),
+            ManagedAgentFixtures.Identities(),
             sharing,
             directory,
             tenantDirectory,
@@ -762,6 +762,24 @@ public sealed class ManagedAgentShareServiceTests
             CancellationToken.None);
 
         Assert.Equal("env-1", result.EnvironmentId);
+    }
+
+    [Fact]
+    public async Task Share_ForARecordWithNoEnvironment_NamesTheRecord()
+    {
+        using var workspace = new TemporaryWorkspace();
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent(environmentId: string.Empty) with { McsAgentId = Bot });
+        var catalog = Catalog();
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, new FakeAgentSharingPort(), Directory(), catalog).ShareAsync(
+            new ManagedAgentShareRequest { AgentId = "agent-1", User = "ada@contoso.com", Role = "use" },
+            CancellationToken.None));
+
+        Assert.Equal("agent-environment-missing", failure.ErrorKind);
+        Assert.Contains("'Contoso Agent' (agent-1)", failure.Message, StringComparison.Ordinal);
+        Assert.Empty(catalog.ResolvedValues);
     }
 
     [Fact]

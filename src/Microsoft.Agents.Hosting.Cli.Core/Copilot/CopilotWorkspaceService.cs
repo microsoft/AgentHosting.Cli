@@ -62,11 +62,12 @@ public sealed class CopilotWorkspaceService
             throw CopilotStudioException.PushConflictsRequirePull(conflicting);
         }
 
-        var pushed = await _workspaces.PushAsync(workspace, request.Overwrite, cancellationToken).ConfigureAwait(false);
+        var pushed = await _workspaces.PushAsync(workspace, request.Overwrite, request.OverwriteSharedEnvironmentVariables, cancellationToken).ConfigureAwait(false);
         var sentNothing = pushed.Changes.Count == 0 && pushed.AuxiliaryChangeCount == 0 && pushed.UploadedFileNames.Count == 0;
 
         return PushResult(sentNothing ? "no-local-changes" : "pushed", workspace, pushed.Changes) with
         {
+            ComponentCount = pushed.ComponentCount,
             UploadedFileCount = pushed.UploadedFileNames.Count,
             AuxiliaryChangeCount = pushed.AuxiliaryChangeCount,
             Warnings = pushed.Warnings,

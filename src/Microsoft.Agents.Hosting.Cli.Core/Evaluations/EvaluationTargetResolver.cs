@@ -126,12 +126,8 @@ public sealed class EvaluationTargetResolver : IEvaluationTargetResolver
         }
 
         var agent = ManagedAgentResolver.RequireMcsAgent(_resolver.ResolveAgent(projectDirectory, selector.AgentId, selector.AgentName), verb);
-        var workspaceDirectory = _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent);
-        var schemaName = ManagedAgentResolver.McsSchemaNameOf(agent, workspaceDirectory is null ? null : _projectIdentities.Find(workspaceDirectory)?.SchemaName);
 
-        return new ProjectAgent(
-            schemaName ?? (string.IsNullOrWhiteSpace(agent.McsAgentId) ? null : agent.McsAgentId.Trim()),
-            agent.DisplayName);
+        return new ProjectAgent(_projectIdentities.FindSelector(agent, _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent)), agent.DisplayName);
     }
 
     /// <summary>The agent a project names, and the identity the service is addressed by when it has one.</summary>

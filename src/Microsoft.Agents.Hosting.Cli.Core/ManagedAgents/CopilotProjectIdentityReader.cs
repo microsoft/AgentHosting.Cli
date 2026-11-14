@@ -1,5 +1,7 @@
-using System.Text.RegularExpressions;
+using Microsoft.Agents.Hosting.Cli.Core.Copilot;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 
@@ -14,18 +16,25 @@ public sealed record ProjectIdentity
 
     /// <summary>The project's description, when it declares one.</summary>
     public string? Description { get; init; }
+
+    /// <summary>The shape the project was authored as: <see cref="Microsoft.Agents.Hosting.Cli.Core.Copilot.CopilotAuthoringModes.CliCopilot"/> or <see cref="Microsoft.Agents.Hosting.Cli.Core.Copilot.CopilotAuthoringModes.Classic"/>.</summary>
+    public required string AuthoringMode { get; init; }
 }
 
-/// <summary>
-/// Reads a workspace's identity from its settings file.
-/// </summary>
-public sealed partial class CopilotProjectIdentityReader
+/// <summary>Reads the identity a workspace declares in its settings.</summary>
+public sealed class CopilotProjectIdentityReader
 {
     private readonly AgentConfigLocator _locator;
+    private readonly ICopilotProjectIdentityPort _identities;
 
     /// <summary>Creates the reader.</summary>
-    /// <param name="locator">Resolves workspace directories and their settings files.</param>
-    public CopilotProjectIdentityReader(AgentConfigLocator locator) => _locator = locator ?? throw new ArgumentNullException(nameof(locator));
+    /// <param name="locator">Resolves workspace directories.</param>
+    /// <param name="identities">Reads the identity a project declares.</param>
+    public CopilotProjectIdentityReader(AgentConfigLocator locator, ICopilotProjectIdentityPort identities)
+    {
+        _locator = locator ?? throw new ArgumentNullException(nameof(locator));
+        _identities = identities ?? throw new ArgumentNullException(nameof(identities));
+    }
 
     /// <summary>Reads the identity a workspace declares, failing when there is no readable project.</summary>
     /// <param name="workspaceDirectory">The directory holding the workspace.</param>
@@ -36,47 +45,27 @@ public sealed partial class CopilotProjectIdentityReader
     /// <summary>Reads the identity a workspace declares, or <see langword="null"/> when there is none.</summary>
     /// <param name="workspaceDirectory">The directory holding the workspace.</param>
     /// <returns>The workspace's declared identity, or <see langword="null"/>.</returns>
-    public ProjectIdentity? Find(string workspaceDirectory)
+    public ProjectIdentity? Find(string workspaceDirectory) => _identities.Read(_locator.ResolveProjectDirectory(workspaceDirectory));
+
+    /// <summary>Finds the schema name an agent deploys under, reading its workspace only when its record names none.</summary>
+    /// <param name="agent">The agent's record.</param>
+    /// <param name="workspaceDirectory">The directory holding the agent's workspace, or <see langword="null"/> when it has none.</param>
+    /// <returns>The schema name, or <see langword="null"/> when neither the record nor the workspace names one.</returns>
+    public string? FindSchemaName(ManagedAgentRecord agent, string? workspaceDirectory)
     {
-        var resolved = _locator.ResolveProjectDirectory(workspaceDirectory);
+        ArgumentNullException.ThrowIfNull(agent);
 
-        var settingsPath = new[] { AgentConfigLocator.ProjectSettingsFileName, AgentConfigLocator.ClassicProjectFileName }
-            .Select(name => Path.Combine(resolved, name))
-            .FirstOrDefault(File.Exists);
-
-        if (settingsPath is null)
+        if (!string.IsNullOrWhiteSpace(agent.McsSchemaName))
         {
-            return null;
+            return agent.McsSchemaName;
         }
 
-        var content = File.ReadAllText(settingsPath);
-        var schemaName = ReadScalar(content, "schemaName");
-
-        return string.IsNullOrWhiteSpace(schemaName)
-            ? null
-            : new ProjectIdentity
-            {
-                SchemaName = schemaName,
-                DisplayName = ReadScalar(content, "displayName") ?? schemaName,
-                Description = ReadScalar(content, "description"),
-            };
+        return workspaceDirectory is null ? null : Find(workspaceDirectory)?.SchemaName;
     }
 
-    private static string? ReadScalar(string content, string key)
-    {
-        var match = ScalarPattern(key).Match(content);
-
-        if (!match.Success)
-        {
-            return null;
-        }
-
-        var value = match.Groups["value"].Value.Trim();
-
-        return value.Length >= 2 && ((value[0] == '"' && value[^1] == '"') || (value[0] == '\'' && value[^1] == '\''))
-            ? value[1..^1].Replace("\\\"", "\"", StringComparison.Ordinal).Replace("\\\\", "\\", StringComparison.Ordinal)
-            : value;
-    }
-
-    private static Regex ScalarPattern(string key) => new($@"^{Regex.Escape(key)}:[ \t]*(?<value>.*)$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+    /// <summary>Finds what an agent is looked up by in an environment: its schema name, else the cloud agent identifier its record carries.</summary>
+    /// <param name="agent">The agent's record.</param>
+    /// <param name="workspaceDirectory">The directory holding the agent's workspace, or <see langword="null"/> when it has none.</param>
+    /// <returns>The schema name or cloud agent identifier, or <see langword="null"/> when the agent has neither.</returns>
+    public string? FindSelector(ManagedAgentRecord agent, string? workspaceDirectory) => FindSchemaName(agent, workspaceDirectory) ?? (string.IsNullOrWhiteSpace(agent.McsAgentId) ? null : agent.McsAgentId.Trim());
 }

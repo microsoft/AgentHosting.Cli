@@ -43,20 +43,23 @@ public sealed class ManagedAgentResolver
     /// passes <see langword="false"/>, which still refuses a location that escapes the project root.
     /// </param>
     /// <returns>The workspace directory.</returns>
-    public string ResolveWorkspaceDirectory(string? projectDirectory, ManagedAgentRecord agent, bool requireExists = true)
+    public string ResolveWorkspaceDirectory(string? projectDirectory, ManagedAgentRecord agent, bool requireExists = true) => FindWorkspaceDirectory(projectDirectory, agent, requireExists) ?? throw ManagedAgentException.WorkspaceMissing(agent.AgentId, agent.AgentLocation, _locator.ResolveProjectDirectory(projectDirectory));
+
+    /// <summary>Finds the content directory a record names, for either an agent project or a workflow, when the record's location holds one.</summary>
+    /// <param name="projectDirectory">The project directory.</param>
+    /// <param name="agent">The record whose workspace is sought.</param>
+    /// <param name="requireExists">Whether a workflow directory has to be on disk already.</param>
+    /// <returns>The workspace directory, or <see langword="null"/> when the location holds none or escapes the project root.</returns>
+    public string? FindWorkspaceDirectory(string? projectDirectory, ManagedAgentRecord agent, bool requireExists = true)
     {
         ArgumentNullException.ThrowIfNull(agent);
 
         if (agent.AgentType != AgentTypes.McsWorkflow)
         {
-            return ResolveAgentWorkspaceDirectory(projectDirectory, agent);
+            return FindAgentWorkspaceDirectory(projectDirectory, agent);
         }
 
-        var root = _locator.ResolveProjectDirectory(projectDirectory);
-
-        return _locator.ContainedLocation(root, agent.AgentLocation) is { } located && (!requireExists || Directory.Exists(located))
-            ? located
-            : throw ManagedAgentException.WorkspaceMissing(agent.AgentId, agent.AgentLocation, root);
+        return _locator.ContainedLocation(_locator.ResolveProjectDirectory(projectDirectory), agent.AgentLocation) is { } located && (!requireExists || Directory.Exists(located)) ? located : null;
     }
 
     /// <summary>Finds the directory holding an agent's workspace content, when it is still on disk.</summary>
@@ -70,12 +73,6 @@ public sealed class ManagedAgentResolver
     /// <param name="agentWorkspaceDirectory">The directory holding the agent's workspace.</param>
     /// <returns>The collection directories that exist, and the declarations that resolve to nothing.</returns>
     public (IReadOnlyList<string> Found, IReadOnlyList<string> Missing) ResolveComponentCollectionDirectories(string? projectDirectory, string agentWorkspaceDirectory) => _locator.ComponentCollectionDirectories(agentWorkspaceDirectory, projectDirectory);
-
-    /// <summary>The schema name an agent deploys under, preferring the value the record carries.</summary>
-    /// <param name="agent">The agent record.</param>
-    /// <param name="projectSchemaName">The schema name the workspace declares, when it is available.</param>
-    /// <returns>The schema name, or <see langword="null"/> when neither source has one.</returns>
-    public static string? McsSchemaNameOf(ManagedAgentRecord agent, string? projectSchemaName) => string.IsNullOrWhiteSpace(agent.McsSchemaName) ? projectSchemaName : agent.McsSchemaName;
 
     /// <summary>Resolves an agent by identifier, then by name.</summary>
     /// <param name="projectDirectory">The project directory holding the configuration.</param>
@@ -127,6 +124,32 @@ public sealed class ManagedAgentResolver
         _locator.ConfigExists(projectDirectory) && Matching(_agents.List(projectDirectory), agentId, agentName) is [var single]
             ? single
             : null;
+
+    /// <summary>Resolves the record a location selects: the agent or workflow whose folder holds it, else its project's only MCS agent, else, when the project holds no MCS agent, its only standalone workflow.</summary>
+    /// <param name="location">A project directory or a folder inside one, or <see langword="null"/> for the current directory.</param>
+    /// <returns>The project directory and the selected record.</returns>
+    public (string ProjectDirectory, ManagedAgentRecord Agent) ResolveAgentAt(string? location)
+    {
+        var start = Path.TrimEndingDirectorySeparator(Path.GetFullPath(string.IsNullOrWhiteSpace(location) ? Directory.GetCurrentDirectory() : location.Trim()));
+        var projectDirectory = Directory.Exists(start) ? _locator.EnclosingProjectDirectory(start) : start;
+
+        if (!_locator.ConfigExists(projectDirectory))
+        {
+            throw ManagedAgentException.ConfigNotFound(_locator.ConfigFilePath(projectDirectory));
+        }
+
+        var candidates = _agents.List(projectDirectory).Select(agent => (Agent: agent, Folder: FindWorkspaceDirectory(projectDirectory, agent))).ToArray();
+        var mcsAgents = candidates.Where(candidate => candidate.Agent.AgentType == AgentTypes.McsAgent).ToArray();
+        var fallbackCandidates = mcsAgents.Length > 0 ? mcsAgents : [.. candidates.Where(candidate => candidate.Agent.AgentType == AgentTypes.McsWorkflow)];
+        var physicalStart = AgentConfigLocator.PhysicalPath(start);
+
+        return (projectDirectory, candidates.Select(candidate => (candidate.Agent, PhysicalFolder: candidate.Folder is { } folder ? AgentConfigLocator.PhysicalPath(folder) : null)).Where(candidate => candidate.PhysicalFolder is { } physicalFolder && AgentConfigLocator.IsContainedIn(physicalStart, physicalFolder)).OrderByDescending(candidate => candidate.PhysicalFolder!.Length).Select(candidate => candidate.Agent).FirstOrDefault() ?? fallbackCandidates switch
+        {
+            [var only] => only.Agent,
+            [] => throw ManagedAgentException.AgentNotFound("(none supplied)"),
+            _ => throw ManagedAgentException.AgentAmbiguousAt(projectDirectory, fallbackCandidates.Select(candidate => $"{candidate.Agent.DisplayName} ({candidate.Folder ?? candidate.Agent.AgentLocation})")),
+        });
+    }
 
     private static IReadOnlyList<ManagedAgentRecord> Matching(IReadOnlyList<ManagedAgentRecord> agents, string? agentId, string? agentName) =>
         !string.IsNullOrWhiteSpace(agentId)
@@ -339,6 +362,20 @@ public sealed class ManagedAgentResolver
     /// <param name="agent">The record owning the deployment.</param>
     /// <param name="deployment">The deployment, or <see langword="null"/> for the agent's home.</param>
     /// <returns>The environment identifier.</returns>
-    public static string TargetEnvironmentId(ManagedAgentRecord agent, AgentDeploymentRecord? deployment) =>
-        deployment is null || string.IsNullOrWhiteSpace(deployment.EnvironmentId) ? agent.EnvironmentId : deployment.EnvironmentId;
+    public static string TargetEnvironmentId(ManagedAgentRecord agent, AgentDeploymentRecord? deployment)
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+
+        var environmentId = deployment is null || string.IsNullOrWhiteSpace(deployment.EnvironmentId) ? agent.EnvironmentId : deployment.EnvironmentId;
+
+        return string.IsNullOrWhiteSpace(environmentId) ? throw ManagedAgentException.AgentEnvironmentMissing(agent.DisplayName, agent.AgentId) : environmentId;
+    }
+
+    /// <summary>Whether the records show the agent carrying the schema name in the deployment's environment is one the project deployed there.</summary>
+    /// <param name="agent">The record owning the deployment.</param>
+    /// <param name="deployment">The deployment whose environment holds the agent.</param>
+    /// <param name="schemaName">The schema name the agent was found by.</param>
+    /// <param name="targetAgentId">The agent carrying the schema name.</param>
+    /// <returns>Whether the project owns the agent.</returns>
+    public static bool ProjectOwns(ManagedAgentRecord agent, AgentDeploymentRecord deployment, string schemaName, string targetAgentId) => string.Equals(agent.McsAgentId, targetAgentId, StringComparison.OrdinalIgnoreCase) || (deployment.LastDeployedTime is not null && string.Equals(agent.McsSchemaName, schemaName, StringComparison.OrdinalIgnoreCase));
 }

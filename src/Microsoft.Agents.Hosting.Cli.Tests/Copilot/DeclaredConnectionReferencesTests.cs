@@ -468,6 +468,22 @@ public sealed class DeclaredConnectionReferencesTests : IDisposable
         Assert.Equal(["classic.custom"], Names(await ProvisionAsync(provider, client)));
     }
 
+    [Fact]
+    public async Task Provision_AcceptsACustomConnectorWhoseDeclarationSpellsItsSuffixSeparatorInUpperCase()
+    {
+        WriteClassic("classic.custom", "shared_contoso-5F0123456789abcdef");
+        using var provider = SdkProvider();
+        var client = new RecordingConnectionReferenceClient();
+        client.References["classic.custom"] = new SyncDataverseClient.ConnectionReferenceInfo
+        {
+            ConnectionReferenceId = Guid.NewGuid(),
+            ConnectionReferenceLogicalName = "classic.custom",
+            ConnectorId = "/providers/Microsoft.PowerApps/apis/shared_contoso-5ffedcba9876543210",
+        };
+
+        Assert.Equal(["classic.custom"], Names(await ProvisionAsync(provider, client)));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

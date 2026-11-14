@@ -1305,4 +1305,15 @@ public sealed class WorkflowWorkspaceAdapterTests : IDisposable
         Assert.Equal(WorkflowWorkspace.IsStandaloneWorkspace(_root), new WorkflowWorkspaceAdapter().IsStandaloneWorkspace(_root));
         Assert.True(new WorkflowWorkspaceAdapter().IsStandaloneWorkspace(_root));
     }
+
+    [Theory]
+    [InlineData("workflows", true)]
+    [InlineData("Workflows", true)]
+    [InlineData("infrastructure", true)]
+    [InlineData("INFRASTRUCTURE", true)]
+    [InlineData(".mcs", false)]
+    [InlineData(".config", false)]
+    [InlineData("Source Agent", false)]
+    [InlineData("workflow", false)]
+    public void IsProjectFolder_OwnsTheWorkflowsAndInfrastructureFoldersInAnyCase(string folderName, bool owned) => Assert.Equal(owned, new WorkflowWorkspaceAdapter().IsProjectFolder(folderName));
 }

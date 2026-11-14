@@ -31,6 +31,7 @@ public sealed class FacadeHandlerProvider : IServiceProvider
             [typeof(ICommandHandler<ManagedAgentShareShowRequest, ManagedAgentShareShowResult>)] = new FacadeHandler<ManagedAgentShareShowRequest, ManagedAgentShareShowResult>(operations.ShowManagedAgentSharesAsync),
             [typeof(ICommandHandler<ManagedAgentUnshareRequest, ManagedAgentUnshareResult>)] = new FacadeHandler<ManagedAgentUnshareRequest, ManagedAgentUnshareResult>(operations.UnshareManagedAgentAsync),
             [typeof(ICommandHandler<ManagedAgentCreateRequest, ManagedAgentCreateResult>)] = new FacadeHandler<ManagedAgentCreateRequest, ManagedAgentCreateResult>(operations.CreateManagedAgentAsync),
+            [typeof(ICommandHandler<ManagedAgentCopyRequest, ManagedAgentCopyResult>)] = new FacadeHandler<ManagedAgentCopyRequest, ManagedAgentCopyResult>(operations.CopyManagedAgentAsync),
             [typeof(ICommandHandler<AgentCreateRequest, AgentCreateResult>)] = new FacadeHandler<AgentCreateRequest, AgentCreateResult>(operations.CreateAgentAsync),
             [typeof(ICommandHandler<ManagedAgentDeployRequest, ManagedAgentDeployResult>)] = new FacadeHandler<ManagedAgentDeployRequest, ManagedAgentDeployResult>(operations.DeployManagedAgentAsync),
             [typeof(ICommandHandler<AgentDeployRequest, AgentDeployResult>)] = new FacadeHandler<AgentDeployRequest, AgentDeployResult>(operations.DeployAgentAsync),

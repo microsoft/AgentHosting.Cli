@@ -23,6 +23,7 @@ public sealed class SyncWorkspaceAdapterCloneTests : IDisposable
     private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
         new(
             synchronizer,
+            synchronizer,
             new RecordingRetargetService(),
             new CloneSourceClient(),
             new StubComponentCollectionClient(),

@@ -25,6 +25,7 @@ public sealed class SyncWorkspaceAdapterComponentCollectionTests : IDisposable
     private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer, CloneSourceClient client) =>
         new(
             synchronizer,
+            synchronizer,
             new RecordingRetargetService(),
             client,
             new StubComponentCollectionClient(),

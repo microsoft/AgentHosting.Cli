@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
@@ -16,6 +14,8 @@ public sealed class WorkflowStateCache
     /// <summary>The value recorded for a workflow the service reports as activated.</summary>
     public const int Activated = 1;
 
+    internal const string WriteGuardNamePrefix = "ah-workflow-state-";
+
     private const string CacheFileName = ".mcs/workflow-state.json";
 
     private static readonly JsonSerializerOptions ReadOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -27,12 +27,18 @@ public sealed class WorkflowStateCache
     };
 
     private readonly ICopilotFileSystem _fileSystem;
+    private readonly TimeSpan _writeGuardPatience;
 
     /// <summary>Creates the cache.</summary>
     /// <param name="fileSystem">Reads and writes the cache file.</param>
-    public WorkflowStateCache(ICopilotFileSystem fileSystem)
+    public WorkflowStateCache(ICopilotFileSystem fileSystem) : this(fileSystem, TimeSpan.FromSeconds(5))
+    {
+    }
+
+    internal WorkflowStateCache(ICopilotFileSystem fileSystem, TimeSpan writeGuardPatience)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
+        _writeGuardPatience = writeGuardPatience;
     }
 
     /// <summary>Reads the states last observed in one environment.</summary>
@@ -70,7 +76,7 @@ public sealed class WorkflowStateCache
             return;
         }
 
-        using var guard = new WorkspaceWriteGuard(workspaceDirectory);
+        using var guard = NamedMutexLock.TryAcquire(WriteGuardNamePrefix, workspaceDirectory, _writeGuardPatience);
 
         var all = new Dictionary<string, Dictionary<string, int>>(ReadAll(workspaceDirectory), StringComparer.OrdinalIgnoreCase)
         {
@@ -78,49 +84,6 @@ public sealed class WorkflowStateCache
         };
 
         _fileSystem.WriteAllText(PathFor(workspaceDirectory), JsonSerializer.Serialize(all, WriteOptions) + "\n");
-    }
-
-    /// <summary>
-    /// Holds a workspace's cache while one environment's entry is replaced.
-    ///
-    /// The file holds every environment, so recording one means reading all of them and writing them
-    /// back. Two commands doing that at once would each write what they read, and the later write
-    /// would restore the other's previous observation. Waiting is bounded and failure to acquire is
-    /// not fatal: a stale cache entry is recoverable, and failing a command over one would not be.
-    /// </summary>
-    private sealed class WorkspaceWriteGuard : IDisposable
-    {
-        private static readonly TimeSpan Patience = TimeSpan.FromSeconds(5);
-
-        private readonly Mutex _mutex;
-        private readonly bool _held;
-
-        public WorkspaceWriteGuard(string workspaceDirectory)
-        {
-            _mutex = new Mutex(initiallyOwned: false, NameFor(workspaceDirectory));
-
-            try
-            {
-                _held = _mutex.WaitOne(Patience);
-            }
-            catch (AbandonedMutexException)
-            {
-                _held = true;
-            }
-        }
-
-        public void Dispose()
-        {
-            if (_held)
-            {
-                _mutex.ReleaseMutex();
-            }
-
-            _mutex.Dispose();
-        }
-
-        private static string NameFor(string workspaceDirectory) =>
-            $"ah-workflow-state-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(workspaceDirectory.ToUpperInvariant())))[..32]}";
     }
 
     /// <summary>

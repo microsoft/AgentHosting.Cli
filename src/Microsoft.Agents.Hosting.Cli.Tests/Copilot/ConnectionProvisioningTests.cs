@@ -18,6 +18,7 @@ public sealed class ConnectionProvisioningTests
     private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
         new(
             synchronizer,
+            synchronizer,
             new RecordingRetargetService(),
             new StubSolutionVersionsClient(),
             new StubComponentCollectionClient(),
@@ -31,7 +32,7 @@ public sealed class ConnectionProvisioningTests
         using var workspace = new ClassicWorkspace();
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await CreateWith(synchronizer, new RecordingConnectionReferenceClient()).PushAsync(workspace.Info, overwrite: false, CancellationToken.None);
+        await CreateWith(synchronizer, new RecordingConnectionReferenceClient()).PushAsync(workspace.Info, overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Contains(nameof(IWorkspaceSynchronizer.ProvisionConnectionReferencesAsync), synchronizer.Calls);
         Assert.Equal(0, synchronizer.FolderAwareProvisionCount);
@@ -44,7 +45,7 @@ public sealed class ConnectionProvisioningTests
         var synchronizer = new RecordingWorkspaceSynchronizer();
         var dataverseClient = new RecordingConnectionReferenceClient();
 
-        await CreateWith(synchronizer, dataverseClient).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await CreateWith(synchronizer, dataverseClient).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.ProvisionConnectionReferencesAsync), synchronizer.Calls);
         Assert.Empty(dataverseClient.EnsuredLogicalNames);
@@ -56,7 +57,7 @@ public sealed class ConnectionProvisioningTests
         using var workspace = new ClassicWorkspace();
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await CreateWith(synchronizer, new RecordingConnectionReferenceClient()).PushAsync(workspace.Info, overwrite: false, CancellationToken.None);
+        await CreateWith(synchronizer, new RecordingConnectionReferenceClient()).PushAsync(workspace.Info, overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         var provision = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.ProvisionConnectionReferencesAsync));
         var workflows = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.UpsertWorkflowForAgentAsync));
@@ -74,7 +75,7 @@ public sealed class ConnectionProvisioningTests
         var synchronizer = new RecordingWorkspaceSynchronizer();
         synchronizer.ConnectorRowIds["shared_contoso"] = rowId;
 
-        await CreateWith(synchronizer, new RecordingConnectionReferenceClient()).PushAsync(workspace.Info, overwrite: false, CancellationToken.None);
+        await CreateWith(synchronizer, new RecordingConnectionReferenceClient()).PushAsync(workspace.Info, overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(rowId, Assert.Single(synchronizer.LastProvisionedConnectorIds!).Value);
     }
@@ -84,7 +85,7 @@ public sealed class ConnectionProvisioningTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Contains(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync), synchronizer.Calls);
     }
@@ -94,7 +95,7 @@ public sealed class ConnectionProvisioningTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         var connectors = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync));
         var push = synchronizer.Calls.IndexOf(nameof(IWorkspaceSynchronizer.PushLocalChangesAsync));
@@ -109,7 +110,7 @@ public sealed class ConnectionProvisioningTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(WorkflowActivationMode.DraftWhenConnectionsUnbound, synchronizer.LastWorkflowActivationMode);
     }
@@ -119,7 +120,7 @@ public sealed class ConnectionProvisioningTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.NotEqual(WorkflowActivationMode.DraftWhenConnectionReferencesExist, synchronizer.LastWorkflowActivationMode);
     }
@@ -129,7 +130,7 @@ public sealed class ConnectionProvisioningTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.Calls.Count(call => call == nameof(IWorkspaceSynchronizer.PushCustomConnectorsAsync)));
     }
@@ -140,7 +141,7 @@ public sealed class ConnectionProvisioningTests
         using var workspace = new ClassicWorkspace();
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await CreateWith(synchronizer, new RecordingConnectionReferenceClient()).PushAsync(workspace.Info, overwrite: false, CancellationToken.None);
+        await CreateWith(synchronizer, new RecordingConnectionReferenceClient()).PushAsync(workspace.Info, overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal("crf9a_Classic.shared_teams.0add1954",
             Assert.Single(synchronizer.LastProvisionedDefinition!.ConnectionReferences).ConnectionReferenceLogicalName.Value);
@@ -152,13 +153,14 @@ public sealed class ConnectionProvisioningTests
         using var workspace = new ClassicWorkspace();
         var dataverseClient = new RecordingConnectionReferenceClient();
 
-        await CreateWith(new RecordingWorkspaceSynchronizer(), dataverseClient).PushAsync(workspace.Info, overwrite: false, CancellationToken.None);
+        await CreateWith(new RecordingWorkspaceSynchronizer(), dataverseClient).PushAsync(workspace.Info, overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(["crf9a_Classic.shared_teams.0add1954"], dataverseClient.EnsuredLogicalNames);
     }
 
     private static SyncWorkspaceAdapter CreateWith(RecordingWorkspaceSynchronizer synchronizer, ISyncDataverseClient dataverseClient) =>
         new(
+            synchronizer,
             synchronizer,
             new RecordingRetargetService(),
             dataverseClient,

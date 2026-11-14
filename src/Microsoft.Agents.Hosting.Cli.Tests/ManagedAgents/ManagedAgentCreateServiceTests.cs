@@ -43,7 +43,7 @@ public sealed class ManagedAgentCreateServiceTests
         return new ManagedAgentCreateService(
             new CopilotScaffoldService(
                 scaffolder ?? new EmbeddedTemplateScaffolder(),
-                new CopilotSchemaName(),
+                new CopilotSchemaName(new SyncNamingRulesAdapter()),
                 fileSystem),
             environments,
             catalog,
@@ -53,7 +53,9 @@ public sealed class ManagedAgentCreateServiceTests
             new AgentConfigLocator(),
             ManagedAgentFixtures.Identities(),
             new ManagedAgentPrincipalResolver(InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant)),
-            workspacePort);
+            workspacePort,
+            ManagedAgentFixtures.AgentNames(),
+            new SyncNamingRulesAdapter());
     }
 
     [Fact]
@@ -209,10 +211,10 @@ public sealed class ManagedAgentCreateServiceTests
         var store = ManagedAgentFixtures.Store();
 
         await Create(store, new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() }).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
             CancellationToken.None);
 
-        Assert.Equal("Fork", store.List(workspace.Root).Single().AgentLocation);
+        Assert.Equal("Copy", store.List(workspace.Root).Single().AgentLocation);
     }
 
     [Fact]
@@ -447,7 +449,7 @@ public sealed class ManagedAgentCreateServiceTests
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = sourceAgentId };
 
         var result = await Create(ManagedAgentFixtures.Store(), catalog).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneSchemaName = "src_agent", CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneSchemaName = "src_agent", CloneEnvironmentId = "env-1" },
             CancellationToken.None);
 
         Assert.Equal("clone", result.CreatedFrom);
@@ -465,7 +467,7 @@ public sealed class ManagedAgentCreateServiceTests
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = sourceAgentId };
 
         await Create(store, catalog).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = sourceAgentId, CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = sourceAgentId, CloneEnvironmentId = "env-1" },
             CancellationToken.None);
 
         Assert.Equal(sourceAgentId, store.List(workspace.Root).Single().McsAgentId);
@@ -479,7 +481,7 @@ public sealed class ManagedAgentCreateServiceTests
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() };
 
         var result = await Create(ManagedAgentFixtures.Store(), catalog).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
             CancellationToken.None);
 
         Assert.Equal("env-1", result.EnvironmentId);
@@ -494,7 +496,7 @@ public sealed class ManagedAgentCreateServiceTests
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() };
 
         await Create(ManagedAgentFixtures.Store(), catalog, scaffolder).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
             CancellationToken.None);
 
         Assert.Null(scaffolder.LastCommand);
@@ -508,7 +510,7 @@ public sealed class ManagedAgentCreateServiceTests
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() };
 
         var result = await Create(ManagedAgentFixtures.Store(), catalog).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneSchemaName = "src_agent" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneSchemaName = "src_agent" },
             CancellationToken.None);
 
         Assert.Equal("env-1", result.EnvironmentId);
@@ -522,7 +524,7 @@ public sealed class ManagedAgentCreateServiceTests
         using var scope = new CurrentDirectoryScope(workspace.Root);
 
         await Assert.ThrowsAsync<UsageException>(() => Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort()).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneSchemaName = "src_agent", CloneEnvironmentId = "env-1", SchemaName = "foo_foo" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneSchemaName = "src_agent", CloneEnvironmentId = "env-1", SchemaName = "foo_foo" },
             CancellationToken.None));
     }
 
@@ -534,7 +536,7 @@ public sealed class ManagedAgentCreateServiceTests
         var store = ManagedAgentFixtures.Store();
 
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, new FakeCopilotCatalogPort { ResolveReturns = null }).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneSchemaName = "src_agent", CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneSchemaName = "src_agent", CloneEnvironmentId = "env-1" },
             CancellationToken.None));
 
         Assert.Equal("clone-source-not-found", failure.ErrorKind);
@@ -550,7 +552,7 @@ public sealed class ManagedAgentCreateServiceTests
         var workspaces = new FakeCopilotWorkspacePort();
 
         var result = await Create(ManagedAgentFixtures.Store(), catalog, workspaces: workspaces).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
             CancellationToken.None);
 
         Assert.Equal(1, workspaces.CloneCalls);
@@ -602,7 +604,7 @@ public sealed class ManagedAgentCreateServiceTests
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() };
 
         var result = await Create(store, catalog).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
             CancellationToken.None);
 
         var deployment = Assert.Single(store.Read(workspace.Root).AgentDeployments);
@@ -622,7 +624,7 @@ public sealed class ManagedAgentCreateServiceTests
         var workspaces = new FakeCopilotWorkspacePort();
 
         await Create(ManagedAgentFixtures.Store(), catalog, workspaces: workspaces).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
             CancellationToken.None);
 
         Assert.Equal(0, workspaces.PushCalls);
@@ -640,7 +642,7 @@ public sealed class ManagedAgentCreateServiceTests
         var workspaces = new FakeCopilotWorkspacePort { CloneThrows = new InvalidOperationException("the service is unavailable") };
 
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, catalog, workspaces: workspaces).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
             CancellationToken.None));
 
         Assert.Equal("clone-not-materialised", failure.ErrorKind);
@@ -658,7 +660,7 @@ public sealed class ManagedAgentCreateServiceTests
         var workspaces = new FakeCopilotWorkspacePort { CloneThrows = new InvalidOperationException("boom") };
 
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, catalog, workspaces: workspaces).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
             CancellationToken.None));
 
         Assert.Contains("boom", failure.Message, StringComparison.Ordinal);
@@ -675,7 +677,7 @@ public sealed class ManagedAgentCreateServiceTests
         var cause = new InvalidOperationException("boom");
 
         var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, catalog, workspaces: new FakeCopilotWorkspacePort { CloneThrows = cause }).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
             CancellationToken.None));
 
         Assert.Same(cause, failure.InnerException);
@@ -690,12 +692,12 @@ public sealed class ManagedAgentCreateServiceTests
         var workspaces = new FakeCopilotWorkspacePort
         {
             OnClone = () => File.WriteAllText(
-                Path.Combine(workspace.Root, "Fork", AgentConfigLocator.ProjectSettingsFileName),
-                "displayName: \"Fork\"\nschemaName: \"con_frommaterialised\"\ntemplate: cliagent-1.0.0\n"),
+                Path.Combine(workspace.Root, "Copy", AgentConfigLocator.ProjectSettingsFileName),
+                "displayName: \"Copy\"\nschemaName: \"con_frommaterialised\"\ntemplate: cliagent-1.0.0\n"),
         };
 
         var result = await Create(ManagedAgentFixtures.Store(), catalog, workspaces: workspaces).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
             CancellationToken.None);
 
         Assert.Equal("con_frommaterialised", result.SchemaName);
@@ -711,7 +713,7 @@ public sealed class ManagedAgentCreateServiceTests
         var result = await Create(ManagedAgentFixtures.Store(), catalog).CreateAsync(
             new ManagedAgentCreateRequest
             {
-                Name = "Fork",
+                Name = "Copy",
                 CloneAgentId = Guid.NewGuid().ToString(),
                 CloneEnvironmentId = "env-1",
                 InitialPrompt = "Be helpful.",
@@ -760,7 +762,7 @@ public sealed class ManagedAgentCreateServiceTests
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() };
 
         var result = await Create(ManagedAgentFixtures.Store(), catalog).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-1" },
             CancellationToken.None);
 
         Assert.Equal("env-1", result.EnvironmentId);
@@ -778,7 +780,7 @@ public sealed class ManagedAgentCreateServiceTests
             EnvironmentFixtures.Environment("env-2", instanceUrl: CopilotTestFixtures.DataverseOrganization));
 
         var result = await Create(store, catalog, resolver: resolver).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-2" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-2" },
             CancellationToken.None);
 
         Assert.Equal("env-2", result.EnvironmentId);
@@ -798,7 +800,7 @@ public sealed class ManagedAgentCreateServiceTests
             EnvironmentFixtures.Environment("env-2", instanceUrl: CopilotTestFixtures.DataverseOrganization));
 
         await Create(store, catalog, resolver: resolver).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-2" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1", EnvironmentId = "env-2" },
             CancellationToken.None);
 
         Assert.Null(store.List(workspace.Root).Single().McsAgentId);
@@ -814,7 +816,7 @@ public sealed class ManagedAgentCreateServiceTests
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = sourceAgentId };
 
         await Create(store, catalog).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = sourceAgentId, CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = sourceAgentId, CloneEnvironmentId = "env-1" },
             CancellationToken.None);
 
         Assert.Equal("env-1", Assert.Single(store.Read(workspace.Root).AgentDeployments).EnvironmentId);
@@ -829,7 +831,7 @@ public sealed class ManagedAgentCreateServiceTests
         var store = ManagedAgentFixtures.Store();
 
         var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store, new FakeCopilotCatalogPort()).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneSchemaName = "src_agent", CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneSchemaName = "src_agent", CloneEnvironmentId = "env-1" },
             CancellationToken.None));
 
         Assert.Contains("exactly one", failure.Message, StringComparison.Ordinal);
@@ -859,10 +861,10 @@ public sealed class ManagedAgentCreateServiceTests
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() };
 
         var result = await Create(store, catalog).CreateAsync(
-            new ManagedAgentCreateRequest { Name = "Fork", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            new ManagedAgentCreateRequest { Name = "Copy", CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
             CancellationToken.None);
 
-        Assert.Equal("Fork", result.DisplayName);
+        Assert.Equal("Copy", result.DisplayName);
         Assert.Single(store.List(workspace.Root));
     }
 
@@ -889,6 +891,42 @@ public sealed class ManagedAgentCreateServiceTests
         await Assert.ThrowsAsync<UsageException>(() => Create(ManagedAgentFixtures.Store(), new FakeCopilotCatalogPort()).CreateAsync(
             new ManagedAgentCreateRequest(),
             CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Create_WithANameLongerThanFortyTwoCharacters_ScaffoldsNothing()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        var scaffolder = new RecordingScaffoldPort();
+        var (resolver, client) = ManagedAgentFixtures.TrackedResolver();
+        var before = client.ListCalls;
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store, new FakeCopilotCatalogPort(), scaffolder, resolver).CreateAsync(
+            Scaffold() with { Name = "Contoso Agent".PadRight(43, 'x') },
+            CancellationToken.None));
+
+        Assert.Equal("--agent-name is 43 characters long; Copilot Studio allows at most 42.", failure.Message);
+        Assert.Null(scaffolder.LastCommand);
+        Assert.Equal(before, client.ListCalls);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(workspace.Root));
+    }
+
+    [Fact]
+    public async Task Create_FromACloneWithARecordNameLongerThanFortyTwoCharacters_RegistersIt()
+    {
+        using var workspace = new TemporaryWorkspace(withProjectFile: false);
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        var name = "Contoso Agent".PadRight(43, 'x');
+
+        var result = await Create(store, new FakeCopilotCatalogPort { ResolveReturns = Guid.NewGuid().ToString() }).CreateAsync(
+            new ManagedAgentCreateRequest { Name = name, CloneAgentId = Guid.NewGuid().ToString(), CloneEnvironmentId = "env-1" },
+            CancellationToken.None);
+
+        Assert.Equal(name, result.DisplayName);
+        Assert.Equal(name, Assert.Single(store.List(workspace.Root)).DisplayName);
     }
 }
 

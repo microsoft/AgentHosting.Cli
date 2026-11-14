@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.Hosting.Cli.Core;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
@@ -119,27 +120,12 @@ internal sealed class FileTelemetryPreferenceStore : ITelemetryPreferenceStore
                 }
             }
 
-            string json = JsonSerializer.Serialize(
-                new TelemetryPreferenceDocument
-                {
-                    SchemaVersion = SupportedSchemaVersion,
-                    Enabled = enabled,
-                },
-                TelemetryPreferenceJsonContext.Default.TelemetryPreferenceDocument);
-            string tempPath = _filePath + ".tmp-" + Guid.NewGuid().ToString("N");
             try
             {
-                await File.WriteAllTextAsync(tempPath, json, cancellationToken);
-                File.Move(tempPath, _filePath, overwrite: true);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                TryDelete(tempPath);
-                throw;
+                AtomicFile.WriteAllText(_filePath, JsonSerializer.Serialize(new TelemetryPreferenceDocument { SchemaVersion = SupportedSchemaVersion, Enabled = enabled }, TelemetryPreferenceJsonContext.Default.TelemetryPreferenceDocument));
             }
             catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
             {
-                TryDelete(tempPath);
                 throw Unavailable("write");
             }
         }
@@ -184,18 +170,6 @@ internal sealed class FileTelemetryPreferenceStore : ITelemetryPreferenceStore
         new(
             $"The AgentHost telemetry preference could not be {(operation == "write" ? "written" : "read")}.",
             "Verify that the AgentHost config directory is accessible, then retry.");
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
-        {
-            // Preserve the primary write failure.
-        }
-    }
 }
 
 internal sealed class TelemetryControlService :

@@ -58,6 +58,36 @@ public sealed class FixtureCopiesTests : IDisposable
     public void CopyTree_RefusesAMissingFixture() =>
         Assert.Throws<E2EException>(() => FixtureCopies.CopyTree(Path.Combine(_root, "missing"), Path.Combine(_root, "copy"), keepLocalState: true));
 
+    [Fact]
+    public void CopyTree_WithoutLocalState_KeepsTheLocalStateOfANestedWorkspace()
+    {
+        var source = Fixture();
+        Directory.CreateDirectory(Path.Combine(source, "Agent", ".mcs"));
+        File.WriteAllText(Path.Combine(source, "Agent", ".mcs", "conn.json"), "{}");
+        var destination = Path.Combine(_root, "tree");
+
+        FixtureCopies.CopyTree(source, destination, keepLocalState: false);
+
+        Assert.True(File.Exists(Path.Combine(destination, "Agent", ".mcs", "conn.json")));
+        Assert.False(Directory.Exists(Path.Combine(destination, ".mcs")));
+    }
+
+    [Fact]
+    public void CopyDirectory_SkipsTheExcludedNamesAtEveryDepth()
+    {
+        var source = Fixture();
+        Directory.CreateDirectory(Path.Combine(source, "Agent", ".mcs"));
+        File.WriteAllText(Path.Combine(source, "Agent", ".mcs", "conn.json"), "{}");
+        var destination = Path.Combine(_root, "tree");
+
+        FileTree.CopyDirectory(source, destination, [".mcs"]);
+
+        Assert.False(Directory.Exists(Path.Combine(destination, ".mcs")));
+        Assert.False(Directory.Exists(Path.Combine(destination, "Agent", ".mcs")));
+        Assert.True(Directory.Exists(Path.Combine(destination, "Agent")));
+        Assert.True(File.Exists(Path.Combine(destination, ".config", "agent.config.json")));
+    }
+
     private string Fixture()
     {
         var source = Path.Combine(_root, "fixture");

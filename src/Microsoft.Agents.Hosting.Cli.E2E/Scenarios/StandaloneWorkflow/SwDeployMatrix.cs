@@ -266,7 +266,7 @@ public static class SwDeployMatrix
         run.Expect(SwChecks.Snapshot(outside).Count == 0, "--project wrote nothing into the current directory", "nothing", SwChecks.Difference(new Dictionary<string, string>(), SwChecks.Snapshot(outside)) ?? string.Empty);
 
         run.ExpectExit(await SwSteps.RawDeployAsync(run, workspace, SwSteps.Slot, null, "--overwrite").ConfigureAwait(false), 0, "deploy --overwrite on a workflow is accepted", "P3", "#3");
-        await SwChecks.ExpectHelpAsync(run, ["agent", "deploy"], "--overwrite", "Overwrite cloud drift, and replace an unverified MCS agent. Only dev refuses drift without it.",
+        await SwChecks.ExpectHelpAsync(run, ["agent", "deploy"], "--overwrite", "Overwrite cloud drift and shared environment variables, and replace an unverified agent. Only dev refuses drift without it.",
             "the --overwrite help says it overwrites cloud drift, which a dev deploy refuses without it", "#3").ConfigureAwait(false);
     }
 

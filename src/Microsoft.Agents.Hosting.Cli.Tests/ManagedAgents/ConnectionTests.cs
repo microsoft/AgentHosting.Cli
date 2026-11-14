@@ -5,6 +5,7 @@ using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
@@ -1242,6 +1243,17 @@ public sealed class WorkflowStateCacheTests
         Assert.Empty(cache.Read(Workspace, "env-1"));
         Assert.Equal(WorkflowStateCache.Activated, cache.Read(Workspace, "env-2")["SubmitExpense"]);
     }
+
+    [Fact]
+    public void Write_WhileAnotherCommandHoldsTheWorkspace_StillRecordsWhatWasObserved()
+    {
+        var fileSystem = new FakeCopilotFileSystem();
+        using var holder = HeldNamedMutex.OnAnotherThread(WorkflowStateCache.WriteGuardNamePrefix, Workspace);
+
+        new WorkflowStateCache(fileSystem, TimeSpan.Zero).Write(Workspace, "env-1", new Dictionary<string, int> { ["SubmitExpense"] = WorkflowStateCache.Activated });
+
+        Assert.Equal(WorkflowStateCache.Activated, Cache(fileSystem).Read(Workspace, "env-1")["SubmitExpense"]);
+    }
 }
 
 public sealed class ConnectorReadinessWaitTests
@@ -1249,7 +1261,7 @@ public sealed class ConnectorReadinessWaitTests
     private const string CustomConnector = "cre98_weather-5f0123456789abcdef";
 
     private static ConnectorReadinessWait Wait(IConnectorCatalogPort connectors, TimeSpan? timeout = null) =>
-        new(connectors, timeout ?? TimeSpan.FromMinutes(1), (_, _) => Task.CompletedTask);
+        new(connectors, new SyncNamingRulesAdapter(), timeout ?? TimeSpan.FromMinutes(1), (_, _) => Task.CompletedTask);
 
     [Theory]
     [InlineData("shared_office365", false)]
@@ -1257,9 +1269,10 @@ public sealed class ConnectorReadinessWaitTests
     [InlineData(CustomConnector, true)]
     [InlineData("/providers/Microsoft.PowerApps/apis/" + CustomConnector, true)]
     [InlineData("", false)]
+    [InlineData("-5f0123456789abcdef", false)]
     public void IsCustomConnector_RecognisesTheCustomConnectorSuffix(string connectorId, bool expected)
     {
-        Assert.Equal(expected, ConnectorReadinessWait.IsCustomConnector(connectorId));
+        Assert.Equal(expected, Wait(new FakeConnectorCatalogPort()).IsCustomConnector(connectorId));
     }
 
     [Fact]
@@ -1827,6 +1840,20 @@ public sealed class AgentDeploymentConnectionServiceTests
         Assert.Equal(0, connections.BindCalls);
         Assert.Equal(0, connections.ActivateCalls);
         Assert.Equal(WorkflowStateCache.Activated, states.Read(workspace.Root, "env-1")["SubmitExpense"]);
+    }
+
+    [Fact]
+    public async Task Update_AnUnknownConnectionReferenceOfAnAgentSelectedByName_SuggestsAListingThatSelectsItByIdentifier()
+    {
+        var (workspace, store) = Deployed();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, new FakeConnectionPort()).UpdateAsync(
+            new AgentDeploymentConnectionRequest { AgentName = "Contoso Agent", DeploymentName = "dev", ConnectionReference = "cr_missing", NonInteractive = true },
+            CancellationToken.None));
+
+        Assert.Equal("Run `msagent deployment connection list --agent-id agent-1 --deployment-name dev` to see the references the workspace declares.", failure.Remediation);
     }
 
     [Fact]

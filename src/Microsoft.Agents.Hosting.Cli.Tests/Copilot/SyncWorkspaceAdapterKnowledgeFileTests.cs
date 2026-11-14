@@ -25,6 +25,7 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
     private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
         new(
             synchronizer,
+            synchronizer,
             new RecordingRetargetService(),
             new StubSolutionVersionsClient(),
             new StubComponentCollectionClient(),
@@ -40,7 +41,7 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
             PushLocalChangesThrows = new InvalidOperationException("Unsupported sync operation. A component references a parent agent that could not be created on the cloud."),
         };
 
-        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.ConnectedAgentNotInTarget, failure.ErrorKind);
         Assert.Equal(0, synchronizer.UploadKnowledgeFilesCalls);
@@ -53,10 +54,17 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
         {
             UploadKnowledgeFilesThrows = new InvalidOperationException("Improper response, not implemented"),
         };
+        synchronizer.LocalChanges.AddRange(
+        [
+            new Change { ChangeType = ChangeType.Create, Name = "con_agent.file.guide.txt_0Sh", SchemaName = "con_agent.file.guide.txt_0Sh", ChangeKind = "FileAttachmentComponent" },
+            new Change { ChangeType = ChangeType.Update, Name = "Settings", SchemaName = "entity", ChangeKind = "BotEntity" },
+            new Change { ChangeType = ChangeType.Update, Name = "Icon", SchemaName = "icon", ChangeKind = "update" },
+        ]);
 
-        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None));
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.KnowledgeUploadFailed, failure.ErrorKind);
+        Assert.StartsWith("1 component(s) were pushed", failure.Message, StringComparison.Ordinal);
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
     }
 
@@ -65,7 +73,7 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.UploadKnowledgeFilesCalls);
     }
@@ -75,7 +83,7 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
         Assert.Equal(0, synchronizer.PushChangesetCalls);
@@ -86,7 +94,7 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(
             [nameof(IWorkspaceSynchronizer.PushLocalChangesAsync), nameof(IWorkspaceSynchronizer.UploadKnowledgeFilesAsync)],
@@ -98,7 +106,7 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.True(synchronizer.LastCheckKnowledgeFiles);
     }
@@ -187,9 +195,24 @@ internal sealed class StubOperationContextProvider : IOperationContextProvider
         dvTableSearchSolutionVersion: new Version(1, 0));
 }
 
-internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
+internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer, IEnvironmentVariableDependencyValidator
 {
     public List<string> Calls { get; } = [];
+
+    public List<bool> EnvironmentVariableChecksComparedWithTheCloudCache { get; } = [];
+
+    public EnvironmentVariableDependencyCheck EnvironmentVariableCheck { get; init; } = EnvironmentVariableDependencyCheck.None;
+
+    public PvaComponentChangeSet LocalChangeSet { get; init; } = new(null, null, null);
+
+    public ImmutableArray<string>? LastApprovedEnvironmentVariableOverwrites { get; private set; }
+
+    public Task<EnvironmentVariableDependencyCheck> ValidateEnvironmentVariableDependenciesAsync(DirectoryPath workspaceFolder, DefinitionBase workspaceDefinition, bool isRetarget, ISyncDataverseClient dataverseClient, CancellationToken cancellationToken)
+    {
+        Calls.Add(nameof(ValidateEnvironmentVariableDependenciesAsync));
+        EnvironmentVariableChecksComparedWithTheCloudCache.Add(isRetarget);
+        return Task.FromResult(EnvironmentVariableCheck);
+    }
 
     public int PushLocalChangesCalls { get; private set; }
 
@@ -281,7 +304,7 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
     public Task<(PvaComponentChangeSet, ImmutableArray<Change>)> GetLocalChangesAsync(DirectoryPath workspaceFolder, DefinitionBase workspaceDefinition, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, CancellationToken cancellationToken)
     {
         Calls.Add(nameof(GetLocalChangesAsync));
-        return Task.FromResult((new PvaComponentChangeSet(null, null, null), LocalChanges.ToImmutableArray()));
+        return Task.FromResult((LocalChangeSet, LocalChanges.ToImmutableArray()));
     }
 
     public DiscardResult DiscardLocalChanges(DirectoryPath workspaceFolder, IReadOnlyCollection<Change> changes) => new();
@@ -358,11 +381,12 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer
 
     public bool? LastOverwriteRemoteChanges { get; private set; }
 
-    public Task PushLocalChangesAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, DefinitionBase workspaceDefinition, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, CloudFlowMetadata? cloudFlowMetadata, ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts, CancellationToken cancellationToken, AuthoringOperationContextBase? contentSaveContextOverride = null, bool overwriteRemoteChanges = false)
+    public Task PushLocalChangesAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, DefinitionBase workspaceDefinition, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, CloudFlowMetadata? cloudFlowMetadata, ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts, CancellationToken cancellationToken, AuthoringOperationContextBase? contentSaveContextOverride = null, bool overwriteRemoteChanges = false, ImmutableArray<string>? approvedEnvironmentVariableOverwrites = null)
     {
         PushLocalChangesCalls++;
         LastPushedPrompts = aiPrompts;
         LastOverwriteRemoteChanges = overwriteRemoteChanges;
+        LastApprovedEnvironmentVariableOverwrites = approvedEnvironmentVariableOverwrites;
         Calls.Add(nameof(PushLocalChangesAsync));
 
         if (PushLocalChangesFailures.Count > 0)

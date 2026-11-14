@@ -33,8 +33,15 @@
     // OPTIONAL. Unlocks the 4 dev -> test promotion scenarios.
     // Also written to: agents are created and deleted here as well.
     // Must differ from devEnvironmentId, or plan refuses to start.
-    // Format: GUID, or null.
+    // Format: GUID, a "Default-<tenant GUID>" id, or null.
     "testEnvironmentId": null,
+
+    // OPTIONAL. Environments the harness must never touch, such as the one the
+    // copy corpus was built in, or production. Any command whose arguments name
+    // one of them is stopped before it starts, a corpus copy that still names one
+    // stops its scenario, and plan refuses a dev or test environment listed here.
+    // Format: a list of environment ids.
+    "forbiddenEnvironmentIds": [],
 
     // OPTIONAL. Unlocks the 5 scenarios that grant and revoke real access.
     //
@@ -67,6 +74,18 @@
       "cliAgent": null,
       "classicAgent": null,
       "workflow": null
+    },
+
+    // OPTIONAL. The mcs-copy feature (pack `copy`).
+    //   corpusRoot - a folder of real agent workspaces, one per subfolder, that
+    //                the corpus rows copy, initialise, and copy. The folder is
+    //                READ-ONLY to the harness: only copies without .mcs and
+    //                .config are used, and the run fails with DATA LOSS if any
+    //                file under it changes. Overridden by the
+    //                MSAGENT_E2E_COPY_CORPUS environment variable.
+    // Format: "C:\\path\\to\\corpus", or null.
+    "copy": {
+      "corpusRoot": null
     }
   },
 

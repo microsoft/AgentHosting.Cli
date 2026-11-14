@@ -39,7 +39,7 @@ public sealed class AzureCli
         }
 
         return await ProcessRunner
-            .RunAsync(startInfo, arguments, stdin: null, TimeSpan.FromMinutes(5), _transcript, cancellationToken)
+            .RunAsync(startInfo, arguments, stdin: null, TimeSpan.FromMinutes(5), _transcript, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -139,9 +139,7 @@ public sealed class CloudProbe
     /// <summary>Whether an agent is absent from an environment, polled because deletion is eventually consistent.</summary>
     public async Task<bool> AgentGoneAsync(string environmentId, string agentId, CancellationToken cancellationToken = default)
     {
-        var result = await _msagent
-            .RunAsync(["agent", "list", "--environment-id", environmentId, "--json"], cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
+        var result = await ListAgentsAsync(environmentId, cancellationToken).ConfigureAwait(false);
 
         return result.ExitCode != 0 || !MentionsId(result.StdOut, agentId);
     }
@@ -149,9 +147,7 @@ public sealed class CloudProbe
     /// <summary>Whether an agent is present in an environment.</summary>
     public async Task<bool> AgentExistsAsync(string environmentId, string agentId, CancellationToken cancellationToken = default)
     {
-        var result = await _msagent
-            .RunAsync(["agent", "list", "--environment-id", environmentId, "--json"], cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
+        var result = await ListAgentsAsync(environmentId, cancellationToken).ConfigureAwait(false);
 
         return result.ExitCode == 0 && MentionsId(result.StdOut, agentId);
     }
@@ -159,11 +155,28 @@ public sealed class CloudProbe
     /// <summary>Whether an agent with a schema name already exists, which a deploy would silently adopt.</summary>
     public async Task<bool> SchemaNameExistsAsync(string environmentId, string schemaName, CancellationToken cancellationToken = default)
     {
-        var result = await _msagent
-            .RunAsync(["agent", "list", "--environment-id", environmentId, "--json"], cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
+        var result = await ListAgentsAsync(environmentId, cancellationToken).ConfigureAwait(false);
 
         return result.ExitCode == 0 && result.StdOut.Contains($"\"{schemaName}\"", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>How many listed agents carry an id, and how many carry a schema name, from one listing.</summary>
+    public async Task<(int WithId, int WithSchemaName)> CountAgentsAsync(string environmentId, string agentId, string schemaName, CancellationToken cancellationToken = default)
+    {
+        var agents = await AgentsAsync(environmentId, cancellationToken).ConfigureAwait(false);
+
+        return (agents.Count(agent => string.Equals(agent.AgentId, agentId, StringComparison.OrdinalIgnoreCase)), agents.Count(agent => string.Equals(agent.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>Lists every agent in an environment as cloud id and schema name pairs, refusing a listing that does not say it is complete.</summary>
+    /// <param name="environmentId">The environment to list.</param>
+    /// <param name="cancellationToken">Cancels the listing.</param>
+    /// <returns>Every agent in the environment.</returns>
+    public async Task<IReadOnlyList<(string AgentId, string SchemaName)>> AgentsAsync(string environmentId, CancellationToken cancellationToken = default)
+    {
+        var result = await ListAgentsAsync(environmentId, cancellationToken).ConfigureAwait(false);
+
+        return result.ExitCode == 0 ? ReadCompleteListing(result.StdOut, "mcsAgentId", "schemaName") ?? throw new E2EException($"agent list did not show every agent in {environmentId}: it stopped at {ListingLimit} or printed no readable listing, so no agent there can be proven absent") : throw new E2EException($"agent list exited {result.ExitCode}, so {environmentId} cannot be inspected: {result.StdErr.Trim()}");
     }
 
     /// <summary>
@@ -175,15 +188,68 @@ public sealed class CloudProbe
     /// </summary>
     public async Task<bool?> WorkflowExistsAsync(string environmentId, string workflowId, CancellationToken cancellationToken = default)
     {
-        var result = await _msagent
-            .RunAsync(["agent", "list", "--agent-type", "MCSWorkflow", "--environment-id", environmentId, "--limit", ListingLimit, "--json"], cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
+        var result = await ListWorkflowsAsync(environmentId, cancellationToken).ConfigureAwait(false);
 
         return result.ExitCode != 0 ? null : ReadListing(result.StdOut, "mcsWorkflowId", workflowId);
     }
 
+    /// <summary>Lists an environment's standalone workflows as id and display name pairs, or none when the listing fails.</summary>
+    public async Task<IReadOnlyList<(string WorkflowId, string DisplayName)>> WorkflowsAsync(string environmentId, CancellationToken cancellationToken = default)
+    {
+        var result = await ListWorkflowsAsync(environmentId, cancellationToken).ConfigureAwait(false);
+
+        return result.ExitCode == 0 ? Pairs(result.StdOut, "mcsWorkflowId", "displayName") : [];
+    }
+
+    /// <summary>Lists an environment's standalone workflows as id and display name pairs, or null unless the listing succeeds, parses, and says it was not truncated.</summary>
+    /// <param name="environmentId">The environment to list.</param>
+    /// <param name="cancellationToken">Cancels the listing.</param>
+    /// <returns>Every workflow in the environment, or null when the listing cannot prove which are absent.</returns>
+    public async Task<IReadOnlyList<(string WorkflowId, string DisplayName)>?> CompleteWorkflowsAsync(string environmentId, CancellationToken cancellationToken = default)
+    {
+        var result = await ListWorkflowsAsync(environmentId, cancellationToken).ConfigureAwait(false);
+
+        return result.ExitCode == 0 ? ReadCompleteWorkflowListing(result.StdOut) : null;
+    }
+
+    /// <summary>Reads a workflow listing's rows as id and display name pairs, or null unless it parses, carries an array of rows, and says it was not truncated.</summary>
+    /// <param name="json">The JSON output of <c>agent list --agent-type MCSWorkflow</c>.</param>
+    /// <returns>Every listed workflow, or null when the listing cannot prove which are absent.</returns>
+    public static IReadOnlyList<(string WorkflowId, string DisplayName)>? ReadCompleteWorkflowListing(string json) => ReadCompleteListing(json, "mcsWorkflowId", "displayName");
+
+    private static IReadOnlyList<(string, string)>? ReadCompleteListing(string json, string first, string second)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+
+            return Rows(document.RootElement) is { } rows && IsComplete(document.RootElement) ? Pairs(rows, first, second) : null;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>The ceiling the probes list under, high enough that a busy environment still fits.</summary>
     private const string ListingLimit = "500";
+
+    private const int ListingAttempts = 3;
+
+    private static readonly TimeSpan ListingRetryDelay = TimeSpan.FromSeconds(10);
+
+    private async Task<MsagentResult> ListAgentsAsync(string environmentId, CancellationToken cancellationToken, params string[] extraArguments) => (await MsagentCli.RetriedAsync(() => _msagent.RunAsync(["agent", "list", .. extraArguments, "--environment-id", environmentId, "--limit", ListingLimit, "--json"], cancellationToken: cancellationToken), result => Task.FromResult(result.ExitCode == 0), ListingAttempts, ListingRetryDelay, cancellationToken).ConfigureAwait(false)).Result;
+
+    private Task<MsagentResult> ListWorkflowsAsync(string environmentId, CancellationToken cancellationToken) => ListAgentsAsync(environmentId, cancellationToken, "--agent-type", "MCSWorkflow");
+
+    private static IReadOnlyList<(string, string)> Pairs(string json, string first, string second)
+    {
+        using var document = JsonDocument.Parse(json);
+
+        return document.RootElement.TryGetProperty("agents", out var agents) ? Pairs(agents, first, second) : [];
+    }
+
+    private static IReadOnlyList<(string, string)> Pairs(JsonElement agents, string first, string second) => [.. agents.EnumerateArray().Select(element => (Text(element, first), Text(element, second)))];
 
     private static bool? ReadListing(string json, string property, string id)
     {
@@ -191,9 +257,7 @@ public sealed class CloudProbe
         {
             var root = JsonDocument.Parse(json).RootElement;
 
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("agents", out var agents)
-                || agents.ValueKind != JsonValueKind.Array)
+            if (Rows(root) is not { } agents)
             {
                 return null;
             }
@@ -203,15 +267,17 @@ public sealed class CloudProbe
                 return true;
             }
 
-            return root.TryGetProperty("truncated", out var truncated) && truncated.ValueKind is JsonValueKind.True or JsonValueKind.False
-                ? truncated.ValueKind == JsonValueKind.True ? null : false
-                : null;
+            return IsComplete(root) ? false : null;
         }
         catch (JsonException)
         {
             return null;
         }
     }
+
+    private static JsonElement? Rows(JsonElement root) => root.ValueKind == JsonValueKind.Object && root.TryGetProperty("agents", out var agents) && agents.ValueKind == JsonValueKind.Array ? agents : null;
+
+    private static bool IsComplete(JsonElement root) => root.TryGetProperty("truncated", out var truncated) && truncated.ValueKind == JsonValueKind.False;
 
     /// <summary>The <c>az bot show</c> arguments, scoped to the subscription the bot was created in.</summary>
     /// <param name="botName">The bot resource name.</param>
@@ -291,4 +357,6 @@ public sealed class CloudProbe
     private static bool Matches(JsonElement element, string property, string id) =>
         element.TryGetProperty(property, out var cloudId)
         && string.Equals(cloudId.GetString(), id, StringComparison.OrdinalIgnoreCase);
+
+    private static string Text(JsonElement element, string property) => element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : string.Empty;
 }

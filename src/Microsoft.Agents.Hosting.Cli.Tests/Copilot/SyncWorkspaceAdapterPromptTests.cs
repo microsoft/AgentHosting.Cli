@@ -21,6 +21,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
     private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
         new(
             synchronizer,
+            synchronizer,
             new RecordingRetargetService(),
             new StubSolutionVersionsClient(),
             new StubComponentCollectionClient(),
@@ -46,7 +47,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
     {
         var synchronizer = SynchronizerWithPrompt();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.UpsertAIPromptsCalls);
     }
@@ -58,7 +59,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
     {
         var synchronizer = SynchronizerWithPrompt();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(overwrite, synchronizer.LastPromptUpsertOverwroteRemoteChanges);
     }
@@ -68,7 +69,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
     {
         var synchronizer = SynchronizerWithPrompt();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Single(synchronizer.LastPushedPrompts);
         Assert.Equal("Summarize", synchronizer.LastPushedPrompts[0].Name);
@@ -79,7 +80,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
     {
         var synchronizer = SynchronizerWithPrompt();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(
             [nameof(IWorkspaceSynchronizer.UpsertAIPromptsForAgentAsync), nameof(IWorkspaceSynchronizer.PushLocalChangesAsync)],
@@ -91,7 +92,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Empty(synchronizer.LastPushedPrompts);
     }
@@ -101,7 +102,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
     {
         var synchronizer = SynchronizerWithPrompt(errorMessage: "invalid model");
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Contains(outcome.Warnings, warning => warning.Contains("Summarize", StringComparison.Ordinal));
         Assert.Contains(outcome.Warnings, warning => warning.Contains("invalid model", StringComparison.Ordinal));
@@ -112,7 +113,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
     {
         var synchronizer = SynchronizerWithPrompt(errorMessage: "invalid model");
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
         Assert.Equal(1, synchronizer.UploadKnowledgeFilesCalls);
@@ -123,7 +124,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
     {
         var synchronizer = SynchronizerWithPrompt(errorMessage: "invalid model");
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Empty(synchronizer.LastPushedPrompts);
     }
@@ -135,7 +136,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
         synchronizer.PromptResponses.Add(new SyncDataverseClient.AIPromptResponse { PromptName = "Accepted" });
         synchronizer.PromptMetadata.Add(new SyncDataverseClient.AIPromptMetadata { Name = "Accepted" });
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal(
             synchronizer.PromptMetadata.Select(prompt => prompt.Name),
@@ -148,7 +149,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
         var synchronizer = new RecordingWorkspaceSynchronizer();
         synchronizer.PromptResponses.Add(new SyncDataverseClient.AIPromptResponse { PromptName = "Unconfirmed" });
 
-        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Empty(synchronizer.LastPushedPrompts);
     }
@@ -163,7 +164,7 @@ public sealed class SyncWorkspaceAdapterPromptTests
         synchronizer.LocalChanges.Add(new Change { Name = "Greeting", SchemaName = "cre98_agent.topic.Greeting", ChangeKind = "DialogComponent", ChangeType = ChangeType.Update });
         synchronizer.PromptResponses.Add(new SyncDataverseClient.AIPromptResponse { AIModelId = promptId, PromptName = "Summarize", ErrorMessage = "invalid model" });
 
-        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, CancellationToken.None);
+        var outcome = await Create(synchronizer).PushAsync(Workspace(), overwrite: false, overwriteSharedEnvironmentVariables: false, CancellationToken.None);
 
         Assert.Equal("cre98_agent.topic.Greeting", Assert.Single(outcome.Changes).SchemaName);
     }

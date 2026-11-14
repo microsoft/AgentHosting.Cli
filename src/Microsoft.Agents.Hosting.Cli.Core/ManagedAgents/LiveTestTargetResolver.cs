@@ -22,15 +22,16 @@ public sealed class LiveTestTargetResolver
     private readonly CopilotProjectIdentityReader _projectIdentities;
 
     /// <summary>Creates a resolver over the existing read-only registry ports.</summary>
-    public LiveTestTargetResolver(
-        IManagedAgentRegistry agents,
-        IAgentDeploymentRegistry deployments,
-        AgentConfigLocator locator)
+    /// <param name="agents">The managed-agent table.</param>
+    /// <param name="deployments">The agent-deployment table.</param>
+    /// <param name="locator">Resolves project and workspace directories.</param>
+    /// <param name="projectIdentities">Reads the schema name a workspace declares.</param>
+    public LiveTestTargetResolver(IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities)
     {
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
-        _projectIdentities = new CopilotProjectIdentityReader(locator);
+        _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
     }
 
     /// <summary>Resolves one target without authentication, network access or configuration writes.</summary>
@@ -344,16 +345,7 @@ public sealed class LiveTestTargetResolver
         }
     }
 
-    private string? EffectiveSchema(string project, ManagedAgentRecord agent)
-    {
-        if (!string.IsNullOrWhiteSpace(agent.McsSchemaName))
-        {
-            return agent.McsSchemaName.Trim();
-        }
-
-        var workspace = _locator.AgentWorkspaceDirectory(project, agent.AgentLocation);
-        return workspace is null ? null : _projectIdentities.Find(workspace)?.SchemaName?.Trim();
-    }
+    private string? EffectiveSchema(string project, ManagedAgentRecord agent) => _projectIdentities.FindSchemaName(agent, _locator.AgentWorkspaceDirectory(project, agent.AgentLocation))?.Trim();
 
     private static void ValidateRegistryShape(
         IReadOnlyList<ManagedAgentRecord> agents,

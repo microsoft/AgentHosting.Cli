@@ -73,6 +73,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IStandaloneWorkflowDataverseClient>(provider => (IStandaloneWorkflowDataverseClient)provider.GetRequiredService<ISyncDataverseClient>());
         services.AddSingleton<IStandaloneWorkflowSynchronizer>(provider => new StandaloneWorkflowSynchronizer(provider.GetRequiredService<IStandaloneWorkflowDataverseClient>()));
         services.AddSingleton<ICopilotWorkspaceAttachPort, WorkspaceReattachAdapter>();
+        services.AddSingleton<ICopilotCopyPort, WorkspaceCopyAdapter>();
+        services.AddSingleton<ICopilotAgentResourcePort, DataverseAgentResourceAdapter>();
+        services.AddSingleton<ICopilotNamingRules, SyncNamingRulesAdapter>();
+        services.AddSingleton<ICopilotProjectIdentityPort, SyncProjectIdentityAdapter>();
         services.AddSingleton<ICopilotWorkspacePort, SyncWorkspaceAdapter>();
         services.AddSingleton<ICopilotCatalogPort, DataverseCatalogAdapter>();
         services.AddSingleton<DataverseWebApiClient>();

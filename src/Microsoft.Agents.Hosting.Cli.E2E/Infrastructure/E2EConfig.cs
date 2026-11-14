@@ -60,6 +60,7 @@ public sealed record E2EConfig
             DevEnvironmentId = Env("MCS_DEV_ENV") ?? Mcs.DevEnvironmentId,
             TestEnvironmentId = Env("MCS_TEST_ENV") ?? Mcs.TestEnvironmentId,
             ShareUserObjectId = Env("MCS_SHARE_USER") ?? Mcs.ShareUserObjectId,
+            Copy = Mcs.Copy with { CorpusRoot = Env("COPY_CORPUS") ?? Mcs.Copy.CorpusRoot },
             Workspaces = Mcs.Workspaces with
             {
                 CliAgent = Env("WORKSPACE_CLI") ?? Mcs.Workspaces.CliAgent,
@@ -101,7 +102,17 @@ public sealed record McsConfig
 
     public string? ShareUserObjectId { get; init; }
 
+    public IReadOnlyList<string> ForbiddenEnvironmentIds { get; init; } = [];
+
+    public CopyConfig Copy { get; init; } = new();
+
     public WorkspaceConfig Workspaces { get; init; } = new();
+}
+
+/// <summary>Where the copy scenarios find real agent workspaces to copy from, which they only ever read.</summary>
+public sealed record CopyConfig
+{
+    public string? CorpusRoot { get; init; }
 }
 
 /// <summary>Overrides for the bundled agent fixtures.</summary>

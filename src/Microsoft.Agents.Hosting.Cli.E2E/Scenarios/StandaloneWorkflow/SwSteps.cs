@@ -15,7 +15,7 @@ public static class SwSteps
     public static async Task<MsagentResult> RunAsync(SwRun run, IReadOnlyList<string> arguments, string? directory, string? stdin = null, TimeSpan? timeout = null)
     {
         var result = await run.Context.Msagent
-            .RunAsync(arguments, directory, stdin, timeout ?? TimeSpan.FromMinutes(10), run.Token)
+            .RunAsync(arguments, directory, stdin, timeout ?? TimeSpan.FromMinutes(10), cancellationToken: run.Token)
             .ConfigureAwait(false);
 
         run.Services.AddTiming(new StandaloneTiming(run.Id, Verb(arguments), result.ExitCode, result.Duration.TotalSeconds));

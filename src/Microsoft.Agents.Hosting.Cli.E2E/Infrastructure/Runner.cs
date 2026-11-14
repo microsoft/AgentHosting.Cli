@@ -122,8 +122,9 @@ public sealed class Runner
         _run.Transcript.Note($"=== {scenario.Id} {scenario.Title} ===");
 
         var stopwatch = Stopwatch.StartNew();
+        var bound = scenario.Timeout ?? _scenarioTimeout;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(_scenarioTimeout);
+        timeout.CancelAfter(bound);
 
         var running = null as Task;
 
@@ -190,7 +191,7 @@ public sealed class Runner
                 Scenario = ScenarioDescriptor.From(scenario),
                 Outcome = Outcome.Error,
                 Duration = stopwatch.Elapsed,
-                Reason = $"the scenario exceeded its {_scenarioTimeout} bound",
+                Reason = $"the scenario exceeded its {bound} bound",
                 TranscriptPath = transcriptPath,
                 RetainedWorkspace = RetainWorkspace(scenario),
                 PassedChecks = assertions.Passed,

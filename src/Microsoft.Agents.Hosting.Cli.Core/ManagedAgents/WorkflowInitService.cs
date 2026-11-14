@@ -15,6 +15,7 @@ public sealed class WorkflowInitService
     private readonly IWorkflowStorePort _workflows;
     private readonly ManagedAgentPrincipalResolver _principals;
     private readonly IWorkflowWorkspacePort _workspace;
+    private readonly ManagedAgentRegistration _registration;
 
     /// <summary>Creates the service.</summary>
     /// <param name="agents">The managed-agent table.</param>
@@ -31,6 +32,7 @@ public sealed class WorkflowInitService
         _workflows = workflows ?? throw new ArgumentNullException(nameof(workflows));
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
+        _registration = new ManagedAgentRegistration(_agents, _locator);
     }
 
     /// <summary>Registers a workflow that already exists on disk.</summary>
@@ -57,7 +59,6 @@ public sealed class WorkflowInitService
         var local = await _workflows.ReadLocalAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
         var projectDirectory = _locator.EnclosingProjectDirectory(workspaceRoot);
         var agentLocation = Path.GetRelativePath(projectDirectory, workspaceRoot).Replace('\\', '/');
-        var displayName = request.Name.Trim();
 
         WorkflowRegistrationGuard.RequireUnregistered(_agents, _locator, projectDirectory, folder.WorkflowId);
 
@@ -66,21 +67,7 @@ public sealed class WorkflowInitService
 
         _workflows.WriteConnectionReferenceDeclaration(workspaceRoot);
 
-        var stored = _agents.Add(projectDirectory, new ManagedAgentRecord
-        {
-            AgentId = Guid.NewGuid().ToString(),
-            DisplayName = displayName,
-            AgentType = AgentTypes.McsWorkflow,
-            AgentLocation = agentLocation,
-            McsWorkflowId = folder.WorkflowId.ToString(),
-            TenantId = environment.TenantId,
-            EnvironmentId = environment.EnvironmentId,
-            Origin = ManagedAgentOrigins.AgentHostCli,
-            Owner = caller,
-            CreatedBy = caller,
-            EntityTag = string.Empty,
-            AgentState = EntityStates.Saved,
-        });
+        var stored = _registration.RegisterWorkflow(projectDirectory, request.Name, null, agentLocation, environment.TenantId, environment.EnvironmentId, caller, folder.WorkflowId);
 
         return new ManagedAgentInitResult
         {

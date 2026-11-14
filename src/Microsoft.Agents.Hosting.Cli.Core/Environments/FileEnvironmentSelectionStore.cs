@@ -138,7 +138,7 @@ public sealed class FileEnvironmentSelectionStore : IEnvironmentSelectionStore
         string json;
         try
         {
-            json = File.ReadAllText(_selectionFilePath);
+            json = AtomicFile.ReadAllText(_selectionFilePath);
         }
         catch (IOException ex)
         {
@@ -187,33 +187,15 @@ public sealed class FileEnvironmentSelectionStore : IEnvironmentSelectionStore
             document,
             EnvironmentSelectionJsonContext.Default.EnvironmentSelectionDocument);
 
-        var tempPath = _selectionFilePath + ".tmp-" + Guid.NewGuid().ToString("N");
         try
         {
-            File.WriteAllText(tempPath, json);
-            File.Move(tempPath, _selectionFilePath, overwrite: true);
+            AtomicFile.WriteAllText(_selectionFilePath, json);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            TryDeleteTemp(tempPath);
             throw new AgentHostingStateException(
                 $"The AgentHost environment selection could not be written: {ex.Message}",
                 remediation: "Verify the AgentHost config directory is writable, then retry.");
-        }
-    }
-
-    private static void TryDeleteTemp(string tempPath)
-    {
-        try
-        {
-            if (File.Exists(tempPath))
-            {
-                File.Delete(tempPath);
-            }
-        }
-        catch (IOException)
-        {
-            // Best-effort cleanup; the write failure is already being reported.
         }
     }
 

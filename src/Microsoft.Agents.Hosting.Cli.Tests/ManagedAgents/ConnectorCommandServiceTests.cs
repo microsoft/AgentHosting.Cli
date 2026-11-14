@@ -1066,6 +1066,22 @@ public sealed class ConnectorCommandServiceTests
     }
 
     [Fact]
+    public async Task Create_ForAnAgentSelectedByName_SuggestsABindCommandThatSelectsItByIdentifier()
+    {
+        var (workspace, store) = Deployed();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var consentFlow = new ScriptedConsentFlow();
+        consentFlow.Outcomes.Enqueue(new ConnectionConsentResult(ConnectionConsentStatus.Created, "conn-new", "conn-new", null, null));
+
+        var result = await CreateService(store, Catalog("shared_teams"), consentFlow).CreateAsync(
+            new AgentDeploymentConnectionCreateRequest { AgentName = "Contoso Agent", DeploymentName = "dev", Connector = "shared_teams" },
+            CancellationToken.None);
+
+        Assert.Equal("msagent deployment connection update --agent-id agent-1 --deployment-name dev --connector shared_teams --connection-id conn-new", result.BindCommand);
+    }
+
+    [Fact]
     public async Task Create_WithoutADeploymentTheSuggestedBindCommandShowsAPlaceholder()
     {
         var (workspace, store) = Deployed();
@@ -1096,6 +1112,23 @@ public sealed class ConnectorCommandServiceTests
             CancellationToken.None);
 
         Assert.False(result.Ready);
+        Assert.Equal("msagent deployment connection update --agent-id agent-1 --deployment-name dev --connection-reference cre98_agent.shared_teams.abc", result.BindCommand);
+    }
+
+    [Fact]
+    public async Task Reference_ForAnAgentSelectedByName_SuggestsABindCommandThatSelectsItByIdentifier()
+    {
+        var (workspace, store) = Deployed();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var connections = new FakeConnectionPort();
+        connections.CreatedReferenceNames.Enqueue("cre98_agent.shared_teams.abc");
+        connections.Views.Add(ManagedAgentFixtures.Reference("cre98_agent.shared_teams.abc", "shared_teams"));
+
+        var result = await ReferenceService(store, Catalog("shared_teams"), connections, new ScriptedConsentFlow()).CreateAsync(
+            new AgentDeploymentConnectionReferenceCreateRequest { AgentName = "Contoso Agent", DeploymentName = "dev", Connector = "shared_teams", NonInteractive = true },
+            CancellationToken.None);
+
         Assert.Equal("msagent deployment connection update --agent-id agent-1 --deployment-name dev --connection-reference cre98_agent.shared_teams.abc", result.BindCommand);
     }
 
@@ -1633,6 +1666,20 @@ public sealed class ConnectorCommandServiceTests
 
         Assert.Contains("requires --connection-reference", failure.Message, StringComparison.Ordinal);
         Assert.Contains("msagent deployment connection list --agent-id agent-1 --deployment-name dev", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReferenceRemove_WithoutAReferenceForAnAgentSelectedByName_SuggestsAListingThatSelectsItByIdentifier()
+    {
+        var (workspace, store) = Deployed();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => RemoveService(store, Catalog("shared_teams"), new FakeConnectionPort()).RemoveAsync(
+            new AgentDeploymentConnectionRemoveRequest { AgentName = "Contoso Agent", DeploymentName = "dev" },
+            CancellationToken.None));
+
+        Assert.Contains("Run `msagent deployment connection list --agent-id agent-1 --deployment-name dev` to see them.", failure.Message, StringComparison.Ordinal);
     }
 
     [Fact]

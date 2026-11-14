@@ -64,16 +64,15 @@ public sealed class AgentDeploymentDeleteService
             throw new UsageException("--delete-deployed-mcs-agent does not apply to a workflow, which has no agent in the environment. Run `msagent agent delete` to remove the cloud flow.");
         }
 
-        var expectedResponse = deployments.Count == 1 ? deployments[0].DeploymentName : agent.DisplayName;
-
+        var schemaName = request.DeleteDeployedMcsAgent ? _projectIdentities.FindSchemaName(agent, _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent)) : null;
         var planned = new List<(AgentDeploymentRecord Deployment, string? TargetAgentId)>();
 
         foreach (var deployment in deployments)
         {
-            planned.Add((deployment, request.DeleteDeployedMcsAgent ? await FindTargetAgentIdAsync(projectDirectory, agent, deployment, cancellationToken).ConfigureAwait(false) : null));
+            planned.Add((deployment, schemaName is null ? null : await FindTargetAgentIdAsync(deployment, schemaName, cancellationToken).ConfigureAwait(false)));
         }
 
-        var outcome = await ConfirmationPolicy.ConfirmAsync(_confirmations, request.NonInteractive, Describe(agent, planned, request.DeleteDeployedMcsAgent), expectedResponse, cancellationToken).ConfigureAwait(false);
+        var outcome = await ConfirmationPolicy.ConfirmAsync(_confirmations, request.NonInteractive, Describe(agent, planned, request.DeleteDeployedMcsAgent), deployments.Count == 1 ? deployments[0].DeploymentName : agent.DisplayName, cancellationToken).ConfigureAwait(false);
 
         if (outcome != ConfirmationOutcome.Confirmed)
         {
@@ -91,7 +90,7 @@ public sealed class AgentDeploymentDeleteService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 _deployments.Remove(projectDirectory, deployment.DeploymentId, deployment.EntityTag);
-                ForgetDeletedCloudAgent(projectDirectory, agent, targetAgentId);
+                agent = ForgetDeletedCloudAgent(projectDirectory, agent, targetAgentId);
             }
             catch (Exception failure) when (targetAgentId is not null && failure is not OperationCanceledException)
             {
@@ -102,25 +101,9 @@ public sealed class AgentDeploymentDeleteService
         return Result("deployment-deleted", agent, planned, request.DeleteDeployedMcsAgent, _locator.ConfigFilePath(projectDirectory));
     }
 
-    private void ForgetDeletedCloudAgent(string projectDirectory, ManagedAgentRecord agent, string? deletedAgentId)
-    {
-        if (deletedAgentId is not null && string.Equals(agent.McsAgentId, deletedAgentId, StringComparison.OrdinalIgnoreCase))
-        {
-            _agents.Update(projectDirectory, agent with { McsAgentId = null });
-        }
-    }
+    private ManagedAgentRecord ForgetDeletedCloudAgent(string projectDirectory, ManagedAgentRecord agent, string? deletedAgentId) => deletedAgentId is not null && string.Equals(agent.McsAgentId, deletedAgentId, StringComparison.OrdinalIgnoreCase) ? _agents.Update(projectDirectory, agent with { McsAgentId = null }) : agent;
 
-    private async Task<string?> FindTargetAgentIdAsync(string projectDirectory, ManagedAgentRecord agent, AgentDeploymentRecord deployment, CancellationToken cancellationToken)
-    {
-        var workspaceDirectory = _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent);
-
-        if (ManagedAgentResolver.McsSchemaNameOf(agent, workspaceDirectory is null ? null : _projectIdentities.Find(workspaceDirectory)?.SchemaName) is not { } schemaName)
-        {
-            return null;
-        }
-
-        return await _catalog.ResolveAgentIdAsync(await _environmentResolver.ResolveAsync(deployment.EnvironmentId, cancellationToken).ConfigureAwait(false), schemaName, cancellationToken).ConfigureAwait(false);
-    }
+    private async Task<string?> FindTargetAgentIdAsync(AgentDeploymentRecord deployment, string schemaName, CancellationToken cancellationToken) => await _catalog.ResolveAgentIdAsync(await _environmentResolver.ResolveAsync(deployment.EnvironmentId, cancellationToken).ConfigureAwait(false), schemaName, cancellationToken).ConfigureAwait(false);
 
     private async Task DeleteTargetAgentOrFailAsync(ManagedAgentRecord agent, AgentDeploymentRecord deployment, string targetAgentId, CancellationToken cancellationToken)
     {

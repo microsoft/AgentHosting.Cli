@@ -112,7 +112,7 @@ public sealed class TelemetryControlTests
             "user-settings.json")));
         Assert.Empty(Directory.GetFiles(
             Path.GetDirectoryName(store.FilePath)!,
-            "*.tmp-*"));
+            "*.tmp"));
     }
 
     [Fact]

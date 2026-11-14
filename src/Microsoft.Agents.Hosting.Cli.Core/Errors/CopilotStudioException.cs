@@ -33,6 +33,9 @@ public static class CopilotErrorKinds
     /// <summary>Local and remote both changed the same components; a pull is required first.</summary>
     public const string PushConflictsRequirePull = "push-conflicts-require-pull";
 
+    /// <summary>A deploy would replace the values of shared environment variables the target environment already holds.</summary>
+    public const string SharedEnvironmentVariablesRequireOverwrite = "shared-environment-variables-require-overwrite";
+
     /// <summary>A destructive command was invoked without confirmation.</summary>
     public const string ConfirmationRequired = "confirmation-required";
 
@@ -76,6 +79,9 @@ public static class CopilotErrorKinds
 
     /// <summary>The service refused a connection reference it already holds, so the push did not land.</summary>
     public const string DuplicateConnectionReference = "duplicate-connection-reference";
+
+    /// <summary>The service refused to create a component it already holds, so the push did not land.</summary>
+    public const string DuplicateComponent = "duplicate-component";
 
     /// <summary>The push names a connection reference the environment does not hold, even after the baseline was re-read.</summary>
     public const string MissingConnectionReference = "missing-connection-reference";
@@ -232,6 +238,20 @@ public sealed class CopilotStudioException : AgentHostingException
         ExitCodes.Usage,
         CopilotErrorKinds.PushConflictsRequirePull,
         "There is a conflict with a remote change. Run `msagent agent pull` to get the latest changes and resolve the conflict, then deploy again — or re-run with --overwrite to replace the cloud with your local content.");
+
+    /// <summary>A deploy would replace the values of shared environment variables the target environment already holds.</summary>
+    /// <param name="schemaNames">The schema names of the shared environment variables.</param>
+    /// <param name="files">The workspace files that change them.</param>
+    /// <param name="environmentId">The environment that holds them.</param>
+    /// <param name="innerException">The sync library's refusal, when the push itself refused.</param>
+    /// <returns>The typed failure.</returns>
+    public static CopilotStudioException SharedEnvironmentVariablesRequireOverwrite(IReadOnlyCollection<string> schemaNames, IReadOnlyCollection<string> files, string environmentId, Exception? innerException = null) => new(
+        ErrorCodes.CopilotStudio.SharedEnvironmentVariablesRequireOverwrite,
+        $"This deploy would overwrite {schemaNames.Count} shared environment variable{(schemaNames.Count == 1 ? string.Empty : "s")} that {environmentId} already holds: {string.Join(", ", schemaNames)}.",
+        ExitCodes.Usage,
+        CopilotErrorKinds.SharedEnvironmentVariablesRequireOverwrite,
+        $"Re-run `msagent agent deploy` with --overwrite to replace {(schemaNames.Count == 1 ? "its value" : "their values")} in {environmentId}, or discard the local change to {string.Join(", ", files)}.",
+        innerException);
 
     /// <summary>A destructive command was invoked without confirmation.</summary>
     /// <param name="operation">The operation that requires confirmation.</param>
@@ -523,6 +543,13 @@ public sealed class CopilotStudioException : AgentHostingException
     /// <param name="innerException">The service's refusal.</param>
     /// <returns>The exception to throw.</returns>
     public static CopilotStudioException DuplicateConnectionReference(string environmentId, IReadOnlyList<string> refusals, Exception innerException) => ComponentPushNotCompleted(ErrorCodes.CopilotStudio.DuplicateConnectionReference, $"A connection reference this push declares already exists in {environmentId}", CopilotErrorKinds.DuplicateConnectionReference, "Delete or rename the conflicting connection reference, or run `msagent deployment connection update` to bind it, then deploy again.", refusals, innerException);
+
+    /// <summary>The service refused to create a component it already holds, after the baseline was re-read.</summary>
+    /// <param name="environmentId">The environment that was pushed to.</param>
+    /// <param name="schemaName">The refused component's schema name, when the service named it.</param>
+    /// <param name="failure">The service's refusal.</param>
+    /// <returns>The exception to throw.</returns>
+    public static CopilotStudioException DuplicateComponent(string environmentId, string? schemaName, Exception failure) => ComponentPushNotCompleted(ErrorCodes.CopilotStudio.DuplicateComponent, schemaName is null ? $"A component this push creates already exists in {environmentId}" : $"A component this push creates, {schemaName}, already exists in {environmentId}", CopilotErrorKinds.DuplicateComponent, "Run `msagent agent pull` to bring the cloud copy into the workspace, or rename the local component.", [], failure);
 
     /// <summary>The service reported a connection reference missing after the baseline was re-read from the environment.</summary>
     /// <param name="environmentId">The environment that was pushed to.</param>

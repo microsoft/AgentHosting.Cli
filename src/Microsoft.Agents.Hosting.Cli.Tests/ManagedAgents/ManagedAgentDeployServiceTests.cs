@@ -12,26 +12,27 @@ namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 [Collection("CurrentDirectory")]
 public sealed class ManagedAgentDeployServiceTests
 {
-    private static ManagedAgentDeployService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces, RecordingAttachPort attach, FakeCopilotCatalogPort? catalog = null, WorkflowActivationPass? activation = null, IProgressStatus? progress = null)
+    private static ManagedAgentDeployService Create(JsonAgentConfigStore store, FakeCopilotWorkspacePort workspaces, RecordingAttachPort attach, FakeCopilotCatalogPort? catalog = null, WorkflowActivationPass? activation = null, IManagedAgentRegistry? agents = null, IProgressStatus? progress = null, CopilotEnvironmentResolver? environments = null)
     {
         var resolvedCatalog = catalog ?? new FakeCopilotCatalogPort();
-        var environments = ManagedAgentFixtures.Resolver();
+        var resolvedEnvironments = environments ?? ManagedAgentFixtures.Resolver();
         var fileSystem = new SystemCopilotFileSystem();
         var locator = CopilotTestFixtures.Locator(workspaces, fileSystem);
 
         return new ManagedAgentDeployService(
             ManagedAgentFixtures.AgentResolver(store),
+            agents ?? store,
             store,
-            store,
-            environments,
+            resolvedEnvironments,
             locator,
             new CopilotWorkspaceService(workspaces, locator),
             ManagedAgentFixtures.Identities(),
             attach,
             resolvedCatalog,
-            new CopilotCatalogService(resolvedCatalog, environments, locator, new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
+            new CopilotCatalogService(resolvedCatalog, resolvedEnvironments, locator, new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
             ManagedAgentFixtures.Principals(),
             activation ?? ManagedAgentFixtures.ActivationPass(),
+            ManagedAgentFixtures.AgentNames(),
             new FixedClock(ManagedAgentFixtures.Now),
             progress);
     }
@@ -535,9 +536,9 @@ public sealed class ManagedAgentDeployServiceTests
         return workspaces;
     }
 
-    private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) Registered(string stage = DeploymentStages.Dev, string environmentId = "env-1", bool withProjectFile = true, bool withDeployment = true)
+    private static (TemporaryWorkspace Workspace, JsonAgentConfigStore Store) Registered(string stage = DeploymentStages.Dev, string environmentId = "env-1", bool withProjectFile = true, bool withDeployment = true, bool classic = false)
     {
-        var workspace = new TemporaryWorkspace(withProjectFile);
+        var workspace = classic ? TemporaryWorkspace.Classic() : new TemporaryWorkspace(withProjectFile);
         var store = ManagedAgentFixtures.Store();
 
         store.Add(workspace.Root, ManagedAgentFixtures.Agent());
@@ -582,6 +583,30 @@ public sealed class ManagedAgentDeployServiceTests
 
         Assert.True(result.TargetAgentCreated);
         Assert.True(workspaces.LastPushOverwrite);
+    }
+
+    [Fact]
+    public async Task Deploy_OfACopyHoldingALeftoverCopyManifest_CreatesItsOwnAgentInTheDeploymentsEnvironmentLikeAnyFirstDeploy()
+    {
+        var (workspace, store) = Registered(environmentId: "env-test");
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        workspace.AddFile("copy.sync.yaml", $"status: pending\ndestination:\n  schemaName: con_agent\n  agentId: {ManagedAgentFixtures.CopyAgentId}\n  environmentId: env-1\n");
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var attach = Connecting(workspaces);
+        var environments = ManagedAgentFixtures.Resolver(EnvironmentFixtures.Environment("env-1", instanceUrl: CopilotTestFixtures.DataverseOrganization), EnvironmentFixtures.Environment("env-test", instanceUrl: CopilotTestFixtures.DataverseOrganization));
+
+        var result = await Create(store, workspaces, attach, environments: environments).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None);
+
+        Assert.True(result.TargetAgentCreated);
+        Assert.Equal(1, attach.Calls);
+        Assert.Equal("env-test", attach.LastCommand!.Environment.EnvironmentId);
+        Assert.Null(attach.LastCommand.ExpectedAgentId);
+        Assert.Equal(attach.AgentId, result.TargetMcsAgentId);
+        Assert.Equal(attach.AgentId, store.List(workspace.Root).Single().McsAgentId);
+        Assert.False(Directory.Exists(CopyProjectState.Root(workspace.Root)));
     }
 
     [Fact]
@@ -661,6 +686,7 @@ public sealed class ManagedAgentDeployServiceTests
             new CopilotCatalogService(new FakeCopilotCatalogPort(), environments, CopilotTestFixtures.Locator(new FakeCopilotWorkspacePort(), new SystemCopilotFileSystem()), new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
             ManagedAgentFixtures.Principals(),
             ManagedAgentFixtures.ActivationPass(),
+            ManagedAgentFixtures.AgentNames(),
             new FixedClock(ManagedAgentFixtures.Now));
 
         var result = await service.DeployAsync(new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "prod" }, CancellationToken.None);
@@ -1051,6 +1077,75 @@ public sealed class ManagedAgentDeployServiceTests
     }
 
     [Fact]
+    public async Task Deploy_WhenItCreatesTheCloudAgent_StillRefusesToOverwriteSharedEnvironmentVariables()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var attach = Connecting(workspaces);
+
+        var result = await Create(store, workspaces, attach).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None);
+
+        Assert.True(result.TargetAgentCreated);
+        Assert.True(workspaces.LastPushOverwrite);
+        Assert.False(attach.LastCommand!.OverwriteSharedEnvironmentVariables);
+        Assert.False(workspaces.LastPushOverwriteSharedEnvironmentVariables);
+    }
+
+    [Fact]
+    public async Task Deploy_AProductionSlot_StillRefusesToOverwriteSharedEnvironmentVariables()
+    {
+        var (workspace, store) = Registered(DeploymentStages.Prod, "env-1");
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort();
+        workspaces.LocalChanges.Add(CopilotTestFixtures.Change("con_greeting"));
+
+        await Create(store, workspaces, Connecting(workspaces)).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "prod" },
+            CancellationToken.None);
+
+        Assert.True(workspaces.LastPushOverwrite);
+        Assert.False(workspaces.LastPushOverwriteSharedEnvironmentVariables);
+    }
+
+    [Fact]
+    public async Task Deploy_WithOverwrite_LetsTheAttachAndThePushOverwriteSharedEnvironmentVariables()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var attach = Connecting(workspaces);
+
+        await Create(store, workspaces, attach).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev", Overwrite = true },
+            CancellationToken.None);
+
+        Assert.True(attach.LastCommand!.OverwriteSharedEnvironmentVariables);
+        Assert.True(workspaces.LastPushOverwriteSharedEnvironmentVariables);
+    }
+
+    [Fact]
+    public async Task Deploy_WhenThePushRefusesToOverwriteSharedEnvironmentVariables_ReportsThatRefusalUnwrapped()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var refusal = CopilotStudioException.SharedEnvironmentVariablesRequireOverwrite(["cr9_shared"], ["environmentvariables/cr9_shared.mcs.yml"], "env-1");
+        var workspaces = new FakeCopilotWorkspacePort { PushThrows = refusal };
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(store, workspaces, Connecting(workspaces)).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None));
+
+        Assert.Same(refusal, failure);
+    }
+
+    [Fact]
     public async Task Deploy_ReportsTheFilesThePushUploaded()
     {
         var (workspace, store) = Registered();
@@ -1064,6 +1159,22 @@ public sealed class ManagedAgentDeployServiceTests
 
         Assert.Equal(0, result.PushedComponentCount);
         Assert.Equal(1, result.UploadedFileCount);
+    }
+
+    [Fact]
+    public async Task Deploy_ReportsOnlyTheComponentsTheServiceStoredAsPushed()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true, ComponentCountReturns = 1 };
+        workspaces.LocalChanges.AddRange([CopilotTestFixtures.Change("con_greeting"), CopilotTestFixtures.Change("entity", componentType: "BotEntity"), CopilotTestFixtures.Change("icon", componentType: "update")]);
+
+        var result = await Create(store, workspaces, Connecting(workspaces)).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None);
+
+        Assert.Equal(1, result.PushedComponentCount);
     }
 
     [Fact]
@@ -1223,12 +1334,50 @@ public sealed class ManagedAgentDeployServiceTests
     }
 
     [Fact]
-    public async Task Deploy_OverridesTheSchemaName()
+    public async Task Deploy_OfACliAgentWithADifferentSchemaName_IsRefusedBeforeAnyWrite()
     {
         var (workspace, store) = Registered();
         using var _ = workspace;
         using var scope = new CurrentDirectoryScope(workspace.Root);
-                var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var attach = Connecting(workspaces);
+        var catalog = new FakeCopilotCatalogPort();
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store, workspaces, attach, catalog).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev", SchemaName = "foo_other" },
+            CancellationToken.None));
+
+        Assert.StartsWith("--schema-name foo_other cannot be used: settings.mcs.yml declares schema name con_agent", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(0, attach.Calls);
+        Assert.Empty(catalog.ResolvedValues);
+        Assert.Equal(0, catalog.GetAgentCalls);
+        Assert.Equal(0, workspaces.PushCalls);
+        Assert.Null(store.List(workspace.Root).Single().McsAgentId);
+    }
+
+    [Fact]
+    public async Task Deploy_OfACliAgentWithItsOwnSchemaName_IsAccepted()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var attach = Connecting(workspaces);
+
+        await Create(store, workspaces, attach).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev", SchemaName = " con_agent " },
+            CancellationToken.None);
+
+        Assert.Equal("con_agent", attach.LastCommand!.SchemaName);
+    }
+
+    [Fact]
+    public async Task Deploy_OfAClassicAgent_OverridesTheSchemaName()
+    {
+        var (workspace, store) = Registered(classic: true);
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
         var attach = Connecting(workspaces);
 
         await Create(store, workspaces, attach).DeployAsync(
@@ -1236,6 +1385,149 @@ public sealed class ManagedAgentDeployServiceTests
             CancellationToken.None);
 
         Assert.Equal("foo_other", attach.LastCommand!.SchemaName);
+    }
+
+    [Fact]
+    public async Task Deploy_WhoseFirstPushFails_RecordsTheAgentItCreated()
+    {
+        var (workspace, store) = Registered(classic: true);
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false, PushThrows = new InvalidOperationException("the connection was reset") };
+        var attach = new RecordingAttachPort { SchemaNameReturns = "foo_assigned", OnAttach = () => workspaces.WorkspaceExists = true };
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, attach).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev", SchemaName = "foo_other" },
+            CancellationToken.None));
+
+        var agent = store.List(workspace.Root).Single();
+        Assert.Equal("deploy-incomplete", failure.ErrorKind);
+        Assert.Equal(attach.AgentId, agent.McsAgentId);
+        Assert.Equal("foo_assigned", agent.McsSchemaName);
+        Assert.Null(agent.LastDeployedBy);
+        Assert.Null(store.Read(workspace.Root).AgentDeployments.Single().LastDeployedTime);
+    }
+
+    [Fact]
+    public async Task Deploy_WhoseAttachAdoptsAnotherAgent_RecordsItBeforeThePush()
+    {
+        var (workspace, store) = Registered(classic: true);
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        store.Update(workspace.Root, store.List(workspace.Root).Single() with { McsAgentId = "22222222-2222-2222-2222-222222222222" });
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false, PushThrows = new InvalidOperationException("the connection was reset") };
+        var attach = new RecordingAttachPort { AgentCreated = false, OnAttach = () => workspaces.WorkspaceExists = true };
+
+        await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, attach).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None));
+
+        Assert.Equal(attach.AgentId, store.List(workspace.Root).Single().McsAgentId);
+    }
+
+    [Fact]
+    public async Task Deploy_WhoseAttachKeepsTheRecordedAgent_RecordsItOnlyAfterThePush()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        store.Update(workspace.Root, store.List(workspace.Root).Single() with { McsAgentId = "11111111-1111-1111-1111-111111111111" });
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var attach = new RecordingAttachPort { AgentCreated = false, OnAttach = () => workspaces.WorkspaceExists = true };
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, attach, new FakeCopilotCatalogPort { ResolveReturns = attach.AgentId }, agents: new RefusingAgentRegistry(store)).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None));
+
+        Assert.Equal("deploy-recorded-nowhere", failure.ErrorKind);
+        Assert.Contains("was pushed to env-1", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(1, workspaces.PushCalls);
+    }
+
+    [Fact]
+    public async Task Deploy_WhenRecordingTheCreatedAgentFails_ReportsTheAgentAsRecordedNowhere()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var attach = Connecting(workspaces);
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, attach, agents: new RefusingAgentRegistry(store)).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None));
+
+        Assert.Equal("deploy-recorded-nowhere", failure.ErrorKind);
+        Assert.Contains($"'con_agent' ({attach.AgentId}) was created or attached in env-1, and the custom connectors, connection references, workflows, and AI prompts its workspace declares may already be there", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("so its components were not pushed yet", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("nothing was pushed", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("was pushed to", failure.Message, StringComparison.Ordinal);
+        Assert.Equal("Re-run `msagent agent deploy --deployment-name dev` to record the agent and push its content.", failure.Remediation);
+        Assert.IsType<IOException>(failure.InnerException);
+        Assert.Equal(0, workspaces.PushCalls);
+        Assert.Null(store.List(workspace.Root).Single().McsAgentId);
+    }
+
+    [Fact]
+    public async Task Delete_WithDeleteDeployedMcsAgent_DeletesTheAgentAFailedFirstDeployCreated()
+    {
+        var (workspace, store) = Registered(classic: true);
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false, PushThrows = new InvalidOperationException("the connection was reset") };
+        var attach = Connecting(workspaces);
+        await Assert.ThrowsAsync<ManagedAgentException>(() => Create(store, workspaces, attach).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev", SchemaName = "foo_other" },
+            CancellationToken.None));
+        var catalog = new FakeCopilotCatalogPort { ResolveReturns = attach.AgentId };
+
+        var result = await new AgentDeploymentDeleteService(ManagedAgentFixtures.AgentResolver(store), store, store, ManagedAgentFixtures.Resolver(), catalog, ManagedAgentFixtures.Identities(), new ScriptedConfirmationPrompt(), new AgentConfigLocator()).DeleteAsync(
+            new AgentDeploymentDeleteRequest { AgentId = "agent-1", DeploymentName = "dev", DeleteDeployedMcsAgent = true },
+            CancellationToken.None);
+
+        Assert.Equal(["foo_other"], catalog.ResolvedValues);
+        Assert.Equal(1, catalog.DeleteCalls);
+        Assert.Equal(attach.AgentId, result.Deployments.Single().DeletedMcsAgentId);
+    }
+
+    [Fact]
+    public async Task Deploy_OfANewAgentWithAnOverlongName_SendsNothing()
+    {
+        using var workspace = new TemporaryWorkspace(displayName: "Contoso Agent".PadRight(43, 'x'));
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent());
+        store.Add(workspace.Root, ManagedAgentFixtures.Deployment());
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = false };
+        var attach = Connecting(workspaces);
+        var catalog = new FakeCopilotCatalogPort();
+
+        var failure = await Assert.ThrowsAsync<UsageException>(() => Create(store, workspaces, attach, catalog).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None));
+
+        Assert.Equal("The display name in settings.mcs.yml is 43 characters long; Copilot Studio allows at most 42.", failure.Message);
+        Assert.Equal(0, attach.Calls);
+        Assert.Empty(catalog.ResolvedValues);
+        Assert.Equal(0, workspaces.PushCalls);
+    }
+
+    [Fact]
+    public async Task Deploy_ToABoundAgentWithAnOverlongName_StillPushes()
+    {
+        using var workspace = new TemporaryWorkspace(displayName: "Contoso Agent".PadRight(43, 'x'));
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var store = ManagedAgentFixtures.Store();
+        store.Add(workspace.Root, ManagedAgentFixtures.Agent());
+        store.Add(workspace.Root, ManagedAgentFixtures.Deployment());
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true };
+
+        var result = await Create(store, workspaces, new RecordingAttachPort()).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev" },
+            CancellationToken.None);
+
+        Assert.Equal("push", result.Action);
+        Assert.Equal(1, workspaces.PushCalls);
     }
 
     [Theory]
@@ -1282,4 +1574,15 @@ public sealed class ManagedAgentDeployServiceTests
 
         Assert.Equal("not-an-mcs-agent", failure.ErrorKind);
     }
+}
+
+internal sealed class RefusingAgentRegistry(IManagedAgentRegistry inner) : IManagedAgentRegistry
+{
+    public IReadOnlyList<ManagedAgentRecord> List(string projectDirectory) => inner.List(projectDirectory);
+
+    public ManagedAgentRecord Add(string projectDirectory, ManagedAgentRecord record) => inner.Add(projectDirectory, record);
+
+    public ManagedAgentRecord Update(string projectDirectory, ManagedAgentRecord record) => throw new IOException("the configuration file is locked by another process");
+
+    public int RemoveWithDeployments(string projectDirectory, string agentId, string expectedETag) => throw new IOException("the configuration file is locked by another process");
 }

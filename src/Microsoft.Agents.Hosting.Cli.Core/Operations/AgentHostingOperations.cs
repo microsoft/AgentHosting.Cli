@@ -145,6 +145,10 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
     }
 
     /// <inheritdoc />
+    public Task<ManagedAgentCopyResult> CopyManagedAgentAsync(ManagedAgentCopyRequest request, CancellationToken cancellationToken) =>
+        RequireManagedAgents("agent copy").Copy.CopyAsync(request, cancellationToken);
+
+    /// <inheritdoc />
     public Task<ManagedAgentInitResult> InitManagedAgentAsync(ManagedAgentInitRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

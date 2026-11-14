@@ -104,6 +104,8 @@ internal sealed class FakeWorkflowWorkspacePort : IWorkflowWorkspacePort
 
     public bool HasAgentProject(string directory) => new CopilotStudio.WorkflowWorkspaceAdapter().HasAgentProject(directory);
 
+    public bool IsProjectFolder(string folderName) => new CopilotStudio.WorkflowWorkspaceAdapter().IsProjectFolder(folderName);
+
     public string ProjectFolderName(string displayName) => new CopilotStudio.WorkflowWorkspaceAdapter().ProjectFolderName(displayName);
 }
 
@@ -147,6 +149,11 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
     {
         Calls.Add($"download:{workflowId}");
 
+        if (DownloadThrows is not null)
+        {
+            return Task.FromException<WorkflowDownloadOutcome>(DownloadThrows);
+        }
+
         var document = Cloud[workflowId];
         var folderPath = Path.Combine(WorkflowWorkspace.WorkflowsDirectory(workspaceRoot), WorkflowWorkspace.FolderNameFor(document.Name, workflowId));
 
@@ -177,10 +184,20 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
         File.WriteAllText(metadataPath, metadata);
         LastSynced[workflowId] = definition;
 
+        if (WritesCloudCacheOnDownload)
+        {
+            Directory.CreateDirectory(Path.Combine(workspaceRoot, ".mcs"));
+            File.WriteAllText(Path.Combine(workspaceRoot, ".mcs", "botdefinition.json"), $"{{\"workflowId\":\"{workflowId}\"}}");
+        }
+
         return Task.FromResult(new WorkflowDownloadOutcome { Workflow = document, FolderPath = folderPath, PreviousFolder = previousFolder, Changed = changed, Warnings = WarningsOnDownload });
     }
 
     public IReadOnlyList<string> WarningsOnDownload { get; set; } = [];
+
+    public bool WritesCloudCacheOnDownload { get; set; }
+
+    public Exception? DownloadThrows { get; set; }
 
     public Dictionary<Guid, string> LastSynced { get; } = [];
 
@@ -236,6 +253,8 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
 
     public void WriteConnectionReferenceDeclaration(string workspaceRoot) => DeclarationWrites.Add($"{workspaceRoot}|{Single(workspaceRoot).WorkflowId}");
 
+    public List<string> DeletedIn { get; } = [];
+
     public Task<bool> DeleteAsync(CopilotEnvironmentContext environment, Guid workflowId, CancellationToken cancellationToken)
     {
         if (!Cloud.TryGetValue(workflowId, out var document))
@@ -250,6 +269,7 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
         Calls.Add($"delete:{workflowId}");
         Cloud.Remove(workflowId);
         CloudDefinition.Remove(workflowId);
+        DeletedIn.Add(environment.EnvironmentId);
 
         return Task.FromResult(true);
     }

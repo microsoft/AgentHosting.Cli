@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Rendering;
 
@@ -148,6 +149,17 @@ public sealed class ManagedAgentException : AgentHostingException
         "agent-ambiguous",
         "Name the agent with --agent-id or --agent-name.");
 
+    /// <summary>A location selects a project holding several agents, none of whose folders holds the location.</summary>
+    /// <param name="projectDirectory">The project the location is in.</param>
+    /// <param name="candidates">The agents, each with its folder.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException AgentAmbiguousAt(string projectDirectory, IEnumerable<string> candidates) => new(
+        ErrorCodes.ManagedAgent.AgentAmbiguous,
+        $"The project {projectDirectory} holds several agents: {string.Join(", ", candidates)}.",
+        ExitCodes.Usage,
+        "agent-ambiguous",
+        "Choose the agent with --project <its folder>.");
+
     /// <summary>The agent's schema name is available from neither the project nor a clone source.</summary>
     /// <param name="agentId">The agent that has no schema name.</param>
     /// <param name="searchedPath">Where a project file was looked for.</param>
@@ -221,18 +233,7 @@ public sealed class ManagedAgentException : AgentHostingException
             : $"Select --deployment-id or --deployment-name for '{displayName}', for example:{Environment.NewLine}  msagent agent deploy {agentSelector} --deployment-id {CommandArgument(deployments[0].DeploymentId)}";
     }
 
-    private static string CommandArgument(string value) => OperatingSystem.IsWindows() ? PowerShellCommandArgument(value) : PosixCommandArgument(value);
-
-    internal static string PowerShellCommandArgument(string value) => QuotedCommandArgument(value, "$`\"", "''");
-
-    internal static string PosixCommandArgument(string value) => QuotedCommandArgument(value, "$`\"\\!", "'\\''");
-
-    private static string QuotedCommandArgument(string value, string doubleQuotedSpecialCharacters, string singleQuotedApostrophe)
-    {
-        var argument = TerminalText.Sanitize(value);
-
-        return argument.AsSpan().ContainsAny(doubleQuotedSpecialCharacters) ? $"'{argument.Replace("'", singleQuotedApostrophe, StringComparison.Ordinal)}'" : $"\"{argument}\"";
-    }
+    private static string CommandArgument(string value) => CommandLineArgument.Quote(TerminalText.Sanitize(value));
 
     private static string DeploymentNames(IEnumerable<AgentDeploymentRecord> deployments) => string.Join(", ", deployments.Select(deployment => TerminalText.Sanitize(deployment.DeploymentName)));
 
@@ -336,7 +337,7 @@ public sealed class ManagedAgentException : AgentHostingException
         "workflow-metadata-unreadable",
         "Pull the workflow again, or restore the file from source control.");
 
-    /// <summary>The workflow a clone names does not exist in its environment.</summary>
+    /// <summary>The workflow a clone or copy names does not exist in its environment.</summary>
     /// <param name="workflowId">The workflow that was requested.</param>
     /// <param name="environmentId">The environment that was searched.</param>
     /// <returns>The failure.</returns>
@@ -345,7 +346,7 @@ public sealed class ManagedAgentException : AgentHostingException
         $"No workflow with id {workflowId} exists in {environmentId}.",
         ExitCodes.Usage,
         "workflow-source-not-found",
-        "Check the id with `msagent agent list`, or supply --mcs-clone-environment-id for the environment holding it.");
+        "Check the id with `msagent agent list --agent-type MCSWorkflow` in the environment that holds it, and name that environment.");
 
     /// <summary>The service refused the workflow the push sent.</summary>
     /// <param name="workflowName">The workflow that was pushed.</param>
@@ -597,13 +598,14 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <summary>The destination workspace holds content that creation must not overwrite.</summary>
     /// <param name="workspaceDirectory">The destination directory.</param>
     /// <param name="existingContent">The kind of content already present.</param>
+    /// <param name="projectChoosesDestination">Whether --project chose the destination, so another one can avoid the folder.</param>
     /// <returns>The typed failure.</returns>
-    public static ManagedAgentException WorkspaceNotEmpty(string workspaceDirectory, string existingContent = "content") => new(
+    public static ManagedAgentException WorkspaceNotEmpty(string workspaceDirectory, string existingContent = "content", bool projectChoosesDestination = true) => new(
         ErrorCodes.Workspace.WorkspaceNotEmpty,
         $"'{workspaceDirectory}' already holds {existingContent}.",
         ExitCodes.Usage,
         "workspace-not-empty",
-        "Choose a different --agent-name, or a --project directory that does not hold a folder by that name.");
+        projectChoosesDestination ? "Choose a different --agent-name, or a --project directory that does not hold a folder by that name." : "Choose a different --agent-name.");
 
     /// <summary>The clone source could not be found in the environment it was named in.</summary>
     /// <param name="selector">The schema name or identifier that was looked up.</param>
@@ -637,6 +639,17 @@ public sealed class ManagedAgentException : AgentHostingException
         ExitCodes.Usage,
         "not-deployed-yet",
         "Run `msagent deployment create` and then `msagent agent deploy` to create the agent, then pull.");
+
+    /// <summary>An agent's record names no environment.</summary>
+    /// <param name="displayName">The record's name.</param>
+    /// <param name="agentId">The record's identifier.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException AgentEnvironmentMissing(string displayName, string agentId) => new(
+        ErrorCodes.ManagedAgent.AgentEnvironmentMissing,
+        $"The agent '{displayName}' ({agentId}) has no environment in {Path.Combine(AgentConfigLocator.ConfigDirectoryName, AgentConfigLocator.ConfigFileName)}.",
+        ExitCodes.Usage,
+        "agent-environment-missing",
+        "Set its environmentId to the environment it belongs to.");
 
     /// <summary>The workspace still declares a reference the service would not remove.</summary>
     /// <param name="logicalName">The reference that survives.</param>
@@ -866,13 +879,18 @@ public sealed class ManagedAgentException : AgentHostingException
     /// <param name="deploymentName">The deployment that was targeted.</param>
     /// <param name="innerException">The failure that stopped the record from being written.</param>
     /// <returns>The typed failure.</returns>
-    public static ManagedAgentException DeployRecordedNowhere(string schemaName, string environmentId, string targetAgentId, string deploymentName, Exception innerException) => new(
-        ErrorCodes.Deployment.DeployRecordedNowhere,
-        $"Agent '{schemaName}' ({targetAgentId}) was pushed to {environmentId}, but deployment '{deploymentName}' could not be marked as deployed: {innerException.Message}",
-        ExitCodes.Failure,
-        "deploy-recorded-nowhere",
-        $"The cloud content is already updated. Re-run `msagent agent deploy --deployment-name {deploymentName}` to record it; the push is idempotent, so nothing is sent twice that the service still holds.",
-        innerException);
+    public static ManagedAgentException DeployRecordedNowhere(string schemaName, string environmentId, string targetAgentId, string deploymentName, Exception innerException) => RecordedNowhere(ErrorCodes.Deployment.DeployRecordedNowhere, $"Agent '{schemaName}' ({targetAgentId}) was pushed to {environmentId}, but deployment '{deploymentName}' could not be marked as deployed: {innerException.Message}", $"The cloud content is already updated. Re-run `msagent agent deploy --deployment-name {deploymentName}` to record it; the push is idempotent, so nothing is sent twice that the service still holds.", innerException);
+
+    /// <summary>The agent was created or attached in the environment, but its record could not be updated before its components were pushed.</summary>
+    /// <param name="schemaName">The agent that was created or attached.</param>
+    /// <param name="environmentId">The environment holding the agent.</param>
+    /// <param name="targetAgentId">The cloud agent the record could not be pointed at.</param>
+    /// <param name="deploymentName">The deployment that was targeted.</param>
+    /// <param name="innerException">The failure that stopped the record from being written.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException DeployRecordedNowhereBeforePush(string schemaName, string environmentId, string targetAgentId, string deploymentName, Exception innerException) => RecordedNowhere(ErrorCodes.Deployment.DeployRecordedNowhereBeforePush, $"Agent '{schemaName}' ({targetAgentId}) was created or attached in {environmentId}, and the custom connectors, connection references, workflows, and AI prompts its workspace declares may already be there, but its record could not be updated, so its components were not pushed yet: {innerException.Message}", $"Re-run `msagent agent deploy --deployment-name {deploymentName}` to record the agent and push its content.", innerException);
+
+    private static ManagedAgentException RecordedNowhere(int errorCode, string message, string remediation, Exception innerException) => new(errorCode, message, ExitCodes.Failure, "deploy-recorded-nowhere", remediation, innerException);
 
     /// <summary>The connections were bound, but the workflows depending on them stayed drafts.</summary>
     /// <param name="agentId">The cloud agent whose workflows could not be activated.</param>
@@ -913,7 +931,8 @@ public sealed class ManagedAgentException : AgentHostingException
         "Nothing was registered and nothing was sent to Copilot Studio. Re-run the same command once the cause is resolved.",
         innerException);
 
-    /// <summary>The cloud agent was deleted but its records could not be removed.</summary>    /// <param name="agentId">The record that survived.</param>
+    /// <summary>The cloud agent was deleted but its records could not be removed.</summary>
+    /// <param name="agentId">The record that survived.</param>
     /// <param name="environmentId">The environment the cloud agent was deleted from.</param>
     /// <param name="reason">Why the record write failed.</param>
     /// <returns>The typed failure.</returns>
@@ -922,7 +941,7 @@ public sealed class ManagedAgentException : AgentHostingException
         $"The cloud agent in {environmentId} was deleted, but the records for '{agentId}' could not be removed: {reason}",
         ExitCodes.Failure,
         "records-survived-cloud-delete",
-        "Re-run `msagent agent delete`; deleting an already-absent cloud agent succeeds, so the records will be removed.");
+        "Re-run the same command; deleting an already-absent cloud agent succeeds, so the records will be removed.");
 
     /// <summary>Another process holds the configuration write lock.</summary>
     /// <param name="path">The configuration file.</param>
@@ -978,9 +997,42 @@ public sealed class ManagedAgentException : AgentHostingException
         "The deploy is not recorded, so the deployment still shows as never deployed. Re-running is safe: an existing agent is adopted rather than duplicated.",
         innerException);
 
+    /// <summary>A copy could not be prepared; nothing was written.</summary>
+    /// <param name="newName">The copy's requested display name.</param>
+    /// <param name="findings">Everything that stopped it.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException CopyNotPrepared(string newName, IEnumerable<string> findings) => new(
+        ErrorCodes.ManagedAgent.CopyNotPrepared,
+        $"The copy '{newName}' could not be prepared: {string.Join(" ", findings)}",
+        ExitCodes.Usage,
+        "copy-not-prepared",
+        "Nothing was written and nothing was sent to Copilot Studio. Resolve the findings in the source or choose another --schema-name, then run `msagent agent copy` again.");
+
+    /// <summary>An <c>--all-resources</c> delete removed the agent but could not delete some of its resources.</summary>
+    /// <param name="displayName">The agent's display name.</param>
+    /// <param name="deleted">How many resources were deleted.</param>
+    /// <param name="remaining">Each resource left, with why.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException ResourceDeleteIncomplete(string displayName, int deleted, IReadOnlyList<string> remaining) => new(
+        ErrorCodes.ManagedAgent.ResourceDeleteIncomplete,
+        $"'{displayName}' was deleted from Copilot Studio with {deleted} of its resources, but {remaining.Count} could not be deleted: {string.Join("; ", remaining)}",
+        ExitCodes.Failure,
+        "resource-delete-incomplete",
+        "The records were kept. Resolve what is reported, then run the same delete again; what is already gone is skipped.");
+
+    /// <summary>Another <c>msagent agent copy</c> into a project holds the project's copy lock.</summary>
+    /// <param name="projectDirectory">The project the copy registers its agent in.</param>
+    /// <returns>The typed failure.</returns>
+    public static ManagedAgentException CopyIntoProjectBusy(string projectDirectory) => new(
+        ErrorCodes.ManagedAgent.CopyIntoProjectBusy,
+        $"Another `msagent agent copy` into {projectDirectory} is running.",
+        ExitCodes.Failure,
+        "copy-busy",
+        "Nothing was sent. Wait for it to finish, then run this command again.");
+
     /// <summary>Renders an exception and its inner chain as one line.</summary>
     /// <param name="exception">The exception to describe.</param>
-    /// <returns>The message, with each inner message appended.</returns>
+    /// <returns>The message, with each inner message the outer messages do not already carry appended.</returns>
     public static string DescribeChain(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
@@ -989,7 +1041,10 @@ public sealed class ManagedAgentException : AgentHostingException
 
         for (var current = exception; current is not null; current = current.InnerException)
         {
-            messages.Add(current is AgentHostingException ? current.Message : $"{current.GetType().Name}: {current.Message}");
+            if (messages.Count == 0 || !messages[^1].Contains(current.Message, StringComparison.Ordinal))
+            {
+                messages.Add(current is AgentHostingException ? current.Message : $"{current.GetType().Name}: {current.Message}");
+            }
         }
 
         return string.Join(" -> ", messages);

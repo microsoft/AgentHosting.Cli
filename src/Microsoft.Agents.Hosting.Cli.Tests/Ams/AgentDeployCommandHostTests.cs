@@ -263,7 +263,7 @@ public sealed class AgentDeployCommandHostTests
         var (exitCode, _, stderr) = Run(new FakeOperations(), "agent");
 
         Assert.Equal(ExitCodes.Usage, exitCode);
-        Assert.Contains("Valid subgroups: package. Valid commands: create, init, list, show, pull, delete, deploy, share, unshare.", stderr, StringComparison.Ordinal);
+        Assert.Contains("Valid subgroups: package. Valid commands: create, copy, init, list, show, pull, delete, deploy, share, unshare.", stderr, StringComparison.Ordinal);
     }
 
     private static (int ExitCode, string Stdout, string Stderr) Run(

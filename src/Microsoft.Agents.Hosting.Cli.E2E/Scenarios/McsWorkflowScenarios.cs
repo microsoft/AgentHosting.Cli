@@ -243,13 +243,14 @@ public static class McsWorkflowScenarios
             var result = await WorkflowSteps.DeleteAsync(context, workspace, agentId, workspace.AgentName).ConfigureAwait(false);
             context.Assert.ExitZero(result, "agent delete");
 
-            context.Ledger.MarkDeleted(workflowId);
             context.Assert.FileExists(definitionPath, "local files are not touched");
 
             await context.Assert.EventuallyAsync(
                 async () => await context.Cloud.WorkflowExistsAsync(context.DevEnvironmentId, workflowId, context.CancellationToken).ConfigureAwait(false) == false,
                 TimeSpan.FromMinutes(2),
                 "the flow is gone from the environment").ConfigureAwait(false);
+
+            context.Ledger.MarkDeleted(workflowId);
         });
     }
 

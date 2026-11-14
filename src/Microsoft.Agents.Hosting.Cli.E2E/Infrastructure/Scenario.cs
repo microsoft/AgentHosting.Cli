@@ -18,6 +18,9 @@ public sealed record Scenario
 
     public string? Pack { get; init; }
 
+    /// <summary>How long the scenario may run, when it needs longer than the runner's default.</summary>
+    public TimeSpan? Timeout { get; init; }
+
     public required Func<ScenarioContext, Task> Run { get; init; }
 }
 

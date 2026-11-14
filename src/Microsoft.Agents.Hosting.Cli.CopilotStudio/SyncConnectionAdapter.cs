@@ -15,7 +15,6 @@ namespace Microsoft.Agents.Hosting.Cli.CopilotStudio;
 public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCatalogPort
 {
     private const string PowerAppsResource = "https://api.bap.microsoft.com";
-    private const string ConnectionReferencesRoute = "api/data/v9.2/connectionreferences";
 
     private readonly IConnectionManagementService _connections;
     private readonly IWorkflowActivationService _workflows;
@@ -223,28 +222,13 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
     {
         try
         {
-            var recordId = await RecordIdAsync(logicalName, cancellationToken).ConfigureAwait(false);
-
-            if (recordId == Guid.Empty)
-            {
-                return false;
-            }
-
-            (await _webApi.SendAsync(environment, HttpMethod.Delete, $"{ConnectionReferencesRoute}({recordId})", cancellationToken).ConfigureAwait(false))?.Dispose();
-
-            return true;
+            return await _webApi.DeleteConnectionReferenceAsync(environment, logicalName, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception failure) when (failure is not OperationCanceledException)
         {
             throw CopilotStudioException.ConnectionReferenceNotDeleted(logicalName, environment.EnvironmentId, failure);
         }
     }
-
-    private async Task<Guid> RecordIdAsync(string logicalName, CancellationToken cancellationToken) =>
-        (await _dataverseClient.GetConnectionReferencesByLogicalNamesAsync([logicalName], cancellationToken).ConfigureAwait(false))
-            .Where(row => logicalName.Equals(row.ConnectionReferenceLogicalName, StringComparison.OrdinalIgnoreCase))
-            .Select(row => row.ConnectionReferenceId)
-            .FirstOrDefault();
 
     private void RetireFromBaseline(DirectoryPath workspaceFolder, string logicalName)
     {

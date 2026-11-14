@@ -10,7 +10,7 @@ The CLI supports the following core activities:
 
 - Sign in and manage authentication state
 - List and select Power Platform environments
-- Create, list, show, pull, and delete agent resources
+- Create, copy, list, show, pull, and delete agent resources
 - Manage deployment lifecycle and connection configuration
 
 ## Install
@@ -75,7 +75,7 @@ Common command groups include:
 
 - `msagent auth` — sign in, check auth state, switch accounts, sign out
 - `msagent env` — list available environments and select a target environment
-- `msagent agent` — create, initialize, list, show, pull, delete, deploy, and evaluate agents
+- `msagent agent` — create, copy, initialize, list, show, pull, delete, deploy, and evaluate agents
 - `msagent deployment` — manage deployment records and connection binding
 - `msagent test ask` — send a live query to a selected Copilot Studio agent
 - `msagent test playground` — launch the M365 Agents Playground for a selected agent
@@ -133,6 +133,15 @@ msagent env select <environment-id>
 
 ```bash
 msagent agent create --agent-type MCSAgent --agent-name "Contoso Agent" --description "Contoso helper" --initial-prompt "Help users with Contoso questions."
+```
+
+### Copy an agent
+
+Creates a new, independent agent from an existing one and registers it locally. Nothing is sent to
+Copilot Studio and the source is never changed; the copy's first deploy creates its own agent.
+
+```bash
+msagent agent copy --mcs-clone-agent-id <agent-id> --environment-id <environment-id> --agent-name "Contoso Agent copy"
 ```
 
 ### List agents

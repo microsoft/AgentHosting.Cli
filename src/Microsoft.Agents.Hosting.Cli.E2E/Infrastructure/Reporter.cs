@@ -109,6 +109,7 @@ public sealed class Reporter
 
         var orphans = ledger.Where(entry => entry.State == ResourceState.Orphaned).ToArray();
         var removed = ledger.Where(entry => entry.State is ResourceState.Deleted or ResourceState.Restored).ToArray();
+        var retained = ledger.Where(entry => entry.State == ResourceState.Retained).ToArray();
 
         Console.WriteLine();
 
@@ -122,9 +123,20 @@ public sealed class Reporter
             }
         }
 
+        if (retained.Length > 0)
+        {
+            Console.WriteLine();
+            WriteColoured($"  Left in the environment, no msagent delete exists  ({retained.Length})", ConsoleColor.Yellow);
+
+            foreach (var entry in retained)
+            {
+                Console.WriteLine($"    {entry.DisplayName,-20} {entry.Id}   {entry.Cleanup.EnvironmentId}");
+            }
+        }
+
         if (orphans.Length == 0)
         {
-            Console.WriteLine("  Nothing left behind.");
+            Console.WriteLine(retained.Length == 0 ? "  Nothing left behind." : "  No orphans.");
             return;
         }
 

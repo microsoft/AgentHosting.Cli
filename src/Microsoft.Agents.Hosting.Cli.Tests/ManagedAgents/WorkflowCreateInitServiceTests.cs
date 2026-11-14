@@ -346,6 +346,52 @@ public sealed class WorkflowCreateServiceTests : IDisposable
         await Assert.ThrowsAsync<UsageException>(() => Service(ManagedAgentFixtures.Store()).CreateAsync(
             new ManagedAgentCreateRequest { AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = "not-a-guid", Project = _workspace.Root },
             CancellationToken.None));
+
+    [Theory]
+    [InlineData("scaffold")]
+    [InlineData("clone")]
+    [InlineData("init")]
+    public async Task Create_AndInit_WriteTheSameRecordAsBefore(string route)
+    {
+        var store = ManagedAgentFixtures.Store();
+        var cloudWorkflowId = Guid.NewGuid();
+        _store.Cloud[cloudWorkflowId] = new WorkflowDocument { WorkflowId = cloudWorkflowId, Name = "Remote Flow", Description = "  Cloud description  ", State = WorkflowStateProjection.Activated };
+        var localWorkflowId = route == "init" ? WorkflowFixtures.Write(_workspace.Root, "Local Flow") : Guid.Empty;
+
+        var (workflowId, description, location) = route switch
+        {
+            "scaffold" => ((await Service(store).CreateAsync(new ManagedAgentCreateRequest { Name = " WF Hook 2 ", Description = "  Hooks the build  ", AgentType = AgentTypes.McsWorkflow, Project = _workspace.Root }, CancellationToken.None)).McsWorkflowId, "Hooks the build", "WF Hook 2"),
+            "clone" => ((await Service(store).CreateAsync(new ManagedAgentCreateRequest { Name = " WF Hook 2 ", AgentType = AgentTypes.McsWorkflow, CloneWorkflowId = cloudWorkflowId.ToString(), Project = _workspace.Root }, CancellationToken.None)).McsWorkflowId, "Cloud description", "WF Hook 2"),
+            _ => ((await new WorkflowInitService(store, new AgentConfigLocator(), ManagedAgentFixtures.Resolver(), _store, ManagedAgentFixtures.Principals(), new FakeWorkflowWorkspacePort()).InitAsync(new ManagedAgentInitRequest { Name = " WF Hook 2 ", AgentType = AgentTypes.McsWorkflow, McsWorkflowSource = _workspace.Root }, CancellationToken.None)).McsWorkflowId, (string?)null, AgentConfigLocator.CurrentDirectoryLocation),
+        };
+
+        var stored = Assert.Single(store.List(_workspace.Root));
+        var caller = await ManagedAgentFixtures.Principals().ResolveAsync(CancellationToken.None);
+
+        Assert.NotNull(caller);
+        Assert.True(Guid.TryParse(stored.AgentId, out _));
+        Assert.Equal(route switch { "clone" => cloudWorkflowId.ToString(), "init" => localWorkflowId.ToString(), _ => workflowId }, stored.McsWorkflowId);
+        Assert.Equal(
+            new ManagedAgentRecord
+            {
+                AgentId = stored.AgentId,
+                DisplayName = "WF Hook 2",
+                Description = description,
+                AgentType = AgentTypes.McsWorkflow,
+                AgentLocation = location,
+                McsWorkflowId = workflowId,
+                TenantId = EnvironmentFixtures.ContosoTenant,
+                EnvironmentId = "env-1",
+                Origin = ManagedAgentOrigins.AgentHostCli,
+                Owner = caller,
+                CreatedBy = caller,
+                CreatedTime = ManagedAgentFixtures.Now,
+                ChangedTime = ManagedAgentFixtures.Now,
+                AgentState = EntityStates.Saved,
+                EntityTag = stored.EntityTag,
+            },
+            stored);
+    }
 }
 
 public sealed class WorkflowInitServiceTests : IDisposable

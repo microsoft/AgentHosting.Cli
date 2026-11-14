@@ -44,12 +44,12 @@ public sealed class AgentDeploymentConnectionCreateService
 
         if (string.IsNullOrWhiteSpace(request.Connector))
         {
-            throw new UsageException($"`{Verb}` requires --connector. Run `{ConnectionCommandHints.ListConnectors(request, request.EnvironmentId)}` to find one.");
+            throw new UsageException($"`{Verb}` requires --connector. Run `{ConnectionCommandHints.ListConnectors(request, _targets.FindAgentId(request), request.EnvironmentId)}` to find one.");
         }
 
         var target = await _targets.ResolveAsync(request, request.EnvironmentId, Verb, cancellationToken).ConfigureAwait(false);
         var environment = target.Environment;
-        var resolution = await _connectorResolver.RequireAsync(environment, request.Connector, ConnectionCommandHints.ListConnectors(request, request.EnvironmentId), cancellationToken).ConfigureAwait(false);
+        var resolution = await _connectorResolver.RequireAsync(environment, request.Connector, ConnectionCommandHints.ListConnectors(request, target.AgentId, request.EnvironmentId), cancellationToken).ConfigureAwait(false);
         var connector = resolution.Connector;
         var diagnostics = await DescribeExistingAsync(environment, resolution, cancellationToken).ConfigureAwait(false);
 
@@ -57,7 +57,7 @@ public sealed class AgentDeploymentConnectionCreateService
 
         if (outcome.Status != ConnectionConsentStatus.Created || string.IsNullOrWhiteSpace(outcome.ConnectionId))
         {
-            throw Refused(request, environment.EnvironmentId, connector.InternalId, outcome.ErrorMessage ?? DescribeOutcome(outcome.Status));
+            throw Refused(request, target, connector.InternalId, outcome.ErrorMessage ?? DescribeOutcome(outcome.Status));
         }
 
         return new AgentDeploymentConnectionCreateResult
@@ -68,17 +68,17 @@ public sealed class AgentDeploymentConnectionCreateService
             ConnectorName = connector.DisplayName,
             ConnectionId = outcome.ConnectionId,
             DisplayName = string.IsNullOrWhiteSpace(outcome.DisplayName) ? null : outcome.DisplayName,
-            BindCommand = ConnectionCommandHints.BindConnector(request, connector.InternalId, outcome.ConnectionId),
+            BindCommand = ConnectionCommandHints.BindConnector(request, target.AgentId, connector.InternalId, outcome.ConnectionId),
             Diagnostics = diagnostics,
         };
     }
 
-    private static ManagedAgentException Refused(AgentDeploymentConnectionCreateRequest request, string environmentId, string connectorInternalId, string reason) =>
+    private static ManagedAgentException Refused(AgentDeploymentConnectionCreateRequest request, ConnectionTarget target, string connectorInternalId, string reason) =>
         ManagedAgentException.ConnectionNotCreated(
             connectorInternalId,
-            environmentId,
+            target.Environment.EnvironmentId,
             reason,
-            ConnectionCommandHints.BindConnector(request, connectorInternalId, "<id>"));
+            ConnectionCommandHints.BindConnector(request, target.AgentId, connectorInternalId, "<id>"));
 
     private async Task<IReadOnlyList<string>> DescribeExistingAsync(CopilotEnvironmentContext environment, ConnectorResolution resolution, CancellationToken cancellationToken)
     {

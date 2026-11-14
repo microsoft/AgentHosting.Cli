@@ -565,6 +565,9 @@ public sealed record ManagedAgentDeleteRequest
     /// <summary>Chooses which cloud agent is deleted, by deployment name.</summary>
     public string? DeploymentName { get; init; }
 
+    /// <summary>Also deletes the flows, AI prompts, connection references, and custom connectors the agent holds.</summary>
+    public bool AllResources { get; init; }
+
     /// <summary>Fails instead of prompting.</summary>
     public bool NonInteractive { get; init; }
     /// <summary>
@@ -584,6 +587,27 @@ public sealed record ManagedAgentOrphanedTarget
 
     /// <summary>The agent identifier, when it could be resolved.</summary>
     public string? McsAgentId { get; init; }
+
+    /// <summary>The copy as one line of text.</summary>
+    /// <returns>The environment, followed by what names it.</returns>
+    public override string ToString() => DeploymentName == WorkflowDeleteService.HomeTargetName ? $"{EnvironmentId} (the agent's home environment, which no deployment names)" : $"{EnvironmentId} (deployment \"{DeploymentName}\")";
+}
+
+/// <summary>A flow, AI prompt, connection reference, or custom connector that <c>msagent agent delete --all-resources</c> removes with the agent.</summary>
+public sealed record ManagedAgentResource
+{
+    /// <summary>What the resource is: <c>aiModel</c>, <c>workflow</c>, <c>connectionReference</c>, or <c>connector</c>.</summary>
+    public required string Kind { get; init; }
+
+    /// <summary>The resource's identifier, or a connection reference's logical name.</summary>
+    public required string Identity { get; init; }
+
+    /// <summary>The environment holding the resource.</summary>
+    public required string EnvironmentId { get; init; }
+
+    /// <summary>The resource as one line of text.</summary>
+    /// <returns>Its kind, identity, and environment.</returns>
+    public override string ToString() => $"{Kind} {Identity} in {EnvironmentId}";
 }
 
 /// <summary>Result of <c>msagent agent delete</c>.</summary>
@@ -592,7 +616,7 @@ public sealed record ManagedAgentDeleteResult : ITextGridRenderable
     /// <summary>Output-envelope schema version.</summary>
     public int SchemaVersion { get; init; } = 1;
 
-    /// <summary>Machine-readable status string (<c>agent-deleted</c> or <c>cancelled</c>).</summary>
+    /// <summary>Machine-readable status string (<c>agent-deleted</c>, <c>cancelled</c>, or <c>name-mismatch</c>).</summary>
     public required string Status { get; init; }
 
     /// <summary>The record that was deleted.</summary>
@@ -603,6 +627,9 @@ public sealed record ManagedAgentDeleteResult : ITextGridRenderable
 
     /// <summary>The environment the deleted cloud agent lived in.</summary>
     public string? EnvironmentId { get; init; }
+
+    /// <summary>The cloud agent the delete targets in <see cref="Microsoft.Agents.Hosting.Cli.Core.Operations.ManagedAgentDeleteResult.EnvironmentId"/>, when one exists.</summary>
+    public string? McsAgentId { get; init; }
 
     /// <summary>The deployment that selected the target, when one did.</summary>
     public string? DeploymentId { get; init; }
@@ -622,6 +649,21 @@ public sealed record ManagedAgentDeleteResult : ITextGridRenderable
     /// <summary>Advisories about the delete, such as the Copilot Studio agents that lost the deleted workflow.</summary>
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
+    /// <summary>The flows, AI prompts, connection references, and custom connectors an <c>--all-resources</c> delete removed.</summary>
+    public IReadOnlyList<ManagedAgentResource> Resources { get; init; } = [];
+
+    /// <summary>What the delete removes, as its confirmation lists it.</summary>
+    /// <returns>The lines.</returns>
+    public IReadOnlyList<string> PlanLines() =>
+    [
+        McsWorkflowId is null ? $"  agent        {DisplayName} ({AgentId})" : $"  workflow     {DisplayName} ({AgentId})",
+        McsWorkflowId is null ? ManagedAgentDeleteTargets.CloudAgentLine(McsAgentId is null ? null : $"{McsAgentId} in {EnvironmentId}", "exists") : $"  cloud flow   {McsWorkflowId} in {EnvironmentId}",
+        $"  records      1 ManagedAgent + {RemovedAgentDeployments} AgentDeployment row(s)",
+        .. Warnings.Select(warning => TextGrid.WarningLine("  ", warning)),
+        .. ManagedAgentDeleteTargets.Section("resources", Resources),
+        .. ManagedAgentDeleteTargets.Section("orphaned by this delete", OrphanedTargets),
+    ];
+
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines()
     {
@@ -639,25 +681,21 @@ public sealed record ManagedAgentDeleteResult : ITextGridRenderable
             return ["Cancelled. Nothing was deleted."];
         }
 
-        var cloudLabel = McsWorkflowId is null ? "cloud agent" : "cloud flow ";
-        var lines = new List<string>
-        {
-            $"Deleted {DisplayName} ({AgentId}).",
-            McsAgentAlreadyAbsent
-                ? $"  {cloudLabel}  none — this {(McsWorkflowId is null ? "agent" : "workflow")} existed nowhere in {(McsWorkflowId is null ? "Copilot Studio" : EnvironmentId)}"
-                : $"  {cloudLabel}  deleted from {EnvironmentId}",
-            $"  records      1 ManagedAgent + {RemovedAgentDeployments} AgentDeployment row(s)",
-        };
+        var lines = new List<string> { $"Deleted {DisplayName} ({AgentId})." };
 
-        lines.AddRange(Warnings.Select(warning => TextGrid.WarningLine("  ", warning)));
-
-        if (OrphanedTargets.Count > 0)
+        if (McsWorkflowId is null)
         {
-            lines.Add(string.Empty);
-            lines.Add("  orphaned by this delete:");
-            lines.AddRange(OrphanedTargets.Select(orphan => $"    {orphan.EnvironmentId}   (deployment \"{orphan.DeploymentName}\")"));
+            lines.Add(ManagedAgentDeleteTargets.CloudAgentLine(McsAgentAlreadyAbsent ? null : $"deleted from {EnvironmentId}", "existed"));
+        }
+        else
+        {
+            lines.Add(McsAgentAlreadyAbsent ? $"  cloud flow   none — this workflow existed nowhere in {EnvironmentId}" : $"  cloud flow   deleted from {EnvironmentId}");
         }
 
+        lines.Add($"  records      1 ManagedAgent + {RemovedAgentDeployments} AgentDeployment row(s)");
+        lines.AddRange(Warnings.Select(warning => TextGrid.WarningLine("  ", warning)));
+        lines.AddRange(ManagedAgentDeleteTargets.Section("resources", Resources));
+        lines.AddRange(ManagedAgentDeleteTargets.Section("orphaned by this delete", OrphanedTargets));
         lines.Add("Local files were not touched.");
 
         return lines;
@@ -779,6 +817,7 @@ public sealed record ManagedAgentDeployRequest
     /// without it; test and prod always overwrite.
     /// </summary>
     public bool Overwrite { get; init; }
+
     /// <summary>
     /// The project directory the command acts on. The current directory when omitted.
     /// </summary>
@@ -839,7 +878,7 @@ public sealed record ManagedAgentDeployResult : ITextGridRenderable
     /// <summary>Whether a new cloud agent was created rather than an existing one updated.</summary>
     public bool TargetAgentCreated { get; init; }
 
-    /// <summary>How many components were pushed.</summary>
+    /// <summary>How many component changes the push sent and the service stored, excluding the agent's settings and icon.</summary>
     public int PushedComponentCount { get; init; }
 
     /// <summary>How many knowledge and attachment files the push sent.</summary>

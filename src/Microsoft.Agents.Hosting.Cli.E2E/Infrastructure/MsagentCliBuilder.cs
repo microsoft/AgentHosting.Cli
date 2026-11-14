@@ -170,7 +170,7 @@ public sealed class MsagentCliBuilder
         try
         {
             var result = await ProcessRunner
-                .RunAsync(startInfo, arguments, stdin: null, TimeSpan.FromMinutes(1), _transcript, cancellationToken)
+                .RunAsync(startInfo, arguments, stdin: null, TimeSpan.FromMinutes(1), _transcript, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
 
             return result.ExitCode == 0 ? result.StdOut.Trim() : string.Empty;
@@ -307,7 +307,7 @@ public sealed class MsagentCliBuilder
         }
 
         var result = await ProcessRunner
-            .RunAsync(startInfo, arguments, stdin: null, TimeSpan.FromMinutes(10), _transcript, cancellationToken)
+            .RunAsync(startInfo, arguments, stdin: null, TimeSpan.FromMinutes(10), _transcript, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
         if (result.ExitCode != 0)

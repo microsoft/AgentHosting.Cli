@@ -190,8 +190,7 @@ public sealed class EnvironmentSelectionService
 
         if (string.IsNullOrWhiteSpace(environmentId))
         {
-            throw new UsageException(
-                "`msagent agent create --environment-id` requires a non-empty environment id.");
+            throw new UsageException("--environment-id requires a non-empty environment id.");
         }
 
         var resolved = await ResolveAvailableAsync(environmentId, cancellationToken).ConfigureAwait(false);

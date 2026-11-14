@@ -19,10 +19,8 @@ internal static class DeclaredConnectionReferences
 {
     private const string DeclarationFileName = "connectionreferences.mcs.yml";
     private const string ConnectionsFolderName = "connections";
-    private const string InfrastructureFolderName = "infrastructure";
+    internal const string InfrastructureFolderName = "infrastructure";
     private const string ConnectionFilePattern = "*.sync.yaml";
-    private const string CustomConnectorSuffixSeparator = "-5f";
-    private const int CustomConnectorSuffixLength = 16;
 
     /// <summary>Every connection reference the workspace declares, deduplicated by logical name.</summary>
     /// <param name="workspacePath">The workspace directory.</param>
@@ -149,15 +147,6 @@ internal static class DeclaredConnectionReferences
         && row.ConnectionReferenceId != Guid.Empty
         && ServesConnector(declared.ConnectorId.Value, row.ConnectorId);
 
-    /// <summary>
-    /// Whether a row serves the connector a declaration asks for.
-    /// </summary>
-    /// <remarks>
-    /// A custom connector carries an environment-specific suffix, so the target's id for one is not
-    /// the id the declaration names and the library rewrites it on the way in. Those are compared on
-    /// the stable part of the name; every other connector has to match outright, which is what catches
-    /// a re-point the target refused.
-    /// </remarks>
     private static bool ServesConnector(string? declared, string? confirmed)
     {
         var requested = ConnectionConsentLink.NormalizeOptionalResourceId(declared);
@@ -173,41 +162,7 @@ internal static class DeclaredConnectionReferences
             return true;
         }
 
-        return EnvironmentScopedPrefix(requested) is { } prefix
-            && served.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// The part of a custom connector's name that survives being copied into another environment, or
-    /// <see langword="null"/> when the name carries no environment-specific suffix.
-    /// </summary>
-    private static string? EnvironmentScopedPrefix(string connectorInternalId)
-    {
-        var separator = connectorInternalId.LastIndexOf(CustomConnectorSuffixSeparator, StringComparison.Ordinal);
-
-        if (separator <= 0)
-        {
-            return null;
-        }
-
-        var suffix = connectorInternalId.AsSpan(separator + CustomConnectorSuffixSeparator.Length);
-
-        return suffix.Length == CustomConnectorSuffixLength && IsHex(suffix)
-            ? connectorInternalId[..(separator + CustomConnectorSuffixSeparator.Length)]
-            : null;
-    }
-
-    private static bool IsHex(ReadOnlySpan<char> value)
-    {
-        foreach (var character in value)
-        {
-            if (!Uri.IsHexDigit(character))
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return CustomConnectorInternalId.StablePrefixOf(requested) is { } prefix && served.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
     }
 
     private static ConnectionReference Confirmed(SyncDataverseClient.ConnectionReferenceInfo row) =>

@@ -155,6 +155,18 @@ public sealed class CopilotWorkspaceServiceTests
     }
 
     [Fact]
+    public async Task Push_CarriesHowManyComponentsTheServiceStoredApartFromTheChangesSent()
+    {
+        var workspaces = new FakeCopilotWorkspacePort { ComponentCountReturns = 1 };
+        workspaces.LocalChanges.AddRange([CopilotTestFixtures.Change("Greeting"), CopilotTestFixtures.Change("entity", componentType: "BotEntity")]);
+
+        var result = await Create(workspaces).PushAsync(new CopilotPushRequest(), CancellationToken.None);
+
+        Assert.Equal(2, result.ChangeCount);
+        Assert.Equal(1, result.ComponentCount);
+    }
+
+    [Fact]
     public async Task Push_WithNothingSentAtAll_ReportsNoLocalChanges()
     {
         var workspaces = new FakeCopilotWorkspacePort();

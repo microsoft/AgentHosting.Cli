@@ -47,7 +47,7 @@ public sealed class AgentDeploymentConnectionRemoveService
 
         if (logicalName is null && connectionId is null)
         {
-            throw new UsageException($"`{Verb}` requires --connection-reference to remove a reference, --connection-id to delete a connection, or both. Run `{ConnectionCommandHints.ListConnections(request)}` to see them.");
+            throw new UsageException($"`{Verb}` requires --connection-reference to remove a reference, --connection-id to delete a connection, or both. Run `{ConnectionCommandHints.ListConnections(request, _targets.FindAgentId(request))}` to see them.");
         }
 
         var target = await _targets.ResolveAsync(request, request.EnvironmentId, Verb, cancellationToken).ConfigureAwait(false);
@@ -111,7 +111,7 @@ public sealed class AgentDeploymentConnectionRemoveService
 
         return declared is null || declared.Any(name => name.Equals(logicalName, StringComparison.OrdinalIgnoreCase))
             ? ManagedAgentException.ConnectionReferenceNotRemoved(logicalName, workspaceDirectory)
-            : ManagedAgentException.ConnectionReferenceNotDeclared(logicalName, workspaceDirectory, NearMatches(declared, logicalName), ConnectionCommandHints.ListConnections(request));
+            : ManagedAgentException.ConnectionReferenceNotDeclared(logicalName, workspaceDirectory, NearMatches(declared, logicalName), ConnectionCommandHints.ListConnections(request, target.AgentId));
     }
 
     private async Task<IReadOnlyList<string>?> DeclaredNamesAsync(ConnectionTarget target, string workspaceDirectory, CancellationToken cancellationToken)
@@ -166,8 +166,8 @@ public sealed class AgentDeploymentConnectionRemoveService
 
         var resolution = await _connectorResolver.RequireAsync(
             target.Environment,
-            ResolveConnector(request, snapshot, connectionId),
-            ConnectionCommandHints.ListConnectors(request, request.EnvironmentId),
+            ResolveConnector(request, target, snapshot, connectionId),
+            ConnectionCommandHints.ListConnectors(request, target.AgentId, request.EnvironmentId),
             cancellationToken).ConfigureAwait(false);
 
         if (removedReference is not null)
@@ -223,7 +223,7 @@ public sealed class AgentDeploymentConnectionRemoveService
     }
 
     private static ManagedAgentException Unserved(AgentDeploymentConnectionRemoveRequest request, ConnectionTarget target, ConnectorResolution resolution, string connectionId) =>
-        ManagedAgentException.ConnectionNotServed(resolution.Connector.InternalId, connectionId, target.Environment.EnvironmentId, ConnectionCommandHints.ListConnections(request));
+        ManagedAgentException.ConnectionNotServed(resolution.Connector.InternalId, connectionId, target.Environment.EnvironmentId, ConnectionCommandHints.ListConnections(request, target.AgentId));
 
     private async Task<(string ConnectorId, string ConnectionId)> DeleteConnectionAsync(AgentDeploymentConnectionRemoveRequest request, ConnectionTarget target, (string ConnectorId, string ConnectionId) deletion, string? removedReference, bool referenceRemoved, CancellationToken cancellationToken)
     {
@@ -237,7 +237,7 @@ public sealed class AgentDeploymentConnectionRemoveService
                 deletion.ConnectionId,
                 removedReference!,
                 failure,
-                ConnectionCommandHints.DeleteConnection(request, request.EnvironmentId, deletion.ConnectorId, deletion.ConnectionId, request.Force));
+                ConnectionCommandHints.DeleteConnection(request, target.AgentId, request.EnvironmentId, deletion.ConnectorId, deletion.ConnectionId, request.Force));
         }
 
         return deletion;
@@ -255,7 +255,7 @@ public sealed class AgentDeploymentConnectionRemoveService
                 .Select(view => view.LogicalName)
                 .OrderBy(logicalName => logicalName, StringComparer.Ordinal)];
 
-    private static string ResolveConnector(AgentDeploymentConnectionRemoveRequest request, CopilotConnectionSnapshot? snapshot, string connectionId)
+    private static string ResolveConnector(AgentDeploymentConnectionRemoveRequest request, ConnectionTarget target, CopilotConnectionSnapshot? snapshot, string connectionId)
     {
         if (!string.IsNullOrWhiteSpace(request.Connector))
         {
@@ -265,7 +265,7 @@ public sealed class AgentDeploymentConnectionRemoveService
         var holder = snapshot?.References.FirstOrDefault(view => Holds(view, connectionId));
 
         return string.IsNullOrWhiteSpace(holder?.ConnectorId)
-            ? throw new UsageException($"--connector is required to delete connection {connectionId}: no connection reference in this workspace holds it, so its connector is not recorded here. Run `{ConnectionCommandHints.ListConnections(request)}` to see the connections your references do hold.")
+            ? throw new UsageException($"--connector is required to delete connection {connectionId}: no connection reference in this workspace holds it, so its connector is not recorded here. Run `{ConnectionCommandHints.ListConnections(request, target.AgentId)}` to see the connections your references do hold.")
             : ConnectionConsentLink.NormalizeResourceId(holder.ConnectorId);
     }
 

@@ -36,6 +36,9 @@ public sealed class RunContext
 
     public StandaloneServices? Standalone { get; init; }
 
+    /// <summary>The read-only copy corpus as the run found it, compared again when the run ends.</summary>
+    public TreeSnapshot? CorpusSnapshot { get; init; }
+
     /// <summary>Builds the context one scenario sees.</summary>
     public ScenarioContext ContextFor(Scenario scenario, Assertions assertions, CancellationToken cancellationToken) => new()
     {

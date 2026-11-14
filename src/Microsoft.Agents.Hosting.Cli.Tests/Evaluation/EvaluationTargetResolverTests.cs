@@ -105,6 +105,17 @@ public sealed class EvaluationTargetResolverTests
     }
 
     [Fact]
+    public async Task ResolveAsync_ForARecordWithNoEnvironment_NamesTheRecord()
+    {
+        using var workspace = new TemporaryWorkspace(schemaName: SchemaName);
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(() => ResolveAsync(Seeded(workspace, ManagedAgentFixtures.Agent(environmentId: string.Empty)), new EvaluationTestSetListRequest { Project = workspace.Root }));
+
+        Assert.Equal("agent-environment-missing", failure.ErrorKind);
+        Assert.Contains("'Contoso Agent' (agent-1)", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ResolveAsync_NamesTheEnvironmentItSearchedWhenTheRecordsAgentIsNotThere()
     {
         using var workspace = new TemporaryWorkspace(schemaName: SchemaName);

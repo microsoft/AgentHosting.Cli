@@ -118,17 +118,14 @@ public sealed record CopilotPullOutcome
     public IReadOnlyList<string> Warnings { get; init; } = [];
 }
 
-/// <summary>
-/// What a push sent, and anything the service declined along the way.
-///
-/// A declined workflow or AI prompt does not fail the push: the sync library keeps it out of the cloud
-/// cache and continues, because a flow whose connection reference is not yet bound in the target
-/// environment is the expected state during a promotion.
-/// </summary>
+/// <summary>What a push sent, and anything the service declined along the way.</summary>
 public sealed record CopilotPushOutcome
 {
     /// <summary>The components that were uploaded.</summary>
     public required IReadOnlyList<CopilotChange> Changes { get; init; }
+
+    /// <summary>How many of the sent component changes the service stored, excluding the agent's settings and icon.</summary>
+    public int ComponentCount { get; init; }
 
     /// <summary>How many workflows the service was asked to store that <see cref="Changes"/> does not already report.</summary>
     public int AuxiliaryChangeCount { get; init; }
@@ -218,9 +215,10 @@ public interface ICopilotWorkspacePort
     /// Whether to re-image the cloud baseline and push again when the service reports the agent
     /// changed underneath. The baseline is always taken from the service, never from local content.
     /// </param>
+    /// <param name="overwriteSharedEnvironmentVariables">Whether the push may replace the values of shared environment variables the target environment already holds.</param>
     /// <param name="cancellationToken">Cancels the push.</param>
     /// <returns>The changes that were uploaded, and anything the service declined.</returns>
-    Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken);
+    Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, bool overwriteSharedEnvironmentVariables, CancellationToken cancellationToken);
 }
 
 /// <summary>Agent inventory and lifecycle operations against an environment.</summary>
@@ -313,6 +311,9 @@ public sealed record CopilotAttachCommand
     /// one. A different agent under that name is a conflict rather than something to adopt.
     /// </summary>
     public string? ExpectedAgentId { get; init; }
+
+    /// <summary>Whether the attach may go ahead when the workspace would replace the values of shared environment variables the target environment already holds.</summary>
+    public bool OverwriteSharedEnvironmentVariables { get; init; }
 }
 
 /// <summary>The agent an attach created or adopted.</summary>

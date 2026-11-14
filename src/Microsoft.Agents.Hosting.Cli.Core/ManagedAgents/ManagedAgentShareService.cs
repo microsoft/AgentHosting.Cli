@@ -252,9 +252,7 @@ public sealed class ManagedAgentShareService
             throw ManagedAgentException.NotDeployedYet(agent.DisplayName, agent.AgentId);
         }
 
-        var environment = await _environmentResolver
-            .ResolveAsync(MostRecentlyDeployedEnvironment(deployments) ?? agent.EnvironmentId, cancellationToken)
-            .ConfigureAwait(false);
+        var environment = await _environmentResolver.ResolveAsync(ManagedAgentResolver.TargetEnvironmentId(agent, MostRecentlyDeployed(deployments)), cancellationToken).ConfigureAwait(false);
 
         var mcsAgentId = await _catalog.ResolveAgentIdAsync(environment, selector, cancellationToken).ConfigureAwait(false)
             ?? throw ManagedAgentException.ShareTargetNotInEnvironment(agent.DisplayName, agent.AgentId, environment.EnvironmentId);
@@ -271,23 +269,9 @@ public sealed class ManagedAgentShareService
     /// <summary>
     /// What this record can be looked up by inside an environment.
     /// </summary>
-    private string? SelectorFor(string projectDirectory, ManagedAgentRecord agent)
-    {
-        var workspaceDirectory = _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent);
-        var schemaName = ManagedAgentResolver.McsSchemaNameOf(agent, workspaceDirectory is null ? null : _projectIdentities.Find(workspaceDirectory)?.SchemaName);
+    private string? SelectorFor(string projectDirectory, ManagedAgentRecord agent) => _projectIdentities.FindSelector(agent, _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent));
 
-        return schemaName ?? (string.IsNullOrWhiteSpace(agent.McsAgentId) ? null : agent.McsAgentId.Trim());
-    }
-
-    /// <summary>
-    /// The environment of the slot this agent most recently deployed to, or <see langword="null"/> when
-    /// it has never deployed and the home environment stands.
-    /// </summary>
-    private static string? MostRecentlyDeployedEnvironment(IReadOnlyList<AgentDeploymentRecord> deployments) =>
-        deployments
-            .Where(deployment => deployment.LastDeployedTime is not null && !string.IsNullOrWhiteSpace(deployment.EnvironmentId))
-            .MaxBy(deployment => deployment.LastDeployedTime)
-            ?.EnvironmentId;
+    private static AgentDeploymentRecord? MostRecentlyDeployed(IReadOnlyList<AgentDeploymentRecord> deployments) => deployments.Where(deployment => deployment.LastDeployedTime is not null && !string.IsNullOrWhiteSpace(deployment.EnvironmentId)).MaxBy(deployment => deployment.LastDeployedTime);
 
     private static ManagedAgentShareEntry ToEntry(DirectoryPrincipal principal, AgentShareTarget? share) => ToEntry(principal, principal.ObjectId, share);
 

@@ -17,6 +17,7 @@ public sealed class ManagedAgentDeleteService
     private readonly CopilotEnvironmentResolver _environmentResolver;
     private readonly ICopilotCatalogPort _catalog;
     private readonly CopilotProjectIdentityReader _projectIdentities;
+    private readonly ICopilotAgentResourcePort _resources;
     private readonly IConfirmationPrompt _confirmations;
 
     /// <summary>Creates the service.</summary>
@@ -26,8 +27,9 @@ public sealed class ManagedAgentDeleteService
     /// <param name="environmentResolver">Resolves the environment the target lives in.</param>
     /// <param name="catalog">Resolves and deletes the cloud agent.</param>
     /// <param name="projectIdentities">Reads the project's declared schema name.</param>
+    /// <param name="resources">Lists, finds, and deletes the agent's resources.</param>
     /// <param name="confirmations">Confirms the delete with the operator.</param>
-    public ManagedAgentDeleteService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, CopilotWorkspaceLocator workspaceLocator, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, CopilotProjectIdentityReader projectIdentities, IConfirmationPrompt confirmations)
+    public ManagedAgentDeleteService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, CopilotWorkspaceLocator workspaceLocator, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, CopilotProjectIdentityReader projectIdentities, ICopilotAgentResourcePort resources, IConfirmationPrompt confirmations)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
@@ -35,10 +37,11 @@ public sealed class ManagedAgentDeleteService
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
+        _resources = resources ?? throw new ArgumentNullException(nameof(resources));
         _confirmations = confirmations ?? throw new ArgumentNullException(nameof(confirmations));
     }
 
-    /// <summary>Deletes the agent's cloud resources and its records.</summary>
+    /// <summary>Deletes the agent's cloud resources and its records, or reports what that would delete.</summary>
     /// <param name="request">The command input.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>What was deleted, and what was left behind.</returns>
@@ -50,27 +53,29 @@ public sealed class ManagedAgentDeleteService
         var agent = ManagedAgentResolver.RequireMcsAgent(_resolver.ResolveAgent(projectDirectory, request.AgentId, request.AgentName), "msagent agent delete");
         var deployment = _resolver.FindDeployment(projectDirectory, agent, request.DeploymentId, request.DeploymentName);
         var deployments = _resolver.ListDeployments(projectDirectory, agent.AgentId);
-
-        var target = await ResolveTargetAsync(projectDirectory, agent, deployment, cancellationToken).ConfigureAwait(false);
+        var workspaceDirectory = _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent);
+        var resources = request.AllResources ? ListResources(workspaceDirectory, agent) : [];
+        var workspace = workspaceDirectory is null ? null : await _workspaceLocator.FindAsync(workspaceDirectory, cancellationToken).ConfigureAwait(false);
+        var (environment, target) = await ResolveTargetAsync(agent, deployment, workspaceDirectory, workspace, _projectIdentities.FindSchemaName(agent, workspaceDirectory), cancellationToken).ConfigureAwait(false);
         var matchingDeployment = deployment ?? deployments.FirstOrDefault(candidate => string.Equals(ManagedAgentResolver.TargetEnvironmentId(agent, candidate), target?.EnvironmentId, StringComparison.OrdinalIgnoreCase));
-        var orphaned = deployments
-            .Where(candidate => candidate.DeploymentId != matchingDeployment?.DeploymentId)
-            .Select(candidate => new ManagedAgentOrphanedTarget { DeploymentName = candidate.DeploymentName, EnvironmentId = ManagedAgentResolver.TargetEnvironmentId(agent, candidate) })
-            .ToArray();
-
-        var outcome = await ConfirmationPolicy.ConfirmAsync(_confirmations, request.NonInteractive, Describe(agent, target, deployments.Count, orphaned), agent.DisplayName, cancellationToken).ConfigureAwait(false);
-
-        if (outcome != ConfirmationOutcome.Confirmed)
+        var existing = await FindResourcesAsync(resources, environment, cancellationToken).ConfigureAwait(false);
+        var planned = new ManagedAgentDeleteResult
         {
-            return new ManagedAgentDeleteResult
-            {
-                Status = outcome == ConfirmationOutcome.Mismatched ? "name-mismatch" : "cancelled",
-                AgentId = agent.AgentId,
-                DisplayName = agent.DisplayName,
-                EnvironmentId = target?.EnvironmentId,
-                DeploymentId = matchingDeployment?.DeploymentId,
-                OrphanedTargets = orphaned,
-            };
+            Status = ManagedAgentDeleteTargets.DeletedStatus,
+            AgentId = agent.AgentId,
+            DisplayName = agent.DisplayName,
+            EnvironmentId = target?.EnvironmentId,
+            McsAgentId = target?.AgentId,
+            DeploymentId = matchingDeployment?.DeploymentId,
+            McsAgentAlreadyAbsent = target is null,
+            RemovedAgentDeployments = deployments.Count,
+            OrphanedTargets = ManagedAgentDeleteTargets.OrphanedBy(agent, deployments, environment?.EnvironmentId, includeHome: false),
+            Resources = [.. existing.Select(AsResource)],
+        };
+
+        if (await ManagedAgentDeleteTargets.StopBeforeDeletingAsync(_confirmations, request, planned, cancellationToken).ConfigureAwait(false) is { } stopped)
+        {
+            return stopped;
         }
 
         if (target is not null)
@@ -78,30 +83,9 @@ public sealed class ManagedAgentDeleteService
             await _catalog.DeleteAgentAsync(target.Environment, target.AgentId, cancellationToken).ConfigureAwait(false);
         }
 
-        int removed;
+        await DeleteResourcesAsync(agent.DisplayName, existing, cancellationToken).ConfigureAwait(false);
 
-        cancellationToken.ThrowIfCancellationRequested();
-
-        try
-        {
-            removed = _agents.RemoveWithDeployments(projectDirectory, agent.AgentId, agent.EntityTag);
-        }
-        catch (Exception failure) when (target is not null && failure is not OperationCanceledException)
-        {
-            throw ManagedAgentException.RecordsSurvivedCloudDelete(agent.AgentId, target.EnvironmentId, failure.Message);
-        }
-
-        return new ManagedAgentDeleteResult
-        {
-            Status = "agent-deleted",
-            AgentId = agent.AgentId,
-            DisplayName = agent.DisplayName,
-            EnvironmentId = target?.EnvironmentId,
-            DeploymentId = matchingDeployment?.DeploymentId,
-            McsAgentAlreadyAbsent = target is null,
-            RemovedAgentDeployments = removed,
-            OrphanedTargets = orphaned,
-        };
+        return planned with { RemovedAgentDeployments = ManagedAgentDeleteTargets.RemoveRecords(_agents, projectDirectory, agent, target?.EnvironmentId, cancellationToken) };
     }
 
     private sealed record DeleteTarget(CopilotEnvironmentContext Environment, string AgentId)
@@ -119,31 +103,33 @@ public sealed class ManagedAgentDeleteService
     /// project. A workspace that is no longer on disk leaves nothing to target, so the delete removes the
     /// records alone rather than failing on a directory the operator has already removed.
     /// </summary>
-    private async Task<DeleteTarget?> ResolveTargetAsync(string projectDirectory, ManagedAgentRecord agent, AgentDeploymentRecord? deployment, CancellationToken cancellationToken)
+    private async Task<(CopilotEnvironmentContext? Environment, DeleteTarget? Target)> ResolveTargetAsync(ManagedAgentRecord agent, AgentDeploymentRecord? deployment, string? workspaceDirectory, CopilotWorkspaceInfo? workspace, string? schemaName, CancellationToken cancellationToken)
     {
-        if (_resolver.FindAgentWorkspaceDirectory(projectDirectory, agent) is not { } workspaceDirectory)
+        if (workspaceDirectory is null)
         {
-            return null;
+            return (null, null);
         }
-
-        var workspace = await _workspaceLocator.FindAsync(workspaceDirectory, cancellationToken).ConfigureAwait(false);
-        var expectedSchemaName = ManagedAgentResolver.McsSchemaNameOf(agent, _projectIdentities.Find(workspaceDirectory)?.SchemaName);
 
         if (deployment is null && workspace is not null)
         {
             var bound = await _environmentResolver.ResolveAsync(workspace.EnvironmentId, cancellationToken).ConfigureAwait(false);
             WorkspaceConnectionVerifier.RequireOriginMatches(workspace, bound);
-            await RequireBoundAgentMatchesAsync(bound, workspace.AgentId, expectedSchemaName, workspaceDirectory, agent.AgentId, cancellationToken).ConfigureAwait(false);
 
-            return new DeleteTarget(bound, workspace.AgentId);
+            return (bound, await FindBoundAgentAsync(bound, workspace, schemaName, workspaceDirectory, agent.AgentId, cancellationToken).ConfigureAwait(false));
         }
 
-        if (expectedSchemaName is not { } schemaName)
+        if (schemaName is null)
         {
-            return null;
+            return (null, null);
         }
 
         var environment = await _environmentResolver.ResolveAsync(ManagedAgentResolver.TargetEnvironmentId(agent, deployment), cancellationToken).ConfigureAwait(false);
+
+        return (environment, await FindBySchemaNameAsync(environment, workspace, schemaName, cancellationToken).ConfigureAwait(false));
+    }
+
+    private async Task<DeleteTarget?> FindBySchemaNameAsync(CopilotEnvironmentContext environment, CopilotWorkspaceInfo? workspace, string schemaName, CancellationToken cancellationToken)
+    {
         var resolved = await _catalog.ResolveAgentIdAsync(environment, schemaName, cancellationToken).ConfigureAwait(false);
 
         if (resolved is null)
@@ -156,42 +142,59 @@ public sealed class ManagedAgentDeleteService
         return new DeleteTarget(environment, resolved);
     }
 
-    /// <summary>Rejects a delete whose workspace binding cannot be proven to name the record's own agent.</summary>
-    private async Task RequireBoundAgentMatchesAsync(CopilotEnvironmentContext environment, string boundAgentId, string? expectedSchemaName, string workspaceDirectory, string agentId, CancellationToken cancellationToken)
+    private IReadOnlyList<CopilotCopyLink> ListResources(string? workspaceDirectory, ManagedAgentRecord agent) => workspaceDirectory is null ? throw new UsageException($"--all-resources reads the flows, AI prompts, connection references, and custom connectors of '{agent.DisplayName}' from its workspace, which is no longer on disk. Restore the workspace, or delete without --all-resources.") : ManagedAgentDeleteTargets.Resources(_resources.List(workspaceDirectory));
+
+    private async Task<IReadOnlyList<(CopilotEnvironmentContext Environment, CopilotCopyLink Resource)>> FindResourcesAsync(IReadOnlyList<CopilotCopyLink> resources, CopilotEnvironmentContext? environment, CancellationToken cancellationToken)
+    {
+        if (environment is null || resources.Count == 0)
+        {
+            return [];
+        }
+
+        return [.. (await _resources.FindExistingAsync(environment, resources, cancellationToken).ConfigureAwait(false)).Select(resource => (environment, resource))];
+    }
+
+    private async Task DeleteResourcesAsync(string displayName, IReadOnlyList<(CopilotEnvironmentContext Environment, CopilotCopyLink Resource)> resources, CancellationToken cancellationToken)
+    {
+        var remaining = new List<string>();
+
+        foreach (var found in resources)
+        {
+            try
+            {
+                await _resources.DeleteAsync(found.Environment, found.Resource, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception failure) when (failure is not OperationCanceledException)
+            {
+                remaining.Add($"{AsResource(found)} ({ManagedAgentException.DescribeChain(failure)})");
+            }
+        }
+
+        if (remaining.Count > 0)
+        {
+            throw ManagedAgentException.ResourceDeleteIncomplete(displayName, resources.Count - remaining.Count, remaining);
+        }
+    }
+
+    private static ManagedAgentResource AsResource((CopilotEnvironmentContext Environment, CopilotCopyLink Resource) found) => new() { Kind = found.Resource.Kind, Identity = found.Resource.Identity, EnvironmentId = found.Environment.EnvironmentId };
+
+    private async Task<DeleteTarget?> FindBoundAgentAsync(CopilotEnvironmentContext environment, CopilotWorkspaceInfo workspace, string? expectedSchemaName, string workspaceDirectory, string agentId, CancellationToken cancellationToken)
     {
         if (expectedSchemaName is null)
         {
             throw ManagedAgentException.WorkspaceSchemaUnknown(workspaceDirectory, agentId);
         }
 
-        var bound = await _catalog.GetAgentAsync(environment, boundAgentId, cancellationToken).ConfigureAwait(false);
+        if (await _catalog.FindAgentAsync(environment, workspace.AgentId, cancellationToken).ConfigureAwait(false) is not { } bound)
+        {
+            return await FindBySchemaNameAsync(environment, workspace, expectedSchemaName, cancellationToken).ConfigureAwait(false);
+        }
 
         if (!string.Equals(bound.SchemaName, expectedSchemaName, StringComparison.OrdinalIgnoreCase))
         {
             throw ManagedAgentException.WorkspaceIdentityMismatch(expectedSchemaName, bound.SchemaName, bound.AgentId, workspaceDirectory);
         }
-    }
 
-    private static string Describe(ManagedAgentRecord agent, DeleteTarget? target, int deploymentCount, ManagedAgentOrphanedTarget[] orphaned)
-    {
-        var lines = new List<string>
-        {
-            "About to delete:",
-            $"  agent        {agent.DisplayName} ({agent.AgentId})",
-            target is null ? "  cloud agent  none — this agent exists nowhere in Copilot Studio" : $"  cloud agent  {target.AgentId} in {target.EnvironmentId}",
-            $"  records      1 ManagedAgent + {deploymentCount} AgentDeployment row(s)",
-        };
-
-        if (orphaned.Length > 0)
-        {
-            lines.Add(string.Empty);
-            lines.Add("  orphaned by this delete:");
-            lines.AddRange(orphaned.Select(orphan => $"    {orphan.EnvironmentId}   (deployment \"{orphan.DeploymentName}\")"));
-        }
-
-        lines.Add(string.Empty);
-        lines.Add("This deletes remote resources. Local files are not touched.");
-
-        return string.Join(Environment.NewLine, lines);
+        return new DeleteTarget(environment, workspace.AgentId);
     }
 }

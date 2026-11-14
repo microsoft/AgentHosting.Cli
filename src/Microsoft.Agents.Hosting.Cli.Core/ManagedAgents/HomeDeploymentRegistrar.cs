@@ -7,6 +7,9 @@ namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 /// <summary>Records the home <c>develop</c> deployment a clone is checked out against, removing the new agent record when that deployment cannot be written.</summary>
 public sealed class HomeDeploymentRegistrar
 {
+    /// <summary>The name of the home deployment registered for a new agent.</summary>
+    public const string DeploymentName = "develop";
+
     private readonly IManagedAgentRegistry _agents;
     private readonly IAgentDeploymentRegistry _deployments;
 
@@ -36,7 +39,7 @@ public sealed class HomeDeploymentRegistrar
                 AgentId = agent.AgentId,
                 AgentType = agent.AgentType,
                 DeploymentType = DeploymentStages.Dev,
-                DeploymentName = "develop",
+                DeploymentName = HomeDeploymentRegistrar.DeploymentName,
                 TenantId = agent.TenantId,
                 HomeEnvironmentId = agent.EnvironmentId,
                 EnvironmentId = targetEnvironmentId,

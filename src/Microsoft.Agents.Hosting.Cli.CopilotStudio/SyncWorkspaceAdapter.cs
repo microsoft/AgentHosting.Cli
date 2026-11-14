@@ -5,7 +5,6 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.Platform.Content;
-using Microsoft.Agents.Platform.Content.Exceptions;
 using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 using Microsoft.CopilotStudio.Sync.Dataverse;
@@ -20,12 +19,11 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     private const string MissingParentAgentMarker = "references a parent agent that could not be created";
     private const string RemoteChangedMarker = "was changed in the cloud while you were editing it";
     private const string ImproperResponseMarker = "Improper response, not implemented";
-    private const string MissingEntityMarker = "does not exist";
-    private const string DuplicateConnectionReferenceMarker = "ExportKeyInvalidCreate";
     private const string ConnectionReferenceEntity = "connectionreference";
-    private const string ObjectDoesNotExistCode = "0x80040217";
+    private const string ComponentEntity = "botcomponent";
     private const int UnreadableResponseAttempts = 4;
     private readonly IWorkspaceSynchronizer _synchronizer;
+    private readonly IEnvironmentVariableDependencyValidator _environmentVariableValidator;
     private readonly IWorkspaceRetargetService _retargetService;
     private readonly ISyncDataverseClient _dataverseClient;
     private readonly ISyncComponentCollectionDataverseClient _componentCollections;
@@ -36,6 +34,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
 
     /// <summary>Creates the adapter.</summary>
     /// <param name="synchronizer">The sync library's workspace synchronizer.</param>
+    /// <param name="environmentVariableValidator">Lists the shared environment variables a push would overwrite.</param>
     /// <param name="retargetService">Re-images the cloud baseline before a push is resent.</param>
     /// <param name="dataverseClient">The sync library's Dataverse client.</param>
     /// <param name="componentCollections">Resolves component collections by schema name.</param>
@@ -43,9 +42,10 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     /// <param name="httpClientAccessor">Targets the Dataverse organization for a given operation.</param>
     /// <param name="changeMapper">Translates sync library changes into transport-neutral records.</param>
     /// <param name="delay">Waits between push attempts.</param>
-    public SyncWorkspaceAdapter(IWorkspaceSynchronizer synchronizer, IWorkspaceRetargetService retargetService, ISyncDataverseClient dataverseClient, ISyncComponentCollectionDataverseClient componentCollections, IOperationContextProvider operationContexts, AgentHostDataverseHttpClientAccessor httpClientAccessor, CopilotChangeMapper changeMapper, Func<TimeSpan, CancellationToken, Task>? delay = null)
+    public SyncWorkspaceAdapter(IWorkspaceSynchronizer synchronizer, IEnvironmentVariableDependencyValidator environmentVariableValidator, IWorkspaceRetargetService retargetService, ISyncDataverseClient dataverseClient, ISyncComponentCollectionDataverseClient componentCollections, IOperationContextProvider operationContexts, AgentHostDataverseHttpClientAccessor httpClientAccessor, CopilotChangeMapper changeMapper, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         _synchronizer = synchronizer ?? throw new ArgumentNullException(nameof(synchronizer));
+        _environmentVariableValidator = environmentVariableValidator ?? throw new ArgumentNullException(nameof(environmentVariableValidator));
         _retargetService = retargetService ?? throw new ArgumentNullException(nameof(retargetService));
         _dataverseClient = dataverseClient ?? throw new ArgumentNullException(nameof(dataverseClient));
         _componentCollections = componentCollections ?? throw new ArgumentNullException(nameof(componentCollections));
@@ -302,7 +302,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     }
 
     /// <inheritdoc />
-    public async Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
+    public async Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, bool overwriteSharedEnvironmentVariables, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(workspace);
 
@@ -312,7 +312,12 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
         var localDefinition = await WorkspaceDefinitionReader.ReadAsync(_synchronizer, workspaceFolder, checkKnowledgeFiles: true, cancellationToken).ConfigureAwait(false);
         await WorkspaceDefinitionReader.RequireSynchronizableAsync(_synchronizer, workspaceFolder, localDefinition, cancellationToken).ConfigureAwait(false);
         WorkflowToolIds.RequireNotEmpty(localDefinition);
-        var (_, localChanges) = await _synchronizer.GetLocalChangesAsync(workspaceFolder, localDefinition, _dataverseClient, syncInfo, cancellationToken).ConfigureAwait(false);
+        var (localChangeSet, localChanges) = await _synchronizer.GetLocalChangesAsync(workspaceFolder, localDefinition, _dataverseClient, syncInfo, cancellationToken).ConfigureAwait(false);
+
+        if (!overwriteSharedEnvironmentVariables)
+        {
+            await _environmentVariableValidator.RefuseUnapprovedOverwritesAsync(localChangeSet.EnvironmentVariableChanges.OfType<EnvironmentVariableUpsert>().Select(upsert => upsert.EnvironmentVariable), workspaceFolder, localDefinition, compareWithCloudCache: true, _dataverseClient, workspace.EnvironmentId, cancellationToken).ConfigureAwait(false);
+        }
 
         CloudFlowMetadata? cloudFlowMetadata = null;
         var aiPrompts = ImmutableArray<SyncDataverseClient.AIPromptMetadata>.Empty;
@@ -335,8 +340,10 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
             warnings.AddRange(SyncResponseGuards.DescribeRefusedPrompts(promptResponses));
         }
 
-        await PushComponentsAsync(workspaceFolder, operationContext, localDefinition, syncInfo, DeclaredConnectionReferences.WithProvisioned(cloudFlowMetadata, provisionedReferences), aiPrompts, workspace.EnvironmentId, overwrite, warnings, cancellationToken).ConfigureAwait(false);
+        await PushComponentsAsync(workspaceFolder, operationContext, localDefinition, syncInfo, DeclaredConnectionReferences.WithProvisioned(cloudFlowMetadata, provisionedReferences), aiPrompts, workspace.EnvironmentId, overwrite, overwriteSharedEnvironmentVariables, warnings, cancellationToken).ConfigureAwait(false);
 
+        var accepted = localChanges.WithoutFailedAssets(pushedConnectors, workflowResponses, promptResponses);
+        var componentCount = accepted.Count(change => IsComponentChange(change.ChangeKind));
         ImmutableArray<string> uploadedFiles;
 
         try
@@ -345,14 +352,15 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
         }
         catch (Exception failure) when (failure is not OperationCanceledException)
         {
-            throw CopilotStudioException.KnowledgeUploadFailed(localChanges.Length, failure);
+            throw CopilotStudioException.KnowledgeUploadFailed(componentCount, failure);
         }
 
-        var changes = _changeMapper.Map(localChanges.WithoutFailedAssets(pushedConnectors, workflowResponses, promptResponses));
+        var changes = _changeMapper.Map(accepted);
 
         return new CopilotPushOutcome
         {
             Changes = changes,
+            ComponentCount = componentCount,
             AuxiliaryChangeCount = workflowResponses.Count(response => !changes.Any(change => string.Equals(change.SchemaName, WorkflowLayout.SchemaNamePrefix + response.WorkflowId, StringComparison.OrdinalIgnoreCase))),
             UploadedFileNames = uploadedFiles,
             Warnings = warnings,
@@ -362,24 +370,20 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     private static IReadOnlyList<string> DescribeConflicts(List<WorkspaceDiagnostic> conflicts) =>
         [.. conflicts.Select(conflict => conflict.ToString())];
 
-    private async Task PushComponentsAsync(
-        DirectoryPath workspaceFolder,
-        AuthoringOperationContextBase operationContext,
-        DefinitionBase localDefinition,
-        AgentSyncInfo syncInfo,
-        CloudFlowMetadata? cloudFlowMetadata,
-        ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts,
-        string environmentId,
-        bool overwrite,
-        List<string> priorWarnings,
-        CancellationToken cancellationToken)
+    private static bool IsComponentChange(string changeKind) => TypeUtility.TryParseBotElementKind(changeKind, out var kind) && typeof(BotComponentBase).IsAssignableFrom(TypeUtility.TypeFromKind(kind));
+
+    private async Task PushComponentsAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, DefinitionBase localDefinition, AgentSyncInfo syncInfo, CloudFlowMetadata? cloudFlowMetadata, ImmutableArray<SyncDataverseClient.AIPromptMetadata> aiPrompts, string environmentId, bool overwrite, bool overwriteSharedEnvironmentVariables, List<string> priorWarnings, CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                await _synchronizer.PushLocalChangesAsync(workspaceFolder, operationContext, localDefinition, _dataverseClient, syncInfo, cloudFlowMetadata, aiPrompts, cancellationToken, overwriteRemoteChanges: overwrite).ConfigureAwait(false);
+                await _synchronizer.PushLocalChangesAsync(workspaceFolder, operationContext, localDefinition, _dataverseClient, syncInfo, cloudFlowMetadata, aiPrompts, cancellationToken, overwriteRemoteChanges: overwrite, approvedEnvironmentVariableOverwrites: SharedEnvironmentVariableOverwrites.ApprovedOverwrites(overwriteSharedEnvironmentVariables)).ConfigureAwait(false);
                 return;
+            }
+            catch (WorkspaceValidationException failure)
+            {
+                throw SharedEnvironmentVariableOverwrites.Translate(failure, environmentId);
             }
             catch (InvalidOperationException failure) when (failure.Message.Contains(MissingParentAgentMarker, StringComparison.OrdinalIgnoreCase))
             {
@@ -398,17 +402,14 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
 
                 await _delay(TimeSpan.FromSeconds(2 * attempt), cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception failure) when (failure is not OperationCanceledException && TypedConnectionReferenceFailure(failure, environmentId, priorWarnings) is { } typedFailure)
+            catch (Exception failure) when (failure is not OperationCanceledException && TypedPushFailure(failure, environmentId, priorWarnings) is { } typedFailure)
             {
                 if (attempt > 1)
                 {
                     throw typedFailure;
                 }
             }
-            catch (Exception failure) when (
-                priorWarnings.Count > 0
-                && failure is not OperationCanceledException
-                && ChainContains(failure, MissingEntityMarker))
+            catch (Exception failure) when (priorWarnings.Count > 0 && failure is not OperationCanceledException && DataverseFailureClassifier.ReportsMissingRow(failure))
             {
                 throw CopilotStudioException.PushFailedAfterRefusedComponents(environmentId, priorWarnings, failure);
             }
@@ -417,33 +418,12 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
         }
     }
 
-    private static bool ChainContains(Exception failure, string marker) => AnyInExceptionChain(failure, current => current.Message.Contains(marker, StringComparison.OrdinalIgnoreCase));
-
-    private static bool IsMissingConnectionReference(Exception failure) => AnyInExceptionChain(failure, NamesAMissingConnectionReference);
-
-    private static bool NamesAMissingConnectionReference(Exception failure) => (failure is DataverseNotFoundException || IsObjectDoesNotExist(failure)) && failure.Message.Contains(ConnectionReferenceEntity, StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsObjectDoesNotExist(Exception failure) => failure is DataverseException dataverse && string.Equals(dataverse.ErrorCodeValue, ObjectDoesNotExistCode, StringComparison.OrdinalIgnoreCase);
-
-    private static CopilotStudioException? TypedConnectionReferenceFailure(Exception failure, string environmentId, IReadOnlyList<string> refusals) => failure switch
+    private static CopilotStudioException? TypedPushFailure(Exception failure, string environmentId, IReadOnlyList<string> refusals) => DataverseFailureClassifier.IsMissingRow(failure, ConnectionReferenceEntity) ? CopilotStudioException.MissingConnectionReference(environmentId, refusals, failure) : DataverseFailureClassifier.FindKeyConflict(failure) switch
     {
-        _ when IsMissingConnectionReference(failure) => CopilotStudioException.MissingConnectionReference(environmentId, refusals, failure),
-        _ when ChainContains(failure, DuplicateConnectionReferenceMarker) => CopilotStudioException.DuplicateConnectionReference(environmentId, refusals, failure),
+        { EntityLogicalName: ConnectionReferenceEntity } => CopilotStudioException.DuplicateConnectionReference(environmentId, refusals, failure),
+        { EntityLogicalName: ComponentEntity } conflict => CopilotStudioException.DuplicateComponent(environmentId, conflict.KeyValue, failure),
         _ => null,
     };
-
-    private static bool AnyInExceptionChain(Exception failure, Func<Exception, bool> predicate)
-    {
-        for (var current = failure; current is not null; current = current.InnerException)
-        {
-            if (predicate(current))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
 
     /// <summary>
     /// Re-reads the cloud baseline from the service, writing only the cache.

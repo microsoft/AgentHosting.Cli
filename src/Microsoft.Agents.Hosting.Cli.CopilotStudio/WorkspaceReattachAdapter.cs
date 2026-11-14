@@ -14,6 +14,7 @@ namespace Microsoft.Agents.Hosting.Cli.CopilotStudio;
 public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort
 {
     private readonly IWorkspaceSynchronizer _synchronizer;
+    private readonly IEnvironmentVariableDependencyValidator _environmentVariableValidator;
     private readonly IWorkspaceRetargetService _retargetService;
     private readonly ISyncDataverseClient _dataverseClient;
     private readonly IOperationContextProvider _operationContexts;
@@ -21,13 +22,15 @@ public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort
 
     /// <summary>Creates the adapter.</summary>
     /// <param name="synchronizer">Reads the workspace and writes its sync info.</param>
+    /// <param name="environmentVariableValidator">Lists the shared environment variables the workspace would overwrite.</param>
     /// <param name="retargetService">Writes the cloud baseline and owns the retarget snapshot.</param>
     /// <param name="dataverseClient">Resolves and creates agents.</param>
     /// <param name="operationContexts">Builds the authoring operation context.</param>
     /// <param name="httpClientAccessor">Targets the Dataverse organization.</param>
-    public WorkspaceReattachAdapter(IWorkspaceSynchronizer synchronizer, IWorkspaceRetargetService retargetService, ISyncDataverseClient dataverseClient, IOperationContextProvider operationContexts, AgentHostDataverseHttpClientAccessor httpClientAccessor)
+    public WorkspaceReattachAdapter(IWorkspaceSynchronizer synchronizer, IEnvironmentVariableDependencyValidator environmentVariableValidator, IWorkspaceRetargetService retargetService, ISyncDataverseClient dataverseClient, IOperationContextProvider operationContexts, AgentHostDataverseHttpClientAccessor httpClientAccessor)
     {
         _synchronizer = synchronizer ?? throw new ArgumentNullException(nameof(synchronizer));
+        _environmentVariableValidator = environmentVariableValidator ?? throw new ArgumentNullException(nameof(environmentVariableValidator));
         _retargetService = retargetService ?? throw new ArgumentNullException(nameof(retargetService));
         _dataverseClient = dataverseClient ?? throw new ArgumentNullException(nameof(dataverseClient));
         _operationContexts = operationContexts ?? throw new ArgumentNullException(nameof(operationContexts));
@@ -59,6 +62,11 @@ public sealed class WorkspaceReattachAdapter : ICopilotWorkspaceAttachPort
             }
 
             await WorkspaceDefinitionReader.RequireSynchronizableAsync(_synchronizer, workspaceFolder, definition, cancellationToken).ConfigureAwait(false);
+
+            if (!command.OverwriteSharedEnvironmentVariables)
+            {
+                await _environmentVariableValidator.RefuseUnapprovedOverwritesAsync(definition.EnvironmentVariables, workspaceFolder, definition, compareWithCloudCache: isRetarget, _dataverseClient, command.Environment.EnvironmentId, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         var existing = await _dataverseClient.GetAgentIdBySchemaNameAsync(command.SchemaName, cancellationToken).ConfigureAwait(false);

@@ -1262,6 +1262,25 @@ public class CommandHostTests
     }
 
     [Fact]
+    public void Copy_ShowsItsProgressLabel()
+    {
+        var time = new ManualTimeProvider();
+        var operations = new FakeOperations
+        {
+            OnManagedAgentCopy = request =>
+            {
+                time.Advance(TimeSpan.FromMilliseconds(500));
+                return new FakeOperations().CopyManagedAgentAsync(request, CancellationToken.None).GetAwaiter().GetResult();
+            },
+        };
+
+        var (exitCode, output) = RunWithSpinner(operations, time, "agent", "copy", "--agent-name", "NB1 Copy");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.StartsWith("\r\u280B Copying agent (0s)\r", output);
+    }
+
+    [Fact]
     public void SignIn_ShowsNoSpinner()
     {
         var time = new ManualTimeProvider();

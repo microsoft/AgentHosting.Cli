@@ -83,6 +83,12 @@ public interface IAgentHostingOperations
     /// <summary>Scaffolds a new MCS project and registers it, or records a clone source for the first deploy.</summary>
     Task<ManagedAgentCreateResult> CreateManagedAgentAsync(ManagedAgentCreateRequest request, CancellationToken cancellationToken);
 
+    /// <summary>Prepares a new MCS agent's local content from an existing agent and registers it, without writing to the cloud.</summary>
+    /// <param name="request">The command input.</param>
+    /// <param name="cancellationToken">Cancels the copy.</param>
+    /// <returns>The registered copy.</returns>
+    Task<ManagedAgentCopyResult> CopyManagedAgentAsync(ManagedAgentCopyRequest request, CancellationToken cancellationToken);
+
     /// <summary>Registers an MCS project that already exists on disk.</summary>
     Task<ManagedAgentInitResult> InitManagedAgentAsync(ManagedAgentInitRequest request, CancellationToken cancellationToken);
 

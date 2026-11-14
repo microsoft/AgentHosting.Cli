@@ -15,18 +15,19 @@ here runs unless you run it.
 
 ## What it covers
 
-**210 scenarios** across seven features. Every one drives the packaged binary through a real command
+**279 scenarios** across eight features. Every one drives the packaged binary through a real command
 line and asserts on exit code, stdout, and — where it matters — the cloud state afterwards.
 
 | Feature | Ids | Count | Pack | What it pins |
 |---|---|---|---|---|
-| `mcs-agent` | `MA-01`–`MA-85` | 78 | `core` | Environment selection, `agent init/create/show/list/pull/deploy/delete`, deployment slots, connection reporting and binding, workflow activation, dev→test promotion, agent sharing, and the delete-confirmation paths |
+| `mcs-agent` | `MA-01`–`MA-86` | 79 | `core` | Environment selection, `agent init/create/show/list/pull/deploy/delete`, deployment slots, connection reporting and binding, workflow activation, dev→test promotion, agent sharing, and the delete-confirmation paths |
 | `mcs-workflow` | `MW-01`–`MW-61` | 14 | `core` | Standalone cloud flows with no agent: scaffold, `agent init`, deploy and publish, clone from cloud, the pull/deploy round trip and its overwrite semantics, cloud-only listing with `--filter`, and the delete-confirmation paths |
 | `code-agent` | `CA-01`–`CA-20` | 20 | `azure` | Unified `deployment` routing between agent types, Azure Bot Service provisioning, update/delete, and option-shape rejection |
 | `abs` | `AB-01`–`AB-09` | 9 | `azure` | `abs preview` planning, `abs apply --force` create/update/no-op, and the refusal paths |
 | `identity` | `ID-01`–`ID-05` | 5 | `azure` | `identity create app/blueprint --dry-run` and argument validation |
 | `mcs-eval` | `EV-01`–`EV-28` | 28 | `eval` | `agent eval` conversation test sets, CSV import and export, generated conversations, project-based agent resolution for both workspace shapes, and the scored runs — start, list, show, cancel, delete and `--watch` |
 | `mcs-standaloneworkflow` | `SW-A01`–`SW-X03` | 56 | `swf` | The aggressive standalone-workflow suite: every fixture shape deployed as draft and activated, with full, partial and missing connections; clone/pull round trips against a second operator; listing, delete and slot rules; refusals checked for side effects; every report checked against a read-only Dataverse oracle. See [Standalone-workflow suite](#standalone-workflow-suite-swf) |
+| `mcs-copy` | `MC-01`–`MC-104` | 68 | `copy` | `agent copy` from local and cloud sources, agents and standalone workflows: argument handling, preparation and its refusals, including a schema name or other identity another agent in the environment already holds, the first deploy that creates each copy's own agent or flow and the redeploys into it, deleting a copy with `--all-resources`, source and copy isolation, `agent show`/`deployment show`, pull and clone round trips, interrupted copies, bring-up of every real agent in the corpus, messy command orders, and concurrent commands |
 
 Each scenario carries a **safety tier**, which is what the confirmation prompt counts:
 
@@ -49,9 +50,11 @@ authoritative index, and it never executes anything.
 |---|---|---|
 | .NET 10 SDK | everything | the harness packs `msagent` from source on each run |
 | A signed-in `msagent` session | everything | run `msagent auth login` before each run |
-| A disposable Copilot Studio environment | the 78 `mcs-agent` scenarios | agents are created **and deleted** here |
+| A disposable Copilot Studio environment | the 79 `mcs-agent` scenarios | agents are created **and deleted** here |
 | An Entra object id to share with | the 7 grant/revoke scenarios | `mcs.shareUserObjectId`; an object id only, never a sign-in address |
 | Copilot Credits in that environment | the `eval` pack | `agent eval run` and `agent eval generate` are billed against them |
+| A corpus of real agent workspaces | the `mcs-copy` corpus rows | `mcs.copy.corpusRoot`; read-only, only copies of it are copied, and a run fails with `DATA LOSS` if a file under it changes |
+| The environments to protect | the `mcs-copy` corpus rows | `mcs.forbiddenEnvironmentIds`; any command naming one is stopped before it starts, and so is a corpus copy that still names one |
 | Azure CLI (`az`) on `PATH` | the `azure` pack | cleanup shells out to it, because `msagent` cannot delete a bot |
 | An Azure subscription and resource group | the `azure` pack | bots are created here when `allowCreate` is true |
 
@@ -102,6 +105,9 @@ dotnet run --project . -- run --packs core,azure
 # Include the pack that spends Copilot Credits on scored evaluations
 dotnet run --project . -- run --packs core,eval
 
+# Include the pack that copies agents
+dotnet run --project . -- run --packs core,copy --feature mcs-copy
+
 # A fast subset: one deploy per fixture shape, plus the previously-shipped-bug checks
 dotnet run --project . -- run --packs core,azure --smoke
 
@@ -110,13 +116,14 @@ dotnet run --project . -- run --feature mcs-agent
 dotnet run --project . -- run --packs core,eval --feature mcs-eval
 dotnet run --project . -- run --only MA-34
 dotnet run --project . -- run --only MA-2*
+dotnet run --project . -- run --packs core,copy --only MC-35
 ```
 
 | Option | Effect |
 |---|---|
-| `--packs core,azure,eval` | include the scenarios that create Azure resources, that spend Copilot Credits, or both. Default is `core`. `swf` adds the standalone-workflow suite |
-| `--feature <names>` | `mcs-agent`, `mcs-workflow`, `mcs-standaloneworkflow`, `code-agent`, `abs`, `identity`, `mcs-eval` |
-| `--only <patterns>` | `MA-18`, `MA-2*`, `AB-07`, `EV-01`, `SW-B0*` |
+| `--packs core,azure,eval,copy` | include the scenarios that create Azure resources, that spend Copilot Credits, that copy agents, or any mix. Default is `core`. `swf` adds the standalone-workflow suite |
+| `--feature <names>` | `mcs-agent`, `mcs-workflow`, `mcs-standaloneworkflow`, `code-agent`, `abs`, `identity`, `mcs-eval`, `mcs-copy` |
+| `--only <patterns>` | `MA-18`, `MA-2*`, `AB-07`, `EV-01`, `SW-B0*`, `MC-35` |
 | `--smoke` | the fast subset |
 | `--msagent-path <file>` | drive an existing binary instead of packing one (`--ah-path` is still accepted) |
 | `--yes` | skip the confirmation prompt |
@@ -234,6 +241,10 @@ isolation.
 The `eval` pack adds evaluation test sets to the ledger — recorded by name, before the call that
 creates them, and deleted with `agent eval testset delete --force`.
 
+The `copy` pack records each copy before its first deploy, by its schema name until the deploy names
+the agent it created, together with the workflow ids the copy assigned, which the deploy creates its
+workflows under. Cleanup deletes each copy with `agent delete --all-resources`, which removes its
+agent and every workflow, prompt, connection reference, and custom connector its workspace names.
 ---
 
 ## Fixtures

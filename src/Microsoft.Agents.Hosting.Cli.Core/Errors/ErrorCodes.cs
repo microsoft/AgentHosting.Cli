@@ -90,6 +90,10 @@ public static class ErrorCodes
         public const int WorkflowNameInvalid = 11055;
         public const int WorkflowCloudChangesWouldBeLost = 11056;
         public const int WorkflowUnpublishedDraft = 11057;
+        public const int AgentEnvironmentMissing = 11058;
+        public const int CopyNotPrepared = 11059;
+        public const int CopyIntoProjectBusy = 11067;
+        public const int ResourceDeleteIncomplete = 11069;
     }
 
     /// <summary>Error identifiers for the Authentication area (prefix 12).</summary>
@@ -182,6 +186,7 @@ public static class ErrorCodes
         public const int DeploymentCannotClearRequiredParameter = 14045;
         public const int DeploymentInvalidParameterValue = 14046;
         public const int DeploymentChannelConfigurationUnavailable = 14047;
+        public const int DeployRecordedNowhereBeforePush = 14050;
     }
 
     /// <summary>Error identifiers for the Package area (prefix 15).</summary>
@@ -257,6 +262,8 @@ public static class ErrorCodes
         public const int WorkflowToolIdEmpty = 17030;
         public const int DuplicateConnectionReference = 17031;
         public const int MissingConnectionReference = 17032;
+        public const int DuplicateComponent = 17033;
+        public const int SharedEnvironmentVariablesRequireOverwrite = 17034;
     }
 
     /// <summary>Error identifiers for the Evaluation area (prefix 18).</summary>

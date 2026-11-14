@@ -12,18 +12,18 @@ namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 /// </summary>
 public sealed class ManagedAgentCreateService
 {
-    private const string DefaultPublisherPrefix = "cr";
-
     private readonly CopilotScaffoldService _scaffolds;
     private readonly CopilotEnvironmentResolver _environmentResolver;
     private readonly ICopilotCatalogPort _catalog;
-    private readonly IManagedAgentRegistry _agents;
     private readonly HomeDeploymentRegistrar _homeDeployments;
     private readonly ManagedAgentCloneMaterialiser _materialiser;
     private readonly AgentConfigLocator _locator;
     private readonly CopilotProjectIdentityReader _projectIdentities;
     private readonly ManagedAgentPrincipalResolver _principals;
     private readonly ICopilotWorkspacePort _workspaces;
+    private readonly CopilotAgentName _agentNames;
+    private readonly ICopilotNamingRules _namingRules;
+    private readonly ManagedAgentRegistration _registration;
 
     /// <summary>Creates the service.</summary>
     /// <param name="scaffolds">Writes the project files.</param>
@@ -36,18 +36,22 @@ public sealed class ManagedAgentCreateService
     /// <param name="projectIdentities">Detects a project already present in the directory.</param>
     /// <param name="principals">Resolves the signed-in operator recorded as owner and creator.</param>
     /// <param name="workspaces">Names the folder the agent's workspace occupies.</param>
-    public ManagedAgentCreateService(CopilotScaffoldService scaffolds, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, IManagedAgentRegistry agents, HomeDeploymentRegistrar homeDeployments, ManagedAgentCloneMaterialiser materialiser, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities, ManagedAgentPrincipalResolver principals, ICopilotWorkspacePort workspaces)
+    /// <param name="agentNames">Refuses a new agent's display name Copilot Studio would refuse.</param>
+    /// <param name="namingRules">Supplies the publisher prefix a new agent's schema name carries.</param>
+    public ManagedAgentCreateService(CopilotScaffoldService scaffolds, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, IManagedAgentRegistry agents, HomeDeploymentRegistrar homeDeployments, ManagedAgentCloneMaterialiser materialiser, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities, ManagedAgentPrincipalResolver principals, ICopilotWorkspacePort workspaces, CopilotAgentName agentNames, ICopilotNamingRules namingRules)
     {
         _scaffolds = scaffolds ?? throw new ArgumentNullException(nameof(scaffolds));
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
-        _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _homeDeployments = homeDeployments ?? throw new ArgumentNullException(nameof(homeDeployments));
         _materialiser = materialiser ?? throw new ArgumentNullException(nameof(materialiser));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
         _workspaces = workspaces ?? throw new ArgumentNullException(nameof(workspaces));
+        _agentNames = agentNames ?? throw new ArgumentNullException(nameof(agentNames));
+        _namingRules = namingRules ?? throw new ArgumentNullException(nameof(namingRules));
+        _registration = new ManagedAgentRegistration(agents, locator);
     }
 
     /// <summary>Creates a managed agent, scaffolding a project or recording a clone source.</summary>
@@ -111,19 +115,19 @@ public sealed class ManagedAgentCreateService
             throw new UsageException("`msagent agent create` requires --initial-prompt for a new MCS agent.");
         }
 
+        var displayName = _agentNames.Require(request.Name!.Trim(), "--agent-name");
         var environment = await _environmentResolver.ResolveAsync(request.EnvironmentId, cancellationToken).ConfigureAwait(false);
         var projectDirectory = ResolveProjectDirectory(request.Project);
-        var displayName = request.Name!.Trim();
         var agentLocation = _workspaces.ProjectFolderName(displayName);
         var workspaceDirectory = Path.Combine(projectDirectory, agentLocation);
 
-        RequireProjectIsFree(projectDirectory, workspaceDirectory, displayName);
+        _registration.RequireProjectIsFree(projectDirectory, workspaceDirectory, displayName);
 
         var scaffolded = _scaffolds.Init(
             new CopilotInitRequest
             {
                 Name = request.Name,
-                PublisherPrefix = DefaultPublisherPrefix,
+                PublisherPrefix = _namingRules.DefaultPublisherPrefix,
                 SchemaName = request.SchemaName,
                 Instructions = request.InitialPrompt,
                 AuthoringMode = CopilotAuthoringModes.Resolve(request.McsAgentType, request.InitTemplate).AuthoringMode,
@@ -131,7 +135,7 @@ public sealed class ManagedAgentCreateService
             },
             cancellationToken);
 
-        var stored = Register(projectDirectory, request, agentLocation, environment.TenantId, environment.EnvironmentId, await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false), scaffolded.SchemaName);
+        var stored = _registration.Register(projectDirectory, displayName, request.Description, agentLocation, environment.TenantId, environment.EnvironmentId, await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false), scaffolded.SchemaName);
 
         return new ManagedAgentCreateResult
         {
@@ -180,12 +184,12 @@ public sealed class ManagedAgentCreateService
         var agentLocation = _workspaces.ProjectFolderName(displayName);
         var workspaceDirectory = Path.Combine(projectDirectory, agentLocation);
 
-        RequireProjectIsFree(projectDirectory, workspaceDirectory, displayName);
+        _registration.RequireProjectIsFree(projectDirectory, workspaceDirectory, displayName);
 
         var materialised = await MaterialiseOrFailAsync(projectDirectory, workspaceDirectory, source, mcsAgentId, cancellationToken).ConfigureAwait(false);
         var project = _projectIdentities.Find(workspaceDirectory);
         var description = string.IsNullOrWhiteSpace(request.Description) ? project?.Description : request.Description;
-        var stored = Register(projectDirectory, request with { Name = displayName, Description = description }, agentLocation, target.TenantId, target.EnvironmentId, await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false), project?.SchemaName, SameEnvironment(source, target) ? mcsAgentId : null);
+        var stored = _registration.Register(projectDirectory, displayName, description, agentLocation, target.TenantId, target.EnvironmentId, await _principals.ResolveAsync(cancellationToken).ConfigureAwait(false), project?.SchemaName, SameEnvironment(source, target) ? mcsAgentId : null);
         var deployment = _homeDeployments.Register(projectDirectory, stored, target.EnvironmentId);
 
         return new ManagedAgentCreateResult
@@ -214,7 +218,7 @@ public sealed class ManagedAgentCreateService
     {
         try
         {
-            return await _materialiser.MaterialiseAsync(projectDirectory, workspaceDirectory, source, mcsAgentId, cancellationToken).ConfigureAwait(false);
+            return await _materialiser.MaterialiseAsync(projectDirectory, workspaceDirectory, source, mcsAgentId, includeLinkedComponentCollections: true, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException and not ManagedAgentException)
         {
@@ -223,38 +227,6 @@ public sealed class ManagedAgentCreateService
     }
 
     private static bool SameEnvironment(CopilotEnvironmentContext source, CopilotEnvironmentContext target) => string.Equals(source.EnvironmentId, target.EnvironmentId, StringComparison.OrdinalIgnoreCase);
-
-    private ManagedAgentRecord Register(string projectDirectory, ManagedAgentCreateRequest request, string agentLocation, string tenantId, string environmentId, PrincipalReference? caller, string? mcsSchemaName = null, string? mcsAgentId = null) =>
-        _agents.Add(projectDirectory, new ManagedAgentRecord
-        {
-            AgentId = Guid.NewGuid().ToString(),
-            DisplayName = request.Name!.Trim(),
-            Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
-            AgentType = AgentTypes.McsAgent,
-            AgentLocation = agentLocation,
-            McsSchemaName = mcsSchemaName,
-            McsAgentId = mcsAgentId,
-            TenantId = tenantId,
-            EnvironmentId = environmentId,
-            Origin = ManagedAgentOrigins.AgentHostCli,
-            Owner = caller,
-            CreatedBy = caller,
-            EntityTag = string.Empty,
-            AgentState = EntityStates.Saved,
-        });
-
-    /// <summary>
-    /// Rejects a name or folder already taken, before anything is written.
-    /// </summary>
-    private void RequireProjectIsFree(string projectDirectory, string workspaceDirectory, string name)
-    {
-        if (_agents.List(projectDirectory).FirstOrDefault(agent => string.Equals(agent.DisplayName, name, StringComparison.OrdinalIgnoreCase)) is { } duplicate)
-        {
-            throw ManagedAgentException.AlreadyRegistered(duplicate.DisplayName, duplicate.AgentId, _locator.ConfigFilePath(projectDirectory));
-        }
-
-        WorkspaceDirectoryGuard.RequireEmpty(workspaceDirectory);
-    }
 
     private static IReadOnlyList<string> IgnoredCloneOptions(ManagedAgentCreateRequest request)
     {

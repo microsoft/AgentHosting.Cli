@@ -8,7 +8,8 @@ namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 /// <summary>The environment a connector verb acts on, and the workspace when one was resolved.</summary>
 /// <param name="Environment">The environment the verb acts on.</param>
 /// <param name="WorkspaceDirectory">The agent workspace on disk, absent when the environment was named directly.</param>
-public sealed record ConnectionTarget(CopilotEnvironmentContext Environment, string? WorkspaceDirectory);
+/// <param name="AgentId">The record whose deployment was resolved, absent when the environment was named directly.</param>
+public sealed record ConnectionTarget(CopilotEnvironmentContext Environment, string? WorkspaceDirectory, string? AgentId);
 
 /// <summary>
 /// Resolves the environment a connector verb acts on, either from a named environment or from the
@@ -43,13 +44,18 @@ public sealed class ConnectionTargetResolver
         {
             var target = await _deployments.ResolveWorkspaceAsync(selector, verb, cancellationToken).ConfigureAwait(false);
 
-            return new ConnectionTarget(target.Environment, target.WorkspaceDirectory);
+            return new ConnectionTarget(target.Environment, target.WorkspaceDirectory, target.Agent.AgentId);
         }
 
         RequireNoDeploymentSelector(selector, verb);
 
-        return new ConnectionTarget(await _environments.ResolveAsync(environmentId.Trim(), cancellationToken).ConfigureAwait(false), null);
+        return new ConnectionTarget(await _environments.ResolveAsync(environmentId.Trim(), cancellationToken).ConfigureAwait(false), null, null);
     }
+
+    /// <summary>Finds the record identifier a request's agent selector stands for, looking a name up in the project without resolving anything else.</summary>
+    /// <param name="selector">The deployment selectors the request carries.</param>
+    /// <returns>The identifier the request supplied or its name resolves to, or <see langword="null"/> when there is neither.</returns>
+    public string? FindAgentId(IAgentDeploymentConnectionSelector selector) => _deployments.FindAgentId(selector);
 
     private static void RequireNoDeploymentSelector(IAgentDeploymentConnectionSelector selector, string verb)
     {
