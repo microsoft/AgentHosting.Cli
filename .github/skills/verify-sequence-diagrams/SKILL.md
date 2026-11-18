@@ -1,3 +1,8 @@
+---
+name: verify-sequence-diagrams
+description: verify-sequence-diagrams
+disable-model-invocation: true
+---
 # Verify sequence diagrams against the implementation
 
 You are auditing the Mermaid sequence diagrams under `docs/` in this repository to make

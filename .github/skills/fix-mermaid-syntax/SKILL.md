@@ -1,3 +1,8 @@
+---
+name: fix-mermaid-syntax
+description: fix-mermaid-syntax
+disable-model-invocation: true
+---
 # Fix invalid Mermaid syntax in sequence diagrams
 
 An automated rendering pass (`mmdc` from `@mermaid-js/mermaid-cli`) failed for one or more
