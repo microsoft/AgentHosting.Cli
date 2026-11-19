@@ -150,17 +150,13 @@ public sealed class DeploymentChannelService
                 cancellationToken)
             .ConfigureAwait(false);
 
-        var channelRecords = channels.ToArray();
-        var supportedChannels = channelRecords
+        var supportedChannels = channels
             .Where(channel => DeploymentChannelCatalog.SupportedChannelNames.Contains(
                 channel.ChannelName, StringComparer.OrdinalIgnoreCase))
             .ToArray();
 
         SaveChannels(request.Project, deployment, supportedChannels);
-        return ToChannelListResult(supportedChannels, JsonSerializer.SerializeToElement(
-                channelRecords.Where(channel => channel.RawArmResponse is not null)
-                    .Select(channel => channel.RawArmResponse!.Value)
-                    .ToArray()));
+        return ToChannelListResult(supportedChannels);
     }
 
     private async Task<(DeploymentChannelRecord Channel, IReadOnlyList<string> Warnings)> WriteChannelAsync(
@@ -219,7 +215,7 @@ public sealed class DeploymentChannelService
             .ToList();
         if (channel is not null)
         {
-            channels.Add(channel with { RawArmResponse = null, AuthorizationUrl = null });
+            channels.Add(channel with { AuthorizationUrl = null });
         }
 
         _store.Upsert(project, deployment with { Channels = channels });
@@ -233,7 +229,7 @@ public sealed class DeploymentChannelService
             project,
             deployment with
             {
-                Channels = [.. channels.Select(channelRecord => channelRecord with { RawArmResponse = null, AuthorizationUrl = null })],
+                Channels = [.. channels.Select(channelRecord => channelRecord with { AuthorizationUrl = null })],
             });
 
     /// <summary>Builds the result of a channel operation, named after the channel it acted on.</summary>
@@ -253,5 +249,5 @@ public sealed class DeploymentChannelService
         };
 
     /// <summary>Builds the result of a channel list.</summary>
-    internal static DeploymentResult<DeploymentChannelRecord[]> ToChannelListResult(DeploymentChannelRecord[] channels, JsonElement? armResponse = null) => new() { Status = DeploymentOperationStatus.Listed, Payload = channels, ArmResponse = armResponse, TargetName = "Channels" };
+    internal static DeploymentResult<DeploymentChannelRecord[]> ToChannelListResult(DeploymentChannelRecord[] channels) => new() { Status = DeploymentOperationStatus.Listed, Payload = channels, TargetName = "Channels" };
 }

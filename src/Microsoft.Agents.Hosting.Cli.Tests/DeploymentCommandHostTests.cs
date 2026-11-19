@@ -184,8 +184,6 @@ public class DeploymentCommandHostTests
     [InlineData(true)]
     public void DeploymentShow_JsonOmitsArmResponse_AndDebugPreservesNormalOutput(bool json)
     {
-        using var armDoc = JsonDocument.Parse("{\"id\":\"/bot\",\"properties\":{\"endpoint\":\"https://x\"}}");
-        var arm = armDoc.RootElement.Clone();
         var ops = new FakeOperations
         {
             OnGetDeployment = request => new DeploymentResult<CodeAgentDeployment>
@@ -208,7 +206,6 @@ public class DeploymentCommandHostTests
                         DisplayName = "n",
                         EntraId = "app",
                         EntraIdType = "AppReg",
-                        RawArmResponse = arm,
                     },
                 },
             },
@@ -240,9 +237,7 @@ public class DeploymentCommandHostTests
         Assert.DoesNotContain("armResponse", humanStdout);
         Assert.Empty(jsonStderr);
         Assert.Equal(NormalizeLines(json ? jsonStdout : humanStdout), NormalizeLines(debugStdout));
-        Assert.StartsWith("ARM response:", debugStderr);
-        Assert.Contains("ARM response:", debugStderr);
-        Assert.Contains("\"id\": \"/bot\"", debugStderr);
+        Assert.Empty(debugStderr);
     }
 
     private static string NormalizeLines(string value)

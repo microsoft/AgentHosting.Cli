@@ -217,12 +217,8 @@ public sealed class DeploymentOAuthCommandHostTests
     }
 
     [Fact]
-    public void OAuthList_Debug_WritesRedactedArmResponsesToStderr()
+    public void OAuthList_Debug_DoesNotWriteAnArmDump()
     {
-        using var firstDocument = JsonDocument.Parse(
-            """{"id":"/connections/first","properties":{"clientSecret":"***"}}""");
-        using var secondDocument = JsonDocument.Parse(
-            """{"id":"/connections/second","properties":{"clientId":"client-2"}}""");
         var operations = new FakeOperations
         {
             OnListDeploymentOAuth = _ => new DeploymentResult<DeploymentOAuthConnection[]>
@@ -237,7 +233,6 @@ public sealed class DeploymentOAuthCommandHostTests
                         ConnectionName = "first",
                         ServiceProviderId = "provider-id",
                         ServiceProviderDisplayName = "Provider",
-                        RawArmResponse = firstDocument.RootElement.Clone(),
                     },
                     new()
                     {
@@ -245,7 +240,6 @@ public sealed class DeploymentOAuthCommandHostTests
                         ConnectionName = "second",
                         ServiceProviderId = "provider-id",
                         ServiceProviderDisplayName = "Provider",
-                        RawArmResponse = secondDocument.RootElement.Clone(),
                     },
                 ],
             },
@@ -260,16 +254,7 @@ public sealed class DeploymentOAuthCommandHostTests
         Assert.Equal(ExitCodes.Success, exitCode);
         Assert.Contains("/connections/first", stdout);
         Assert.Contains("/connections/second", stdout);
-        Assert.StartsWith("ARM response:", stderr);
-        Assert.Contains("ARM response:", stderr);
-        Assert.Contains("/connections/first", stderr);
-        Assert.Contains("/connections/second", stderr);
-        Assert.Contains(BotServiceResponseRedactor.Mask, stderr);
-
-        var response = stderr[(stderr.IndexOf('['))..];
-        using var document = JsonDocument.Parse(response);
-        Assert.Equal(JsonValueKind.Array, document.RootElement.ValueKind);
-        Assert.Equal(2, document.RootElement.GetArrayLength());
+        Assert.Empty(stderr);
     }
 
     [Fact]

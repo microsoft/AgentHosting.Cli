@@ -323,11 +323,10 @@ public static class DeploymentChannelCatalog
 
     /// <summary>
     /// Produces the safe canonical channel shape defined by the catalog. Undeclared parameters are removed,
-    /// declared secrets are masked, and the raw ARM response is retained only when requested and redacted.
+    /// declared secrets are masked, and the adapter's authorization link is preserved.
     /// </summary>
     internal static DeploymentChannelRecord? Sanitize(
         DeploymentChannelRecord channel,
-        bool includeArmResponse = true,
         bool omitSecrets = false)
     {
         var definition = FindChannelDefinitionOrDefault(channel.ChannelName, ChannelKeyType.Name)
@@ -345,10 +344,6 @@ public static class DeploymentChannelCatalog
         {
             ChannelName = definition.Name,
             Parameters = sanitized,
-            RawArmResponse = includeArmResponse && channel.RawArmResponse is { } rawArmResponse
-                ? BotServiceResponseRedactor.RedactChannel(rawArmResponse, definition)
-                : null,
-            AuthorizationUrl = includeArmResponse ? channel.AuthorizationUrl : null,
         };
     }
 

@@ -220,15 +220,8 @@ public sealed class DeploymentOAuthAdapterTests
         Assert.Equal("common", connection.Parameters["TenantId"]);
         Assert.DoesNotContain("ClientId", connection.Parameters);
         Assert.Equal("***", connection.Parameters["ApiKey"]);
-        var rawProperties = connection.RawArmResponse!.Value.GetProperty("properties");
-        Assert.Equal("***", rawProperties.GetProperty("clientSecret").GetString());
-        var rawParameters = rawProperties.GetProperty("parameters").EnumerateArray().ToArray();
-        Assert.Equal(3, rawParameters.Length);
-        Assert.Equal(
-            "***",
-            rawParameters.Single(parameter => parameter.GetProperty("key").GetString() == "ApiKey")
-                .GetProperty("value")
-                .GetString());
+        Assert.DoesNotContain("secret-1", JsonSerializer.Serialize(connection));
+        Assert.DoesNotContain("secret-2", JsonSerializer.Serialize(connection));
         Assert.Equal(HttpMethod.Get, handler.Requests.Single().Method);
     }
 
@@ -458,16 +451,9 @@ public sealed class DeploymentOAuthAdapterTests
         Assert.Equal(2, connections.Count);
         Assert.Equal("provider-a", connections[0].ServiceProviderId);
         Assert.Equal("Provider A", connections[0].ServiceProviderDisplayName);
-        var raw = connections[0].RawArmResponse!.Value;
-        Assert.False(raw.TryGetProperty("kind", out _));
-        Assert.False(raw.TryGetProperty("sku", out _));
-        Assert.False(raw.TryGetProperty("resourceGroup", out _));
-        var rawProperties = raw.GetProperty("properties");
-        Assert.Equal("c-a", rawProperties.GetProperty("clientId").GetString());
-        Assert.False(rawProperties.TryGetProperty("clientSecret", out _));
-        Assert.False(rawProperties.TryGetProperty("parameters", out _));
-        Assert.False(rawProperties.TryGetProperty("scopes", out _));
-        Assert.False(rawProperties.TryGetProperty("settingId", out _));
+        Assert.Equal("c-a", connections[0].ClientId);
+        Assert.Empty(connections[0].Parameters);
+        Assert.Empty(connections[0].Scopes);
         Assert.Equal(
             $"{Arm}/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.BotService/botServices/dev1/connections?api-version={ApiVersion}",
             handler.Requests.Single().Uri.ToString());

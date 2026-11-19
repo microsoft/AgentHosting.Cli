@@ -88,7 +88,7 @@ public sealed class AmsOAuthAdapterTests
         Assert.Equal(["TenantId", "TokenExchangeUrl"], connection.Parameters.Keys);
         Assert.Equal("common", connection.Parameters["TenantId"]);
         Assert.Null(connection.Parameters["TokenExchangeUrl"]);
-        Assert.Null(connection.RawArmResponse);
+        Assert.DoesNotContain("rawArmResponse", JsonSerializer.Serialize(connection), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

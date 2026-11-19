@@ -85,7 +85,6 @@ public sealed class DeploymentChannelServiceTests
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
         Assert.Equal("returned", Assert.Single(saved.Parameters["lineRegistrations"].EnumerateArray()).GetProperty("generatedId").GetString());
         Assert.Equal(result.Payload!.Parameters["callbackUrl"].GetString(), saved.Parameters["callbackUrl"].GetString());
-        Assert.Null(saved.RawArmResponse);
     }
 
     [Theory]
@@ -110,7 +109,6 @@ public sealed class DeploymentChannelServiceTests
             Assert.Equal("synthetic-secret", item.GetProperty("channelSecret").GetString());
             Assert.Equal("synthetic-token", item.GetProperty("channelAccessToken").GetString());
         }
-        Assert.Null(Assert.Single(Assert.Single(store.Records).Channels).RawArmResponse);
     }
 
     [Theory]
@@ -174,7 +172,7 @@ public sealed class DeploymentChannelServiceTests
         Assert.Equal(exists ? ["get"] : ["get", "create"], channels.Operations);
         Assert.Equal(exists ? DeploymentOperationStatus.Existed : DeploymentOperationStatus.Created, result.Status);
         Assert.Equal(2, result.Payload!.Parameters["pages"].GetArrayLength());
-        Assert.DoesNotContain("synthetic-", result.Payload.RawArmResponse!.Value.GetRawText());
+        Assert.DoesNotContain("synthetic-", JsonSerializer.Serialize(result.Payload));
         if (!exists)
         {
             var write = Assert.Single(channels.Upserts);
@@ -184,7 +182,6 @@ public sealed class DeploymentChannelServiceTests
         }
 
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
-        Assert.Null(saved.RawArmResponse);
         Assert.Equal("***", saved.Parameters["pages"][0].GetProperty("accessToken").GetString());
         Assert.Equal("***", saved.Parameters["verifyToken"].GetString());
     }
@@ -220,7 +217,6 @@ public sealed class DeploymentChannelServiceTests
         Assert.False(result.Payload!.Parameters["isEnabled"].GetBoolean());
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
         Assert.False(saved.Parameters["isEnabled"].GetBoolean());
-        Assert.Null(saved.RawArmResponse);
     }
 
     [Theory]
@@ -303,7 +299,6 @@ public sealed class DeploymentChannelServiceTests
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
         Assert.Equal("returned", Assert.Single(saved.Parameters["pages"].EnumerateArray()).GetProperty("id").GetString());
         Assert.Equal("***", saved.Parameters["pages"][0].GetProperty("accessToken").GetString());
-        Assert.Null(saved.RawArmResponse);
     }
 
     [Theory]
@@ -591,7 +586,7 @@ public sealed class DeploymentChannelServiceTests
     }
 
     [Fact]
-    public async Task CreateMsTeams_CarriesEntireArmResponse()
+    public async Task CreateMsTeams_ProjectsCanonicalChannelParameters()
     {
         var store = new FakeStore(ProvisionedRecord());
         var channels = new RecordingChannelPort
@@ -604,10 +599,7 @@ public sealed class DeploymentChannelServiceTests
 
         var result = await service.CreateChannelAsync(CreateRequest("msteams"), default);
 
-        Assert.NotNull(result.Payload!.RawArmResponse);
-        var arm = result.Payload.RawArmResponse!.Value;
-        Assert.True(arm.GetProperty("properties").GetProperty("properties").GetProperty("acceptedTerms").GetBoolean());
-        Assert.True(result.Payload.Parameters["acceptedTerms"].GetBoolean());
+        Assert.True(result.Payload!.Parameters["acceptedTerms"].GetBoolean());
         Assert.True(result.Payload.Parameters["isEnabled"].GetBoolean());
     }
 
@@ -899,7 +891,6 @@ public sealed class DeploymentChannelServiceTests
         Assert.Equal("ServiceResponse", result.Payload!.Parameters["sites"][0].GetProperty("siteName").GetString());
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
         Assert.Equal(result.Payload.Parameters["sites"].GetRawText(), saved.Parameters["sites"].GetRawText());
-        Assert.Null(saved.RawArmResponse);
         Assert.Equal(1, store.UpsertCalls);
     }
 
@@ -1017,7 +1008,6 @@ public sealed class DeploymentChannelServiceTests
         Assert.Equal(JsonValueKind.Null, result.Payload.Parameters["sites"][0].GetProperty("isEnabled").ValueKind);
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
         Assert.Equal(result.Payload.Parameters["sites"].GetRawText(), saved.Parameters["sites"].GetRawText());
-        Assert.Null(saved.RawArmResponse);
         Assert.Equal(1, store.UpsertCalls);
         Assert.Empty(result.Warnings);
     }
@@ -1111,7 +1101,6 @@ public sealed class DeploymentChannelServiceTests
         Assert.Equal(firstResponse.GetProperty("properties").GetProperty("properties").GetProperty("sites").GetRawText(),
             saved.Parameters["sites"].GetRawText());
         Assert.Equal(result.Payload!.Parameters["sites"].GetRawText(), saved.Parameters["sites"].GetRawText());
-        Assert.Null(saved.RawArmResponse);
         Assert.Equal(1, store.UpsertCalls);
     }
 
@@ -1190,7 +1179,6 @@ public sealed class DeploymentChannelServiceTests
             result.Payload!.Parameters["sites"][0].GetProperty("siteName").GetString());
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
         Assert.Equal(result.Payload.Parameters["sites"].GetRawText(), saved.Parameters["sites"].GetRawText());
-        Assert.Null(saved.RawArmResponse);
         Assert.Equal(1, store.UpsertCalls);
     }
 
@@ -1342,7 +1330,6 @@ public sealed class DeploymentChannelServiceTests
         Assert.Equal("id-2", saved.Parameters["sites"][1].GetProperty("siteId").GetString());
         Assert.Equal("***", saved.Parameters["sites"][0].GetProperty("key").GetString());
         Assert.Equal("***", saved.Parameters["sites"][1].GetProperty("key2").GetString());
-        Assert.Null(saved.RawArmResponse);
         Assert.Empty(channels.Upserts);
     }
 
@@ -1420,7 +1407,6 @@ public sealed class DeploymentChannelServiceTests
         Assert.Equal(nonInteractive ? [] : new[] { authorizationUrl }, browser.Urls);
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
         Assert.Null(saved.AuthorizationUrl);
-        Assert.Null(saved.RawArmResponse);
         Assert.DoesNotContain("SYNTHETIC_STATE", JsonSerializer.Serialize(saved));
     }
 
@@ -1520,8 +1506,7 @@ public sealed class DeploymentChannelServiceTests
         else
             Assert.DoesNotContain("browser could not be opened", updated.Stdout);
         Assert.Contains("does not verify authorization completion", updated.Stdout);
-        Assert.Contains("ARM response:", updated.Stderr);
-        Assert.DoesNotContain("SYNTHETIC_STATE", updated.Stderr);
+        Assert.Empty(updated.Stderr);
 
         async Task<(string Stdout, string Stderr)> Invoke(string verb, string[] arguments)
         {
@@ -1601,7 +1586,6 @@ public sealed class DeploymentChannelServiceTests
             var saved = Assert.Single(Assert.Single(store.Records).Channels);
             Assert.Equal("chat:write", saved.Parameters["scopes"].GetString());
             Assert.Null(saved.AuthorizationUrl);
-            Assert.Null(saved.RawArmResponse);
             Assert.DoesNotContain("SYNTHETIC_STATE", JsonSerializer.Serialize(result.Payload));
         }
     }
@@ -1798,7 +1782,9 @@ public sealed class DeploymentChannelServiceTests
 
         Assert.Equal(DeploymentOperationStatus.Retrieved, result.Status);
         Assert.Equal("slack", result.Payload!.ChannelName);
-        Assert.Equal(raw.GetRawText(), result.Payload.RawArmResponse!.Value.GetRawText());
+        Assert.True(result.Payload.Parameters["isEnabled"].GetBoolean());
+        Assert.Equal("client-1", result.Payload.Parameters["clientId"].GetString());
+        Assert.Equal("***", result.Payload.Parameters["clientSecret"].GetString());
 
         var persisted = Assert.Single(store.Records).Channels;
         Assert.Equal(2, persisted.Count);
@@ -1809,7 +1795,6 @@ public sealed class DeploymentChannelServiceTests
         Assert.True(slack.Parameters["isEnabled"].GetBoolean());
         Assert.Equal("client-1", slack.Parameters["clientId"].GetString());
         Assert.Equal("***", slack.Parameters["clientSecret"].GetString());
-        Assert.Null(slack.RawArmResponse);
     }
 
     [Fact]
@@ -1865,7 +1850,7 @@ public sealed class DeploymentChannelServiceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task List_ReturnsAndPersistsOnlySupportedChannelsButPreservesFullArmResponse(bool includeSupported)
+    public async Task List_ReturnsAndPersistsOnlySupportedChannels(bool includeSupported)
     {
         var store = new FakeStore(ProvisionedRecord());
         var unsupported = DeploymentChannelCatalog.Channels.First(channel => !channel.IsSupported);
@@ -1892,14 +1877,6 @@ public sealed class DeploymentChannelServiceTests
                 },
             ],
         };
-        channels.ListChannels = channels.ListChannels.Select(channel => channel with
-        {
-            RawArmResponse = JsonSerializer.SerializeToElement(new
-            {
-                id = channel.ResourceId,
-                properties = new { channelName = channel.ResourceId.Split('/')[^1] },
-            }),
-        }).ToArray();
         var service = new DeploymentChannelService(store, channels);
 
         var result = await service.ListChannelsAsync(new DeploymentChannelListRequest { DeploymentId = DepId }, default);
@@ -1914,10 +1891,7 @@ public sealed class DeploymentChannelServiceTests
         Assert.Equal(
             expectedChannels,
             Assert.Single(store.Records).Channels.Select(channel => channel.ChannelName));
-        Assert.All(Assert.Single(store.Records).Channels, channel => Assert.Null(channel.RawArmResponse));
-        Assert.Equal(
-            channels.ListChannels.Select(channel => channel.ResourceId),
-            result.ArmResponse!.Value.EnumerateArray().Select(channel => channel.GetProperty("id").GetString()));
+        Assert.DoesNotContain("UnknownArmChannel", JsonSerializer.Serialize(result));
     }
 
     [Fact]
@@ -2116,7 +2090,6 @@ public sealed class DeploymentChannelServiceTests
                 ChannelName = channelName,
                 ResourceId = $"{botResourceId}/channels/{channelArmName}",
                 Parameters = parameters,
-                RawArmResponse = raw,
             };
         }
 

@@ -201,10 +201,8 @@ public sealed class DeploymentOAuthAdapter : DeploymentArmClient, IDeploymentOAu
                 Scopes = DeploymentOAuthParameters.ParseScopes(GetString(properties, "scopes")),
                 Parameters = ParseConnectionParameters(properties),
                 ResourceId = GetString(element, "id")!,
-                RawArmResponse = element.Clone(),
             },
-            provider: null,
-            includeArmResponse: true);
+            provider: null);
     }
 
     private static Dictionary<string, string?> ParseConnectionParameters(JsonElement properties)

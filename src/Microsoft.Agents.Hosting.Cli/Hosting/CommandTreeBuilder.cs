@@ -361,7 +361,7 @@ public sealed class CommandTreeBuilder
             }
 
             renderingSuccess = true;
-            _renderer.RenderSuccess(result, json, debug);
+            _renderer.RenderSuccess(result, json);
             renderingSuccess = false;
             telemetry.RecordOutcome(CommandTelemetryOutcome.Success);
 

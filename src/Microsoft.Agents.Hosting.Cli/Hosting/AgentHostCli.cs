@@ -147,12 +147,46 @@ public sealed class AgentHostCli
     /// Output is written to <paramref name="stdout"/>/<paramref name="stderr"/> and ANSI color is
     /// emitted only when <paramref name="color"/> is <see langword="true"/>.
     /// </summary>
+    public Task<int> InvokeAsync(
+        string[] args,
+        TextWriter stdout,
+        TextWriter stderr,
+        bool color,
+        CancellationToken cancellationToken = default) =>
+        InvokeAsync(args, stdout, stderr, color, beforeFinalOutput: null, cancellationToken);
+
+    /// <summary>Invokes a command with host teardown before deferred debug results are written.</summary>
     public async Task<int> InvokeAsync(
         string[] args,
         TextWriter stdout,
         TextWriter stderr,
         bool color,
+        Func<ValueTask>? beforeFinalOutput,
         CancellationToken cancellationToken = default)
+    {
+        var debug = GlobalOptions.IsPresent(args, "--debug");
+        var renderer = new CliOutputRenderer(stdout, stderr, color, deferFinalOutput: debug);
+        try
+        {
+            return await InvokeCoreAsync(args, stdout, stderr, color, renderer, cancellationToken);
+        }
+        finally
+        {
+            if (debug)
+            {
+                if (beforeFinalOutput is not null)
+                {
+                    await beforeFinalOutput();
+                }
+
+                renderer.FlushFinalOutput();
+            }
+        }
+    }
+
+    private async Task<int> InvokeCoreAsync(
+        string[] args, TextWriter stdout, TextWriter stderr, bool color,
+        CliOutputRenderer renderer, CancellationToken cancellationToken)
     {
         // No command group given (empty, or only global flags) behaves like `--help` and exits 0,
         // mirroring the shipped TypeScript CLI. A positional token is always parsed so an unknown
@@ -163,10 +197,8 @@ public sealed class AgentHostCli
             args = [.. args, "--help"];
         }
 
-        var renderer = new CliOutputRenderer(stdout, stderr, color);
-
         var jsonOption = CreateGlobalBooleanOption("--json", "Emit machine-readable JSON output.");
-        var debugOption = CreateGlobalBooleanOption("--debug", "Display debugging information, such as redacted API responses, on stderr.");
+        var debugOption = CreateGlobalBooleanOption("--debug", "Display debugging information, including real-time HTTP requests and responses, on stderr.");
         var noColorOption = CreateGlobalBooleanOption("--no-color", "Disable colored output.");
         var nonInteractiveOption = CreateGlobalBooleanOption("--non-interactive", "Do not open a browser or broker sign-in, fail instead.");
         var treeBuilder = new CommandTreeBuilder(

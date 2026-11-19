@@ -288,8 +288,7 @@ public sealed class DeploymentOAuthService
                 OAuthConnections = oauthConnections
                     .Select(connection => DeploymentOAuthParameters.Sanitize(
                         connection,
-                        provider: null,
-                        includeArmResponse: false))
+                        provider: null))
                     .ToArray(),
             });
 

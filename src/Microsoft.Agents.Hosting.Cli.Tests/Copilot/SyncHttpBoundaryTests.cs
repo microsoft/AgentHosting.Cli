@@ -7,6 +7,7 @@ using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.Platform.Content;
@@ -23,6 +24,31 @@ public sealed class SyncHttpBoundaryTests
     private const string Tenant = "33333333-3333-3333-3333-333333333333";
     private const string IslandResource = "api://96ff4394-9197-43aa-b393-6a41652e21f8";
     private const string Gateway = "https://gateway.island.powerapps.com/";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SdkRequestsStayOutsideHttpDiagnostics(bool islandEnabled)
+    {
+        using var output = new StringWriter();
+        var diagnostics = new HttpDiagnostics(new TextWriterHttpDiagnosticSink(output));
+        var transport = new Transport(HttpStatusCode.TooManyRequests);
+        using var services = Services(new ProfileSyncResourceTests.Credentials(), new RecordingTokenProvider(),
+            transport, new HostFactory(transport), islandEnabled: islandEnabled, diagnostics: diagnostics);
+        var environment = Environment();
+        using var scope = DataverseOperationScope.Push(new(environment.DataverseOrganization, Tenant, environment.Context));
+        var sdk = services.GetRequiredService<IIslandControlPlaneService>();
+        if (islandEnabled)
+        {
+            sdk.SetConnectionContext(Gateway, SyncClusterCategory.For(CoreCluster.Prod));
+        }
+
+        var failure = await Record.ExceptionAsync(() => sdk.GetComponentsAsync(Context(environment), null!, default));
+
+        Assert.NotNull(failure);
+        Assert.NotEmpty(transport.Requests);
+        Assert.Equal(string.Empty, output.ToString());
+    }
 
     [Fact]
     public async Task DefaultSdkComponentPathRejectsRedirectWithoutFollowingIt()
@@ -466,15 +492,16 @@ public sealed class SyncHttpBoundaryTests
         null, false);
 
     private static ServiceProvider Services(ProfileSyncResourceTests.Credentials credentials, RecordingTokenProvider legacy,
-        Transport transport, HostFactory hostFactory, bool islandEnabled = false, PowerPlatformApiTargetConfig? apiTarget = null)
+        Transport transport, HostFactory hostFactory, bool islandEnabled = false, PowerPlatformApiTargetConfig? apiTarget = null,
+        HttpDiagnostics? diagnostics = null)
     {
         IServiceCollection services = islandEnabled ? new IslandEnabledServices() : new ServiceCollection();
         services.AddSingleton<IProfileCredentialProvider>(credentials);
         services.AddSingleton<ITokenProvider>(legacy);
         services.AddSingleton<IHttpClientFactory>(hostFactory);
-        services.AddAgentHostCopilotStudio(TextWriter.Null, apiTarget ?? PowerPlatformApiTargetConfig.Public);
+        services.AddAgentHostCopilotStudio(TextWriter.Null, apiTarget ?? PowerPlatformApiTargetConfig.Public, httpDiagnostics: diagnostics);
         services.AddSingleton<AgentHostDataverseHttpClientAccessor>(provider =>
-            new(provider.GetRequiredService<ISyncAuthProvider>(), () => transport));
+            new(provider.GetRequiredService<ISyncAuthProvider>(), () => transport, diagnostics));
         return services.BuildServiceProvider();
     }
 

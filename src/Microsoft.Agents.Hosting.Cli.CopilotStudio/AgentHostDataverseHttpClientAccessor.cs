@@ -22,8 +22,10 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
 
     private readonly ISyncAuthProvider _authProvider;
     private readonly Func<HttpMessageHandler> _innerHandlerFactory;
+    private readonly HttpDiagnostics _httpDiagnostics;
     private readonly Lock _gate = new();
     private HttpMessageHandler? _sharedHandler;
+    private HttpMessageHandler? _repositoryHandler;
 
     /// <summary>Creates an accessor that authenticates through <paramref name="authProvider"/>.</summary>
     /// <param name="authProvider">Supplies bearer tokens for the Dataverse organization.</param>
@@ -31,10 +33,12 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
     {
     }
 
-    internal AgentHostDataverseHttpClientAccessor(ISyncAuthProvider authProvider, Func<HttpMessageHandler> innerHandlerFactory)
+    internal AgentHostDataverseHttpClientAccessor(ISyncAuthProvider authProvider, Func<HttpMessageHandler> innerHandlerFactory,
+        HttpDiagnostics? httpDiagnostics = null)
     {
         _authProvider = authProvider ?? throw new ArgumentNullException(nameof(authProvider));
         _innerHandlerFactory = innerHandlerFactory ?? throw new ArgumentNullException(nameof(innerHandlerFactory));
+        _httpDiagnostics = httpDiagnostics ?? HttpDiagnostics.Disabled;
     }
 
     /// <summary>Creates the transport handler used for Dataverse calls, which never follows redirects.</summary>
@@ -74,7 +78,7 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
         DataverseTargeting.RequireTarget(target);
         return new(new BearerTokenHandler(_authProvider, target, target.Organization, new DataverseRetryHandler
         {
-            InnerHandler = new NoReplayResponseHandler(SharedHandler(), sdkRequests),
+            InnerHandler = new NoReplayResponseHandler(SharedHandler(sdkRequests), sdkRequests),
         }), disposeHandler: true) { Timeout = RequestTimeout };
     }
 
@@ -110,8 +114,9 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
     {
         lock (_gate)
         {
-            _sharedHandler?.Dispose();
+            (_repositoryHandler ?? _sharedHandler)?.Dispose();
             _sharedHandler = null;
+            _repositoryHandler = null;
         }
     }
 
@@ -123,11 +128,12 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
     /// performs many of. Clients stay disposable — <see cref="BearerTokenHandler"/> does not dispose what
     /// it does not own — so callers may keep using <c>using</c>.
     /// </summary>
-    private HttpMessageHandler SharedHandler()
+    private HttpMessageHandler SharedHandler(bool sdkRequests = true)
     {
         lock (_gate)
         {
-            return _sharedHandler ??= _innerHandlerFactory();
+            _sharedHandler ??= _innerHandlerFactory();
+            return sdkRequests ? _sharedHandler : _repositoryHandler ??= _httpDiagnostics.Wrap(_sharedHandler);
         }
     }
 

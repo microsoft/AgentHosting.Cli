@@ -421,11 +421,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
                         ["isEnabled"] = JsonSerializer.SerializeToElement(true),
                         ["enableCalling"] = JsonSerializer.SerializeToElement(true),
                     },
-                    RawArmResponse = JsonSerializer.SerializeToElement(new
-                    {
-                        id = "/subscriptions/sub-1/.../channels/MsTeamsChannel",
-                        properties = new { channelName = "MsTeamsChannel" },
-                    }),
                 },
             ],
         };
@@ -437,7 +432,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
         Assert.True(channel.Parameters["isEnabled"].GetBoolean());
         Assert.Contains("channels/MsTeamsChannel", channel.ResourceId);
         Assert.True(channel.Parameters["enableCalling"].GetBoolean());
-        Assert.Null(channel.RawArmResponse);
         Assert.DoesNotContain(
             "rawArmResponse",
             File.ReadAllText(Path.Combine(_root, AgentConfigLocator.ConfigDirectoryName, AgentConfigLocator.ConfigFileName)),
@@ -486,27 +480,13 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
                 ["redirectAction"] = JsonSerializer.SerializeToElement("https://slack.com/oauth/v2/authorize?state=SYNTHETIC_STATE"),
                 ["futureProperty"] = JsonSerializer.SerializeToElement("unknown"),
             },
-            RawArmResponse = JsonSerializer.SerializeToElement(new
-            {
-                properties = new
-                {
-                    channelName = "SlackChannel",
-                    properties = new { clientSecret = "client-secret", redirectAction = "https://slack.com/oauth/v2/authorize?state=SYNTHETIC_STATE" },
-                },
-            }),
             AuthorizationUrl = new Uri("https://slack.com/oauth/v2/authorize?state=SYNTHETIC_STATE"),
         };
 
         var inMemoryChannel = DeploymentChannelCatalog.Sanitize(unsafeChannel);
         Assert.NotNull(inMemoryChannel);
         Assert.Equal(BotServiceResponseRedactor.Mask, inMemoryChannel.Parameters["clientSecret"].GetString());
-        Assert.Equal(
-            BotServiceResponseRedactor.Mask,
-            inMemoryChannel.RawArmResponse!.Value
-                .GetProperty("properties")
-                .GetProperty("properties")
-                .GetProperty("clientSecret")
-                .GetString());
+        Assert.Equal(unsafeChannel.AuthorizationUrl, inMemoryChannel.AuthorizationUrl);
 
         var storedRecord = ProjectDeploymentStore.ToAgentDeploymentRecord(
             Record() with { Channels = [unsafeChannel] },
@@ -527,7 +507,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
             Assert.DoesNotContain("verificationToken", channel.Parameters.Keys);
             Assert.DoesNotContain("signingSecret", channel.Parameters.Keys);
             Assert.DoesNotContain("futureProperty", channel.Parameters.Keys);
-            Assert.Null(channel.RawArmResponse);
             Assert.Null(channel.AuthorizationUrl);
             Assert.DoesNotContain("SYNTHETIC_STATE", JsonSerializer.Serialize(channel));
         }
@@ -551,7 +530,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
                 ["isValidated"] = JsonSerializer.SerializeToElement(true),
                 ["unknown"] = JsonSerializer.SerializeToElement("ignore"),
             },
-            RawArmResponse = JsonSerializer.SerializeToElement(new { authToken = "synthetic-auth-token" }),
         };
         _store.Upsert(_root, Record() with { Channels = [unsafeChannel] });
         var config = File.ReadAllText(Path.Combine(_root, ".config", "agent.config.json"));
@@ -568,7 +546,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
             Assert.False(channel.Parameters["isEnabled"].GetBoolean());
             Assert.True(channel.Parameters["isValidated"].GetBoolean());
             Assert.DoesNotContain("unknown", channel.Parameters);
-            Assert.Null(channel.RawArmResponse);
         }
     }
 
@@ -626,7 +603,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
             {
                 ["futureField"] = JsonSerializer.SerializeToElement("SYNTHETIC_SECRET"),
             },
-            RawArmResponse = JsonSerializer.SerializeToElement(new { futureField = "SYNTHETIC_RAW_SECRET" }),
         };
         var supportedChannel = new DeploymentChannelRecord
         {
@@ -654,7 +630,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
             Assert.Equal(supportedChannel.ResourceId, channel.ResourceId);
             Assert.Equal(supportedChannel.ChannelName, channel.ChannelName);
             Assert.True(channel.Parameters["isEnabled"].GetBoolean());
-            Assert.Null(channel.RawArmResponse);
         }
 
         var config = File.ReadAllText(Path.Combine(
@@ -802,7 +777,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
             }
 
             Assert.DoesNotContain("unknown", channel.Parameters);
-            Assert.Null(channel.RawArmResponse);
         }
 
         var config = File.ReadAllText(Path.Combine(_root, AgentConfigLocator.ConfigDirectoryName, AgentConfigLocator.ConfigFileName));

@@ -1238,7 +1238,7 @@ public sealed class DeploymentChannelPlanTests
     }
 
     [Fact]
-    public void BuildUpdate_UsesPersistedParameters_NotRawArmResponse()
+    public void BuildUpdate_MergesPersistedParametersWithRequestedChanges()
     {
         var plan = DeploymentChannelPlan.ValidateUpdate(
             UpdateRequest("msteams", "enableCalling=true"));
@@ -1251,9 +1251,6 @@ public sealed class DeploymentChannelPlanTests
                 ["isEnabled"] = JsonValue("true"),
                 ["callingWebhook"] = JsonValue("\"https://saved.example\""),
             },
-            RawArmResponse = System.Text.Json.JsonDocument.Parse(
-                """{"properties":{"properties":{"isEnabled":false,"callingWebhook":"https://raw.example"}}}""")
-                .RootElement.Clone(),
         };
 
         var upsert = DeploymentChannelPlan.BuildUpdate(plan, existing, BotResourceId, "tenant-1");
@@ -1863,7 +1860,6 @@ public sealed class DeploymentChannelPlanTests
                     property => property.Name,
                     property => property.Value.Clone(),
                     StringComparer.Ordinal),
-            RawArmResponse = raw,
         };
     }
 

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -28,13 +27,11 @@ internal static class DeploymentOAuthParameters
     /// <summary>
     /// Produces a safe OAuth connection shape. When a provider definition is supplied, only its declared
     /// parameters remain and its secret metadata drives masking. Without a provider definition, unknown parameters
-    /// remain and recognizable secret names are masked. The raw ARM response is included only when requested and is
-    /// redacted with the same provider metadata.
+    /// remain and recognizable secret names are masked.
     /// </summary>
     internal static DeploymentOAuthConnection Sanitize(
         DeploymentOAuthConnection connection,
         OAuthProviderDefinition? provider,
-        bool includeArmResponse = true,
         bool omitSecrets = false)
     {
         var parameters = connection.Parameters ??
@@ -85,9 +82,6 @@ internal static class DeploymentOAuthParameters
         return connection with
         {
             Parameters = sanitized,
-            RawArmResponse = includeArmResponse
-                ? BotServiceResponseRedactor.RedactOAuth(connection.RawArmResponse, secretNames)
-                : null,
         };
     }
 
