@@ -122,8 +122,12 @@ msagent test ask --project <project-path> --agent-name <agentname> --deployment-
 - `--conversation-id` continues an existing conversation; omit it to start a new one (the id is not saved automatically, so save it yourself to continue later).
 - `--non-interactive` fails instead of opening a browser/WAM sign-in prompt; `--json` emits machine-readable output; `--plain` prints only the final response, without transient progress.
 
-Sign in interactively with `msagent auth login` before running unattended
-queries. `--json` does not itself prevent authentication prompts, and `--plain`
+In human-readable output, a specific failure and its recovery guidance appear
+on stderr without an additional generic SDK completion error.
+
+Sign in interactively with `msagent auth create` before running unattended
+queries, or select the intended existing profile with `msagent auth select --name <name>`.
+`--json` does not itself prevent authentication prompts, and `--plain`
 cannot be combined with `--json`. The JSON result is one incrementally streamed
 activity/result document, not the ordinary command envelope. Check its final
 status and answer; a completed response does not prove a remote action succeeded.

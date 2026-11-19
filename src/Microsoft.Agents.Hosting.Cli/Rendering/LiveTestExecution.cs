@@ -67,12 +67,7 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
         string? conversationId = _request.ConversationId;
         string conversationSource = conversationId is null ? "none" : "supplied";
         string delivery = "not-attempted";
-        string status = "completed";
-        string? errorKind = null;
-        string? errorMessage = null;
-        string? remediation = null;
-        bool sdkStarted = false;
-        int exitCode = 0;
+        TurnError? turnError = null;
         try
         {
             Validate(_request);
@@ -82,7 +77,6 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
             var token = await _acquireToken(target, _request.NonInteractive, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             await using var session = _createSession(target, token, cancellationToken);
-            sdkStarted = true;
             if (conversationId is null)
             {
                 await foreach (var activity in session.StartAsync(cancellationToken).WithCancellation(cancellationToken))
@@ -117,21 +111,22 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
                 OperationCanceledException => ErrorCodes.General.TransportTimeout,
                 _ => ErrorCodes.General.Unknown,
             };
-            (status, exitCode, errorKind, errorMessage, remediation) = Classify(failure, cancellationToken);
+            turnError = Classify(failure, cancellationToken);
         }
 
         try
         {
             if (json is not null)
-                await json.FinishAsync(new LiveTestResult(status, exitCode, targetSource,
-                    conversationId, conversationSource, delivery, errorKind, errorMessage, remediation));
+                await json.FinishAsync(new LiveTestResult(turnError?.Status ?? "completed", turnError?.ExitCode ?? 0,
+                    targetSource, conversationId, conversationSource, delivery,
+                    turnError?.Kind, turnError?.Message, turnError?.Remediation));
             else
             {
                 if (conversationId is not null)
                     human!.WriteConversationId(conversationId);
-                if (status != "completed")
-                    human!.WriteError($"{errorMessage} {remediation}");
-                human!.Finish(status == "completed", sdkStarted);
+                if (turnError is not null)
+                    human!.WriteError($"{turnError.Message} {turnError.Remediation}");
+                human!.Finish(sdkCompleted: turnError is null);
             }
         }
         catch (Exception failure)
@@ -143,7 +138,7 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
                 : "The live test could not finalize its result.");
             return 1;
         }
-        return exitCode;
+        return turnError?.ExitCode ?? 0;
 
         async Task WriteActivity(JsonElement activity)
         {
@@ -217,43 +212,44 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
         source = "service";
     }
 
-    private static (string Status, int ExitCode, string Kind, string Message, string Remediation) Classify(
-        Exception failure, CancellationToken cancellationToken)
+    private sealed record TurnError(string Status, int ExitCode, string Kind, string Message, string Remediation);
+
+    private static TurnError Classify(Exception failure, CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)
-            return ("cancelled", 1, "cancelled", "Local testing was cancelled.",
+            return new("cancelled", 1, "cancelled", "Local testing was cancelled.",
                 "Remote effects may continue if the query was already sent.");
         if (failure is LiveTestFailure typed)
-            return ("failed", typed.ExitCode, typed.Kind, typed.Message, typed.Remediation);
+            return new("failed", typed.ExitCode, typed.Kind, typed.Message, typed.Remediation);
         if (failure is LiveTestTargetResolutionException targetFailure)
-            return ("failed", targetFailure.ExitCode, targetFailure.ErrorKind ?? "invalid-configuration",
+            return new("failed", targetFailure.ExitCode, targetFailure.ErrorKind ?? "invalid-configuration",
                 targetFailure.Message,
                 targetFailure.Remediation ?? "Check the agent, deployment, schema, environment, and tenant options.");
         if (failure is ManagedAgentException)
-            return ("failed", 2, "invalid-configuration", "The local agent configuration could not be read.",
+            return new("failed", 2, "invalid-configuration", "The local agent configuration could not be read.",
                 "Check --project and the managed-agent configuration.");
         if (failure is ActiveAccountMismatchException or TokenClaimException)
-            return ("failed", 2, "identity-mismatch", "The authenticated identity does not match the selected destination.",
+            return new("failed", 2, "identity-mismatch", "The authenticated identity does not match the selected destination.",
                 "Select the intended account and tenant, then invoke the command again.");
         if (failure is NotSignedInException or InteractionRequiredException)
-            return ("failed", 3, "authentication-required", "A selected signed-in user is required.",
+            return new("failed", 3, "authentication-required", "A selected signed-in user is required.",
                 "Run `msagent auth create` for the intended account and cloud; allow consent or remove --non-interactive.");
         if (failure is AuthenticationException)
-            return ("failed", 1, "authentication-failed", "Delegated authentication failed.",
+            return new("failed", 1, "authentication-failed", "Delegated authentication failed.",
                 "Check the selected account, public-client registration, and delegated consent.");
         if (failure is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden })
-            return ("failed", 1, "authorization-failed", "The service rejected delegated access.",
+            return new("failed", 1, "authorization-failed", "The service rejected delegated access.",
                 "Check agent sharing and delegated Copilot Studio permissions before retrying.");
         if (failure is JsonException or FormatException or McsLiveTestProtocolException)
-            return ("failed", 1, "protocol-error", "The service returned an invalid response.",
+            return new("failed", 1, "protocol-error", "The service returned an invalid response.",
                 "Check the published agent response.");
         if (failure is McsLiveTestTokenException)
-            return ("failed", 1, "authentication-failed", "Delegated authentication failed.",
+            return new("failed", 1, "authentication-failed", "Delegated authentication failed.",
                 "Check the selected account and delegated consent.");
         if (failure is HttpRequestException or IOException or OperationCanceledException)
-            return ("failed", 1, "transport-error", "The service connection failed.",
+            return new("failed", 1, "transport-error", "The service connection failed.",
                 "Check the destination before retrying; a delivered query may have caused remote actions.");
-        return ("failed", 1, "internal-error", "The live test could not complete.",
+        return new("failed", 1, "internal-error", "The live test could not complete.",
             "Check the CLI configuration and try again; verify remote effects first if the query was sent.");
     }
 }

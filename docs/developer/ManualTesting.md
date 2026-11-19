@@ -32,7 +32,8 @@ or enable shipped-off features without the relevant approval.
 
 `LiveTestFeatures` ships on, so `test ask` and `test playground` are available
 by default. No feature override is needed; availability does not replace the
-required approval. Select the intended account with `msagent auth login`. When
+required approval. Sign in as the intended account with `msagent auth create`,
+or select its existing profile with `msagent auth select --name <name>`. When
 testing a custom client configuration,
 configure `AH_CLI_CLIENT_ID` for
 an authorized public/native client with public-client redirect flow and

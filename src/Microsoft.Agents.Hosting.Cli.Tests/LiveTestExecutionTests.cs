@@ -45,21 +45,47 @@ public sealed class LiveTestExecutionTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task HumanFailureOnlyReportsSdkStatusAfterSdkStarts(bool sdkStarted)
+    public async Task HumanFailureReportsOnlySpecificErrorBeforeOrAfterSdkStarts(bool sdkStarted)
     {
         var execution = new LiveTestExecution(
             new LiveTestRequest { Query = "hello", ConversationId = "supplied" },
             _ => new LiveTestDestination("synthetic", "tenant", "schema", "configured"),
             (_, _, _) => sdkStarted
                 ? Task.FromResult("token")
-                : throw new IOException("CANARY-secret"),
+                : throw new IOException("do not leak the authentication response"),
             (_, _, _) => new FakeSession { FailQuery = true });
         using var output = new StringWriter();
         using var error = new StringWriter();
 
         Assert.Equal(1, await execution.RenderAsync(output, error, false, CancellationToken.None));
-        Assert.Equal(sdkStarted, output.ToString().Contains("SDK response did not complete", StringComparison.Ordinal));
-        Assert.DoesNotContain("CANARY", output.ToString() + error.ToString(), StringComparison.Ordinal);
+        Assert.Equal(
+            "CLI: The service connection failed. Check the destination before retrying; a delivered query may have caused remote actions."
+            + Environment.NewLine,
+            error.ToString());
+        var conversationLine = $"CLI: Conversation ID: supplied{Environment.NewLine}";
+        Assert.Equal(
+            sdkStarted ? $"Agent: answer{Environment.NewLine}{conversationLine}" : conversationLine,
+            output.ToString());
+    }
+
+    [Fact]
+    public async Task UnclassifiedFailureReportsOneSafeFallback()
+    {
+        var execution = new LiveTestExecution(
+            new LiveTestRequest { Query = "hello" },
+            _ => new LiveTestDestination("synthetic", "tenant", "schema", "explicit"),
+            (_, _, _) => Task.FromResult("token"),
+            (_, _, _) => throw new InvalidOperationException("do not leak the exception detail"));
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        Assert.Equal(1, await execution.RenderAsync(output, error, false, CancellationToken.None));
+
+        Assert.Empty(output.ToString());
+        Assert.Equal(
+            "CLI: The live test could not complete. Check the CLI configuration and try again; verify remote effects first if the query was sent."
+            + Environment.NewLine,
+            error.ToString());
     }
 
     [Fact]

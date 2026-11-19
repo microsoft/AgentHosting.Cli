@@ -17,22 +17,13 @@ suppresses the notice.
 | [`msagent auth name`](#msagent-auth-name) | Name a profile by index. |
 | [`msagent auth clear`](#msagent-auth-clear) | Clear or repair only owned msagent state. |
 | [`msagent auth who`](#msagent-auth-who) | Show selected profile, identity and environment metadata. |
-| [`msagent auth login`](#msagent-auth-login) | Legacy interactive sign-in; requires `LegacyAuth` (off by default). |
 | [`msagent auth status`](#msagent-auth-status) | Retained acquisition-free sign-in status contract. |
-| [`msagent auth logout`](#msagent-auth-logout) | Legacy sign-out; requires `LegacyAuth` (off by default). |
 
 Eight commands are available by default: create, list, select, delete, name, clear, who and status.
-Login/logout are absent from help and parsing until the `legacyAuth` feature control is enabled.
-For process-local compatibility opt-in:
-
-```powershell
-$env:AH_CLI_FEATURES = "LegacyAuth"
-```
 
 Use `auth create` for sign-in, `auth delete` to remove one profile, or `auth clear` to reset all
-owned state. `auth status` is not gated. Enabling legacy authentication does not enable other
-feature-controlled command groups. Create defaults to `Public`; explicitly supply `--cloud` when
-recreating a sovereign or nonproduction profile rather than relying on legacy login inheritance.
+owned state. `auth status` is not gated. Create defaults to `Public`; explicitly supply `--cloud`
+when recreating a sovereign or nonproduction profile.
 
 `--json` changes presentation, not interaction permission. List, select, status, who and name
 never renew tokens, start credential sources, open identity UI, or unlock native storage.
@@ -75,7 +66,6 @@ $env:AH_CLI_FEATURES = "appusersupport"
 This control gates creation/replacement only. Existing application profiles remain
 available for selection, use, renewal, and cleanup. Shared settings (`--name`,
 `--environment`, `--cloud`, `--tenant`) and user authentication are not gated.
-Enabling `LegacyAuth` does not enable application profile creation.
 
 Credential modes are exclusive. Client secret, certificate, and federation require explicit tenant
 and application IDs. An application ID without an applicable workload method is invalid.
@@ -211,24 +201,6 @@ token acquisition. Target precedence is explicit command environment, compatible
 profile default, then a missing-target error. `env select` updates the selected profile's default.
 Foreign or incompatible selection state is not silently reused.
 
-## `msagent auth login`
-
-Requires `LegacyAuth` (off by default). Prefer `msagent auth create` for normal workflows.
-
-```text
-msagent auth login [--account <hint>] [--tenant <guid>] [--device-code]
-                   [--resource <resource> | --scope <scope> ...] [--cloud <cloud>]
-```
-
-Retains `--account` (`-acc`), `--tenant` (`-t`, `--tenant-id`), `--resource` (`-r`),
-repeatable `--scope` (`-s`), `--device-code` (`-dc`), and `--cloud` (`-ci`).
-Login recognizes the nine clouds plus `prod`/`production` → `Public`, `preprod` → `Preprod`,
-and `test` → `Test`. An omitted or blank cloud uses the approved compatible stored-profile inheritance.
-The browser/broker/device flow follows platform policy; device-code instructions go to stderr.
-`--non-interactive=true` always rejects explicit login before any account/cache enumeration.
-The existing `signed-in`, `account`, `tenantId`, `cloud`, and `environmentCleared` JSON shape is
-retained; it is not replaced by the new create result.
-
 ## `msagent auth status`
 
 ```text
@@ -239,18 +211,6 @@ Retains the existing `signed-in`, `signed-out`, or `stale` status shape and envi
 Only the selected profile's applicable private nonbroker user cache is inspected. Broker,
 application and DefaultAzureCredential status do not enumerate external credentials.
 Signed-in status does not prove token freshness or downstream service access.
-
-## `msagent auth logout`
-
-Requires `LegacyAuth` (off by default). Prefer `msagent auth clear` to clear all owned
-authentication state, or `msagent auth delete` to remove only one profile.
-
-```text
-msagent auth logout [--json]
-```
-
-Retains the `signed-out` result and exit contracts while clearing owned authentication state.
-Like clear, it does not sign out shared applications or the OS broker.
 
 ## Cancellation and partial operations
 
