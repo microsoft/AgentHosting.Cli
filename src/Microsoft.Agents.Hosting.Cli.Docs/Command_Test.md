@@ -141,7 +141,7 @@ composer in the browser rather than assuming process start means a connection is
 
 ### Installation and lifetime
 
-The CLI uses `agentsplayground` on `PATH` with version `0.2.29` or newer. If missing or too old,
+The CLI uses `agentsplayground` on `PATH` with version `0.2.30` or newer. If missing or too old,
 interactive use offers `npm install -g @microsoft/m365agentsplayground@latest` and requires typing
 `install`. Non-interactive or redirected-input use requires explicit `--install-playground`
 consent. Before offering installation, the CLI checks for Node.js 22.17.1 or newer and npm.

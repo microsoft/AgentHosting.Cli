@@ -4,7 +4,7 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Playground;
 public sealed class PlaygroundToolLocator : IPlaygroundToolLocator
 {
     public static readonly PlaygroundVersion MinimumNodeVersion = PlaygroundVersion.Parse("22.17.1");
-    public static readonly PlaygroundVersion MinimumPlaygroundVersion = PlaygroundVersion.Parse("0.2.29");
+    public static readonly PlaygroundVersion MinimumPlaygroundVersion = PlaygroundVersion.Parse("0.2.30");
     public static readonly TimeSpan VersionProbeTimeout = TimeSpan.FromSeconds(10);
     public const string NodeInstallRemediation =
         "Install Node.js 22.17.1 or newer with npm from https://nodejs.org/en/download, then open a new terminal and rerun msagent test playground. Ensure node and npm are available on PATH.";
