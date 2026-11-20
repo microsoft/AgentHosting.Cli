@@ -14,10 +14,34 @@ name: "CodeQL Advanced"
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - '.github/**'
+      - '.claude-plugin/**'
+      - '.azdo/**'
+      - '*.proj'
+      - '*.props'
+      - '*.targets'
+      - 'global.json'
+      - 'nuget.config'
   pull_request:
     branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - '.github/**'
+      - '.claude-plugin/**'
+      - '.azdo/**'
+      - '*.proj'
+      - '*.props'
+      - '*.targets'
+      - 'global.json'
+      - 'nuget.config'
   schedule:
     - cron: '29 9 * * 2'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
