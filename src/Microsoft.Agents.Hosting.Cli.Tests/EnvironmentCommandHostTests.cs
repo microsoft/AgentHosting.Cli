@@ -234,6 +234,31 @@ public sealed class EnvironmentCommandHostTests
         Assert.Contains(EnvironmentFixtures.FabrikamTenant, humanStdout);
     }
 
+    [Fact]
+    public void AuthStatus_SameTenantUnboundSelection_AsksToReselectInsteadOfSwitchingTenant()
+    {
+        var operations = new FakeOperations
+        {
+            OnStatus = () => new AuthStatusReport
+            {
+                Status = "signed-in",
+                SignedIn = true,
+                Account = "op@contoso.com",
+                TenantId = EnvironmentFixtures.ContosoTenant,
+                EnvironmentId = "env-1",
+                EnvironmentDisplayName = "Contoso Dev",
+                EnvironmentTenantId = EnvironmentFixtures.ContosoTenant,
+                EnvironmentTenantBound = false,
+            },
+        };
+
+        var (_, humanStdout, _) = Run(operations, "auth", "status");
+
+        Assert.Contains("this selection was not made by this account", humanStdout);
+        Assert.Contains("msagent env select env-1", humanStdout);
+        Assert.DoesNotContain("sign in to that tenant", humanStdout);
+    }
+
     /// <summary>
     /// Builds the real facade over the spy session, so any identity UI attempt is counted rather than
     /// mocked away.

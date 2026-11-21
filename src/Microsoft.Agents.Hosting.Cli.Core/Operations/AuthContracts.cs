@@ -124,9 +124,11 @@ public sealed record AuthStatusReport : ITextGridRenderable
 
         if (EnvironmentId is not null && EnvironmentTenantBound == false)
         {
-            lines.Add(SignedIn
-                ? $"  Not bound to the signed-in account: the environment is in tenant {Describe(EnvironmentTenantId)} and the account is in tenant {Describe(TenantId)}. Commands that need an environment will fail until you sign in to that tenant or select another environment."
-                : "  Not bound to an account: sign in before running a command that needs an environment.");
+            lines.Add(!SignedIn
+                ? "  Not bound to an account: sign in before running a command that needs an environment."
+                : string.Equals(EnvironmentTenantId, TenantId, StringComparison.OrdinalIgnoreCase)
+                    ? $"  Not bound to the signed-in account: this selection was not made by this account. Commands that need an environment will fail until you run `msagent env select {EnvironmentId}`."
+                    : $"  Not bound to the signed-in account: the environment is in tenant {Describe(EnvironmentTenantId)} and the account is in tenant {Describe(TenantId)}. Commands that need an environment will fail until you sign in to that tenant or select another environment.");
         }
 
         return lines;

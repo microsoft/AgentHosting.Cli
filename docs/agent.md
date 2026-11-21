@@ -144,6 +144,10 @@ Authenticate interactively first when needed; non-interactive mode cannot bypass
 sign-in, authorization, or connector consent. Inspect the structured result and
 actual answer, not just the exit code. Use `--conversation-id <id>` to continue a
 conversation; otherwise each call starts a new one. Do not put secrets in queries.
+Use `--start-conversation` without `--query` or `--conversation-id` to receive
+opening activities and a conversation ID before sending a user message.
+Conversation-start topics can have live effects even though `queryDelivery`
+is `not-attempted`.
 Prefer `test ask` over Playground for unattended use: Playground is interactive,
 does not support JSON in this release, and its DirectEngine sign-in may still need
 user action even with `--non-interactive`.

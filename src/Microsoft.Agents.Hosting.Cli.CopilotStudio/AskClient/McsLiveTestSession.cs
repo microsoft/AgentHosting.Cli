@@ -145,9 +145,17 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
     /// Continues a supplied or service-confirmed conversation without starting a replacement.
     /// The query is sent exactly once and is not retried after an uncertain response.
     /// </summary>
-    public async IAsyncEnumerable<JsonElement> QueryAsync(
+    public IAsyncEnumerable<JsonElement> QueryAsync(
         string query,
         string? conversationId = null,
+        CancellationToken cancellationToken = default) =>
+        QueryAsync(query, conversationId, [], cancellationToken);
+
+    /// <summary>Sends one query with explicitly supplied file attachments, without retrying.</summary>
+    public async IAsyncEnumerable<JsonElement> QueryAsync(
+        string query,
+        string? conversationId,
+        IReadOnlyList<LiveTestAttachment> attachments,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -180,7 +188,19 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
         _responseError = null;
         _queryStarted = true;
         await foreach (var activity in ConvertActivitiesAsync(
-            _copilotClient.AskQuestionAsync(query, id, cancellationToken),
+            attachments.Count == 0 ? _copilotClient.AskQuestionAsync(query, id, cancellationToken)
+                : _copilotClient.SendActivityAsync(new Activity
+                {
+                    Type = "message",
+                    Text = query,
+                    Conversation = new ConversationAccount { Id = id },
+                    Attachments = attachments.Select(file => new Attachment
+                    {
+                        Name = file.Name,
+                        ContentType = file.ContentType,
+                        ContentUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(file.Content)}",
+                    }).ToList(),
+                }, cancellationToken),
             cancellationToken)
             .WithCancellation(cancellationToken)
             .ConfigureAwait(false))

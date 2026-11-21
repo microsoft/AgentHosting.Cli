@@ -23,6 +23,27 @@ public sealed class McsLiveTestSessionTests
         "contoso_schema");
 
     [Fact]
+    public async Task QuerySendsFileBytesOnceWithTheSelectedConversation()
+    {
+        var handler = new RecordingHandler(JsonResponse("""{"activities":[{"type":"message","text":"received"}]}"""));
+        await using var session = new McsLiveTestSession(Target, "token", handler);
+        var attachment = new LiveTestAttachment("study.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", [1, 2, 3]);
+
+        await ReadAsync(session.QueryAsync("compare", "existing", [attachment]));
+
+        Assert.Single(handler.Requests);
+        using var document = JsonDocument.Parse(Assert.IsType<string>(Assert.Single(handler.RequestBodies)));
+        var activity = document.RootElement.GetProperty("activity");
+        Assert.Equal("compare", activity.GetProperty("text").GetString());
+        Assert.Equal("existing", activity.GetProperty("conversation").GetProperty("id").GetString());
+        var file = Assert.Single(activity.GetProperty("attachments").EnumerateArray());
+        Assert.Equal("study.xlsx", file.GetProperty("name").GetString());
+        Assert.Equal(attachment.ContentType, file.GetProperty("contentType").GetString());
+        Assert.Equal($"data:{attachment.ContentType};base64,AQID", file.GetProperty("contentUrl").GetString());
+    }
+
+    [Fact]
     public void PlainActivityFailsClosedInsteadOfUsingLossySerialization()
     {
         McsLiveActivityCodec.Initialize();

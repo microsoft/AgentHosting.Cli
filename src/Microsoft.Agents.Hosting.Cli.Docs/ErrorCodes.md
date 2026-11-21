@@ -327,7 +327,7 @@ mean a change partially completed or its result is uncertain.
 | Code | Description |
 | --- | --- |
 | [99001](ErrorCodes/99001.md) | An unexpected error occurred without a more specific classification. |
-| [99002](ErrorCodes/99002.md) | The command, arguments, or required context are not valid for this operation, including invalid authentication profile names and application profile creation options when `appusersupport` is disabled. |
+| [99002](ErrorCodes/99002.md) | The command, arguments, or required context are not valid for this operation, including invalid authentication profile names, application profile creation options when `appusersupport` is disabled, incompatible start-only/query options, or invalid, unreadable, or oversized `test ask` attachments. |
 | [99003](ErrorCodes/99003.md) | This CLI build does not implement the requested operation. |
 | [99004](ErrorCodes/99004.md) | The target did not return a response before the operation timed out. |
 | [99005](ErrorCodes/99005.md) | An internal authentication context is missing or inconsistent, or required token-provider wiring is unavailable. |

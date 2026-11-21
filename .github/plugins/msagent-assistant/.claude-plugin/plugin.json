@@ -3,6 +3,7 @@
   "version": "1.0.2",
   "repository": "https://github.com/microsoft/AgentHosting.Cli",
   "license": "MIT",
+  "extensions": "extensions/",
   "description": "Microsoft Copilot Studio new orchestration YAML authoring toolkit. Create, edit, validate, and test Copilot Studio agents using YAML files.",
   "author": {
     "name": "CMR Dev Tools Team"

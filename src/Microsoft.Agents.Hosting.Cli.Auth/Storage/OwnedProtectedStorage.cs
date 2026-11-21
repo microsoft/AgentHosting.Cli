@@ -91,10 +91,10 @@ internal static class Protection
     internal static bool AllowsTokenFallback(CacheProtectionUnavailableException failure) =>
         failure.Data[AvailabilityFailure] is true;
 
-    internal static CacheProtectionUnavailableException Failure(string platform, string reason, Exception? cause = null)
+    internal static CacheProtectionUnavailableException Failure(string platform, string reason, Exception? cause = null, string? remediation = null)
     {
         var failure = new CacheProtectionUnavailableException($"Owned protected storage is unavailable ({platform}: {reason}).",
-            "Check native storage availability and the host's no-UI policy. No plaintext fallback or unlock was attempted.");
+            remediation ?? "Check native storage availability and the host's no-UI policy. No plaintext fallback or unlock was attempted.");
         if (cause is NativeStorageException { Failure: NativeStorageFailure.Unavailable or NativeStorageFailure.Locked or NativeStorageFailure.PromptRequired }
             or DllNotFoundException or EntryPointNotFoundException or PlatformNotSupportedException)
             failure.Data[AvailabilityFailure] = true;

@@ -43,12 +43,13 @@ Endpoint discovery failure stops the command; it does not guess a fallback endpo
 
 ## `msagent test ask`
 
-Send exactly one literal query.
+Start a conversation without a user message, or send exactly one literal query.
 
 ```text
 msagent test ask --query "Explain this policy" --project <project> --agent-name <agent> --deployment-name <deployment>
 msagent test ask -q "Hello" --schema-name <schema> --environment-id <environment> --tenant <tenant-guid> --deployment-name <label> --json
 msagent test ask -q "Clarify" --agent-id <agent-id> --deployment-id <deployment-id> --conversation-id <returned-id>
+msagent test ask --start-conversation --schema-name <schema> --environment-id <environment> --tenant <tenant-guid> --deployment-name <label> --json --non-interactive
 ```
 
 In addition to the [target selectors](#target-selection) and
@@ -56,13 +57,19 @@ In addition to the [target selectors](#target-selection) and
 
 | Option | Alias | Default | Description |
 | --- | --- | --- | --- |
-| `--query` | `-q` | Required | One nonblank query. Its text can enter shell history. |
+| `--query` | `-q` | Required unless starting only | One nonblank query. Its text can enter shell history. |
+| `--file` | `-fi` | None | Repeat to attach up to five readable local files, at most 10 MiB total. Requires a query; not valid with `--start-conversation`. |
+| `--start-conversation` | `-scv` | `false` | Receive opening activities and a conversation ID without sending a query. Cannot combine with `--query` or `--conversation-id`. |
 | `--conversation-id` | `-cvid` | New conversation | Explicitly continue a conversation using an ID returned for this destination. No last-used ID is saved. |
 | `--plain` | `-pl` | `false` | Accessible final-only human output without transient progress. Cannot be combined with `--json`. |
 
 `--json` does not prohibit interactive sign-in; use `--non-interactive` to prevent the CLI's
 interactive sign-in. The CLI does not save queries, activities, or conversation IDs, but terminal
 capture, shell history, and service-side retention are outside its control.
+
+Files are read before authentication and sent as message attachments to the selected
+conversation. The published agent must support the supplied file types. File contents
+are not placed in command-line arguments; the supplied local paths may enter shell history.
 
 ### Streaming output
 
@@ -77,7 +84,10 @@ handled failure codes are still available to command telemetry.
 SDK response enumeration ended normally, **not** that an answer is correct or a remote action
 succeeded. `partial: true` means activities were written before a failure or cancellation.
 `queryDelivery` is `not-attempted` or `attempted`; an attempted query may already have caused
-remote effects.
+remote effects. With `--start-conversation`, `queryDelivery` stays `not-attempted`
+because no user query is dispatched. Opening topics/actions can still have live
+effects; the returned conversation ID is used with a later `--query` invocation.
+An opening greeting is not guaranteed.
 
 Streamed responses are rendered activity by activity. Whole-JSON responses are read before the
 first activity is rendered. Malformed or interrupted responses fail without automatically

@@ -1,9 +1,11 @@
 namespace Microsoft.Agents.Hosting.Cli.Core.Operations;
 
-/// <summary>One invocation's literal query and selectors; no target or conversation history is persisted.</summary>
+/// <summary>One conversation-start or literal-query invocation; no target or conversation history is persisted.</summary>
 public sealed record LiveTestRequest
 {
     public string? Query { get; init; }
+    public IReadOnlyList<string> Files { get; init; } = [];
+    public bool StartConversation { get; init; }
     public string? Project { get; init; }
     public string? AgentId { get; init; }
     public string? AgentName { get; init; }
