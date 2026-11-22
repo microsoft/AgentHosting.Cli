@@ -26,6 +26,7 @@ For error meanings, causes, and recovery steps, see the [error code reference](E
 
 The first four options are available recursively on every command. Help is available on every
 command; version is available only at the root.
+Help separates command-specific `Options:` from `Global Options:`.
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |

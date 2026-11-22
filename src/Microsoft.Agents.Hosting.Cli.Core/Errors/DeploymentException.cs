@@ -79,33 +79,39 @@ public sealed class DeploymentException : AgentHostingException
             "channel-operation-not-supported");
 
     public static DeploymentException ChannelConfigurationUnavailable() =>
+        ChannelConfigurationUnavailable(null);
+
+    /// <summary>Identifies an unusable response field without including its value.</summary>
+    public static DeploymentException ChannelConfigurationUnavailable(string? parameterName) =>
         new(ErrorCodes.Deployment.DeploymentChannelConfigurationUnavailable,
-            "The channel response does not contain a usable configuration.",
+            parameterName is null
+                ? "The channel response does not contain a usable configuration."
+                : $"The channel response does not contain a usable configuration for parameter '{ParameterKeyForDiagnostic(parameterName)}'.",
             ExitCodes.Failure, "channel-configuration-unavailable");
 
     public static UsageException InvalidChannelParameter(
         string parameterName,
         string channelName,
         string operation) =>
-        new($"Parameter '{parameterName}' is misspelled or not valid for '{channelName}' channel {operation}.");
+        new($"Parameter '{ParameterKeyForDiagnostic(parameterName)}' is misspelled or not valid for '{channelName}' channel {operation}.");
 
     public static UsageException InvalidChannelOption(string optionName, string channelName, string operation) =>
         new($"Option '{optionName}' is not valid for '{channelName}' channel {operation}.");
 
     public static UsageException InvalidChannelParameterValue(string parameterName, string channelName, string requirement) =>
-        new($"Parameter '{parameterName}' for '{channelName}' {requirement}.");
+        new($"Parameter '{ParameterKeyForDiagnostic(parameterName)}' for '{channelName}' {requirement}.");
 
     public static UsageException CannotClearChannelParameter(string parameterName, string channelName) =>
-        new($"Parameter '{parameterName}' for '{channelName}' cannot be cleared.");
+        new($"Parameter '{ParameterKeyForDiagnostic(parameterName)}' for '{channelName}' cannot be cleared.");
 
     public static UsageException DuplicateChannelParameter(string parameterName) =>
-        new($"Parameter '{parameterName}' was specified more than once.");
+        new($"Parameter '{ParameterKeyForDiagnostic(parameterName)}' was specified more than once.");
 
     public static UsageException ChannelItemNotFound(string channelName, string selectorName) =>
-        new($"No item in '{channelName}' matches the '{selectorName}' selector.");
+        new($"No item in '{channelName}' matches parameter '{ParameterKeyForDiagnostic(selectorName)}'.");
 
     public static UsageException ChannelItemAlreadyExists(string channelName, string selectorName) =>
-        new($"An item with the same '{selectorName}' already exists in '{channelName}'.");
+        new($"An item with the same value for parameter '{ParameterKeyForDiagnostic(selectorName)}' already exists in '{channelName}'.");
 
     public static UsageException ParameterNotDeclared(
         string parameterName,
@@ -145,10 +151,20 @@ public sealed class DeploymentException : AgentHostingException
 
     private static string OptionFor(
         string parameterName,
-        bool useOAuthOption) =>
-        useOAuthOption
-            ? CommonOAuthParameters.OptionFor(parameterName)
-            : $"--parameters {parameterName}=...";
+        bool useOAuthOption)
+    {
+        var key = ParameterKeyForDiagnostic(parameterName);
+        return useOAuthOption && CommonOAuthParameters.Contains(key)
+            ? $"'{CommonOAuthParameters.OptionFor(key)}'"
+            : $"--parameters {key}=...";
+    }
+
+    private static string ParameterKeyForDiagnostic(string parameterName)
+    {
+        var separator = parameterName.IndexOf('=');
+        var key = (separator < 0 ? parameterName : parameterName[..separator]).Trim();
+        return key.Length == 0 ? "(empty key)" : key;
+    }
 
     private static string WithGuidance(string message, string? guidance) =>
         guidance is null ? message : $"{message} {guidance}";

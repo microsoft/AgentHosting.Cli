@@ -54,18 +54,15 @@ msagent deployment oauth create --connection <name> --provider-name <provider> [
 | `--client-secret` | `-clsec` | String | Conditional | The write-only application secret. Required when the provider catalogue marks `ClientSecret` as required. |
 | `--client-secret-stdin` | `-clsin` | Switch | No | Reads the write-only application secret from piped standard input instead of `--client-secret`. |
 | `--scopes` | `-scp` | String | No | The space-separated OAuth scopes. |
-| `--parameters` | `-par` | `Key=Value` | No | Provider-specific assignments. Use `msagent deployment oauth list-providers --provider-name <name>` for the live schema. |
+| `--parameters` | `-par` | `Key=Value` or `@path` | No | Provider-specific assignments or a JSON object file. Use `msagent deployment oauth list-providers --provider-name <name>` for the live schema. |
 
 Provider names are case-insensitive and must be supported by the CLI as well as present in the live
 catalogue; listing a newly advertised provider does not necessarily make it creatable. The live schema
 determines required fields, parameter types, and optional defaults. Unsupported common options are
 rejected when the provider does not declare them.
 
-`--parameters` can be repeated and accepts several assignments per occurrence. Quote assignments
-containing spaces. Keys are case-insensitive; unknown keys and duplicates (including case-only
-duplicates) are rejected. Use `--client-id`, `--client-secret`, and `--scopes` for common OAuth fields,
-not `--parameters ClientId=...`, `ClientSecret=...`, or `Scopes=...`. Create rejects blank values and
-requires all provider-required fields, even when the connection already exists.
+Create rejects blank values and requires all provider-required fields, even when the connection
+already exists.
 
 After validation, an existing connection is returned with status `existed` without changing it.
 A new connection returns `created`; use `oauth update`, not a repeated create, to change settings.
@@ -83,6 +80,28 @@ the request passes the checks that need no secret.
 msagent deployment oauth list-providers --provider-name Aadv2
 msagent deployment oauth create --deployment-id <id> --connection MyOAuth --provider-name Aadv2 --client-id <app-id> --client-secret <secret> --scopes "User.Read" --parameters TenantId=<tenant-id>
 ```
+
+## Parameter input
+
+Names are case-insensitive; unknown names and duplicates (including between files and inline input)
+are rejected. `--parameters` can be repeated and accepts several assignments per occurrence.
+Quote assignments containing spaces. Use `--client-id`, `--client-secret`, and `--scopes` for common
+OAuth fields, not `--parameters ClientId=...`, `ClientSecret=...`, or `Scopes=...`.
+
+`--parameters` accepts `@path` to a JSON object file. References inside files remain literal.
+Paths resolve from the current directory, not `--project`; absolute paths are accepted.
+
+```powershell
+--parameters TenantId=<tenant-id>
+--parameters '@.\parameters.json'
+```
+
+### Inline JSON quoting
+
+JSON object keys and string values require double quotes. File contents do not need shell escaping.
+For inline JSON values, follow the [channel quoting guidance](Command_Deployment_Channel.md#inline-json-quoting),
+including escaped double quotes when Windows PowerShell invokes `msagent.cmd`.
+`--parameters` accepts assignments or an object file, not a whole inline JSON object.
 
 ## `msagent deployment oauth delete`
 
@@ -136,6 +155,7 @@ connection, overlays supplied settings, and writes the result. Omitted readable 
 omitted secrets are not replayed from masked responses. Resupply secrets when changing them.
 An explicit empty option or `--parameters Key=` clears an optional field, but required fields cannot
 be cleared, and `--client-secret` cannot be empty.
+A parameter file can likewise use an empty string or `null` to clear an optional field.
 Optional defaults are applied on create, not reapplied over an update clear.
 Missing connections fail as not found. Success returns `updated` with the safe connection snapshot.
 Azure Bot Service can answer a read with settings that are a few seconds old. Because an update reads

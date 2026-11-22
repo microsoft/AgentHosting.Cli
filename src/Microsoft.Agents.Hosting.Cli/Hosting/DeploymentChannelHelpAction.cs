@@ -12,13 +12,16 @@ internal sealed class DeploymentChannelHelpAction : SynchronousCommandLineAction
 {
     private readonly SynchronousCommandLineAction _inner;
     private readonly IReadOnlySet<Command> _channelCommands;
+    private readonly SubgroupHelpAction.TableLayout _tableLayout;
 
     public DeploymentChannelHelpAction(
         SynchronousCommandLineAction inner,
-        IReadOnlySet<Command> channelCommands)
+        IReadOnlySet<Command> channelCommands,
+        SubgroupHelpAction.TableLayout? tableLayout = null)
     {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
         _channelCommands = channelCommands ?? throw new ArgumentNullException(nameof(channelCommands));
+        _tableLayout = tableLayout ?? new SubgroupHelpAction.TableLayout();
     }
 
     public override int Invoke(ParseResult parseResult)
@@ -47,6 +50,10 @@ internal sealed class DeploymentChannelHelpAction : SynchronousCommandLineAction
             throw DeploymentException.ChannelOperationNotSupported(channelName, command.Name);
         }
 
+        var parameterRows = command.Name is "create" or "update"
+            ? ParameterRows(channelDefinition.Parameters, command.Name == "create").ToArray()
+            : [];
+        _tableLayout.PrepareParameters(parameterRows);
         var hiddenOptions = command.Options.Where(option =>
         {
             var collection = option.Name switch
@@ -82,29 +89,10 @@ internal sealed class DeploymentChannelHelpAction : SynchronousCommandLineAction
             channelDefinition.Parameters.Any(parameter => !parameter.IsReadOnly))
         {
             var output = parseResult.InvocationConfiguration.Output ?? Console.Out;
-            output.WriteLine("Parameters:");
-            WriteParameters(output, channelDefinition.Parameters, command.Name == "create");
+            _tableLayout.WriteParameters(output, parameterRows);
         }
 
         return exitCode;
-    }
-
-    private static void WriteParameters(
-        TextWriter output,
-        IEnumerable<ChannelParameterDefinition> parameters,
-        bool isCreate)
-    {
-        var rows = ParameterRows(parameters, isCreate).ToArray();
-        if (rows.Length == 0)
-        {
-            return;
-        }
-
-        var signatureWidth = rows.Max(row => row.Signature.Length) + 2;
-        foreach (var row in rows)
-        {
-            output.WriteLine($"{row.Signature.PadRight(signatureWidth)}{row.Description}");
-        }
     }
 
     private static IEnumerable<(string Signature, string Description)> ParameterRows(

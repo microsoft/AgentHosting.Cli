@@ -27,17 +27,24 @@ public abstract class AmsRoutedDeploymentCommand<TRequest, TResult, TAmsRequest>
     /// <summary>Wraps the bound content in the AMS request, whose address the route fills in.</summary>
     protected abstract TAmsRequest BindAms(TRequest content);
 
+    /// <summary>Expands file-backed input after route validation and before dispatch.</summary>
+    protected virtual Task<TRequest> PrepareRequestAsync(TRequest request, CancellationToken cancellationToken) =>
+        Task.FromResult(request);
+
     /// <inheritdoc />
     protected override Task<object> DispatchAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(input);
 
-        return AmsRoute.RouteAsync(input, services, AmsRules, () => InvokeAsync<TAmsRequest, TResult>(services, AmsRoute.Address(input, BindAms(Bind(input))), cancellationToken), () => DispatchLocalAsync(input, services, cancellationToken));
+        return AmsRoute.RouteAsync(input, services, AmsRules, async () => await InvokeAsync<TAmsRequest, TResult>(
+            services, AmsRoute.Address(input, BindAms(await PrepareRequestAsync(Bind(input), cancellationToken).ConfigureAwait(false))),
+            cancellationToken).ConfigureAwait(false), () => DispatchLocalAsync(input, services, cancellationToken));
     }
 
-    private Task<object> DispatchLocalAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
+    private async Task<object> DispatchLocalAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
     {
         EnsureCodeAgentDeployment(BindDeploymentRequest(input), services);
-        return base.DispatchAsync(input, services, cancellationToken);
+        return await InvokeAsync<TRequest, TResult>(
+            services, await PrepareRequestAsync(Bind(input), cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
     }
 }

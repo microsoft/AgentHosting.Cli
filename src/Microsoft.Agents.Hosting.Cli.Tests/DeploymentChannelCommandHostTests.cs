@@ -4,6 +4,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Tests.Packaging;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
@@ -38,6 +39,10 @@ public sealed class DeploymentChannelCommandHostTests
 
         Assert.Equal(ExitCodes.Success, exitCode);
         Assert.Empty(stderr);
+        if (verb is not null)
+        {
+            Assert.Contains("Examples:", stdout);
+        }
         if (verb is "create" or "update" or "show" or "delete")
         {
             Assert.Contains($"Supported: {string.Join(", ", DeploymentChannelCatalog.SupportedChannelNames)}.", stdout);
@@ -68,6 +73,403 @@ public sealed class DeploymentChannelCommandHostTests
         Assert.Equal(
             ["clientId=client-1", "clientSecret=secret-1", "verificationToken=token-1"],
             request.Parameters);
+    }
+
+    [Theory]
+    [InlineData("create", false)]
+    [InlineData("create", true)]
+    [InlineData("update", false)]
+    [InlineData("update", true)]
+    public void Mutation_ParameterFilesSupportTypedValuesAndMixedAssignments(string verb, bool relativePath)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, """{"accessToken":"@literal?a=b & c=d"}""");
+        var secondPath = WriteParameterFile(directory, """{"isEnabled":false}""", "enabled.json");
+        var reference = relativePath ? Path.GetRelativePath(Environment.CurrentDirectory, path) : path;
+        var operations = new FakeOperations();
+        var (exitCode, _, stderr) = Run(operations,
+            "deployment", "channel", verb, "--deployment-id", "11111111-1111-1111-1111-111111111111",
+            "--channel", "telegram", "--parameters", $"@{reference}", "--parameters", $"@{secondPath}",
+            "--non-interactive");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var request = Assert.IsAssignableFrom<DeploymentChannelCreateRequest>(
+            verb == "create" ? operations.LastCreateChannelRequest : operations.LastUpdateChannelRequest);
+        Assert.Equal(["accessToken=@literal?a=b & c=d", "isEnabled=false"], request.Parameters);
+        Assert.True(request.NonInteractive);
+        var payload = verb == "create"
+            ? DeploymentChannelPlan.ValidateCreate(request).NormalizedParameters
+            : DeploymentChannelPlan.ValidateUpdate(Assert.IsType<DeploymentChannelUpdateRequest>(request)).NormalizedParameters;
+        Assert.Equal("@literal?a=b & c=d", payload["accessToken"].GetString());
+        Assert.False(payload["isEnabled"].GetBoolean());
+    }
+
+    [Theory]
+    [InlineData("--parameters")]
+    [InlineData("-par")]
+    [InlineData("--parameters=")]
+    public void Create_ParameterFileSupportsInlineAssignmentsAndAliases(string option)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, """{"accessToken":"synthetic-token"}""");
+        var operations = new FakeOperations();
+        string[] fileOptions = option.EndsWith('=') ? [$"{option}@{path}"] : [option, $"@{path}"];
+        var (exitCode, _, stderr) = Run(operations,
+            ["deployment", "channel", "create", "--deployment-id", "dep-1", "--channel", "telegram",
+                .. fileOptions, "--parameters", "isEnabled=true"]);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Equal(["accessToken=synthetic-token", "isEnabled=true"], operations.LastCreateChannelRequest!.Parameters);
+    }
+
+    [Theory]
+    [InlineData("directline", """{"sites":[{"siteName":"Primary","isEnabled":true,"trustedOrigins":["https://example.test"]}]}""", "sites")]
+    [InlineData("webchat", """{"sites":[{"siteName":"Primary","isWebchatPreviewEnabled":false}]}""", "sites")]
+    [InlineData("facebook", """{"appId":"app-1","appSecret":"synthetic-secret","isEnabled":false,"pages":[{"id":"page-1","accessToken":"synthetic-token"}]}""", "pages")]
+    [InlineData("line", """{"lineRegistrations":[{"channelSecret":"synthetic-secret","channelAccessToken":"synthetic-token"}]}""", "lineRegistrations")]
+    public void Create_ParameterFilePreservesNestedCollectionValues(string channel, string json, string collection)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, json);
+        var operations = new FakeOperations();
+        var (exitCode, _, stderr) = Run(operations,
+            "deployment", "channel", "create", "--deployment-id", "11111111-1111-1111-1111-111111111111",
+            "--channel", channel, "--parameters", $"@{path}");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var plan = DeploymentChannelPlan.ValidateCreate(operations.LastCreateChannelRequest!);
+        var payload = DeploymentChannelPlan.BuildCreate(plan, "/bots/test", null);
+        using var expected = JsonDocument.Parse(json);
+        Assert.True(JsonElement.DeepEquals(expected.RootElement.GetProperty(collection), payload.Parameters[collection]));
+    }
+
+    [Theory]
+    [InlineData("directline", "sites", """[{"siteName":"Primary","isEnabled":true,"trustedOrigins":["https://example.test"]}]""")]
+    [InlineData("webchat", "sites", """[{"siteName":"Primary","isEnabled":false}]""")]
+    [InlineData("facebook", "pages", """[{"id":"page-1","accessToken":"@literal-token"}]""")]
+    [InlineData("line", "lineRegistrations", """[{"channelSecret":"synthetic-secret","channelAccessToken":"synthetic-token"}]""")]
+    public void Mutation_CollectionFilesMatchInlineJson(string channel, string parameter, string json)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, json);
+        foreach (var verb in new[] { "create", "update" })
+        {
+            foreach (var relativePath in new[] { false, true })
+            {
+                var reference = relativePath ? Path.GetRelativePath(Environment.CurrentDirectory, path) : path;
+                var operations = new FakeOperations();
+                string[] credentials = channel == "facebook" ? ["appId=app-1", "appSecret=synthetic-secret"] : [];
+                var (exitCode, _, stderr) = Run(operations,
+                    ["deployment", "channel", verb, "--deployment-id", "11111111-1111-1111-1111-111111111111",
+                        "--channel", channel, "-par", $"{parameter.ToUpperInvariant()}=@{reference}", .. credentials]);
+
+                Assert.Equal(ExitCodes.Success, exitCode);
+                Assert.Empty(stderr);
+                var request = Assert.IsAssignableFrom<DeploymentChannelCreateRequest>(
+                    verb == "create" ? operations.LastCreateChannelRequest : operations.LastUpdateChannelRequest);
+                Assert.Equal($"{parameter.ToUpperInvariant()}={json}", request.Parameters[0]);
+                IReadOnlyDictionary<string, JsonElement> normalized;
+                if (verb == "create")
+                {
+                    var plan = DeploymentChannelPlan.ValidateCreate(request);
+                    normalized = DeploymentChannelPlan.BuildCreate(plan, "/bots/test", null).Parameters;
+                }
+                else
+                {
+                    var plan = DeploymentChannelPlan.ValidateUpdate(Assert.IsType<DeploymentChannelUpdateRequest>(request));
+                    normalized = plan.SiteMutation is { } sites
+                        ? DeploymentChannelSites.BuildCreate(sites)
+                        : plan.NormalizedParameters;
+                }
+
+                using var expected = JsonDocument.Parse(json);
+                Assert.True(JsonElement.DeepEquals(expected.RootElement, normalized[parameter]));
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("--add-site", false)]
+    [InlineData("-sts", false)]
+    [InlineData("--set-site", true)]
+    public void Update_SiteArrayFieldSupportsFileInput(string option, bool clear)
+    {
+        using var directory = new TempDirectory();
+        var json = clear ? "[]" : """["https://example.test","https://other.test"]""";
+        var path = WriteParameterFile(directory, json);
+        var operations = new FakeOperations();
+        var (exitCode, _, stderr) = Run(operations,
+            "deployment", "channel", "update", "--deployment-id", "11111111-1111-1111-1111-111111111111",
+            "--channel", "directline", option, "siteName=Primary", $"trustedOrigins=@{path}");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var request = operations.LastUpdateChannelRequest!;
+        var assignments = option == "--add-site" ? request.AddSite : request.SetSite;
+        Assert.Equal($"trustedOrigins={json}", assignments[1]);
+        var plan = DeploymentChannelPlan.ValidateUpdate(request);
+        using var expected = JsonDocument.Parse(json);
+        Assert.True(JsonElement.DeepEquals(expected.RootElement, plan.SiteMutation!.Items[0].GetProperty("trustedOrigins")));
+    }
+
+    [Theory]
+    [InlineData("@", "path")]
+    [InlineData("@missing", "Cannot read")]
+    [InlineData("invalid", "invalid JSON")]
+    public void Mutation_InvalidCollectionFileReportsSafeUsageError(string input, string message)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, """[{"accessToken":"SYNTHETIC_FILE_SECRET"}""");
+        var reference = input switch
+        {
+            "@" => "@",
+            "@missing" => $"@{path}.missing",
+            _ => $"@{path}",
+        };
+        var operations = new FakeOperations();
+        var (exitCode, stdout, stderr) = Run(operations,
+            "deployment", "channel", "create", "--deployment-id", "dep-1", "--channel", "facebook",
+            "--parameters", $"pages={reference}", "--json", "--debug");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Empty(stderr);
+        using var document = JsonDocument.Parse(stdout);
+        Assert.Equal(99002, document.RootElement.GetProperty("errorCode").GetInt32());
+        Assert.Contains(message, document.RootElement.GetProperty("errorMessage").GetString());
+        Assert.Contains("'pages'", document.RootElement.GetProperty("errorMessage").GetString());
+        Assert.DoesNotContain("SYNTHETIC_FILE_SECRET", stdout);
+        Assert.Null(operations.LastCreateChannelRequest);
+    }
+
+    [Theory]
+    [InlineData("--add-site")]
+    [InlineData("--set-site")]
+    public void Update_InvalidSiteArrayFileNamesFieldWithoutEchoingContent(string option)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, """["SYNTHETIC_FILE_SECRET" """);
+        var operations = new FakeOperations();
+        var (exitCode, stdout, stderr) = Run(operations,
+            "deployment", "channel", "update", "--deployment-id", "dep-1", "--channel", "directline",
+            option, "siteName=Primary", $"trustedOrigins=@{path}", "--json");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Empty(stderr);
+        using var document = JsonDocument.Parse(stdout);
+        Assert.Equal(99002, document.RootElement.GetProperty("errorCode").GetInt32());
+        Assert.Contains($"{option} 'trustedOrigins' JSON file contains invalid JSON",
+            document.RootElement.GetProperty("errorMessage").GetString());
+        Assert.DoesNotContain("SYNTHETIC_FILE_SECRET", stdout);
+        Assert.Null(operations.LastUpdateChannelRequest);
+    }
+
+    [Theory]
+    [InlineData("directline", "sites", "{}", null)]
+    [InlineData("line", "lineRegistrations", "[]", null)]
+    [InlineData("directline", "sites", """[{"siteName":"Primary","siteId":"readonly"}]""", null)]
+    [InlineData("directline", "sites", "[]", "sites=[]")]
+    public void Update_CollectionFileKeepsPlanValidation(string channel, string parameter, string json, string? duplicate)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, json);
+        var operations = new FakeOperations
+        {
+            OnUpdateChannel = request =>
+            {
+                DeploymentChannelPlan.ValidateUpdate(request);
+                return new() { Status = DeploymentOperationStatus.Updated };
+            },
+        };
+        string[] extra = duplicate is null ? [] : [duplicate];
+        var (exitCode, stdout, _) = Run(operations,
+            ["deployment", "channel", "update", "--deployment-id", "11111111-1111-1111-1111-111111111111",
+                "--channel", channel, "--parameters", $"{parameter}=@{path}", .. extra, "--json"]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        using var document = JsonDocument.Parse(stdout);
+        Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+    }
+
+    [Fact]
+    public void Mutation_CollectionFilesDoNotExpandStringFieldsOrJsonFileContents()
+    {
+        var operations = new FakeOperations();
+        var (exitCode, _, stderr) = Run(operations,
+            "deployment", "channel", "create", "--deployment-id", "dep-1", "--channel", "telegram",
+            "--parameters", "accessToken=@missing.json", "unknown=@missing.json");
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Equal(["accessToken=@missing.json", "unknown=@missing.json"], operations.LastCreateChannelRequest!.Parameters);
+
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, """{"sites":"@missing.json"}""");
+        (exitCode, _, stderr) = Run(operations,
+            "deployment", "channel", "create", "--deployment-id", "dep-1", "--channel", "directline",
+            "--parameters", $"@{path}");
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Equal(["sites=@missing.json"], operations.LastCreateChannelRequest!.Parameters);
+    }
+
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("null")]
+    public void Update_CollectionFileCanClearSites(string json)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, json);
+        var operations = new FakeOperations();
+        var (exitCode, _, stderr) = Run(operations,
+            "deployment", "channel", "update", "--deployment-id", "11111111-1111-1111-1111-111111111111",
+            "--channel", "directline", "--parameters", $"sites=@{path}");
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var plan = DeploymentChannelPlan.ValidateUpdate(operations.LastUpdateChannelRequest!);
+        Assert.Empty(plan.SiteMutation!.Items);
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    public void Mutation_CollectionFilesAreNotReadForHelp(string verb)
+    {
+        var (exitCode, stdout, stderr) = Run(new FakeOperations(),
+            "deployment", "channel", verb, "--channel", "directline", "--parameters", "sites=@", "--help");
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Contains("sites='@.\\sites.json'", stdout);
+    }
+
+    [Theory]
+    [InlineData("create", """{"accessToken":"SYNTHETIC_FILE_SECRET",}""")]
+    [InlineData("update", """["SYNTHETIC_FILE_SECRET"]""")]
+    [InlineData("create", """{"":"SYNTHETIC_FILE_SECRET"}""")]
+    [InlineData("update", """{"accessToken=injected":"SYNTHETIC_FILE_SECRET"}""")]
+    public void Mutation_InvalidParameterFileReturnsSafeUsageErrorBeforeDispatch(string verb, string json)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, json);
+        var operations = new FakeOperations();
+        var (exitCode, stdout, stderr) = Run(operations,
+            "deployment", "channel", verb, "--deployment-id", "dep-1", "--channel", "telegram",
+            "--parameters", $"@{path}", "--json", "--debug");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Empty(stderr);
+        using var document = JsonDocument.Parse(stdout);
+        Assert.Equal(99002, document.RootElement.GetProperty("errorCode").GetInt32());
+        Assert.Contains("--parameters", document.RootElement.GetProperty("errorMessage").GetString());
+        Assert.DoesNotContain("SYNTHETIC_FILE_SECRET", stdout);
+        Assert.Null(operations.LastCreateChannelRequest);
+        Assert.Null(operations.LastUpdateChannelRequest);
+    }
+
+    [Theory]
+    [InlineData("msteams", """{"enableCalling":false,"ENABLECALLING":true}""", null, "duplicate")]
+    [InlineData("msteams", """{"enableCalling":false}""", "ENABLECALLING=true", "duplicate")]
+    [InlineData("msteams", """{"unknown":"SYNTHETIC_FILE_SECRET"}""", null, "unknown")]
+    [InlineData("msteams", """{"isEnabled":true}""", null, "isEnabled")]
+    [InlineData("msteams", """{"enableCalling":[]}""", null, "enableCalling")]
+    [InlineData("telegram", """{"accessToken":""}""", null, "accessToken")]
+    [InlineData("telegram", """{"accessToken":null}""", null, "accessToken")]
+    [InlineData("msteams", """{"enableCalling":null}""", null, "enableCalling")]
+    [InlineData("msteams", """{"enableCalling":{"value":true}}""", null, "enableCalling")]
+    [InlineData("facebook", """{"pages":[]}""", null, "at least one")]
+    public void Update_ParameterFilePreservesExistingSchemaValidation(
+        string channel, string json, string? inline, string expectedMessage)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, json);
+        var operations = new FakeOperations
+        {
+            OnUpdateChannel = request =>
+            {
+                DeploymentChannelPlan.ValidateUpdate(request);
+                return new() { Status = DeploymentOperationStatus.Updated };
+            },
+        };
+        string[] inlineOptions = inline is null ? [] : ["--parameters", inline];
+        var (exitCode, stdout, stderr) = Run(operations,
+            ["deployment", "channel", "update", "--deployment-id", "11111111-1111-1111-1111-111111111111",
+                "--channel", channel, "--parameters", $"@{path}", .. inlineOptions]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Empty(stdout);
+        Assert.Contains(expectedMessage, stderr);
+        Assert.DoesNotContain("SYNTHETIC_FILE_SECRET", stderr);
+    }
+
+    [Theory]
+    [InlineData("directline", "site")]
+    [InlineData("facebook", "page")]
+    [InlineData("line", "registration")]
+    public void Update_EmptyParameterFileCannotBypassCollectionOptionExclusivity(string channel, string item)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, "{}");
+        var operations = new FakeOperations();
+        var (exitCode, _, stderr) = Run(operations,
+            "deployment", "channel", "update", "--deployment-id", "dep-1", "--channel", channel,
+            "--parameters", $"@{path}", $"--add-{item}", "field=SYNTHETIC_FILE_SECRET");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains($"Specify only one of --parameters, --add-{item}, --set-{item}, or --remove-{item}.", stderr);
+        Assert.DoesNotContain("SYNTHETIC_FILE_SECRET", stderr);
+        Assert.Null(operations.LastUpdateChannelRequest);
+    }
+
+    [Theory]
+    [InlineData("""{"sites":[]}""")]
+    [InlineData("""{"sites":null}""")]
+    [InlineData("""{"sites":[{"siteName":"Primary","appId":null,"trustedOrigins":[]}]}""")]
+    public void Update_ParameterFilePreservesSiteClearing(string json)
+    {
+        using var directory = new TempDirectory();
+        var path = WriteParameterFile(directory, json);
+        var operations = new FakeOperations();
+        var (exitCode, _, stderr) = Run(operations,
+            "deployment", "channel", "update", "--deployment-id", "11111111-1111-1111-1111-111111111111",
+            "--channel", "directline", "--parameters", $"@{path}");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var plan = DeploymentChannelPlan.ValidateUpdate(operations.LastUpdateChannelRequest!);
+        using var expected = JsonDocument.Parse(json);
+        var expectedSites = expected.RootElement.GetProperty("sites");
+        var sites = expectedSites.ValueKind == JsonValueKind.Null ? [] : expectedSites.EnumerateArray().ToArray();
+        Assert.Equal(sites.Length, plan.SiteMutation!.Items.Count);
+        for (var index = 0; index < sites.Length; index++)
+        {
+            Assert.True(JsonElement.DeepEquals(sites[index], plan.SiteMutation.Items[index]));
+        }
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    public void Mutation_ParameterFilesAreNotReadForHelpOrBootstrap(string verb)
+    {
+        var operations = new FakeOperations();
+        string[] args = ["deployment", "channel", verb, "--channel", "telegram", "--parameters", "@", "--help"];
+        var (exitCode, stdout, stderr) = Run(operations, args);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Contains("@path", stdout);
+        Assert.True(Hosting.AgentHostCli.ResolveInteractionAllowed(args));
+        Assert.True(Hosting.AgentHostCli.IsRingIndependent(args));
+        Assert.Null(operations.LastCreateChannelRequest);
+        Assert.Null(operations.LastUpdateChannelRequest);
+    }
+
+    private static string WriteParameterFile(TempDirectory directory, string json, string name = "channel parameters.json")
+    {
+        var path = directory.Combine(name);
+        File.WriteAllText(path, json);
+        return path;
     }
 
     public static IEnumerable<object[]> ChannelMutations()
@@ -122,7 +524,7 @@ public sealed class DeploymentChannelCommandHostTests
             Assert.Equal(ExitCodes.Usage, exitCode);
             var expectedMessage = DeploymentChannelCatalog.SupportedChannelNames.Contains(channel)
                 ? $"The '{channel}' channel does not support '{verb}' operation."
-                : $"Channel '{channel}' is not supported. Supported values are: {string.Join(", ", DeploymentChannelCatalog.SupportedChannelNames)}.";
+                : $"Channel '{channel}' is not supported. Supported values are: {string.Join(", ", DeploymentChannelCatalog.SupportedChannelNames.Select(name => $"'{name}'"))}.";
             if (json)
             {
                 Assert.Empty(stderr);
@@ -689,6 +1091,118 @@ public sealed class DeploymentChannelCommandHostTests
             Assert.DoesNotContain("Clearable on update.", stdout);
             Assert.DoesNotContain(" Secret.", stdout);
         }
+    }
+
+    [Theory]
+    [InlineData("create", "directline", "sites='@.\\sites.json'")]
+    [InlineData("create", "msteams", "enableCalling=true callingWebhook=<calling-webhook-url>")]
+    [InlineData("update", " DIRECTLINE ", "trustedOrigins='@.\\origins.json'")]
+    [InlineData("update", "webchat", "--set-site siteName=<existing-site-name>")]
+    [InlineData("create", "facebook", "pages='@.\\pages.json' appId=<app-id> appSecret=<app-secret>")]
+    [InlineData("update", "facebook", "--set-page id=<page-id>")]
+    [InlineData("update", "line", "--set-registration generatedId=<registration-id>")]
+    [InlineData("create", "outlook", "--channel outlook")]
+    public void SelectedChannelHelp_ShowsApplicableExamplesAfterParameters(
+        string verb, string channel, string expected)
+    {
+        var operations = new FakeOperations();
+        var (exitCode, stdout, stderr) = Run(operations,
+            "deployment", "channel", verb, "--channel", channel, "--help");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var start = stdout.IndexOf("Examples:", StringComparison.Ordinal);
+        Assert.True(start > stdout.IndexOf("Options:", StringComparison.Ordinal));
+        Assert.True(start > stdout.IndexOf("Parameters:", StringComparison.Ordinal));
+        var examples = stdout[start..];
+        Assert.Contains(expected, examples);
+        var commandLines = examples.Split(Environment.NewLine)
+            .Where(line => line.StartsWith("    msagent ", StringComparison.Ordinal)).ToArray();
+        Assert.NotEmpty(commandLines);
+        Assert.InRange(commandLines.Length, 1,
+            verb == "update" && channel.Trim().ToLowerInvariant() is "directline" or "webchat" or "facebook" or "line" ? 5 : 3);
+        Assert.All(commandLines, line =>
+            Assert.Contains($"msagent deployment channel {verb} --deployment-id <deployment-id> --channel {channel.Trim().ToLowerInvariant()}", line));
+        if (channel.Trim().Equals("webchat", StringComparison.OrdinalIgnoreCase))
+        {
+            Assert.DoesNotContain("trustedOrigins", examples);
+        }
+        if (channel == "outlook")
+        {
+            Assert.DoesNotContain("--parameters", examples);
+        }
+        Assert.Null(operations.LastCreateChannelRequest);
+        Assert.Null(operations.LastUpdateChannelRequest);
+    }
+
+    [Theory]
+    [InlineData("directline", "site", "sites")]
+    [InlineData("webchat", "site", "sites")]
+    [InlineData("facebook", "page", "pages")]
+    [InlineData("line", "registration", "lineRegistrations")]
+    public void CollectionUpdateHelp_DiversifiesFiveExamplesAcrossOperationsAndFileShapes(
+        string channel, string item, string collection)
+    {
+        var (exitCode, stdout, stderr) = Run(new FakeOperations(),
+            "deployment", "channel", "update", "--channel", channel, "--help");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var examples = stdout[stdout.IndexOf("Examples:", StringComparison.Ordinal)..];
+        Assert.Equal(5, examples.Split(Environment.NewLine)
+            .Count(line => line.StartsWith("    msagent ", StringComparison.Ordinal)));
+        foreach (var operation in new[] { "add", "set", "remove" })
+        {
+            Assert.Contains($"--{operation}-{item}", examples);
+        }
+        Assert.Contains($"--parameters {collection}='@.\\{collection}.json'", examples);
+        Assert.Contains("--parameters '@.\\parameters.json'", examples);
+        if (item == "site")
+        {
+            Assert.Contains("--add-site siteName=Primary", examples);
+            Assert.Contains("--set-site siteName=<existing-site-name>", examples);
+            Assert.Contains("--remove-site siteName=<existing-site-name>", examples);
+            Assert.DoesNotContain("--set-site siteName=Primary", examples);
+            Assert.DoesNotContain("--remove-site siteName=Primary", examples);
+            if (channel == "directline")
+            {
+                Assert.Contains("""trustedOrigins='["<trusted-origin-url>"]'""", examples);
+                Assert.DoesNotContain("https://example.test", examples);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    public void GenericMutationHelp_KeepsAtMostThreeExamples(string verb)
+    {
+        var (exitCode, stdout, stderr) = Run(new FakeOperations(),
+            "deployment", "channel", verb, "--help");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var examples = stdout[stdout.IndexOf("Examples:", StringComparison.Ordinal)..];
+        Assert.InRange(examples.Split(Environment.NewLine)
+            .Count(line => line.StartsWith("    msagent ", StringComparison.Ordinal)), 1, 3);
+        Assert.Contains($"msagent deployment channel {verb} --channel <name> --help", examples);
+    }
+
+    [Theory]
+    [InlineData("show", " MSTeams ", "Show msteams as JSON.")]
+    [InlineData("delete", "facebook", "Delete facebook from a deployment.")]
+    [InlineData("show", null, "Show a channel as JSON.")]
+    [InlineData("delete", null, "Delete a channel from a deployment.")]
+    public void ShowAndDeleteHelp_NameTheChannelOnlyWhenSelected(string verb, string? channel, string description)
+    {
+        string[] selection = channel is null ? [] : ["--channel", channel];
+        var (exitCode, stdout, stderr) = Run(new FakeOperations(),
+            ["deployment", "channel", verb, .. selection, "--help"]);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var examples = stdout[stdout.IndexOf("Examples:", StringComparison.Ordinal)..];
+        Assert.Contains(description, examples);
     }
 
     [Fact]

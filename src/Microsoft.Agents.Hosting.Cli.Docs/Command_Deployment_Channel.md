@@ -41,15 +41,39 @@ msagent deployment channel create --channel <name> [selectors] [options]
 | Option | Shortcut | Value | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--channel` | - | String | Yes | The channel type. |
-| `--parameters` | `-par` | `Key=Value` | Conditional | Channel-specific assignments. Use selected-channel help for required fields and defaults. |
+| `--parameters` | `-par` | `Key=Value` or `@path` | Conditional | Channel-specific assignments or a JSON object file. Use selected-channel help for required fields and defaults. |
 
 Returns an existing channel unchanged. Otherwise, creates the channel using the supplied parameters
 and creation defaults. For Slack, supply explicit `scopes` to request narrower permissions than
 the broad ARM default.
 
-Assignments split at the first `=`. Parameter names are case-insensitive. Use `true`/`false` for
-booleans, whole numbers for integers, and inline JSON arrays for collections.
-JSON parameter files are not supported; readonly settings are not writable.
+## Parameter input
+
+Names are case-insensitive; unknown names, duplicates
+(including between files and inline input), and readonly settings are rejected. Use `true`/`false`
+for booleans, whole numbers for integers, and JSON arrays for `sites`, `pages`, and `lineRegistrations`.
+
+`--parameters` and writable array fiels `sites`, `pages`, `lineRegistrations` accept `@path` to a JSON file. References inside files remain literal. Paths resolve from the current directory, not `--project`; absolute paths are accepted.
+
+```powershell
+--parameters '@.\parameters.json'
+--parameters sites='@.\sites.json'
+```
+
+### Inline JSON quoting
+
+JSON object keys and string values require double quotes. Quote the whole inline JSON value
+for your shell. With Windows PowerShell invoking `msagent.cmd`, escape the embedded double quotes
+as `\"` to prevent quote loss:
+
+```powershell
+--parameters sites='[{\"siteName\":\"Primary\",\"isEnabled\":true}]'
+```
+
+JSON files avoid shell escaping and are recommended. File contents use ordinary, unescaped JSON.
+On shells that preserve embedded quotes, omit the backslashes. PowerShell's supported
+`$PSNativeCommandArgumentPassing = 'Standard'` mode also preserves quotes, but affects all native
+commands in the session.
 
 ## `msagent deployment channel delete`
 
@@ -77,7 +101,7 @@ Updates an existing channel. Requires `--channel` plus the deployment selectors,
 | `--add-page`, `--set-page`, `--remove-page` | `-adp`, `-stp`, `-rmp` | Facebook | `id` |
 | `--add-registration`, `--set-registration`, `--remove-registration` | `-adr`, `-str`, `-rmr` | LINE | `generatedId` (set/remove only) |
 
-Pass unprefixed `Key=Value` fields, for example `--set-site siteName=Primary isEnabled=false`.
+Pass unprefixed `Key=Value` fields, for example `--set-site siteName=<existing-site-name> isEnabled=false`.
 Add requires new-item fields; set requires an existing selector and at least one change;
 remove accepts only the selector. Use `show` to read Azure-generated LINE registration ids.
 Site names are case-insensitive; page and registration ids are case-sensitive.
