@@ -11,7 +11,8 @@ internal static class DeploymentParameterInput
     // enabled=true and optional=. Parameter semantics and duplicates remain the plan's responsibility.
     internal static async Task<IReadOnlyList<string>> ReadParametersAsync(
         IReadOnlyList<string> parameters,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string optionName = "--parameters")
     {
         var assignments = new List<string>();
         foreach (var parameter in parameters)
@@ -23,10 +24,10 @@ internal static class DeploymentParameterInput
                 continue;
             }
 
-            var document = await ReadJsonFileAsync(parameter, "--parameters", cancellationToken).ConfigureAwait(false);
+            var document = await ReadJsonFileAsync(parameter, optionName, cancellationToken).ConfigureAwait(false);
             if (document.ValueKind != JsonValueKind.Object)
             {
-                throw new CommandUsageException("--parameters JSON files must contain an object.");
+                throw new CommandUsageException($"{optionName} JSON files must contain an object.");
             }
 
             foreach (var property in document.EnumerateObject())
@@ -34,7 +35,7 @@ internal static class DeploymentParameterInput
                 if (string.IsNullOrWhiteSpace(property.Name) || property.Name.Contains('='))
                 {
                     throw new CommandUsageException(
-                        "--parameters JSON files require valid key:value pairs: key cannot be empty, whitespace, or contain =.");
+                        $"{optionName} JSON files require valid key:value pairs: key cannot be empty, whitespace, or contain =.");
                 }
 
                 assignments.Add($"{property.Name}={AssignmentValue(property.Value)}");
@@ -44,19 +45,27 @@ internal static class DeploymentParameterInput
         return assignments;
     }
 
-    // Expands file values only for catalog-declared writable arrays, without recursive expansion.
+    // Expands add/set object references and catalog-declared array file values without recursive expansion.
     // For example, sites=@sites.json containing [{"siteName":"Primary"}] becomes
     // sites=[{"siteName":"Primary"}], while a string field such as accessToken=@token stays literal.
     internal static async Task<IReadOnlyList<string>> ReadCollectionAssignmentsAsync(
         IReadOnlyList<string> assignments,
         IReadOnlyList<ChannelParameterDefinition> fields,
         string optionName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool allowObjectFiles = false)
     {
         var result = new List<string>(assignments.Count);
         foreach (var assignment in assignments)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (allowObjectFiles && fields.Count > 0 && assignment.StartsWith('@'))
+            {
+                result.AddRange(await ReadParametersAsync(
+                    [assignment], cancellationToken, optionName).ConfigureAwait(false));
+                continue;
+            }
+
             var separator = assignment.IndexOf('=');
             var field = separator <= 0 ? null : fields.FirstOrDefault(field =>
                 !field.IsReadOnly && field.Type == DeploymentParameterType.Array &&
@@ -75,7 +84,7 @@ internal static class DeploymentParameterInput
             }
 
             var json = await ReadJsonFileAsync(value, $"{optionName} '{field.Name}'", cancellationToken).ConfigureAwait(false);
-            result.Add($"{assignment[..separator]}={AssignmentValue(json)}");
+            result.Add($"{assignment[..separator]}={(json.ValueKind == JsonValueKind.Null ? string.Empty : json.GetRawText())}");
         }
 
         return result;

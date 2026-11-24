@@ -49,14 +49,14 @@ public sealed class DeploymentChannelUpdateCommand : DeploymentChannelCommand<De
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
         .. MutationCommandSymbols,
-        AssignmentOption("--add-site", "Add a Direct Line or Web Chat site using Key=Value fields."),
-        AssignmentOption("--set-site", "Update a Direct Line or Web Chat site using Key=Value fields."),
+        AssignmentOption("--add-site", "Add a Direct Line or Web Chat site using Key=Value fields or a JSON object file (@path)."),
+        AssignmentOption("--set-site", "Update a Direct Line or Web Chat site using Key=Value fields or a JSON object file (@path)."),
         AssignmentOption("--remove-site", "Remove a Direct Line or Web Chat site using `siteName` as a selector."),
-        AssignmentOption("--add-page", "Add a Facebook page using Key=Value fields."),
-        AssignmentOption("--set-page", "Update a Facebook page using Key=Value fields."),
+        AssignmentOption("--add-page", "Add a Facebook page using Key=Value fields or a JSON object file (@path)."),
+        AssignmentOption("--set-page", "Update a Facebook page using Key=Value fields or a JSON object file (@path)."),
         AssignmentOption("--remove-page", "Remove a Facebook page using `id` as a selector."),
-        AssignmentOption("--add-registration", "Add a LINE registration using Key=Value fields."),
-        AssignmentOption("--set-registration", "Update a LINE registration using Key=Value fields."),
+        AssignmentOption("--add-registration", "Add a LINE registration using Key=Value fields or a JSON object file (@path)."),
+        AssignmentOption("--set-registration", "Update a LINE registration using Key=Value fields or a JSON object file (@path)."),
         AssignmentOption("--remove-registration", "Remove a LINE registration using `generatedId` as a selector."),
     ];
 
@@ -92,15 +92,12 @@ public sealed class DeploymentChannelUpdateCommand : DeploymentChannelCommand<De
 
     protected override string? Validate(ICommandInput input)
     {
-        if (input.WasProvided("--parameters"))
+        foreach (var item in new[] { "site", "page", "registration" })
         {
-            foreach (var item in new[] { "site", "page", "registration" })
+            string[] options = ["--parameters", $"--add-{item}", $"--set-{item}", $"--remove-{item}"];
+            if (options.Count(input.WasProvided) > 1)
             {
-                if (input.WasProvided($"--add-{item}") || input.WasProvided($"--set-{item}") ||
-                    input.WasProvided($"--remove-{item}"))
-                {
-                    return $"Specify only one of --parameters, --add-{item}, --set-{item}, or --remove-{item}.";
-                }
+                return $"Specify only one of --parameters, --add-{item}, --set-{item}, or --remove-{item}.";
             }
         }
 
@@ -114,13 +111,23 @@ public sealed class DeploymentChannelUpdateCommand : DeploymentChannelCommand<De
         return DispatchParametersAsync(request, async (channelDefinition, parameters) =>
         {
             var siteFields = channelDefinition.Parameters.FirstOrDefault(field => field.Name == "sites")?.ItemParameters ?? [];
+            var pageFields = channelDefinition.Parameters.FirstOrDefault(field => field.Name == "pages")?.ItemParameters ?? [];
+            var registrationFields = channelDefinition.Parameters.FirstOrDefault(field => field.Name == "lineRegistrations")?.ItemParameters ?? [];
             return request with
             {
                 Parameters = parameters,
                 AddSite = await DeploymentParameterInput.ReadCollectionAssignmentsAsync(
-                    request.AddSite, siteFields, "--add-site", cancellationToken).ConfigureAwait(false),
+                    request.AddSite, siteFields, "--add-site", cancellationToken, allowObjectFiles: true).ConfigureAwait(false),
                 SetSite = await DeploymentParameterInput.ReadCollectionAssignmentsAsync(
-                    request.SetSite, siteFields, "--set-site", cancellationToken).ConfigureAwait(false),
+                    request.SetSite, siteFields, "--set-site", cancellationToken, allowObjectFiles: true).ConfigureAwait(false),
+                AddPage = await DeploymentParameterInput.ReadCollectionAssignmentsAsync(
+                    request.AddPage, pageFields, "--add-page", cancellationToken, allowObjectFiles: true).ConfigureAwait(false),
+                SetPage = await DeploymentParameterInput.ReadCollectionAssignmentsAsync(
+                    request.SetPage, pageFields, "--set-page", cancellationToken, allowObjectFiles: true).ConfigureAwait(false),
+                AddRegistration = await DeploymentParameterInput.ReadCollectionAssignmentsAsync(
+                    request.AddRegistration, registrationFields, "--add-registration", cancellationToken, allowObjectFiles: true).ConfigureAwait(false),
+                SetRegistration = await DeploymentParameterInput.ReadCollectionAssignmentsAsync(
+                    request.SetRegistration, registrationFields, "--set-registration", cancellationToken, allowObjectFiles: true).ConfigureAwait(false),
             };
         }, cancellationToken);
     }
@@ -331,8 +338,8 @@ public abstract class DeploymentChannelCommand<TRequest, TResult> : AmsRoutedDep
                     $"{command} --remove-{item} {selector}"),
                 new($"Replace {collection} from a JSON array file.",
                     $"{command} --parameters {collection}='@.\\{collection}.json'"),
-                new($"Load {channel} parameters from a JSON object file.",
-                    $"{command} --parameters '@.\\parameters.json'"),
+                new($"Add a {item} from a JSON object file.",
+                    $"{command} --add-{item} '@.\\{item}.json'"),
             ];
         }
 
@@ -342,7 +349,7 @@ public abstract class DeploymentChannelCommand<TRequest, TResult> : AmsRoutedDep
             "facebook" => """--parameters appId=<app-id> appSecret=<app-secret> pages='[{"id":"<page-id>","accessToken":"<page-token>"}]'""",
             "line" => """--parameters lineRegistrations='[{"channelSecret":"<channel-secret>","channelAccessToken":"<channel-token>"}]'""",
             "msteams" => "--parameters enableCalling=true callingWebhook=<calling-webhook-url>",
-            "slack" => "--parameters clientId=<client-id> clientSecret=<client-secret> scopes=chat:write",
+            "slack" => "--parameters clientId=<client-id> clientSecret=<client-secret> signingSecret=<signing-secret> scopes=chat:write",
             "sms" => "--parameters accountSID=<account-sid> authToken=<auth-token> phone=<phone-number>",
             "telegram" => "--parameters accessToken=<access-token> isEnabled=true",
             _ => string.Empty,

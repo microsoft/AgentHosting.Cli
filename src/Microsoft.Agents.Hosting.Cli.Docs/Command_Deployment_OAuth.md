@@ -11,11 +11,11 @@
 | Command | Description |
 | --- | --- |
 | [`msagent deployment oauth create`](#msagent-deployment-oauth-create) | Create (enable) an OAuth connection setting on a deployment. |
+| [`msagent deployment oauth update`](#msagent-deployment-oauth-update) | Update an OAuth connection setting on a deployment. |
 | [`msagent deployment oauth delete`](#msagent-deployment-oauth-delete) | Delete an OAuth connection setting on a deployment. |
+| [`msagent deployment oauth show`](#msagent-deployment-oauth-show) | Get an OAuth connection setting on a deployment. |
 | [`msagent deployment oauth list`](#msagent-deployment-oauth-list) | List the OAuth connection settings on a deployment. |
 | [`msagent deployment oauth list-providers`](#msagent-deployment-oauth-list-providers) | List the live Azure Bot Service OAuth provider catalogue. |
-| [`msagent deployment oauth show`](#msagent-deployment-oauth-show) | Get an OAuth connection setting on a deployment. |
-| [`msagent deployment oauth update`](#msagent-deployment-oauth-update) | Update an OAuth connection setting on a deployment. |
 
 Except for `list-providers`, the commands require a deployment selector (`--deployment-id`, or
 `--deployment-name` with `--agent-id`) and accept `--project`.
@@ -36,7 +36,7 @@ Names are trimmed before validation; letters and digits here are ASCII.
 These are live Azure operations, not local-only configuration edits. Create/update/show save safe
 connection snapshots locally, list replaces the stored OAuth snapshots, and delete removes a local
 snapshot after the cloud delete. A local-save failure does not undo a successful Azure mutation.
-Secrets are masked in output and local records and are never recovered from masks for an update.
+Secrets are masked in output, omitted from saved configuration, and never recovered from masks for an update.
 With `--debug`, deployment results go to stderr as a summary or redacted ARM response instead of the
 normal human/JSON success payload (including when `--json` is supplied).
 
@@ -58,8 +58,8 @@ msagent deployment oauth create --connection <name> --provider-name <provider> [
 
 Provider names are case-insensitive and must be supported by the CLI as well as present in the live
 catalogue; listing a newly advertised provider does not necessarily make it creatable. The live schema
-determines required fields, parameter types, and optional defaults. Unsupported common options are
-rejected when the provider does not declare them.
+determines required fields, parameter types, and optional defaults. `ClientId` and `ClientSecret`
+require provider declaration; `Scopes` does not.
 
 Create rejects blank values and requires all provider-required fields, even when the connection
 already exists.
@@ -81,33 +81,41 @@ msagent deployment oauth list-providers --provider-name Aadv2
 msagent deployment oauth create --deployment-id <id> --connection MyOAuth --provider-name Aadv2 --client-id <app-id> --client-secret <secret> --scopes "User.Read" --parameters TenantId=<tenant-id>
 ```
 
-## Parameter input
+## `msagent deployment oauth update`
 
-Names are case-insensitive; unknown names and duplicates (including between files and inline input)
-are rejected. `--parameters` can be repeated and accepts several assignments per occurrence.
-Quote assignments containing spaces. Use `--client-id`, `--client-secret`, and `--scopes` for common
-OAuth fields, not `--parameters ClientId=...`, `ClientSecret=...`, or `Scopes=...`.
+Updates an OAuth connection setting. Requires `--connection` (`-con`) plus the deployment selectors,
+and accepts `--client-id`, `--client-secret`, `--client-secret-stdin`, `--scopes`, and `--parameters`
+with the same meanings as for `oauth create`.
 
-`--parameters` accepts `@path` to a JSON object file. References inside files remain literal.
-Paths resolve from the current directory, not `--project`; absolute paths are accepted.
+At least one update field is required. There is no `--provider-name` option: the live connection's
+provider determines validation and cannot be changed through this command. The CLI reads the live
+connection, overlays supplied settings, and writes the result. Omitted readable values are preserved;
+omitted secrets are not replayed from masked responses. Resupply secrets when changing them.
+An explicit empty option or `--parameters Key=` clears an optional field, but required fields cannot
+be cleared, and `--client-secret` cannot be empty.
+A parameter file can likewise use an empty string or `null` to clear an optional field.
+Optional defaults are applied on create, not reapplied over an update clear.
+Missing connections fail as not found. Success returns `updated` with the safe connection snapshot.
+Azure Bot Service can answer a read with settings that are a few seconds old. Because an update reads
+the connection and writes it back whole, an update that starts right after another change to the same
+connection can undo that change. Wait a few seconds between changes and check the result with
+`oauth show`.
 
-```powershell
---parameters TenantId=<tenant-id>
---parameters '@.\parameters.json'
+```text
+msagent deployment oauth update --deployment-id <id> --connection MyOAuth --scopes "User.Read Mail.Read"
 ```
-
-### Inline JSON quoting
-
-JSON object keys and string values require double quotes. File contents do not need shell escaping.
-For inline JSON values, follow the [channel quoting guidance](Command_Deployment_Channel.md#inline-json-quoting),
-including escaped double quotes when Windows PowerShell invokes `msagent.cmd`.
-`--parameters` accepts assignments or an object file, not a whole inline JSON object.
 
 ## `msagent deployment oauth delete`
 
 Deletes an OAuth connection setting. Requires `--connection` (`-con`) plus the deployment selectors.
 There is no confirmation prompt. An already absent connection is treated as deleted; the local
 deployment record itself must still exist. The result reports deletion without a connection payload.
+
+## `msagent deployment oauth show`
+
+Gets an OAuth connection setting. Requires `--connection` (`-con`) plus the deployment selectors.
+Returns the safe live `connection` snapshot and refreshes its local copy. Missing connections fail as
+not found rather than falling back to cached data.
 
 ## `msagent deployment oauth list`
 
@@ -137,35 +145,27 @@ unambiguous account context. With no provider filter, results are sorted by prov
 `--provider-name`, a case-insensitive exact match returns that provider's schema, or not found.
 With any of the AMS options, the list comes from AMS instead; see [AMS deployments](#ams-deployments-gated).
 
-## `msagent deployment oauth show`
+## Parameter input
 
-Gets an OAuth connection setting. Requires `--connection` (`-con`) plus the deployment selectors.
-Returns the safe live `connection` snapshot and refreshes its local copy. Missing connections fail as
-not found rather than falling back to cached data.
+Names are case-insensitive; unknown names and duplicates (including between files and inline input)
+are rejected. `--parameters` can be repeated and accepts several assignments per occurrence.
+Quote assignments containing spaces. Use `--client-id`, `--client-secret`, and `--scopes` for common
+OAuth fields, not `--parameters ClientId=...`, `ClientSecret=...`, or `Scopes=...`.
 
-## `msagent deployment oauth update`
+`--parameters` accepts `@path` to a JSON object file. References inside files remain literal.
+Paths resolve from the current directory, not `--project`; absolute paths are accepted.
 
-Updates an OAuth connection setting. Requires `--connection` (`-con`) plus the deployment selectors,
-and accepts `--client-id`, `--client-secret`, `--client-secret-stdin`, `--scopes`, and `--parameters`
-with the same meanings as for `oauth create`.
-
-At least one update field is required. There is no `--provider-name` option: the live connection's
-provider determines validation and cannot be changed through this command. The CLI reads the live
-connection, overlays supplied settings, and writes the result. Omitted readable values are preserved;
-omitted secrets are not replayed from masked responses. Resupply secrets when changing them.
-An explicit empty option or `--parameters Key=` clears an optional field, but required fields cannot
-be cleared, and `--client-secret` cannot be empty.
-A parameter file can likewise use an empty string or `null` to clear an optional field.
-Optional defaults are applied on create, not reapplied over an update clear.
-Missing connections fail as not found. Success returns `updated` with the safe connection snapshot.
-Azure Bot Service can answer a read with settings that are a few seconds old. Because an update reads
-the connection and writes it back whole, an update that starts right after another change to the same
-connection can undo that change. Wait a few seconds between changes and check the result with
-`oauth show`.
-
-```text
-msagent deployment oauth update --deployment-id <id> --connection MyOAuth --scopes "User.Read Mail.Read"
+```powershell
+--parameters TenantId=<tenant-id>
+--parameters '@.\parameters.json'
 ```
+
+### Inline JSON quoting
+
+JSON object keys and string values require double quotes. File contents do not need shell escaping.
+For inline JSON values, follow the [channel quoting guidance](Command_Deployment_Channel.md#inline-json-quoting),
+including escaped double quotes when Windows PowerShell invokes `msagent.cmd`.
+`--parameters` accepts assignments or an object file, not a whole inline JSON object.
 
 ## AMS deployments (Gated)
 

@@ -117,18 +117,19 @@ internal sealed partial class SubgroupHelpAction : SynchronousCommandLineAction
     {
         var lines = defaultHelp.Replace("\r\n", "\n").Split('\n');
 
+        var argumentsHeadingIndex = Array.FindIndex(lines, line => line.Trim() == "Arguments:");
         var commandsHeadingIndex = Array.FindIndex(lines, line => line.Trim() == "Commands:");
         var optionsHeadingIndex = Array.FindIndex(lines, line => line.Trim() == "Options:");
 
-        if (commandsHeadingIndex < 0 && optionsHeadingIndex < 0)
+        if (argumentsHeadingIndex < 0 && commandsHeadingIndex < 0 && optionsHeadingIndex < 0)
         {
             return defaultHelp;
         }
 
-        var headLength = commandsHeadingIndex < 0 ? optionsHeadingIndex
-            : optionsHeadingIndex < 0 ? commandsHeadingIndex
-            : Math.Min(optionsHeadingIndex, commandsHeadingIndex);
+        var headLength = new[] { argumentsHeadingIndex, commandsHeadingIndex, optionsHeadingIndex }
+            .Where(index => index >= 0).Min();
         var head = lines.Take(headLength);
+        var arguments = argumentsHeadingIndex >= 0 ? Section(lines, argumentsHeadingIndex) : [];
         var (commandOptions, globalOptions) = FormatOptions(
             optionsHeadingIndex >= 0 ? Section(lines, optionsHeadingIndex) : [], width);
         var rows = commandsHeadingIndex >= 0 ? Section(lines, commandsHeadingIndex) : [];
@@ -147,13 +148,25 @@ internal sealed partial class SubgroupHelpAction : SynchronousCommandLineAction
             result.Append(hasSubgroups ? AddSubgroupToUsage(line) : line).Append('\n');
         }
 
-        Append(result, "Subgroups:", subgroupRows);
-        Append(result, "Commands:", commandRows);
+        Append(result, "Arguments:", FormatRows(arguments, width));
+        Append(result, "Subgroups:", FormatRows(subgroupRows, width));
+        Append(result, "Commands:", FormatRows(commandRows, width));
         Append(result, "Options:", commandOptions);
         Append(result, "Global Options:", globalOptions);
 
         return result.ToString();
     }
+
+    private static List<string> FormatRows(List<string> rows, int width) =>
+    [
+        .. rows.SelectMany(row =>
+        {
+            var column = DescriptionColumn(row);
+            return column == 0
+                ? [row.TrimEnd()]
+                : Wrap(row[..column], row[column..].TrimEnd(), column, width);
+        }),
+    ];
 
     private (List<string> CommandOptions, List<string> GlobalOptions) FormatOptions(List<string> rows, int width)
     {
@@ -221,6 +234,7 @@ internal sealed partial class SubgroupHelpAction : SynchronousCommandLineAction
                     output.WriteLine(line);
                 }
             }
+            output.WriteLine();
         }
     }
 
@@ -276,7 +290,7 @@ internal sealed partial class SubgroupHelpAction : SynchronousCommandLineAction
     {
         var indent = row.Length - row.TrimStart().Length;
 
-        if (indent >= row.Length || row[indent] != '-')
+        if (indent >= row.Length)
         {
             return 0;
         }

@@ -11,12 +11,12 @@
 | Command | Description |
 | --- | --- |
 | [`msagent deployment channel create`](#msagent-deployment-channel-create) | Create (enable) a channel on a deployment. |
-| [`msagent deployment channel delete`](#msagent-deployment-channel-delete) | Delete a channel from a deployment. |
-| [`msagent deployment channel list`](#msagent-deployment-channel-list) | List the supported channels on a deployment. |
-| [`msagent deployment channel show`](#msagent-deployment-channel-show) | Get a channel on a deployment. |
-| [`msagent deployment channel token`](#msagent-deployment-channel-token) | **Gated.** Get a Direct Line token from AMS to start a conversation with the agent. |
-| [`msagent deployment channel types`](#msagent-deployment-channel-types) | **Gated.** List the channel types AMS can create and edit on a deployment. |
 | [`msagent deployment channel update`](#msagent-deployment-channel-update) | Update a channel on a deployment. |
+| [`msagent deployment channel delete`](#msagent-deployment-channel-delete) | Delete a channel from a deployment. |
+| [`msagent deployment channel show`](#msagent-deployment-channel-show) | Get a channel on a deployment. |
+| [`msagent deployment channel list`](#msagent-deployment-channel-list) | List the supported channels on a deployment. |
+| [`msagent deployment channel types`](#msagent-deployment-channel-types) | **Gated.** List the channel types AMS can create and edit on a deployment. |
+| [`msagent deployment channel token`](#msagent-deployment-channel-token) | **Gated.** Get a Direct Line token from AMS to start a conversation with the agent. |
 | [`msagent deployment channel webhook`](#msagent-deployment-channel-webhook) | **Gated.** Get from AMS the callback URL and verify token for Facebook's webhook settings. |
 
 The commands require a deployment selector (`--deployment-id`, or `--deployment-name` with
@@ -47,49 +47,6 @@ Returns an existing channel unchanged. Otherwise, creates the channel using the 
 and creation defaults. For Slack, supply explicit `scopes` to request narrower permissions than
 the broad ARM default.
 
-## Parameter input
-
-Names are case-insensitive; unknown names, duplicates
-(including between files and inline input), and readonly settings are rejected. Use `true`/`false`
-for booleans, whole numbers for integers, and JSON arrays for `sites`, `pages`, and `lineRegistrations`.
-
-`--parameters` and writable array fiels `sites`, `pages`, `lineRegistrations` accept `@path` to a JSON file. References inside files remain literal. Paths resolve from the current directory, not `--project`; absolute paths are accepted.
-
-```powershell
---parameters '@.\parameters.json'
---parameters sites='@.\sites.json'
-```
-
-### Inline JSON quoting
-
-JSON object keys and string values require double quotes. Quote the whole inline JSON value
-for your shell. With Windows PowerShell invoking `msagent.cmd`, escape the embedded double quotes
-as `\"` to prevent quote loss:
-
-```powershell
---parameters sites='[{\"siteName\":\"Primary\",\"isEnabled\":true}]'
-```
-
-JSON files avoid shell escaping and are recommended. File contents use ordinary, unescaped JSON.
-On shells that preserve embedded quotes, omit the backslashes. PowerShell's supported
-`$PSNativeCommandArgumentPassing = 'Standard'` mode also preserves quotes, but affects all native
-commands in the session.
-
-## `msagent deployment channel delete`
-
-Deletes a whole channel. Requires `--channel` plus the deployment selectors.
-Direct Line and Web Chat cannot be deleted by the CLI; use `update` to remove their sites.
-
-## `msagent deployment channel list`
-
-Lists the supported channels on a deployment. Accepts only the deployment selectors and `--project`.
-Unsupported channels appear only in redacted `--debug` diagnostics, not saved configuration.
-
-## `msagent deployment channel show`
-
-Gets a channel's current configuration. Requires `--channel` plus the deployment selectors.
-Secrets are masked in output and omitted from saved configuration.
-
 ## `msagent deployment channel update`
 
 Updates an existing channel. Requires `--channel` plus the deployment selectors, and either
@@ -105,6 +62,15 @@ Pass unprefixed `Key=Value` fields, for example `--set-site siteName=<existing-s
 Add requires new-item fields; set requires an existing selector and at least one change;
 remove accepts only the selector. Use `show` to read Azure-generated LINE registration ids.
 Site names are case-insensitive; page and registration ids are case-sensitive.
+
+Add/set operations accept `@path` to one JSON item object. Files and inline fields can be mixed; duplicate names are rejected. Existing required-field, selector, readonly, and clearing rules still apply.
+Combined file/inline input must include the existing selector and at least one change for set. Remove operations remain selector-only.
+
+```powershell
+--add-site '@.\site.json'
+--set-page '@.\page-update.json'
+--set-registration '@.\registration-update.json'
+```
 
 Omitted fields preserve existing values; creation defaults are not reapplied. Complete arrays
 replace membership, so include every item to keep. Retained items may omit unchanged fields;
@@ -131,6 +97,51 @@ If no usable URL is available, configure Slack through Azure portal. Authorizati
 and does not guarantee persistence; use `show` to check settings. The CLI does not verify completion.
 See the [Slack setup guide](https://learn.microsoft.com/en-us/azure/bot-service/bot-service-channel-connect-slack?view=azure-bot-service-4.0)
 for app configuration and redirect URLs.
+
+## `msagent deployment channel delete`
+
+Deletes a whole channel. Requires `--channel` plus the deployment selectors.
+Direct Line and Web Chat cannot be deleted by the CLI; use `update` to remove their sites.
+
+## `msagent deployment channel show`
+
+Gets a channel's current configuration. Requires `--channel` plus the deployment selectors.
+Secrets are masked in output and omitted from saved configuration.
+
+## `msagent deployment channel list`
+
+Lists the supported channels on a deployment. Accepts only the deployment selectors and `--project`.
+Unsupported channels appear only in redacted `--debug` diagnostics, not saved configuration.
+
+## Parameter input
+
+Names are case-insensitive; unknown names, duplicates
+(including between files and inline input), and readonly settings are rejected. Use `true`/`false`
+for booleans, whole numbers for integers, and JSON arrays for `sites`, `pages`, and `lineRegistrations`.
+
+`--parameters @path` loads a JSON object; `sites=@path`, `pages=@path`, and `lineRegistrations=@path`
+load JSON arrays. References inside files remain literal. Paths resolve from the current directory,
+not `--project`; absolute paths are accepted.
+
+```powershell
+--parameters '@.\parameters.json'
+--parameters sites='@.\sites.json'
+```
+
+### Inline JSON quoting
+
+JSON object keys and string values require double quotes. Quote the whole inline JSON value
+for your shell. With Windows PowerShell invoking `msagent.cmd`, escape the embedded double quotes
+as `\"` to prevent quote loss:
+
+```powershell
+--parameters sites='[{\"siteName\":\"Primary\",\"isEnabled\":true}]'
+```
+
+JSON files avoid shell escaping and are recommended. File contents use ordinary, unescaped JSON.
+On shells that preserve embedded quotes, omit the backslashes. PowerShell's supported
+`$PSNativeCommandArgumentPassing = 'Standard'` mode also preserves quotes, but affects all native
+commands in the session.
 
 ## AMS deployments (Gated)
 

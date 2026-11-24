@@ -102,12 +102,14 @@ public sealed class AgentHostCli
             return root.Parse(arguments);
         }
 
-        var parameters = command.Options.First(option => option.Name == "--parameters");
-        var files = unexpanded.GetResult(parameters)?.Tokens
+        var files = command.Options
+            .Where(option => option.Name is "--parameters" or "--add-site" or "--set-site" or
+                "--add-page" or "--set-page" or "--add-registration" or "--set-registration")
+            .SelectMany(option => unexpanded.GetResult(option)?.Tokens ?? [])
             .Where(token => token.Value.StartsWith('@'))
             .Select(token => token.Value[1..])
             .ToHashSet(StringComparer.Ordinal);
-        if (files is null || files.Count == 0)
+        if (files.Count == 0)
         {
             return root.Parse(arguments);
         }
@@ -456,7 +458,6 @@ public sealed class AgentHostCli
             return;
         }
 
-        output.WriteLine();
         output.WriteLine("Examples:");
         foreach (var example in examples)
         {
