@@ -140,7 +140,7 @@ Wait for Connected and an enabled composer; process start is insufficient.
 #### Playground installation and options
 
 The command uses `agentsplayground` on `PATH`, backed by the global
-`@microsoft/m365agentsplayground` package, version `0.2.29` or newer.
+`@microsoft/m365agentsplayground` package, version `0.2.30` or newer.
 A working installed tool does not trigger an npm probe. For a missing or old
 tool, interactive use offers
 `npm install -g @microsoft/m365agentsplayground@latest`. This runs lifecycle scripts

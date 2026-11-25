@@ -635,7 +635,7 @@ public sealed class PlaygroundLauncherTests
                     node,
                     [fixture, pidFile],
                     node,
-                    PlaygroundVersion.Parse("0.2.29")),
+                    PlaygroundVersion.Parse("0.2.30")),
                 Target("https://example.test/agent"),
                 ClientId,
                 () => { },
@@ -770,7 +770,7 @@ public sealed class PlaygroundLauncherTests
             executable,
             [argumentPrefix],
             executable,
-            PlaygroundVersion.Parse("0.2.29"));
+            PlaygroundVersion.Parse("0.2.30"));
     }
 
     private static LiveTestDestination Target(string endpoint) =>

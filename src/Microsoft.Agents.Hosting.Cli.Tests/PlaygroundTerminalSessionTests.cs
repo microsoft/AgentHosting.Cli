@@ -531,7 +531,7 @@ public sealed class PlaygroundTerminalSessionTests
         Path.Combine(Path.GetTempPath(), "node & runtime", "node"),
         [Path.Combine(Path.GetTempPath(), "playground & test", "cli.js")],
         Path.Combine(Path.GetTempPath(), "agentsplayground"),
-        PlaygroundVersion.Parse("0.2.29"));
+        PlaygroundVersion.Parse("0.2.30"));
 
     private static string? FindNode()
     {
