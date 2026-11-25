@@ -175,7 +175,9 @@ public sealed class ManagedAgentDeployService
         var pushed = await PushAsync(projectDirectory, workspaceDirectory, deployment.DeploymentType, request.Overwrite || targetAgentCreated, request.Overwrite, target, schemaName, DescribeTarget(action, targetAgentCreated), cancellationToken).ConfigureAwait(false);
         _resolver.ObserveDeployment(new()
         {
-            ResourceAction = targetAgentCreated ? DeploymentResourceAction.Created : DeploymentResourceAction.Updated,
+            ResourceAction = targetAgentCreated ? DeploymentResourceAction.Created
+                : pushed.HasChanges ? DeploymentResourceAction.Updated
+                : DeploymentResourceAction.UpdatedNoChange,
         });
         var deployedOn = _clock.UtcNow;
 
@@ -254,13 +256,14 @@ public sealed class ManagedAgentDeployService
     private static IEnumerable<string> ExceptSupersededWorkflows(IReadOnlyList<string> warnings, bool passReported) =>
         passReported ? warnings.Where(warning => !DeployWarningText.IsRestatedByWorkflowCounts(warning)) : warnings;
 
-    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings, IReadOnlyList<string> CollectionWarnings)> PushAsync(string projectDirectory, string workspaceDirectory, string stage, bool overwrite, bool overwriteSharedEnvironmentVariables, CopilotEnvironmentContext target, string schemaName, string targetDescription, CancellationToken cancellationToken)
+    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings, IReadOnlyList<string> CollectionWarnings, bool HasChanges)> PushAsync(string projectDirectory, string workspaceDirectory, string stage, bool overwrite, bool overwriteSharedEnvironmentVariables, CopilotEnvironmentContext target, string schemaName, string targetDescription, CancellationToken cancellationToken)
     {
         var environmentId = target.EnvironmentId;
         var collectionWarnings = new List<string>();
         var componentCount = 0;
         var uploadedFileCount = 0;
         var auxiliaryCount = 0;
+        var hasChanges = false;
         var collections = _resolver.ResolveComponentCollectionDirectories(projectDirectory, workspaceDirectory);
 
         collectionWarnings.AddRange(collections.Missing.Select(declared => $"The component collection declared as '{declared}' was not pushed: it holds no project inside this one."));
@@ -279,15 +282,16 @@ public sealed class ManagedAgentDeployService
             componentCount += pushedCollection.ComponentCount;
             uploadedFileCount += pushedCollection.UploadedFileCount;
             auxiliaryCount += pushedCollection.AuxiliaryCount;
+            hasChanges |= pushedCollection.HasChanges;
             collectionWarnings.AddRange(pushedCollection.Warnings);
         }
 
         var pushed = await PushWorkspaceAsync(workspaceDirectory, stage, overwrite, overwriteSharedEnvironmentVariables, target, schemaName, targetDescription, cancellationToken).ConfigureAwait(false);
 
-        return (componentCount + pushed.ComponentCount, uploadedFileCount + pushed.UploadedFileCount, auxiliaryCount + pushed.AuxiliaryCount, pushed.Warnings, collectionWarnings);
+        return (componentCount + pushed.ComponentCount, uploadedFileCount + pushed.UploadedFileCount, auxiliaryCount + pushed.AuxiliaryCount, pushed.Warnings, collectionWarnings, hasChanges || pushed.HasChanges);
     }
 
-    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings)> PushWorkspaceAsync(string workspaceDirectory, string stage, bool overwrite, bool overwriteSharedEnvironmentVariables, CopilotEnvironmentContext target, string schemaName, string targetDescription, CancellationToken cancellationToken)
+    private async Task<(int ComponentCount, int UploadedFileCount, int AuxiliaryCount, IReadOnlyList<string> Warnings, bool HasChanges)> PushWorkspaceAsync(string workspaceDirectory, string stage, bool overwrite, bool overwriteSharedEnvironmentVariables, CopilotEnvironmentContext target, string schemaName, string targetDescription, CancellationToken cancellationToken)
     {
         try
         {
@@ -296,7 +300,7 @@ public sealed class ManagedAgentDeployService
                 target,
                 cancellationToken).ConfigureAwait(false);
 
-            return (pushed.ComponentCount, pushed.UploadedFileCount, pushed.AuxiliaryChangeCount, pushed.Warnings);
+            return (pushed.ComponentCount, pushed.UploadedFileCount, pushed.AuxiliaryChangeCount, pushed.Warnings, pushed.Status == "pushed");
         }
         catch (CopilotStudioException failure) when (
             failure.ErrorKind is CopilotErrorKinds.PushConflictsRequirePull or CopilotErrorKinds.SharedEnvironmentVariablesRequireOverwrite or CopilotErrorKinds.WorkspaceFilesUnreadable or CopilotErrorKinds.WorkflowToolIdEmpty or CopilotErrorKinds.MissingConnectionReference)

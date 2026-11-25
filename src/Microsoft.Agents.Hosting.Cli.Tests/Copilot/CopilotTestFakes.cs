@@ -262,6 +262,8 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
 
     public IReadOnlyList<string> UploadedFileNamesReturns { get; init; } = [];
 
+    public Dictionary<string, IReadOnlyList<CopilotChange>> PushedChangesByDirectory { get; } = [];
+
     public Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, bool overwriteSharedEnvironmentVariables, CancellationToken cancellationToken)
     {
         PushCalls++;
@@ -280,7 +282,8 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
             throw PushThrowsSequence.Dequeue();
         }
 
-        return Task.FromResult(new CopilotPushOutcome { Changes = LocalChanges, ComponentCount = ComponentCountReturns ?? LocalChanges.Count, AuxiliaryChangeCount = AuxiliaryChangeCountReturns, UploadedFileNames = UploadedFileNamesReturns, Warnings = PushWarnings });
+        var changes = PushedChangesByDirectory.TryGetValue(workspace.WorkspacePath, out var selected) ? selected : LocalChanges;
+        return Task.FromResult(new CopilotPushOutcome { Changes = changes, ComponentCount = ComponentCountReturns ?? changes.Count, AuxiliaryChangeCount = AuxiliaryChangeCountReturns, UploadedFileNames = UploadedFileNamesReturns, Warnings = PushWarnings });
     }
 }
 

@@ -954,7 +954,7 @@ public sealed class AgentTypeTelemetryTests
                 Assert.Equal(attachTarget || !fail, dimensions.TryGetProperty("resourceAction", out var action));
                 if (attachTarget || !fail)
                 {
-                    Assert.Equal(attachTarget ? "created" : "updated", action.GetString());
+                    Assert.Equal(attachTarget ? "created" : "updated-nochange", action.GetString());
                 }
                 Assert.False(dimensions.TryGetProperty("workflowState", out _));
             }

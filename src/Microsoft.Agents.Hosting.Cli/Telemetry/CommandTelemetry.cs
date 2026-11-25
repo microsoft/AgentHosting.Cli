@@ -488,7 +488,9 @@ internal sealed class CommandTelemetryData
             }
             if (deployment.ResourceAction is { } resourceAction)
             {
-                dimensions["resourceAction"] = resourceAction.ToString().ToLowerInvariant();
+                dimensions["resourceAction"] = resourceAction == DeploymentResourceAction.UpdatedNoChange
+                    ? "updated-nochange"
+                    : resourceAction.ToString().ToLowerInvariant();
             }
             if (deployment.PublishStatus is { } publishStatus)
             {

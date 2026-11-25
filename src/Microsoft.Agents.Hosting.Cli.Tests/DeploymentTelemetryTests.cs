@@ -25,6 +25,8 @@ public sealed class DeploymentTelemetryTests
     [InlineData("cancelled", "unknown")]
     [InlineData("push-failed", "not-reached")]
     [InlineData("not-requested", "not-requested")]
+    [InlineData("no-change", "succeeded")]
+    [InlineData("no-change-failed", "failed")]
     public async Task AgentPublicationDistinguishesConfirmedPushFromPublication(string mode, string expectedStatus)
     {
         using var project = new TemporaryWorkspace();
@@ -41,6 +43,11 @@ public sealed class DeploymentTelemetryTests
             AgentIdReturns = "a260baca-7b6e-4e15-8d55-06dfb1ee2b36",
             PushThrows = mode == "push-failed" ? new IOException("Synthetic push failure.") : null,
         };
+        bool noChange = mode is "no-change" or "no-change-failed";
+        if (!noChange)
+        {
+            workspaces.LocalChanges.Add(CopilotTestFixtures.Change("con_greeting"));
+        }
         if (mode == "blocked")
         {
             workspaces.PushWarnings.Add("A component did not land.");
@@ -48,20 +55,13 @@ public sealed class DeploymentTelemetryTests
         var catalog = new FakeCopilotCatalogPort { ResolveReturns = workspaces.AgentIdReturns };
         catalog.PublishedOnSequence.Enqueue(null);
         catalog.PublishedOnSequence.Enqueue(ManagedAgentFixtures.Now);
-        if (mode is "failed" or "cancelled")
+        if (mode is "failed" or "cancelled" or "no-change-failed")
         {
-            catalog.PublishThrowsSequence.Enqueue(mode == "failed"
-                ? new IOException("Synthetic publish failure.")
-                : new OperationCanceledException("Synthetic publication cancellation."));
+            catalog.PublishThrowsSequence.Enqueue(mode == "cancelled"
+                ? new OperationCanceledException("Synthetic publication cancellation.")
+                : new IOException("Synthetic publish failure."));
         }
-        var environments = ManagedAgentFixtures.Resolver();
-        var locator = CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem());
-        var service = new ManagedAgentDeployService(resolver, store, store, environments, locator,
-            new CopilotWorkspaceService(workspaces, locator), ManagedAgentFixtures.Identities(),
-            new RecordingAttachPort(), catalog, new CopilotCatalogService(catalog, environments, locator,
-                new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
-            ManagedAgentFixtures.Principals(), ManagedAgentFixtures.ActivationPass(),
-            ManagedAgentFixtures.AgentNames(), new FixedClock(ManagedAgentFixtures.Now));
+        var service = AgentService(store, resolver, workspaces, catalog);
         bool publish = mode != "not-requested";
         session.RecordAttempt(CommandTelemetryPath.FromMetadata(["agent", "deploy"]), targetsAgent: true);
         var request = new ManagedAgentDeployRequest { Project = project.Root, DeploymentName = "dev", Publish = publish };
@@ -69,17 +69,17 @@ public sealed class DeploymentTelemetryTests
         {
             await Assert.ThrowsAsync<OperationCanceledException>(() => service.DeployAsync(request, CancellationToken.None));
         }
-        else if (mode is "blocked" or "failed" or "push-failed")
+        else if (mode is "blocked" or "failed" or "push-failed" or "no-change-failed")
         {
             await Assert.ThrowsAsync<ManagedAgentException>(() => service.DeployAsync(request, CancellationToken.None));
         }
         else
         {
             var result = await service.DeployAsync(request, CancellationToken.None);
-            Assert.Equal(mode == "success", result.Published);
+            Assert.Equal(mode is "success" or "no-change", result.Published);
         }
         session.RecordOutcome(mode == "cancelled" ? CommandTelemetryOutcome.Cancellation
-            : mode is "blocked" or "failed" or "push-failed" ? CommandTelemetryOutcome.Failure
+            : mode is "blocked" or "failed" or "push-failed" or "no-change-failed" ? CommandTelemetryOutcome.Failure
             : CommandTelemetryOutcome.Success);
         await session.DisposeAsync();
 
@@ -90,10 +90,70 @@ public sealed class DeploymentTelemetryTests
         Assert.Equal(mode != "push-failed", dimensions.TryGetProperty("resourceAction", out var action));
         if (mode != "push-failed")
         {
-            Assert.Equal("updated", action.GetString());
+            Assert.Equal(noChange ? "updated-nochange" : "updated", action.GetString());
         }
         Assert.False(dimensions.TryGetProperty("workflowState", out _));
-        Assert.Equal(mode is "success" or "failed" or "cancelled" ? 1 : 0, catalog.PublishCalls);
+        Assert.Equal(mode is "success" or "failed" or "cancelled" or "no-change" or "no-change-failed" ? 1 : 0, catalog.PublishCalls);
+    }
+
+    [Theory]
+    [InlineData("none", "updated-nochange")]
+    [InlineData("settings", "updated")]
+    [InlineData("files", "updated")]
+    [InlineData("auxiliary", "updated")]
+    [InlineData("collection", "updated")]
+    [InlineData("created", "created")]
+    public async Task AgentResourceActionUsesPushStatusAcrossAllWorkspaces(string mode, string expectedAction)
+    {
+        using var project = new TemporaryWorkspace();
+        var store = ManagedAgentFixtures.Store();
+        store.Add(project.Root, ManagedAgentFixtures.Agent());
+        store.Add(project.Root, ManagedAgentFixtures.Deployment());
+        var transport = new CapturingTransport();
+        await using var session = Session(transport);
+        var accessor = new CommandTelemetrySessionAccessor();
+        using var scope = accessor.Push(session);
+        var resolver = new ManagedAgentResolver(store, store, new AgentConfigLocator(), new CommandTelemetryAgentObserver(accessor));
+        var workspaces = new FakeCopilotWorkspacePort
+        {
+            AgentIdReturns = "a260baca-7b6e-4e15-8d55-06dfb1ee2b36",
+            WorkspaceExists = mode != "created",
+            ComponentCountReturns = 0,
+            UploadedFileNamesReturns = mode == "files" ? ["SKILL.md"] : [],
+            AuxiliaryChangeCountReturns = mode == "auxiliary" ? 1 : 0,
+        };
+        if (mode == "settings")
+        {
+            workspaces.LocalChanges.Add(CopilotTestFixtures.Change("settings", componentType: "update"));
+        }
+        if (mode == "collection")
+        {
+            project.AddFile(AgentConfigLocator.ReferencesFileName, "componentCollections:\n  - schemaName:\n    directory: Shared Tools/\n");
+            project.AddFile(Path.Combine("Shared Tools", AgentConfigLocator.CollectionProjectFileName), "schemaName: con_sharedtools\n");
+            workspaces.PushedChangesByDirectory[Path.Combine(project.Root, "Shared Tools")] =
+                [CopilotTestFixtures.Change("con_shared_topic")];
+        }
+        var catalog = new FakeCopilotCatalogPort { ResolveReturns = mode == "created" ? null : workspaces.AgentIdReturns };
+        var attach = new RecordingAttachPort
+        {
+            AgentId = workspaces.AgentIdReturns,
+            OnAttach = () => workspaces.WorkspaceExists = true,
+        };
+        var service = AgentService(store, resolver, workspaces, catalog, attach);
+        session.RecordAttempt(CommandTelemetryPath.FromMetadata(["agent", "deploy"]), targetsAgent: true);
+
+        var result = await service.DeployAsync(
+            new ManagedAgentDeployRequest { Project = project.Root, DeploymentName = "dev" }, default);
+        session.RecordOutcome(CommandTelemetryOutcome.Success);
+        await session.DisposeAsync();
+
+        Assert.Equal(expectedAction, Outcome(transport).GetProperty("resourceAction").GetString());
+        Assert.Equal(mode == "created", result.TargetAgentCreated);
+        Assert.Equal(mode == "created" ? "reattach" : "push", result.Action);
+        Assert.Equal(mode == "collection" ? 2 : 1, workspaces.PushCalls);
+        Assert.Equal(0, result.PushedComponentCount);
+        Assert.Equal(mode == "files" ? 1 : 0, result.UploadedFileCount);
+        Assert.Equal(mode == "auxiliary" ? 1 : 0, result.AuxiliaryChangeCount);
     }
 
     [Theory]
@@ -392,6 +452,19 @@ public sealed class DeploymentTelemetryTests
             disabled.RecordOutcome(CommandTelemetryOutcome.Success);
             Assert.False(observer.IsObservationEnabled);
         }
+    }
+
+    private static ManagedAgentDeployService AgentService(JsonAgentConfigStore store, ManagedAgentResolver resolver,
+        FakeCopilotWorkspacePort workspaces, FakeCopilotCatalogPort catalog, RecordingAttachPort? attach = null)
+    {
+        var environments = ManagedAgentFixtures.Resolver();
+        var locator = CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem());
+        return new ManagedAgentDeployService(resolver, store, store, environments, locator,
+            new CopilotWorkspaceService(workspaces, locator), ManagedAgentFixtures.Identities(),
+            attach ?? new RecordingAttachPort(), catalog, new CopilotCatalogService(catalog, environments, locator,
+                new FixedClock(ManagedAgentFixtures.Now), (_, _) => Task.CompletedTask),
+            ManagedAgentFixtures.Principals(), ManagedAgentFixtures.ActivationPass(),
+            ManagedAgentFixtures.AgentNames(), new FixedClock(ManagedAgentFixtures.Now));
     }
 
     private static JsonElement Outcome(CapturingTransport transport)

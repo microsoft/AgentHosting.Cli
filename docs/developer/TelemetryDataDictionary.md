@@ -95,7 +95,7 @@ not permit collection of raw argument lists or unrelated argument values.
 | `principalObjectId` | string, GUID | Attributed attempts and outcomes, including playground | Validated tenant-local Entra user object ID |
 | `publishRequested` | boolean | Known MCS deploy request; outcome only | Whether `--publish` was requested; `false` is emitted, not omitted |
 | `publishStatus` | string | Known MCS deploy publication progress; outcome only | `not-requested`, `not-reached`, `succeeded`, `blocked`, `failed`, `unknown` |
-| `resourceAction` | string | Confirmed MCS `agent deploy` mutation; outcome only | `created`, `updated`, `replaced`; survives later failure |
+| `resourceAction` | string | Confirmed MCS `agent deploy` resource action; outcome only | `created`, `updated`, `updated-nochange`, `replaced`; survives later failure |
 | `telemetryLocation` | string | Always | Duplicate of direct location: `eu` / `global` |
 | `tenantId` | string, GUID | When known | Validated authenticated/fallback issuer tenant; not necessarily the resource's owning tenant |
 | `workflowState` | string | Observed standalone MCS workflow deploy state; outcome only | `draft`, `published`, `unknown`; never parent-agent component workflows |
@@ -228,11 +228,18 @@ create additional events.
 
 | Field | MCS agent: capture point | Standalone MCS workflow: capture point | Retention / omission |
 |---|---|---|---|
-| `resourceAction` | `created` immediately after attach returns `AgentCreated=true`, before registry persistence or push. Otherwise `updated` only after push returns successfully, including a successfully pushed adopted agent. | Immediately after successful upsert: `created` if `Created`; otherwise `replaced` if `Replaced`; otherwise `updated`. | Retained through later failures. Failed existing-agent push or workflow upsert does not establish an action. Adoption/reattachment alone is not `updated`. MCS agent deploy does not report `replaced`. |
+| `resourceAction` | `created` immediately after attach returns `AgentCreated=true`, before registry persistence or push. Otherwise, after push returns successfully, `updated` if the main workspace or any pushed component collection reports changes; `updated-nochange` if all report `no-local-changes`. Includes adopted agents. | Immediately after successful upsert: `created` if `Created`; otherwise `replaced` if `Replaced`; otherwise `updated`. | Retained through later failures. Failed existing-agent push or workflow upsert does not establish an action. Adoption/reattachment alone does not establish an action. MCS agent deploy does not report `replaced`; standalone workflow deploy does not report `updated-nochange`. |
 | `deploymentType` | After normal agent/deployment selection validates the MCS agent, before environment resolution/authentication. | After normal workflow/deployment/environment resolution returns, before principal binding and upload preflight. | Canonical slot stage `dev`, `test`, or `prod`. Omitted before that capture point. Not inferred from deployment name or environment ID. |
 | `publishRequested` | On entry to the MCS deploy service, from the request's `Publish` flag. | On entry to the workflow deploy service, before workflow-specific validation. | Native boolean `true` or `false`. Retained if later work fails, provided the final MCS type is known. Describes explicit `--publish`, not automatic activation. |
 | `publishStatus` | Initialized on service entry. Changes to `blocked` when incomplete-push blockers explicitly withhold publication; `unknown` just before publication; `succeeded` on confirmed return; `failed` on caught non-cancellation failure. | Initialized on service entry. After upsert, changes to `unknown` if activation will run (`ActivationRequested` or `--publish`). After activation returns, classified using confirmed activation, typed failure/refusal, and reported unresolved prerequisites, in that order. | Tracks this invocation's operation. Early failures retain initial status; cancellation during an attempted operation retains `unknown`. See exact values below. |
 | `workflowState` | Never set, including for component workflows. | Captured immediately after successful upsert using the existing portal projection. Updated to `published` when activation of the addressed workflow is confirmed, before registry persistence. | `draft`, `published`, or explicit `unknown`; no observed state means omission. Upsert state survives cancelled activation. Confirmed activation survives a later non-cancellation workflow-state cache write failure. |
+
+For existing agents, `updated-nochange` describes only the content push:
+publication and workflow activation can still run. Settings/icon changes,
+uploaded files, and auxiliary workflow changes count as changes even when
+the pushed component count is zero. New agent creation remains `created`
+even when its subsequent push has no local changes. Older CLI versions
+reported `updated` for successful no-change pushes as well.
 
 ### Exact publishStatus conditions
 
@@ -254,7 +261,9 @@ known, not extra event types. A dash means the field is omitted.
 |---|---|---|---|---|
 | New MCS agent created, then push fails; no `--publish` | `created` | `false` | `not-requested` | - |
 | Existing MCS agent push fails with `--publish` | - | `true` | `not-reached` | - |
-| Existing MCS agent push succeeds, publication fails | `updated` | `true` | `failed` | - |
+| Existing MCS agent push sends changes, publication fails | `updated` | `true` | `failed` | - |
+| Existing MCS agent push has no changes, no `--publish` | `updated-nochange` | `false` | `not-requested` | - |
+| Existing MCS agent push has no changes, publication succeeds | `updated-nochange` | `true` | `succeeded` | - |
 | New standalone workflow uploaded as draft, no activation requested | `created` | `false` | `not-requested` | `draft` |
 | Standalone workflow updated and automatically activated without `--publish` | `updated` | `false` | `succeeded` | `published` |
 | Workflow replacement succeeds; requested activation is cancelled, last upsert state was draft | `replaced` | `true` | `unknown` | `draft` |

@@ -9,7 +9,7 @@ public sealed record DeploymentTelemetryObservation
     /// <summary>Whether the caller explicitly requested publication.</summary>
     public bool? PublishRequested { get; init; }
 
-    /// <summary>The confirmed resource mutation, independent of later failures.</summary>
+    /// <summary>The confirmed resource action, independent of later failures.</summary>
     public DeploymentResourceAction? ResourceAction { get; init; }
 
     /// <summary>The publication operation's latest known outcome.</summary>
@@ -19,7 +19,7 @@ public sealed record DeploymentTelemetryObservation
     public DeploymentWorkflowState? WorkflowState { get; init; }
 }
 
-/// <summary>A resource mutation confirmed during deployment.</summary>
+/// <summary>A resource action confirmed during deployment.</summary>
 public enum DeploymentResourceAction
 {
     /// <summary>A new resource was created.</summary>
@@ -28,6 +28,8 @@ public enum DeploymentResourceAction
     Updated,
     /// <summary>An existing workflow was replaced.</summary>
     Replaced,
+    /// <summary>An existing agent's workspaces were pushed without local changes.</summary>
+    UpdatedNoChange,
 }
 
 /// <summary>What is known about this deployment's publication operation.</summary>
