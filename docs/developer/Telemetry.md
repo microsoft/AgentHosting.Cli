@@ -139,9 +139,10 @@ keys or endpoint URLs. Bump the routing policy version when changing the
 recognized-geography-to-collector mapping.
 
 Only recognized `geoLongName` responses populate the cache. Timeout, token or
-HTTP failure, missing/unknown geography and fallback Global decisions do not.
+HTTP failure, missing/unknown geography and fallback decisions do not.
 Expired entries are never used as stale fallbacks; misses retain the existing
-live lookup. Cached and fresh decisions use the same any-EU aggregation.
+live lookup. Cached and fresh decisions use the same conservative aggregation:
+Global requires every observed environment to be confirmed non-EU.
 Captured-profile/context validation, public-cloud/ingestion-key gates and
 collection policy remain ahead of cache use; cached data cannot enable sending
 for an otherwise suppressed invocation.
@@ -158,22 +159,22 @@ share the existing lookup/flush deadlines; cancellation prevents a late lookup
 result from being persisted. Deleting only this cache file forces fresh lookups
 without changing telemetry consent or account/token state.
 
-**TEMPORARY (November 23, 2026):** `TelemetryDestinationResolver.DefaultLocation`
-is Global, overriding the normal conservative EU default for this telemetry
-work. Missing, empty, or unrecognized geography, unavailable geography clients,
-lookup failures/deadlines, and unknown, conflicting, or excess target context
-therefore use the global/US collector.
+Production defaults to the EU collector. Missing, empty, or unrecognized
+geography, unavailable geography clients, and lookup failures/deadlines retain
+this conservative fallback. Incomplete, conflicting, or excess environment
+observations also default to EU without a metadata lookup. Missing, ambiguous,
+or conflicting captured-profile context retains its separate no-send boundary.
 
-At most four distinct environment/tenant pairs are retained. A successfully
-resolved known EU geography still selects EU for the whole batch; otherwise
-known non-EU and unknown geography select Global. A batch never splits or changes
-route after sending begins. Environment-independent and tenant-wide enumeration
-commands use the temporary Global default without metadata authentication.
+At most four distinct environment/tenant pairs are retained. Global is selected
+only when every observed target has a recognized non-EU geography or valid
+confirmed non-EU cache entry. Any EU or unknown target selects EU for the whole
+batch. A batch never splits or changes route after sending begins.
+Environment-independent and tenant-wide enumeration commands use EU without
+metadata authentication.
 Nonproduction continues to use global/US without geography lookup.
 Opt-out, control commands, and policy-suppressed invocations do no metadata work.
 Sovereign selections retain their no-send boundary, and ingestion keys and
-prod/nonprod application names remain unchanged. Restore the default constant to
-Europe and remove its temporary comment when reverting this override.
+prod/nonprod application names remain unchanged.
 
 ## Invocation and Dataverse correlation
 

@@ -18,9 +18,9 @@ public sealed class TelemetryGeographyRoutingTests
     [Theory]
     [InlineData("unitedstates", "Global")]
     [InlineData("europe", "Europe")]
-    [InlineData("atlantis", "Global")]
-    [InlineData(null, "Global")]
-    public async Task ProductionRoutingUsesKnownGeographyAndDefaultsToGlobal(
+    [InlineData("atlantis", "Europe")]
+    [InlineData(null, "Europe")]
+    public async Task ProductionRoutingUsesKnownGeographyAndDefaultsToEurope(
         string? geography,
         string expected)
     {
@@ -43,7 +43,7 @@ public sealed class TelemetryGeographyRoutingTests
     }
 
     [Fact]
-    public async Task GeographyFailureFallsBackToGlobal()
+    public async Task GeographyFailureFallsBackToEurope()
     {
         var resolver = Resolver(new ThrowingGeographyClient());
 
@@ -53,11 +53,11 @@ public sealed class TelemetryGeographyRoutingTests
                     ResolvedTarget("environment-one"),
                     CancellationToken.None));
 
-        Assert.Equal(TelemetryLocation.Global, destination.Location);
+        Assert.Equal(TelemetryLocation.Europe, destination.Location);
     }
 
     [Fact]
-    public async Task CompleteTargetWithoutGeographyClientDefaultsToGlobal()
+    public async Task CompleteTargetWithoutGeographyClientDefaultsToEurope()
     {
         var resolver = new TelemetryDestinationResolver(
             PowerPlatformApiTargetConfig.Public,
@@ -70,21 +70,23 @@ public sealed class TelemetryGeographyRoutingTests
                     ResolvedTarget("environment-one"),
                     CancellationToken.None));
 
-        Assert.Equal(TelemetryLocation.Global, destination.Location);
+        Assert.Equal(TelemetryLocation.Europe, destination.Location);
         Assert.Equal(
-            OneDSCollectorEndpoints.RegionalPublicCloud.US,
+            OneDSCollectorEndpoints.RegionalPublicCloud.EU,
             destination.Endpoint);
     }
 
     [Theory]
     [InlineData("unitedstates", "canada", "Global")]
     [InlineData("unitedstates", "europe", "Europe")]
-    [InlineData("unitedstates", "atlantis", "Global")]
+    [InlineData("unitedstates", "atlantis", "Europe")]
+    [InlineData("atlantis", "unitedstates", "Europe")]
+    [InlineData("unitedstates", null, "Europe")]
     [InlineData("atlantis", "europe", "Europe")]
     [InlineData("europe", "atlantis", "Europe")]
-    public async Task MultipleTargetsRouteToEuropeWhenAnyTargetIsKnownEu(
-        string first,
-        string second,
+    public async Task MultipleTargetsRouteToEuropeUnlessAllTargetsAreKnownNonEu(
+        string? first,
+        string? second,
         string expected)
     {
         var geography = new PerTargetGeographyClient(
@@ -387,7 +389,7 @@ public sealed class TelemetryGeographyRoutingTests
 
         Assert.False(capture.LastTarget!.IsComplete);
         Assert.Empty(geography.Targets);
-        Assert.Equal(TelemetryLocation.Global, capture.LastDestination?.Location);
+        Assert.Equal(TelemetryLocation.Europe, capture.LastDestination?.Location);
     }
 
     [Fact]
@@ -418,7 +420,7 @@ public sealed class TelemetryGeographyRoutingTests
 
         Assert.False(capture.LastTarget!.IsComplete);
         Assert.Empty(geography.Targets);
-        Assert.Equal(TelemetryLocation.Global, capture.LastDestination?.Location);
+        Assert.Equal(TelemetryLocation.Europe, capture.LastDestination?.Location);
     }
 
     [Fact]
@@ -447,7 +449,7 @@ public sealed class TelemetryGeographyRoutingTests
             await session.DisposeAsync();
             Assert.Equal(1, transport.CallCount);
             Assert.Equal(
-                OneDSCollectorEndpoints.RegionalPublicCloud.US,
+                OneDSCollectorEndpoints.RegionalPublicCloud.EU,
                 transport.Destination?.Endpoint);
         }
         finally
@@ -458,7 +460,7 @@ public sealed class TelemetryGeographyRoutingTests
         await geography.Returned.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.Equal(1, transport.CallCount);
         Assert.Equal(
-            OneDSCollectorEndpoints.RegionalPublicCloud.US,
+            OneDSCollectorEndpoints.RegionalPublicCloud.EU,
             transport.Destination?.Endpoint);
     }
 

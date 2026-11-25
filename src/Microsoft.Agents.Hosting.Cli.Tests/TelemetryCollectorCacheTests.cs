@@ -49,7 +49,7 @@ public sealed class TelemetryCollectorCacheTests
         var result = await fixture.ResolveAsync(
             new GeographyClient((_, _) => Task.FromResult<string?>(null)), diagnostics: new(trace));
 
-        Assert.Equal(TelemetryLocation.Global, result!.Location);
+        Assert.Equal(TelemetryLocation.Europe, result!.Location);
         Assert.Contains("stage=cache-expired", trace.ToString());
         Assert.Contains("geography=missing", trace.ToString());
         Assert.Null(await fixture.Cache().ReadAsync(PowerPlatformApiTargetConfig.Public, Environment, default));
@@ -81,8 +81,8 @@ public sealed class TelemetryCollectorCacheTests
         var client = new GeographyClient((_, _) => geography == "throw"
             ? throw new IOException("private-failure")
             : Task.FromResult(geography));
-        await fixture.ResolveAsync(client);
-        await fixture.ResolveAsync(client);
+        Assert.Equal(TelemetryLocation.Europe, (await fixture.ResolveAsync(client))!.Location);
+        Assert.Equal(TelemetryLocation.Europe, (await fixture.ResolveAsync(client))!.Location);
 
         Assert.Equal(2, client.Calls);
         Assert.False(File.Exists(fixture.CachePath));
@@ -105,6 +105,28 @@ public sealed class TelemetryCollectorCacheTests
         Assert.Equal(TelemetryLocation.Europe, result!.Location);
         Assert.Equal(1, client.Calls);
         Assert.Equal(TelemetryLocation.Europe, await fixture.Cache().ReadAsync(PowerPlatformApiTargetConfig.Public, second, default));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("unrecognized")]
+    public async Task CachedGlobalAndUnknownTargetUseEuropeWithoutCachingFallback(string? geography)
+    {
+        using var fixture = new Fixture();
+        await fixture.Cache().WriteAsync(PowerPlatformApiTargetConfig.Public, Environment, TelemetryLocation.Global, default);
+        var second = new ResolvedEnvironmentTarget("environment-two", Environment.TenantId);
+        var client = new GeographyClient((target, _) =>
+        {
+            Assert.Equal(second, target);
+            return Task.FromResult(geography);
+        });
+
+        var result = await fixture.ResolveAsync(client, target: TelemetryEnvironmentTarget.Resolved([Environment, second]));
+
+        Assert.Equal(TelemetryLocation.Europe, result!.Location);
+        Assert.Equal(1, client.Calls);
+        Assert.Null(await fixture.Cache().ReadAsync(PowerPlatformApiTargetConfig.Public, second, default));
+        Assert.Equal(TelemetryLocation.Global, await fixture.Cache().ReadAsync(PowerPlatformApiTargetConfig.Public, Environment, default));
     }
 
     [Theory]
@@ -133,7 +155,7 @@ public sealed class TelemetryCollectorCacheTests
         if (gate is "sovereign" or "invalid-key")
             Assert.Null(result);
         else
-            Assert.Equal(TelemetryLocation.Global, result!.Location);
+            Assert.Equal(gate == "nonproduction" ? TelemetryLocation.Global : TelemetryLocation.Europe, result!.Location);
     }
 
     [Theory]

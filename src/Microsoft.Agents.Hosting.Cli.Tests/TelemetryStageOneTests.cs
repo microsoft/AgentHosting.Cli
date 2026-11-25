@@ -60,7 +60,7 @@ public sealed class TelemetryStageOneTests
             TelemetryIngestionConfiguration.ProductionKey,
             productionDestination.ApiKey);
         Assert.Equal(
-            OneDSCollectorEndpoints.RegionalPublicCloud.US,
+            OneDSCollectorEndpoints.RegionalPublicCloud.EU,
             productionDestination.Endpoint);
         Assert.Equal(
             TelemetryIngestionConfiguration.NonProductionKey,
@@ -83,9 +83,9 @@ public sealed class TelemetryStageOneTests
     }
 
     [Theory]
-    [InlineData(null, "Global")]
-    [InlineData("", "Global")]
-    [InlineData(" \t ", "Global")]
+    [InlineData(null, "Europe")]
+    [InlineData("", "Europe")]
+    [InlineData(" \t ", "Europe")]
     [InlineData("Europe", "Europe")]
     [InlineData("United Kingdom FirstRelease", "Europe")]
     [InlineData("United States", "Global")]
@@ -95,8 +95,8 @@ public sealed class TelemetryStageOneTests
     [InlineData("New Zealand FirstRelease", "Global")]
     [InlineData("South America", "Global")]
     [InlineData("United Arab Emirates", "Global")]
-    [InlineData("unrecognized-geography", "Global")]
-    public void GeographyPolicyUsesKnownGeographyAndDefaultsToGlobal(
+    [InlineData("unrecognized-geography", "Europe")]
+    public void GeographyPolicyUsesKnownGeographyAndDefaultsToEurope(
         string? geography,
         string expected)
     {
@@ -289,7 +289,7 @@ public sealed class TelemetryStageOneTests
     }
 
     [Fact]
-    public async Task OrdinaryLeafRunsThroughHostFactoryAndPackageTransportToGlobal()
+    public async Task OrdinaryLeafRunsThroughHostFactoryAndPackageTransportToEurope()
     {
         await using var server = new LoopbackServer();
         var resolver = new LoopbackDestinationResolver(
@@ -326,7 +326,7 @@ public sealed class TelemetryStageOneTests
         Assert.Empty(stderr.ToString());
         Assert.Equal(1, resolver.ResolveCalls);
         Assert.Equal(TelemetryEnvironmentTarget.Unknown, resolver.LastTarget);
-        Assert.Equal(TelemetryLocation.Global, resolver.LastDestination?.Location);
+        Assert.Equal(TelemetryLocation.Europe, resolver.LastDestination?.Location);
         Assert.Equal(2, events.Length);
         Assert.All(events, item =>
         {
@@ -334,7 +334,7 @@ public sealed class TelemetryStageOneTests
             Assert.Equal("event", document.RootElement.GetProperty("name").GetString());
             JsonElement data = document.RootElement.GetProperty("data");
             Assert.Equal("AgentHostingCLI", data.GetProperty("clientType").GetString());
-            Assert.Equal("global", data.GetProperty("telemetryLocation").GetString());
+            Assert.Equal("eu", data.GetProperty("telemetryLocation").GetString());
             Assert.Equal(
                 "AgentHostingCLI.env.list",
                 data.GetProperty("operation_Name").GetString());
@@ -360,7 +360,7 @@ public sealed class TelemetryStageOneTests
             Assert.IsType<TelemetryDestination>(
                 await resolver.ResolveAsync(TelemetryEnvironmentTarget.Unknown, default));
 
-        Assert.Equal(TelemetryLocation.Global, destination.Location);
+        Assert.Equal(TelemetryLocation.Europe, destination.Location);
     }
 
     [Fact]

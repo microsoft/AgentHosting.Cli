@@ -15,8 +15,8 @@ public sealed class TelemetryGeographyDiagnosticsTests
     [Theory]
     [InlineData(" Europe EUAP ", "europe", "Europe")]
     [InlineData("unitedstates", "unitedstates", "Global")]
-    [InlineData("private-response-data\r\nfake-log", "unrecognized", "Global")]
-    [InlineData(null, "missing", "Global")]
+    [InlineData("private-response-data\r\nfake-log", "unrecognized", "Europe")]
+    [InlineData(null, "missing", "Europe")]
     public async Task TraceReportsOnlyRecognizedGeography(string? geography, string label, string location)
     {
         var output = new StringWriter();
@@ -61,7 +61,7 @@ public sealed class TelemetryGeographyDiagnosticsTests
         if (reason is "cloud-no-send" or "ingestion-key-unavailable")
             Assert.Null(destination);
         else
-            Assert.Equal(TelemetryLocation.Global, destination!.Location);
+            Assert.Equal(reason == "nonproduction" ? TelemetryLocation.Global : TelemetryLocation.Europe, destination!.Location);
     }
 
     [Fact]
@@ -72,9 +72,9 @@ public sealed class TelemetryGeographyDiagnosticsTests
 
         var destination = await resolver.ResolveAsync(TelemetryEnvironmentTarget.Resolved([Target]), default);
 
-        Assert.Equal(TelemetryLocation.Global, destination!.Location);
+        Assert.Equal(TelemetryLocation.Europe, destination!.Location);
         Assert.Contains("lookup-failed", output.ToString());
-        Assert.Contains("collector=Global", output.ToString());
+        Assert.Contains("collector=EU", output.ToString());
         Assert.DoesNotContain("private-failure-data", output.ToString());
     }
 
@@ -99,7 +99,7 @@ public sealed class TelemetryGeographyDiagnosticsTests
         try
         {
             var destination = await resolver.ResolveAsync(TelemetryEnvironmentTarget.Resolved([Target]), default);
-            Assert.Equal(TelemetryLocation.Global, destination!.Location);
+            Assert.Equal(TelemetryLocation.Europe, destination!.Location);
             Assert.Contains("stage=lookup-deadline pendingStage=" + pendingStage, output.ToString());
             string completed = output.ToString();
             release.TrySetResult();
@@ -129,7 +129,7 @@ public sealed class TelemetryGeographyDiagnosticsTests
         var destination = await Resolver(client, diagnostics).ResolveAsync(
             TelemetryEnvironmentTarget.Resolved([Target]), default);
 
-        Assert.Equal(lastStage == "GeographyRead" ? TelemetryLocation.Europe : TelemetryLocation.Global, destination!.Location);
+        Assert.Equal(TelemetryLocation.Europe, destination!.Location);
         string trace = output.ToString();
         Assert.Contains("TokenAcquisitionStarted", trace);
         Assert.Contains("TokenAvailable", trace);
@@ -158,7 +158,7 @@ public sealed class TelemetryGeographyDiagnosticsTests
         var destination = await Resolver(client, diagnostics).ResolveAsync(
             TelemetryEnvironmentTarget.Resolved([Target]), default);
 
-        Assert.Equal(TelemetryLocation.Global, destination!.Location);
+        Assert.Equal(TelemetryLocation.Europe, destination!.Location);
         Assert.Contains(stage, output.ToString());
         Assert.DoesNotContain("RequestStarted", output.ToString());
         Assert.Empty(handler.Requests);

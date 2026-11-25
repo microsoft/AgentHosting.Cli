@@ -79,8 +79,7 @@ internal sealed class UnclassifiedTelemetryDestinationResolver : ITelemetryDesti
 }
 
 internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolver{
-    // TEMPORARY: default/fallback routing uses Global; known EU geography stays EU.
-    private const TelemetryLocation DefaultLocation = TelemetryLocation.Global;
+    private const TelemetryLocation DefaultLocation = TelemetryLocation.Europe;
 
     private static readonly HashSet<string> EuGeographies = new(StringComparer.Ordinal)
     {
@@ -339,13 +338,11 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
                         .ConfigureAwait(false);
                     budgetToken.ThrowIfCancellationRequested();
                     _diagnostics?.Write("geography-result", "geography=" + DiagnosticGeography(geography));
-                    if (TryResolveKnownLocation(geography, out var resolved))
-                    {
-                        if (_collectorCache is not null)
-                            await _collectorCache.WriteAsync(_target, environment, resolved, budgetToken).ConfigureAwait(false);
-                        if (resolved == TelemetryLocation.Europe)
-                            return TelemetryLocation.Europe;
-                    }
+                    bool known = TryResolveKnownLocation(geography, out var resolved);
+                    if (known && _collectorCache is not null)
+                        await _collectorCache.WriteAsync(_target, environment, resolved, budgetToken).ConfigureAwait(false);
+                    if (resolved == TelemetryLocation.Europe)
+                        return TelemetryLocation.Europe;
                 }
 
                 return TelemetryLocation.Global;
