@@ -86,7 +86,6 @@ public sealed class EvaluationRunService
             TestSetId = resolved.TestSetId,
             Name = resolved.DisplayName,
             ConnectionId = request.Connection,
-            RunOnPublishedBot = request.Published,
         };
 
         var started = (await _evaluations.StartRunAsync(target.Environment, target.McsAgentId, start, cancellationToken).ConfigureAwait(false)).Backfill(start);

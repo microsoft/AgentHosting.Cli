@@ -9,6 +9,33 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 public sealed class LiveTestCommandHostTests
 {
     [Fact]
+    public async Task RepeatedFileOptionsBindWithoutChangingTheQuery()
+    {
+        var handler = new TestHandler();
+        var result = await Invoke(new TestFeatureFlags(FeatureName.LiveTestFeatures), handler,
+            "test", "ask", "--query", "compare", "--file", "first.xlsx", "--file", "second.xlsx", "--json");
+        Assert.Equal(0, result.Exit);
+        Assert.Equal(["first.xlsx", "second.xlsx"], handler.Request!.Files);
+        Assert.Equal("compare", handler.Request.Query);
+        var help = await Invoke(new TestFeatureFlags(FeatureName.LiveTestFeatures), handler, "test", "ask", "--help");
+        Assert.Contains("--file", help.Output, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("@not-a-response-file.txt")]
+    [InlineData("--help")]
+    [InlineData("a=b:c")]
+    public async Task InlineQueryPreservesCommandLikeText(string query)
+    {
+        var handler = new TestHandler();
+        var result = await Invoke(new TestFeatureFlags(FeatureName.LiveTestFeatures), handler,
+            "test", "ask", $"--query={query}", "--json");
+
+        Assert.Equal(0, result.Exit);
+        Assert.Equal(query, handler.Request!.Query);
+    }
+
+    [Fact]
     public async Task FeatureGateHidesCommandAndEnabledHostTransfersSoleOutputOwnership()
     {
         var handler = new TestHandler();
@@ -23,6 +50,20 @@ public sealed class LiveTestCommandHostTests
         Assert.Equal("literal  text", handler.Request!.Query);
         Assert.Equal("""{"streaming":true}""", enabled.Output);
         Assert.Empty(enabled.Error);
+    }
+
+    [Fact]
+    public async Task StartConversationFlagBindsWithoutInventingAQuery()
+    {
+        var handler = new TestHandler();
+        var result = await Invoke(new TestFeatureFlags(FeatureName.LiveTestFeatures), handler,
+            "test", "ask", "--start-conversation", "--json", "--non-interactive");
+
+        Assert.Equal(0, result.Exit);
+        Assert.True(handler.Request!.StartConversation);
+        Assert.Null(handler.Request.Query);
+        Assert.Null(handler.Request.ConversationId);
+        Assert.True(handler.Request.NonInteractive);
     }
 
     [Fact]

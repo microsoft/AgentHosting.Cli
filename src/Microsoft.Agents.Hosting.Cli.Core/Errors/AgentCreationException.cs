@@ -14,9 +14,6 @@ public sealed class AgentCreationException : AgentHostingException
     {
     }
 
-    public static AgentCreationException EndpointNotUsable(string detail, string remediation) =>
-        new(ErrorCodes.ManagedAgent.CreationEndpointNotUsable, detail, ExitCodes.Failure, "endpoint-untrusted", remediation);
-
     public static AgentCreationException RedirectRejected(int status, string configuredHost) =>
         new(
             ErrorCodes.ManagedAgent.CreationRedirectRejected,

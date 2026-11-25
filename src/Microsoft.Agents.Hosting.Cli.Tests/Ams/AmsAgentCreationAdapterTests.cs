@@ -15,15 +15,6 @@ public sealed class AmsAgentCreationAdapterTests
     private const string Audience = "https://api.powerplatform.com/";
     private const string Tenant = "11111111-1111-1111-1111-111111111111";
 
-    public static TheoryData<string, string> BoundedRouteIdentifiers => new()
-    {
-        { Tenant, "env/blue" },
-        { "tenant /?#%", "environment /?#%" },
-        { "租戶", "環境🚀" },
-        { " tenant\t", "\nenvironment " },
-        { new string('t', 256), new string('e', 256) },
-    };
-
     private const string SuccessBody =
         """
         {
@@ -80,10 +71,14 @@ public sealed class AmsAgentCreationAdapterTests
     {
         var handler = new CapturingPackageHandler(_ =>
             FakeHttpResponse.Json(HttpStatusCode.Created, SuccessBody));
-        var request = Request() with
+        var request = Request();
+        request = request with
         {
-            Endpoint = new Uri("https://env-1.api.powerplatform.com/"),
-            RouteMode = AmsAgentCreationRouteMode.PowerPlatformApiFrontDoor,
+            ServiceTarget = request.ServiceTarget with
+            {
+                Endpoint = new Uri("https://env-1.api.powerplatform.com/"),
+                RouteForm = AmsRouteForm.EnvironmentHost,
+            },
         };
 
         await Adapter(handler, CreateTokenProvider()).CreateAsync(request, default);
@@ -91,67 +86,6 @@ public sealed class AmsAgentCreationAdapterTests
         Assert.Equal(
             "https://env-1.api.powerplatform.com/agenthosting/agents?api-version=1",
             Assert.Single(handler.Requests).Uri.AbsoluteUri);
-    }
-
-    // Deterministic FUZZ-1 boundary corpus. Continuous mutation-based fuzzing of this route
-    // construction is tracked in https://microsoft.ghe.com/bic/agents-managed-hosting/issues/109.
-    [Theory]
-    [MemberData(nameof(BoundedRouteIdentifiers))]
-    public void BuildCollectionUrl_DirectRoute_PreservesBoundedIdentifiersAsEscapedSegments(
-        string tenantId,
-        string environmentId)
-    {
-        var url = AmsAgentCreationAdapter.BuildCollectionUrl(Request() with
-        {
-            TenantId = tenantId,
-            EnvironmentId = environmentId,
-        });
-
-        var uri = new Uri(url);
-        Assert.Equal("https", uri.Scheme);
-        Assert.Equal("amsdp-alias.example", uri.Host);
-        Assert.Equal(7, uri.Segments.Length);
-        Assert.Equal("agenthosting/", uri.Segments[1]);
-        Assert.Equal("tenants/", uri.Segments[2]);
-        Assert.Equal(tenantId, Uri.UnescapeDataString(uri.Segments[3].TrimEnd('/')));
-        Assert.Equal("environments/", uri.Segments[4]);
-        Assert.Equal(environmentId, Uri.UnescapeDataString(uri.Segments[5].TrimEnd('/')));
-        Assert.Equal("agents", uri.Segments[6]);
-        Assert.Equal("?api-version=1", uri.Query);
-    }
-
-    [Theory]
-    [MemberData(nameof(BoundedRouteIdentifiers))]
-    public void BuildCollectionUrl_FrontDoor_DoesNotProjectTenantOrEnvironmentIdentifiers(
-        string tenantId,
-        string environmentId)
-    {
-        var url = AmsAgentCreationAdapter.BuildCollectionUrl(Request() with
-        {
-            Endpoint = new Uri("https://env-1.api.powerplatform.com/"),
-            RouteMode = AmsAgentCreationRouteMode.PowerPlatformApiFrontDoor,
-            TenantId = tenantId,
-            EnvironmentId = environmentId,
-        });
-
-        Assert.Equal(
-            "https://env-1.api.powerplatform.com/agenthosting/agents?api-version=1",
-            url);
-    }
-
-    [Fact]
-    public void BuildCollectionUrl_UnknownRouteMode_IsRejected()
-    {
-        var exception = Assert.Throws<ArgumentOutOfRangeException>(() =>
-            AmsAgentCreationAdapter.BuildCollectionUrl(Request() with
-            {
-                RouteMode = (AmsAgentCreationRouteMode)int.MaxValue,
-            }));
-
-        // ParamName must name an actual parameter of BuildCollectionUrl; the offending route mode is
-        // carried by ActualValue and the message.
-        Assert.Equal("request", exception.ParamName);
-        Assert.Equal((AmsAgentCreationRouteMode)int.MaxValue, exception.ActualValue);
     }
 
     [Fact]
@@ -300,11 +234,14 @@ public sealed class AmsAgentCreationAdapterTests
 
     private static AmsAgentCreationTransportRequest Request(string idempotencyKey = "retry-key-1") => new()
     {
-        Endpoint = new Uri(Endpoint),
-        RouteMode = AmsAgentCreationRouteMode.DirectDataPlane,
-        Audience = Audience,
-        TenantId = Tenant,
-        EnvironmentId = "env/blue",
+        ServiceTarget = new AmsServiceTarget
+        {
+            Endpoint = new Uri(Endpoint),
+            Audience = Audience,
+            RouteForm = AmsRouteForm.Direct,
+            TenantId = Tenant,
+            EnvironmentId = "env/blue",
+        },
         IdempotencyKey = idempotencyKey,
         DisplayName = "My Agent",
         Description = "description",

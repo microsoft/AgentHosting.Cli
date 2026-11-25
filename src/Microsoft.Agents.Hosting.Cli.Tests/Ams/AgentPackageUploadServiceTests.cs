@@ -43,9 +43,9 @@ public sealed class AgentPackageUploadServiceTests
                 .ToLowerInvariant();
             Assert.Equal(1, agents.Calls);
             Assert.Equal(1, packages.Calls);
-            Assert.Equal(DataPlaneEndpoint, agents.LastRequest!.Endpoint.AbsoluteUri);
+            Assert.Equal(DataPlaneEndpoint, agents.LastRequest!.ServiceTarget.Endpoint.AbsoluteUri);
             Assert.Equal(packagePath, Assert.IsType<FileStream>(packages.LastRequest!.PackageStream).Name);
-            Assert.Equal(DataPlaneEndpoint, packages.LastRequest!.Endpoint.AbsoluteUri);
+            Assert.Equal(DataPlaneEndpoint, packages.LastRequest!.ServiceTarget.Endpoint.AbsoluteUri);
             Assert.Equal(expectedDigest, packages.SentDigest);
             Assert.Equal(5, packages.LastRequest.PackageLength);
             Assert.Equal("package-uploaded", result.Status);
@@ -58,6 +58,42 @@ public sealed class AgentPackageUploadServiceTests
         {
             File.Delete(packagePath);
         }
+    }
+
+    [Fact]
+    public async Task Upload_WithDataPlaneOverride_ReadsTheAgentAndPublishesThroughTheOverride()
+    {
+        var packagePath = await WritePackageAsync([7]);
+        try
+        {
+            var agents = new RecordingAgentReadTransport(BoundAgent());
+            var packages = new RecordingAmsTransport(SucceededUpload);
+
+            await Service(agents, packages, new AmsEndpointProfile { DataPlaneEndpoint = "https://amsdp-alias.example/" }).UploadAsync(Request(packagePath), default);
+
+            var expected = new AmsServiceTarget { Endpoint = new Uri("https://amsdp-alias.example/"), Audience = EnvironmentFixtures.Audience, RouteForm = AmsRouteForm.Direct, TenantId = EnvironmentFixtures.ContosoTenant, EnvironmentId = Environment };
+            AmsTargetFixtures.AssertTarget(expected, agents.LastRequest!.ServiceTarget);
+            AmsTargetFixtures.AssertTarget(expected, packages.LastRequest!.ServiceTarget);
+        }
+        finally
+        {
+            File.Delete(packagePath);
+        }
+    }
+
+    [Fact]
+    public async Task Upload_WithUnusableOverride_FailsBeforeOpeningThePackage()
+    {
+        var agents = new RecordingAgentReadTransport(BoundAgent());
+        var packages = new RecordingAmsTransport(SucceededUpload);
+        var missingPackage = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.zip");
+
+        var exception = await Assert.ThrowsAsync<AgentDeployException>(() =>
+            Service(agents, packages, new AmsEndpointProfile { DataPlaneEndpoint = "http://amsdp-alias.example/" }).UploadAsync(Request(missingPackage), default));
+
+        Assert.Equal(ErrorCodes.Deployment.AgentDeployEndpointNotUsable, exception.ErrorCode);
+        Assert.Equal(0, agents.Calls);
+        Assert.Equal(0, packages.Calls);
     }
 
     [Fact]
@@ -233,6 +269,40 @@ public sealed class AgentPackageUploadServiceTests
         }
     }
 
+    [Fact]
+    public async Task Upload_ByAgentName_ResolvesTheAgentWithOneListAndReportsTheCommit()
+    {
+        var packagePath = await WritePackageAsync([9]);
+        try
+        {
+            var agents = new RecordingAgentReadTransport(BoundAgent());
+            var packages = new RecordingAmsTransport((request, digest) => SucceededUpload(request, digest) with { CommitId = "0123456789abcdef0123456789abcdef01234567" });
+
+            var result = await Service(agents, packages).UploadAsync(new AgentPackageUploadRequest { AgentName = " CONTOSO agent ", PackagePath = packagePath }, default);
+
+            Assert.Equal((1, 1, 1), (agents.Lists, agents.Calls, packages.Calls));
+            Assert.Equal(Agent, packages.LastRequest!.AgentId);
+            Assert.Equal("0123456789abcdef0123456789abcdef01234567", result.CommitId);
+            Assert.Equal("  commit: 0123456789abcdef0123456789abcdef01234567", result.ToTextLines()[^1]);
+        }
+        finally
+        {
+            File.Delete(packagePath);
+        }
+    }
+
+    [Fact]
+    public async Task Upload_WithoutAnAgent_IsRefusedBeforeAnyCall()
+    {
+        var agents = new RecordingAgentReadTransport(BoundAgent());
+        var packages = new RecordingAmsTransport(SucceededUpload);
+
+        var exception = await Assert.ThrowsAsync<UsageException>(() => Service(agents, packages).UploadAsync(new AgentPackageUploadRequest { PackagePath = "package.zip" }, default));
+
+        Assert.Equal("--agent-id or --agent-name is required for `msagent agent package upload`.", exception.Message);
+        Assert.Equal((0, 0, 0), (agents.Lists, agents.Calls, packages.Calls));
+    }
+
     private static AgentPackageUploadRequest Request(string packagePath) => new()
     {
         AgentId = Agent,
@@ -268,7 +338,8 @@ public sealed class AgentPackageUploadServiceTests
 
     private static AgentPackageUploadService Service(
         IAmsAgentReadTransport agents,
-        IAmsPackagePublicationTransport packages)
+        IAmsPackagePublicationTransport packages,
+        AmsEndpointProfile? endpoints = null)
     {
         var profiles = InMemoryAuthProfileStore.SignedIn(
             "op@contoso.com",
@@ -279,10 +350,7 @@ public sealed class AgentPackageUploadServiceTests
             profiles);
         environments.SelectAsync(Environment, default).GetAwaiter().GetResult();
 
-        return new AgentPackageUploadService(
-            environments,
-            agents,
-            packages);
+        return new AgentPackageUploadService(new AmsAddressResolver(AmsTargetFixtures.Targets(endpoints), environments, agents, new PendingAmsDeploymentTransport()), agents, packages);
     }
 
     private static async Task<string> WritePackageAsync(byte[] bytes)
@@ -296,6 +364,7 @@ public sealed class AgentPackageUploadServiceTests
     {
         public AmsAgentReadTransportRequest? LastRequest { get; private set; }
         public int Calls { get; private set; }
+        public int Lists { get; private set; }
 
         public Task<AmsAgentReadResult> GetAsync(
             AmsAgentReadTransportRequest request,
@@ -304,6 +373,12 @@ public sealed class AgentPackageUploadServiceTests
             Calls++;
             LastRequest = request;
             return Task.FromResult(result);
+        }
+
+        public Task<IReadOnlyList<AmsAgentReadResult>> ListAsync(AmsServiceTarget serviceTarget, CancellationToken cancellationToken)
+        {
+            Lists++;
+            return Task.FromResult<IReadOnlyList<AmsAgentReadResult>>([result with { DisplayName = "Contoso Agent" }]);
         }
     }
 }

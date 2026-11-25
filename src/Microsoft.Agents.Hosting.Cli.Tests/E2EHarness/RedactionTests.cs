@@ -69,6 +69,14 @@ public sealed class RedactionTests
     public void AClientSecretIsStillMasked() =>
         Assert.DoesNotContain("s3cr3t", Redaction.Apply("""{"client_secret":"s3cr3t"}"""), StringComparison.Ordinal);
 
+    [Theory]
+    [InlineData("Authorization: Bearer abc.def.ghi", "Authorization: *****")]
+    [InlineData("""{"client_secret":"s3cr3t"}""", """{"client_secret":"*****"}""")]
+    [InlineData("""{"principalName":"Sample Person"}""", """{"principalName":"*****"}""")]
+    [InlineData("sample@contoso.com", "*****")]
+    public void CredentialAndPersonalDataMasksAreConsistent(string input, string expected) =>
+        Assert.Equal(expected, Redaction.Apply(input));
+
     [Fact]
     public void TheAgentsOwnNameIsNotMasked() =>
         Assert.Contains("Contoso Agent", Redaction.Apply("""{"displayName":"Contoso Agent"}"""), StringComparison.Ordinal);
@@ -176,6 +184,36 @@ public sealed class ReportRedactionTests : IDisposable
             Assert.Contains(ObjectId, written, StringComparison.Ordinal);
             Assert.Contains("MA-75", written, StringComparison.Ordinal);
         }
+    }
+
+    [Theory]
+    [InlineData("""{"token":"ew0KICAiYWxnIjoi.abc","conversationId":"C1"}""", "ew0KICAiYWxnIjoi.abc")]
+    [InlineData("""{"callbackUrl":"https://example.test/hook","verifyToken":"verify-secret-1"}""", "verify-secret-1")]
+    [InlineData("Token: plain-secret-2", "plain-secret-2")]
+    public void AnyValueUnderAKeyEndingInTokenIsMasked(string value, string secret)
+    {
+        Assert.DoesNotContain(secret, Redaction.Apply(value), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AKeyThatOnlyStartsWithTokenKeepsItsValue()
+    {
+        Assert.Contains("https://login.example.test/token", Redaction.Apply("""{"tokenEndpoint":"https://login.example.test/token"}"""), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ATranscriptMentionsOnlyWhatItWroteUnmasked()
+    {
+        var transcript = new Transcript(_runDirectory);
+        transcript.BeginScenario(Path.Combine(_runDirectory, "scenarios", "AC-42.log"));
+
+        transcript.Record("msagent.exe", new MsagentResult(["deployment", "channel", "create", "--parameters", "accessToken=fake-access-1"], 0, """{"token":"ew0KICAiYWxnIjoi.abc","conversationId":"C1"}""", string.Empty, TimeSpan.Zero));
+        transcript.Note("the conversation started");
+
+        Assert.False(transcript.Mentions("ew0KICAiYWxnIjoi.abc"));
+        Assert.False(transcript.Mentions("fake-access-1"));
+        Assert.True(transcript.Mentions("the conversation started"));
+        Assert.True(transcript.Mentions("C1"));
     }
 }
 

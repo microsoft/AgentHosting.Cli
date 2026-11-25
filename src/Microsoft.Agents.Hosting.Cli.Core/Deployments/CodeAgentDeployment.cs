@@ -25,12 +25,6 @@ public sealed record DeploymentBotResource
     public required string DisplayName { get; init; }
     public string? Description { get; init; }
     public string? Endpoint { get; init; }
-
-    /// <summary>
-    /// The redacted ARM response retained in memory for debug output. It is never persisted.
-    /// </summary>
-    [JsonIgnore]
-    public JsonElement? RawArmResponse { get; init; }
 }
 
 /// <summary>
@@ -46,12 +40,6 @@ public sealed record DeploymentOAuthConnection
     public IReadOnlyList<string> Scopes { get; init; } = [];
     public IReadOnlyDictionary<string, string?> Parameters { get; init; } =
         new Dictionary<string, string?>(StringComparer.Ordinal);
-
-    /// <summary>
-    /// The redacted ARM response retained in memory for debug output. It is never persisted.
-    /// </summary>
-    [JsonIgnore]
-    public JsonElement? RawArmResponse { get; init; }
 }
 
 /// <summary>A persisted, secret-free projection of a channel configured on a deployment.</summary>
@@ -61,12 +49,6 @@ public sealed record DeploymentChannelRecord
     public required string ChannelName { get; init; }
     public IReadOnlyDictionary<string, JsonElement> Parameters { get; init; } =
         new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-
-    /// <summary>
-    /// The redacted ARM response retained in memory for debug output. It is never persisted.
-    /// </summary>
-    [JsonIgnore]
-    public JsonElement? RawArmResponse { get; init; }
 
     /// <summary>The Azure-returned authorization link, retained only for the current write result.</summary>
     [JsonIgnore]

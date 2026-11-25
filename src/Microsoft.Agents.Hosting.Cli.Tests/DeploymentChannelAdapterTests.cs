@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -78,10 +79,9 @@ public sealed class DeploymentChannelAdapterTests
         Assert.Equal("+12025550123", channel.Parameters["phone"].GetString());
         Assert.False(channel.Parameters["isEnabled"].GetBoolean());
         Assert.True(channel.Parameters["isValidated"].GetBoolean());
-        Assert.Equal("***", channel.Parameters["authToken"].GetString());
+        Assert.Equal("*****", channel.Parameters["authToken"].GetString());
         Assert.DoesNotContain("unknown", channel.Parameters);
-        Assert.DoesNotContain("synthetic-auth-token", channel.RawArmResponse!.Value.GetRawText());
-        Assert.Equal("***", channel.RawArmResponse.Value.GetProperty("properties").GetProperty("properties").GetProperty("authToken").GetString());
+        Assert.DoesNotContain("synthetic-auth-token", JsonSerializer.Serialize(channel));
     }
 
     [Theory]
@@ -128,11 +128,11 @@ public sealed class DeploymentChannelAdapterTests
         Assert.True(channel.Parameters["isValidated"].GetBoolean());
         foreach (var item in channel.Parameters["lineRegistrations"].EnumerateArray())
         {
-            Assert.Equal("***", item.GetProperty("channelSecret").GetString());
-            Assert.Equal("***", item.GetProperty("channelAccessToken").GetString());
+            Assert.Equal("*****", item.GetProperty("channelSecret").GetString());
+            Assert.Equal("*****", item.GetProperty("channelAccessToken").GetString());
             Assert.False(item.TryGetProperty("unknown", out _));
         }
-        Assert.DoesNotContain("synthetic-", channel.RawArmResponse!.Value.GetRawText());
+        Assert.DoesNotContain("synthetic-", JsonSerializer.Serialize(channel));
     }
 
     private static readonly string[] TrustedOrigins =
@@ -190,21 +190,21 @@ public sealed class DeploymentChannelAdapterTests
         Assert.NotNull(channel);
         Assert.Equal(6, channel.Parameters.Count);
         Assert.Equal("https://callback.example", channel.Parameters["callbackUrl"].GetString());
-        Assert.Equal("***", channel.Parameters["appSecret"].GetString());
-        Assert.Equal("***", channel.Parameters["verifyToken"].GetString());
+        Assert.Equal("*****", channel.Parameters["appSecret"].GetString());
+        Assert.Equal("*****", channel.Parameters["verifyToken"].GetString());
         Assert.Equal(2, channel.Parameters["pages"].GetArrayLength());
         foreach (var page in channel.Parameters["pages"].EnumerateArray())
         {
-            Assert.Equal("***", page.GetProperty("accessToken").GetString());
+            Assert.Equal("*****", page.GetProperty("accessToken").GetString());
             Assert.False(page.TryGetProperty("unknown", out _));
         }
 
-        Assert.DoesNotContain("synthetic-", channel.RawArmResponse!.Value.GetRawText());
+        Assert.DoesNotContain("synthetic-", JsonSerializer.Serialize(channel));
         Assert.DoesNotContain("unknown", channel.Parameters);
     }
 
     [Fact]
-    public async Task GetSlack_MasksAuthorizationStateWithoutExposingAnAction()
+    public async Task GetSlack_DropsAuthorizationStateWithoutExposingAnAction()
     {
         var handler = new StubHttpMessageHandler(_ => Json(JsonSerializer.Serialize(new
         {
@@ -218,12 +218,7 @@ public sealed class DeploymentChannelAdapterTests
         var channel = await Adapter(handler).GetChannelAsync("SlackChannel", BotResourceId, null, default);
         Assert.Null(channel!.AuthorizationUrl);
         Assert.Empty(channel.Parameters);
-        var diagnostics = channel.RawArmResponse!.Value.GetProperty("properties").GetProperty("properties");
-        Assert.Equal("***", diagnostics.GetProperty("redirectAction").GetString());
-        Assert.False(diagnostics.GetProperty("IsValidated").GetBoolean());
-        Assert.Equal("submission", diagnostics.GetProperty("lastSubmissionId").GetString());
-        Assert.False(diagnostics.GetProperty("registerBeforeOAuthFlow").GetBoolean());
-        Assert.DoesNotContain("SYNTHETIC_STATE", channel.RawArmResponse!.Value.GetRawText());
+        Assert.DoesNotContain("SYNTHETIC_STATE", JsonSerializer.Serialize(channel));
     }
 
     [Theory]
@@ -252,7 +247,6 @@ public sealed class DeploymentChannelAdapterTests
             : await adapter.CreateChannelAsync(write, default);
 
         Assert.Equal(action, channel.AuthorizationUrl!.AbsoluteUri);
-        Assert.DoesNotContain("SYNTHETIC_STATE", channel.RawArmResponse!.Value.GetRawText());
         Assert.DoesNotContain("SYNTHETIC_STATE", JsonSerializer.Serialize(channel));
         Assert.DoesNotContain("redirectAction", channel.Parameters);
     }
@@ -285,7 +279,7 @@ public sealed class DeploymentChannelAdapterTests
             : await adapter.CreateChannelAsync(write, default);
 
         Assert.Equal(action, channel.AuthorizationUrl!.AbsoluteUri);
-        Assert.DoesNotContain(action, channel.RawArmResponse!.Value.GetRawText());
+        Assert.DoesNotContain(action, JsonSerializer.Serialize(channel));
         Assert.DoesNotContain("SYNTHETIC_STATE", JsonSerializer.Serialize(channel));
     }
 
@@ -326,7 +320,7 @@ public sealed class DeploymentChannelAdapterTests
 
         Assert.Equal("slack", channel.ChannelName);
         Assert.Null(channel.AuthorizationUrl);
-        Assert.Equal("***", channel.RawArmResponse!.Value.GetProperty("properties").GetProperty("properties").GetProperty("redirectAction").GetString());
+        Assert.DoesNotContain("redirectAction", channel.Parameters);
         Assert.DoesNotContain("SYNTHETIC_STATE", JsonSerializer.Serialize(channel));
     }
 
@@ -335,7 +329,7 @@ public sealed class DeploymentChannelAdapterTests
         Uri.EscapeDataString(callback) + "&state=SYNTHETIC_STATE";
 
     [Fact]
-    public async Task GetSlack_RedactsCatalogSecretsAndPreservesUnknownProperties()
+    public async Task GetSlack_RedactsCatalogSecretsAndDropsUnknownProperties()
     {
         var handler = new StubHttpMessageHandler(_ => Json(
             """
@@ -368,17 +362,12 @@ public sealed class DeploymentChannelAdapterTests
         Assert.True(channel.Parameters["isEnabled"].GetBoolean());
         Assert.Equal("/channels/SlackChannel", channel.ResourceId);
         Assert.Equal("client-1", channel.Parameters["clientId"].GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, channel.Parameters["clientSecret"].GetString());
-        var properties = channel.RawArmResponse!.Value
-            .GetProperty("properties")
-            .GetProperty("properties");
-        Assert.True(properties.GetProperty("isEnabled").GetBoolean());
-        Assert.Equal("client-1", properties.GetProperty("clientId").GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, properties.GetProperty("clientSecret").GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, properties.GetProperty("verificationToken").GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, properties.GetProperty("signingSecret").GetString());
-        Assert.Equal(JsonValueKind.Null, properties.GetProperty("landingPageUrl").ValueKind);
-        Assert.Equal("must-not-render", properties.GetProperty("unexpected").GetString());
+        Assert.Equal(SecretRedaction.Mask, channel.Parameters["clientSecret"].GetString());
+        Assert.Equal(SecretRedaction.Mask, channel.Parameters["verificationToken"].GetString());
+        Assert.Equal(SecretRedaction.Mask, channel.Parameters["signingSecret"].GetString());
+        Assert.Equal(JsonValueKind.Null, channel.Parameters["landingPageUrl"].ValueKind);
+        Assert.DoesNotContain("unexpected", channel.Parameters);
+        Assert.DoesNotContain("must-not-render", JsonSerializer.Serialize(channel));
     }
 
     [Theory]
@@ -425,9 +414,8 @@ public sealed class DeploymentChannelAdapterTests
             "secret-1",
             request.RootElement.GetProperty("properties").GetProperty("properties").GetProperty("clientSecret").GetString());
         Assert.Equal(
-            "***",
-            channel.RawArmResponse!.Value.GetProperty("properties").GetProperty("properties")
-                .GetProperty("clientSecret").GetString());
+            "*****",
+            channel.Parameters["clientSecret"].GetString());
         Assert.Equal("slack", channel.ChannelName);
         Assert.True(channel.Parameters["isEnabled"].GetBoolean());
     }
@@ -552,7 +540,7 @@ public sealed class DeploymentChannelAdapterTests
     }
 
     [Fact]
-    public async Task GetDirectLine_PreservesUnknownArmSiteProperties()
+    public async Task GetDirectLine_DropsUnknownArmSiteProperties()
     {
         var handler = new StubHttpMessageHandler(_ => Json(
             """
@@ -573,23 +561,13 @@ public sealed class DeploymentChannelAdapterTests
             targetTenantId: null,
             default);
 
-        var site = channel!.RawArmResponse!.Value
-            .GetProperty("properties")
-            .GetProperty("properties")
-            .GetProperty("sites")[0];
-        var persistedSite = Assert.Single(channel.Parameters["sites"].EnumerateArray());
+        var persistedSite = Assert.Single(channel!.Parameters["sites"].EnumerateArray());
         Assert.Equal("Default Site", persistedSite.GetProperty("siteName").GetString());
         Assert.True(persistedSite.GetProperty("isEnabled").GetBoolean());
         Assert.Equal("https://example.test", persistedSite.GetProperty("trustedOrigins")[0].GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, persistedSite.GetProperty("key").GetString());
+        Assert.Equal(SecretRedaction.Mask, persistedSite.GetProperty("key").GetString());
         Assert.False(persistedSite.TryGetProperty("unexpected", out _));
-        Assert.Equal("Default Site", site.GetProperty("siteName").GetString());
-        Assert.True(site.GetProperty("isEnabled").GetBoolean());
-        Assert.Equal("https://example.test", site.GetProperty("trustedOrigins")[0].GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, site.GetProperty("key").GetString());
-        Assert.Equal(
-            "must-not-render",
-            site.GetProperty("unexpected").GetProperty("nested").GetString());
+        Assert.DoesNotContain("must-not-render", JsonSerializer.Serialize(channel));
     }
 
     [Theory]
@@ -619,13 +597,6 @@ public sealed class DeploymentChannelAdapterTests
         Assert.True(persistedSites[0].GetProperty("isEnabled").GetBoolean());
         Assert.Equal("Secondary", persistedSites[1].GetProperty("siteName").GetString());
         Assert.False(persistedSites[1].GetProperty("isEnabled").GetBoolean());
-        Assert.Equal(
-            2,
-            channel.RawArmResponse!.Value
-                .GetProperty("properties")
-                .GetProperty("properties")
-                .GetProperty("sites")
-                .GetArrayLength());
     }
 
     [Theory]
@@ -655,7 +626,7 @@ public sealed class DeploymentChannelAdapterTests
         var parameters = channel!.Parameters;
         foreach (var name in new[] { "directLineEmbedCode", "extensionKey1", "extensionKey2" })
         {
-            Assert.Equal(BotServiceResponseRedactor.Mask, parameters[name].GetString());
+            Assert.Equal(SecretRedaction.Mask, parameters[name].GetString());
         }
 
         Assert.False(parameters.ContainsKey("isEnabled"));
@@ -671,20 +642,13 @@ public sealed class DeploymentChannelAdapterTests
         Assert.False(sites[0].TryGetProperty("isWebChatSpeechEnabled", out _));
         foreach (var site in sites.EnumerateArray())
         {
-            Assert.Equal(BotServiceResponseRedactor.Mask, site.GetProperty("key").GetString());
-            Assert.Equal(BotServiceResponseRedactor.Mask, site.GetProperty("key2").GetString());
+            Assert.Equal(SecretRedaction.Mask, site.GetProperty("key").GetString());
+            Assert.Equal(SecretRedaction.Mask, site.GetProperty("key2").GetString());
         }
 
-        var raw = channel.RawArmResponse!.Value.GetProperty("properties").GetProperty("properties");
-        Assert.Equal(BotServiceResponseRedactor.Mask, raw.GetProperty(embedCodeProperty).GetString());
         Assert.False(parameters.ContainsKey("DirectLineEmbedCode"));
-        Assert.Equal("debug-only", raw.GetProperty("futureChannelField").GetString());
-        Assert.True(raw.GetProperty("isEnabled").GetBoolean());
-        Assert.Equal("2026-10-13T11:25:35Z", raw.GetProperty("sites")[0].GetProperty("key1LastUpdated").GetString());
-        Assert.Equal("2026-10-14T11:25:35Z", raw.GetProperty("sites")[0].GetProperty("key2LastUpdated").GetString());
-        Assert.False(raw.GetProperty("sites")[0].GetProperty("isWebchatPreviewEnabled").GetBoolean());
-        Assert.True(raw.GetProperty("sites")[0].GetProperty("isWebChatSpeechEnabled").GetBoolean());
-        Assert.Equal(BotServiceResponseRedactor.Mask, raw.GetProperty("sites")[0].GetProperty("futureSecret").GetString());
+        Assert.DoesNotContain("secret-", JsonSerializer.Serialize(channel));
+        Assert.DoesNotContain("embed-with-credentials", JsonSerializer.Serialize(channel));
     }
 
     [Theory]
@@ -711,7 +675,7 @@ public sealed class DeploymentChannelAdapterTests
         var channel = await Adapter(handler).GetChannelAsync(
             "WebChatChannel", BotResourceId, targetTenantId: null, default);
         var parameters = channel!.Parameters;
-        Assert.Equal(BotServiceResponseRedactor.Mask, parameters["webChatEmbedCode"].GetString());
+        Assert.Equal(SecretRedaction.Mask, parameters["webChatEmbedCode"].GetString());
         Assert.False(parameters.ContainsKey("isEnabled"));
         Assert.False(parameters.ContainsKey("futureChannelField"));
         var sites = parameters["sites"];
@@ -733,25 +697,17 @@ public sealed class DeploymentChannelAdapterTests
         }
         foreach (var site in sites.EnumerateArray())
         {
-            Assert.Equal(BotServiceResponseRedactor.Mask, site.GetProperty("key").GetString());
-            Assert.Equal(BotServiceResponseRedactor.Mask, site.GetProperty("key2").GetString());
+            Assert.Equal(SecretRedaction.Mask, site.GetProperty("key").GetString());
+            Assert.Equal(SecretRedaction.Mask, site.GetProperty("key2").GetString());
             Assert.False(site.TryGetProperty("futureSecret", out _));
         }
 
-        var raw = channel.RawArmResponse!.Value.GetProperty("properties").GetProperty("properties");
-        Assert.Equal(BotServiceResponseRedactor.Mask, raw.GetProperty("webChatEmbedCode").GetString());
-        Assert.Equal("debug-only", raw.GetProperty("futureChannelField").GetString());
-        Assert.False(raw.GetProperty("isEnabled").GetBoolean());
-        Assert.Equal("2026-10-13T11:25:35Z", raw.GetProperty("sites")[0].GetProperty("key1LastUpdated").GetString());
-        Assert.Equal("2026-10-14T11:25:35Z", raw.GetProperty("sites")[0].GetProperty("key2LastUpdated").GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, raw.GetProperty("sites")[0].GetProperty("futureSecret").GetString());
-        Assert.Equal(JsonValueKind.Null, raw.GetProperty("sites")[0].GetProperty("isWebChatSpeechEnabled").ValueKind);
-        Assert.True(raw.GetProperty("sites")[0].GetProperty("isV1Enabled").GetBoolean());
-        Assert.True(raw.GetProperty("sites")[0].TryGetProperty("trustedOrigins", out _));
+        Assert.DoesNotContain("secret-", JsonSerializer.Serialize(channel));
+        Assert.DoesNotContain("embed-with-credentials", JsonSerializer.Serialize(channel));
     }
 
     [Fact]
-    public async Task GetDirectLine_MasksMalformedSitesPayload()
+    public async Task GetDirectLine_DropsMalformedSitesPayload()
     {
         var handler = new StubHttpMessageHandler(_ => Json(
             """
@@ -766,10 +722,8 @@ public sealed class DeploymentChannelAdapterTests
             targetTenantId: null,
             default);
 
-        var properties = channel!.RawArmResponse!.Value
-            .GetProperty("properties")
-            .GetProperty("properties");
-        Assert.Equal(BotServiceResponseRedactor.Mask, properties.GetProperty("sites").GetString());
+        Assert.DoesNotContain("sites", channel!.Parameters);
+        Assert.DoesNotContain("must-not-render", JsonSerializer.Serialize(channel));
     }
 
     [Fact]
@@ -792,19 +746,14 @@ public sealed class DeploymentChannelAdapterTests
             targetTenantId: null,
             default);
 
-        var slack = channels[0].RawArmResponse!.Value;
-        var teams = channels[1].RawArmResponse!.Value;
         Assert.Equal(["slack", "msteams"], channels.Select(channel => channel.ChannelName));
         Assert.True(channels[0].Parameters["isEnabled"].GetBoolean());
         Assert.False(channels[1].Parameters["isEnabled"].GetBoolean());
         Assert.Equal(
-            BotServiceResponseRedactor.Mask,
-            slack.GetProperty("properties").GetProperty("properties").GetProperty("clientSecret").GetString());
-        Assert.True(
-            teams.GetProperty("properties").GetProperty("properties").GetProperty("enableCalling").GetBoolean());
-        Assert.Equal(
-            "must-not-render",
-            teams.GetProperty("properties").GetProperty("properties").GetProperty("unknown").GetString());
+            SecretRedaction.Mask,
+            channels[0].Parameters["clientSecret"].GetString());
+        Assert.True(channels[1].Parameters["enableCalling"].GetBoolean());
+        Assert.DoesNotContain("unknown", channels[1].Parameters);
         Assert.Equal(2, channels.Count);
     }
 
@@ -832,9 +781,7 @@ public sealed class DeploymentChannelAdapterTests
 
         Assert.Equal(channelName, channel.ChannelName);
         Assert.Empty(channel.Parameters);
-        Assert.Equal(
-            "Succeeded",
-            channel.RawArmResponse!.Value.GetProperty("properties").GetProperty("provisioningState").GetString());
+        Assert.Equal($"/channels/{armName}", channel.ResourceId);
     }
 
     [Fact]
@@ -896,7 +843,7 @@ public sealed class DeploymentChannelAdapterTests
 
     [Theory]
     [MemberData(nameof(DeploymentChannelCatalogTests.UnsupportedArmNamesAndNames), MemberType = typeof(DeploymentChannelCatalogTests))]
-    public async Task List_UnsupportedChannels_RetainRedactedDebugPropertiesAndContinuePaging(string armName, string channelName)
+    public async Task List_UnsupportedChannels_DropPropertiesAndContinuePaging(string armName, string channelName)
     {
         var requests = 0;
         var handler = new StubHttpMessageHandler(_ => Json(requests++ == 0
@@ -925,12 +872,7 @@ public sealed class DeploymentChannelAdapterTests
         var unsupported = channels[1];
         Assert.Equal($"/channels/{armName}", unsupported.ResourceId);
         Assert.Empty(unsupported.Parameters);
-        var response = unsupported.RawArmResponse!.Value;
-        var properties = response.GetProperty("properties").GetProperty("properties");
-        Assert.Equal("visible", properties.GetProperty("description").GetString());
-        Assert.Equal("visible entry", properties.GetProperty("entries")[0].GetProperty("label").GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, properties.GetProperty("entries")[0].GetProperty("accessToken").GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, channels[0].Parameters["clientSecret"].GetString());
+        Assert.Equal(SecretRedaction.Mask, channels[0].Parameters["clientSecret"].GetString());
         var result = new Core.Operations.DeploymentResult<DeploymentChannelRecord[]>
         {
             Status = Core.Operations.DeploymentOperationStatus.Listed,
@@ -951,7 +893,7 @@ public sealed class DeploymentChannelAdapterTests
 
         Assert.Equal(resourceId, channel.ResourceId);
         Assert.Equal("UnknownArmChannel", channel.ChannelName);
-        Assert.NotNull(channel.RawArmResponse);
+        Assert.Empty(channel.Parameters);
     }
 
     [Theory]

@@ -1,11 +1,9 @@
 namespace Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 /// <summary>Exact opaque package bytes to upload for one existing Agent.</summary>
-public sealed record AgentPackageUploadRequest
+public sealed record AgentPackageUploadRequest : AgentAmsRequest
 {
-    public string? AgentId { get; init; }
     public string? PackagePath { get; init; }
-    public string? EnvironmentId { get; init; }
 }
 
 /// <summary>The validated terminal Package Upload Operation and immutable Package Revision.</summary>
@@ -21,6 +19,9 @@ public sealed record AgentPackageUploadResult : ITextGridRenderable
     public required string PackageDigest { get; init; }
     public required long PackageSizeInBytes { get; init; }
 
+    /// <summary>The commit of the upload, which <c>msagent agent deploy --commit-id</c> selects, or null when AMS records no commits.</summary>
+    public string? CommitId { get; init; }
+
     /// <inheritdoc />
     public IReadOnlyList<string> ToTextLines() =>
     [
@@ -29,7 +30,7 @@ public sealed record AgentPackageUploadResult : ITextGridRenderable
         $"  environment: {EnvironmentId} (tenant {TenantId})",
         $"  package operation: {PackageOperationId}",
         $"  Package Revision: {PackageRevisionId}, {PackageSizeInBytes} bytes, sha256 {PackageDigest}",
-        "This confirms package upload only. It does not create or project a Deployment.",
+        $"  commit: {TextGrid.DescribeOrDash(CommitId)}",
     ];
 }
 

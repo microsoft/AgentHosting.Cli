@@ -64,6 +64,8 @@ public sealed class PlaygroundCommandTests
         Assert.Contains("--plain", stdout.ToString(), StringComparison.Ordinal);
         Assert.Contains("--target", stdout.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("--query", stdout.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("--file", stdout.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("--start-conversation", stdout.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("--conversation-id", stdout.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("--agent-harness", stdout.ToString(), StringComparison.Ordinal);
         Assert.False(OptionCatalog.DeclaredAliases.ContainsKey("--agent-harness"));
@@ -97,6 +99,8 @@ public sealed class PlaygroundCommandTests
 
     [Theory]
     [InlineData("--query", "hello")]
+    [InlineData("--file", "file.txt")]
+    [InlineData("--start-conversation", "true")]
     [InlineData("--conversation-id", "conversation")]
     [InlineData("--agent-harness", "standard")]
     [InlineData("-ah", "github-copilot")]
@@ -131,7 +135,7 @@ public sealed class PlaygroundCommandTests
     }
 
     [Fact]
-    public void PlaygroundSymbolsAddTargetToAskSelectorsWithoutQueryOrConversation()
+    public void PlaygroundSymbolsAddTargetToAskSelectorsWithoutAskOnlyOptions()
     {
         var group = CommandReflector
             .Discover(typeof(TestGroup).Assembly, TestFeatureFlags.Everything)
@@ -141,7 +145,7 @@ public sealed class PlaygroundCommandTests
 
         var expected = ask.Implementation.Symbols
             .Select(symbol => symbol.Name)
-            .Where(name => name is not "--query" and not "--conversation-id")
+            .Where(name => name is not "--query" and not "--file" and not "--start-conversation" and not "--conversation-id")
             .Prepend("--target")
             .Append("--install-playground");
 

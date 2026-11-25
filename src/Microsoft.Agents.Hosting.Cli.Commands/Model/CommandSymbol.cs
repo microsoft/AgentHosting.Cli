@@ -15,6 +15,12 @@ public abstract record CommandSymbol(string Name, string Description)
 
     /// <summary>Features that must all be enabled before help and parsing expose this symbol.</summary>
     public IReadOnlyList<FeatureName> RequiredFeatures { get; init; } = [];
+
+    /// <summary>Features of which at least one must be enabled before help and parsing expose this symbol, for an option that several routes share.</summary>
+    public IReadOnlyList<FeatureName> AnyOfFeatures { get; init; } = [];
+
+    /// <summary>Reports whether help and parsing expose this symbol under the given feature controls.</summary>
+    public bool IsVisible(Func<FeatureName, bool> isFeatureEnabled) => RequiredFeatures.All(isFeatureEnabled) && (AnyOfFeatures.Count == 0 || AnyOfFeatures.Any(isFeatureEnabled));
 }
 
 /// <summary>A named option.</summary>

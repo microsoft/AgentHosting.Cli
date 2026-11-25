@@ -73,6 +73,9 @@ public sealed record CopilotPullRequest
 {
     /// <summary>The workspace directory. Defaults to the current directory.</summary>
     public string? ProjectDirectory { get; init; }
+
+    /// <summary>Whether to delete knowledge files the environment deleted after local edits, instead of keeping them.</summary>
+    public bool Overwrite { get; init; }
 }
 
 /// <summary>Result of <c>msagent agent pull</c>.</summary>
@@ -96,7 +99,7 @@ public sealed record CopilotPullResult
     /// <summary>How many changes were applied.</summary>
     public int ChangeCount { get; init; }
 
-    /// <summary>Files the merge left with unresolved conflict markers.</summary>
+    /// <summary>Files the merge left with unresolved conflict markers, and locally edited knowledge files the pull kept after the environment deleted them.</summary>
     public IReadOnlyList<string> Warnings { get; init; } = [];
 }
 

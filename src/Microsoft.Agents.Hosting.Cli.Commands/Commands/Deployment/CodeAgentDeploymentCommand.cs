@@ -43,15 +43,8 @@ public abstract class CodeAgentDeploymentCommand<TRequest, TResult> : CommandBas
         };
     }
 
-    protected sealed override void EnsureAvailable(ICommandInput input, IServiceProvider services)
-    {
-        ArgumentNullException.ThrowIfNull(input);
-        ArgumentNullException.ThrowIfNull(services);
-
-        EnsureCodeAgentDeployment(BindDeploymentRequest(input), services);
-    }
-
-    private void EnsureCodeAgentDeployment(DeploymentRequest request, IServiceProvider services)
+    /// <summary>Refuses a deployment of the local project that is not a CodeAgent deployment.</summary>
+    protected void EnsureCodeAgentDeployment(DeploymentRequest request, IServiceProvider services)
     {
         var resolvedDeploymentAgentType = DeploymentSelector.Resolve(
             services,

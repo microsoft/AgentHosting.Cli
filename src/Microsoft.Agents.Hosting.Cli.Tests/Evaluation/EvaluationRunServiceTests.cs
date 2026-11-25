@@ -212,14 +212,13 @@ public sealed class EvaluationRunServiceTests
     }
 
     [Fact]
-    public async Task RunAsync_PassesConnectionAndPublishedThrough()
+    public async Task RunAsync_PassesTheConnectionThrough()
     {
         _port.TestSets.Add(EvaluationScenarios.TestSet("testset-7", "Nightly", 4));
 
-        await Create().RunAsync(new EvaluationRunRequest { TestSet = "Nightly", Connection = "conn-1", Published = true }, CancellationToken.None);
+        await Create().RunAsync(new EvaluationRunRequest { TestSet = "Nightly", Connection = "conn-1" }, CancellationToken.None);
 
         Assert.Equal("conn-1", _port.LastStart!.ConnectionId);
-        Assert.True(_port.LastStart.RunOnPublishedBot);
     }
 
     [Fact]

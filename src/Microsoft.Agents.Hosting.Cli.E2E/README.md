@@ -15,7 +15,7 @@ here runs unless you run it.
 
 ## What it covers
 
-**279 scenarios** across eight features. Every one drives the packaged binary through a real command
+**309 scenarios** across nine features. Every one drives the packaged binary through a real command
 line and asserts on exit code, stdout, and — where it matters — the cloud state afterwards.
 
 | Feature | Ids | Count | Pack | What it pins |
@@ -23,6 +23,7 @@ line and asserts on exit code, stdout, and — where it matters — the cloud st
 | `mcs-agent` | `MA-01`–`MA-86` | 79 | `core` | Environment selection, `agent init/create/show/list/pull/deploy/delete`, deployment slots, connection reporting and binding, workflow activation, dev→test promotion, agent sharing, and the delete-confirmation paths |
 | `mcs-workflow` | `MW-01`–`MW-61` | 14 | `core` | Standalone cloud flows with no agent: scaffold, `agent init`, deploy and publish, clone from cloud, the pull/deploy round trip and its overwrite semantics, cloud-only listing with `--filter`, and the delete-confirmation paths |
 | `code-agent` | `CA-01`–`CA-20` | 20 | `azure` | Unified `deployment` routing between agent types, Azure Bot Service provisioning, update/delete, and option-shape rejection |
+| `ams-code-agent` | `AC-01`–`AC-61` | 30 | `core`; `ams-hosted` for AC-22–AC-24 | Code agents on the Agent Management Service: agent and deployment records, deploys to a dev endpoint and of uploaded packages, commits, channels, OAuth connections, and the deletes |
 | `abs` | `AB-01`–`AB-09` | 9 | `azure` | `abs preview` planning, `abs apply --force` create/update/no-op, and the refusal paths |
 | `identity` | `ID-01`–`ID-05` | 5 | `azure` | `identity create app/blueprint --dry-run` and argument validation |
 | `mcs-eval` | `EV-01`–`EV-28` | 28 | `eval` | `agent eval` conversation test sets, CSV import and export, generated conversations, project-based agent resolution for both workspace shapes, and the scored runs — start, list, show, cancel, delete and `--watch` |
@@ -59,9 +60,10 @@ authoritative index, and it never executes anything.
 | An Azure subscription and resource group | the `azure` pack | bots are created here when `allowCreate` is true |
 
 **Interactive consent comes first.** ARM consent is granted through a separate client and cannot be
-pre-authorized, so run one `abs` command by hand before the first `azure` run — otherwise scenarios
-stop with `BLOCKED` rather than failing. The `identity` scenarios are `--dry-run` only and need no
-Graph admin consent.
+pre-authorized, so run one `abs` command by hand, with `AH_CLI_FEATURES=AzureBotServiceFeatures` set,
+before the first `azure` run — otherwise scenarios stop with `BLOCKED` rather than failing. The run
+itself turns on the rollout feature each `azure` feature needs. The `identity` scenarios are
+`--dry-run` only and need no Graph admin consent.
 
 ### 2. Create your config
 
@@ -108,6 +110,9 @@ dotnet run --project . -- run --packs core,eval
 # Include the pack that copies agents
 dotnet run --project . -- run --packs core,copy --feature mcs-copy
 
+# Code agents on the Agent Management Service, with the hosted deploys
+dotnet run --project . -- run --packs core,ams-hosted --feature ams-code-agent
+
 # A fast subset: one deploy per fixture shape, plus the previously-shipped-bug checks
 dotnet run --project . -- run --packs core,azure --smoke
 
@@ -121,9 +126,9 @@ dotnet run --project . -- run --packs core,copy --only MC-35
 
 | Option | Effect |
 |---|---|
-| `--packs core,azure,eval,copy` | include the scenarios that create Azure resources, that spend Copilot Credits, that copy agents, or any mix. Default is `core`. `swf` adds the standalone-workflow suite |
-| `--feature <names>` | `mcs-agent`, `mcs-workflow`, `mcs-standaloneworkflow`, `code-agent`, `abs`, `identity`, `mcs-eval`, `mcs-copy` |
-| `--only <patterns>` | `MA-18`, `MA-2*`, `AB-07`, `EV-01`, `SW-B0*`, `MC-35` |
+| `--packs core,azure,eval,copy` | include the scenarios that create Azure resources, that spend Copilot Credits, that copy agents, or any mix. Default is `core`. `swf` adds the standalone-workflow suite, and `ams-hosted` the hosted Agent Management Service deploys |
+| `--feature <names>` | `mcs-agent`, `mcs-workflow`, `mcs-standaloneworkflow`, `code-agent`, `ams-code-agent`, `abs`, `identity`, `mcs-eval`, `mcs-copy` |
+| `--only <patterns>` | `MA-18`, `MA-2*`, `AB-07`, `EV-01`, `SW-B0*`, `MC-35`, `AC-1*` |
 | `--smoke` | the fast subset |
 | `--msagent-path <file>` | drive an existing binary instead of packing one (`--ah-path` is still accepted) |
 | `--yes` | skip the confirmation prompt |
@@ -152,12 +157,16 @@ Capabilities
   azure.read         yes   sub 33333333… / rg-example · az …\az.cmd
   azure.create       yes   the run creates and deletes its own bot
   azure.existingBot  yes   my-existing-bot (read-only)
-  ams                NO    no ams.endpoint supplied
+  ams                NO    no ams.controlPlane.endpoint supplied
+  ams.create         NO    no ams.controlPlane.endpoint supplied
+  ams.package        NO    no ams.controlPlane.endpoint supplied
+  ams.hosted         NO    no ams.controlPlane.endpoint supplied
+  ams.prod           NO    no ams.controlPlane.endpoint supplied
 
 Will run 91 scenarios  (readonly 58, reversible 6, creating 27)
 Will skip 2 scenarios
-  CA-19  agent create --agent-type CodeAgent    needs ams
-  CA-20  agent deploy a CodeAgent               needs ams
+  CA-19  agent create --agent-type CodeAgent    needs ams.create
+  CA-20  agent deploy a CodeAgent               needs ams.create
 ```
 
 `run` prints one line per scenario, then totals, then any failure in full:

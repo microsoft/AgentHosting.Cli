@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Identity.Client;
 using Microsoft.Identity.Client.Broker;
@@ -6,7 +7,7 @@ using Microsoft.Identity.Client.Broker;
 namespace Microsoft.Agents.Hosting.Cli.Auth;
 
 /// <summary>The single place an MSAL public client is constructed, turning the pure client, authority, and platform-gated broker configuration into a cached live client with its secure token cache.</summary>
-public sealed class MsalPublicClientProvider
+public sealed class MsalPublicClientProvider : IDisposable
 {
     private readonly AgentHostAuthOptions _options;
     private readonly IPlatformInfo _platform;
@@ -15,15 +16,17 @@ public sealed class MsalPublicClientProvider
     private readonly MsalPublicClientConfigurator _configurator;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, IPublicClientApplication> _clients = new(StringComparer.Ordinal);
+    private readonly MsalDiagnosticWriter? _diagnosticWriter;
 
     public MsalPublicClientProvider(AgentHostAuthOptions options, IPlatformInfo platform, ISecureTokenCacheProbe probe,
-        ILegacyMsalTokenCacheBackend? legacyCache = null)
-        : this(options, platform, probe, legacyCache, createClient: null)
+        ILegacyMsalTokenCacheBackend? legacyCache = null, HttpDiagnostics? httpDiagnostics = null)
+        : this(options, platform, probe, legacyCache, createClient: null, httpDiagnostics: httpDiagnostics)
     {
     }
 
     internal MsalPublicClientProvider(AgentHostAuthOptions options, IPlatformInfo platform, ISecureTokenCacheProbe probe,
-        ILegacyMsalTokenCacheBackend? legacyCache, Func<PublicClientConfiguration, IPublicClientApplication>? createClient)
+        ILegacyMsalTokenCacheBackend? legacyCache, Func<PublicClientConfiguration, IPublicClientApplication>? createClient,
+        HttpDiagnostics? httpDiagnostics = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _platform = platform ?? throw new ArgumentNullException(nameof(platform));
@@ -31,6 +34,16 @@ public sealed class MsalPublicClientProvider
         ArgumentNullException.ThrowIfNull(probe);
         _legacyCache = legacyCache;
         _configurator = new MsalPublicClientConfigurator(platform);
+        if (options.DebugOutput is { } debugOutput)
+        {
+            _diagnosticWriter = new MsalDiagnosticWriter(debugOutput, options.DebugColor,
+                recordWriteError: httpDiagnostics is null ? null : httpDiagnostics.RecordWriteError);
+        }
+    }
+
+    public void Dispose()
+    {
+        _gate.Dispose();
     }
 
     /// <summary>Whether this platform has an MSAL broker, which broker-enabled clients use for silent and interactive requests alike.</summary>
@@ -112,9 +125,9 @@ public sealed class MsalPublicClientProvider
             builder.WithBroker(CreateBrokerOptions(_platform, configuration.ListBrokerAccounts));
         }
 
-        if (_options.DebugOutput is { } debugOutput)
+        if (_diagnosticWriter is { } diagnosticWriter)
         {
-            builder.WithLogging((_, message, _) => debugOutput.WriteLine(message), LogLevel.Info, enablePiiLogging: false, enableDefaultPlatformLogging: false);
+            builder.WithLogging(diagnosticWriter.Write, LogLevel.Warning, enablePiiLogging: false, enableDefaultPlatformLogging: false);
         }
 
         return builder.Build();

@@ -286,7 +286,7 @@ public sealed class SyncWorkspaceAdapterIntegrityTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PullAsync(Workspace(), CancellationToken.None);
+        await Create(synchronizer).PullAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.NotNull(synchronizer.LastPullConflicts);
     }
@@ -299,7 +299,7 @@ public sealed class SyncWorkspaceAdapterIntegrityTests
             PullConflicts = [Conflict(ToolPath, line: 7)],
         };
 
-        var outcome = await Create(synchronizer).PullAsync(Workspace(), CancellationToken.None);
+        var outcome = await Create(synchronizer).PullAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         var warning = Assert.Single(outcome.Warnings);
         Assert.Contains(ToolPath, warning, StringComparison.Ordinal);
@@ -314,7 +314,7 @@ public sealed class SyncWorkspaceAdapterIntegrityTests
             PullConflicts = [Conflict(ToolPath)],
         };
 
-        var outcome = await Create(synchronizer).PullAsync(Workspace(), CancellationToken.None);
+        var outcome = await Create(synchronizer).PullAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.DownloadKnowledgeFilesCalls);
         Assert.NotNull(outcome.Changes);
@@ -328,7 +328,7 @@ public sealed class SyncWorkspaceAdapterIntegrityTests
             PullConflicts = [Conflict(ToolPath), Conflict("settings.mcs.yml", line: 3)],
         };
 
-        var outcome = await Create(synchronizer).PullAsync(Workspace(), CancellationToken.None);
+        var outcome = await Create(synchronizer).PullAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.Equal(2, outcome.Warnings.Count);
         Assert.Contains(outcome.Warnings, warning => warning.Contains(ToolPath, StringComparison.Ordinal));
@@ -343,7 +343,7 @@ public sealed class SyncWorkspaceAdapterIntegrityTests
             PullConflicts = [Conflict(ToolPath), Conflict("settings.mcs.yml", line: 3)],
         };
 
-        var outcome = await Create(synchronizer).PullAsync(Workspace(), CancellationToken.None);
+        var outcome = await Create(synchronizer).PullAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.All(outcome.Warnings, warning => Assert.DoesNotContain(warning, char.IsControl));
         Assert.All(outcome.Warnings, warning => Assert.Equal(warning, TerminalText.Sanitize(warning)));
@@ -354,7 +354,7 @@ public sealed class SyncWorkspaceAdapterIntegrityTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        var outcome = await Create(synchronizer).PullAsync(Workspace(), CancellationToken.None);
+        var outcome = await Create(synchronizer).PullAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.Empty(outcome.Warnings);
     }
@@ -368,7 +368,7 @@ public sealed class SyncWorkspaceAdapterIntegrityTests
         };
 
         var failure = await Assert.ThrowsAsync<CopilotStudioException>(
-            () => Create(synchronizer).PullAsync(Workspace(), CancellationToken.None));
+            () => Create(synchronizer).PullAsync(Workspace(), overwrite: false, CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.WorkspaceFilesUnreadable, failure.ErrorKind);
         Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.PullExistingChangesAsync), synchronizer.Calls);

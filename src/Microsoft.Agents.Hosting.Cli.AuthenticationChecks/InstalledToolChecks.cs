@@ -40,7 +40,8 @@ public static class InstalledToolChecks
         start.CreateNoWindow = true;
     }
 
-    public static async Task RunAsync(string packageDirectory, string rid, Func<string, Task>? nativeLibraryCheck = null)
+    public static async Task RunAsync(string packageDirectory, string rid, Func<string, Task>? nativeLibraryCheck = null,
+        string? canvasSmokeScript = null)
     {
         var family = PackageChecks.CheckFamily(packageDirectory);
         Console.WriteLine("tier=package check=family status=PASS rids=7 packages=8 frameworks=net10+aspnet10");
@@ -121,6 +122,14 @@ public static class InstalledToolChecks
                 .Any(f => Path.GetFileName(f).EndsWith(".bin", StringComparison.Ordinal) ||
                     Path.GetFileName(f).Contains("msal", StringComparison.OrdinalIgnoreCase)), "no-native-cache-artifacts");
             Console.WriteLine("tier=package check=installed-contracts status=PASS help=8-default+2-legacy-auth-verbs aliases=PASS defaults=PASS json=PASS NI12007=exit3 telemetry=off");
+            if (canvasSmokeScript is not null)
+            {
+                Require(OperatingSystem.IsWindows(), "windows-canvas-platform");
+                var nativeExecutable = Path.Combine(Path.GetDirectoryName(runtimeFiles[0])!, PackageChecks.PackageId + ".exe");
+                var smoke = await RunChild("node", [canvasSmokeScript, installed, nativeExecutable], root, dotnetRoot);
+                Require(smoke.Exit == 0, "windows-canvas-launcher");
+                Console.WriteLine(smoke.Output.Trim());
+            }
             if (nativeLibraryCheck is not null) await nativeLibraryCheck(Path.GetDirectoryName(runtimeFiles[0])!);
 
             async Task Help(string[] args, string[] required, string? features = null, string[]? forbidden = null)

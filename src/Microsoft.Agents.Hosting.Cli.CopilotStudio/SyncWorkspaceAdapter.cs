@@ -88,6 +88,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
 
         var agentId = Guid.Parse(command.AgentId);
         var agentInfo = await _dataverseClient.GetAgentInfoAsync(agentId, cancellationToken).ConfigureAwait(false);
+        RequireAgentIsUnmanaged(agentInfo);
         var syncInfo = await AgentSyncInfoFactory.CreateAsync(_dataverseClient, command.Environment, agentId, cancellationToken).ConfigureAwait(false);
 
         var collectionIds = command.IncludeLinkedComponentCollections
@@ -162,6 +163,18 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
             AgentWorkspacePath = agentWorkspacePath,
             Workspaces = created,
         };
+    }
+
+    private static void RequireAgentIsUnmanaged(AgentInfo agentInfo)
+    {
+        try
+        {
+            AgentIsManagedException.ThrowIfManaged(agentInfo);
+        }
+        catch (AgentIsManagedException failure)
+        {
+            throw ManagedAgentException.AgentManaged(failure.Message);
+        }
     }
 
     /// <summary>
@@ -282,7 +295,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
     }
 
     /// <inheritdoc />
-    public async Task<CopilotPullOutcome> PullAsync(CopilotWorkspaceInfo workspace, CancellationToken cancellationToken)
+    public async Task<CopilotPullOutcome> PullAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(workspace);
 
@@ -294,7 +307,15 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
         var localDefinition = await WorkspaceDefinitionReader.ReadAsync(_synchronizer, workspaceFolder, checkKnowledgeFiles: true, cancellationToken).ConfigureAwait(false);
         var conflicts = new List<WorkspaceDiagnostic>();
 
-        await _synchronizer.PullExistingChangesAsync(workspaceFolder, operationContext, localDefinition, _dataverseClient, syncInfo, cancellationToken, conflicts: conflicts).ConfigureAwait(false);
+        try
+        {
+            await _synchronizer.PullExistingChangesAsync(workspaceFolder, operationContext, localDefinition, _dataverseClient, syncInfo, cancellationToken, conflicts: conflicts, deletedKnowledgeFileEdits: overwrite ? DeletedKnowledgeFileEdits.Discard : DeletedKnowledgeFileEdits.Keep).ConfigureAwait(false);
+        }
+        catch (DeletedKnowledgeFileEditsException failure)
+        {
+            throw CopilotStudioException.DeletedKnowledgeFileEditsCannotBeKept(failure.FilePaths, failure);
+        }
+
         await _synchronizer.DownloadKnowledgeFilesAsync(workspaceFolder, _dataverseClient, schemaNames: null, cancellationToken).ConfigureAwait(false);
 
         return new CopilotPullOutcome
@@ -395,7 +416,7 @@ public sealed class SyncWorkspaceAdapter : ICopilotWorkspacePort
             }
             catch (InvalidOperationException failure) when (failure.Message.Contains(RemoteChangedMarker, StringComparison.OrdinalIgnoreCase))
             {
-                throw CopilotStudioException.RemoteChangedDuringPush(failure);
+                throw CopilotStudioException.RemoteChangedDuringPush(overwrite, failure);
             }
             catch (ArgumentException failure) when (failure.Message.Contains(ImproperResponseMarker, StringComparison.OrdinalIgnoreCase))
             {

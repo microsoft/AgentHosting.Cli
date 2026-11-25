@@ -220,16 +220,16 @@ public sealed class DeploymentChannelPlanTests
     {
         var collection = channel == "facebook" ? "pages" : "lineRegistrations";
         var assignment = channel == "facebook"
-            ? """pages=[{"id":"***","accessToken":"***"}]"""
-            : """lineRegistrations=[{"channelSecret":"***","channelAccessToken":"***"}]""";
-        string[] parameters = channel == "facebook" ? ["appId=***", "appSecret=***", assignment] : [assignment];
+            ? """pages=[{"id":"*****","accessToken":"*****"}]"""
+            : """lineRegistrations=[{"channelSecret":"*****","channelAccessToken":"*****"}]""";
+        string[] parameters = channel == "facebook" ? ["appId=*****", "appSecret=*****", assignment] : [assignment];
         var write = create
             ? DeploymentChannelPlan.BuildCreate(DeploymentChannelPlan.ValidateCreate(CreateRequest(channel, parameters)), BotResourceId, null)
             : DeploymentChannelPlan.BuildUpdate(DeploymentChannelPlan.ValidateUpdate(UpdateRequest(channel, parameters)), Snapshot(), BotResourceId, null);
 
         var item = Assert.Single(write.Parameters[collection].EnumerateArray());
         Assert.Equal(2, item.EnumerateObject().Count());
-        Assert.All(item.EnumerateObject(), field => Assert.Equal("***", field.Value.GetString()));
+        Assert.All(item.EnumerateObject(), field => Assert.Equal("*****", field.Value.GetString()));
     }
 
     [Theory]
@@ -239,21 +239,21 @@ public sealed class DeploymentChannelPlanTests
     {
         var existing = Snapshot("""
             {"properties":{"properties":{
-              "pages":[{"id":"***","accessToken":"***"},{"id":"two","accessToken":"***"}],
-              "lineRegistrations":[{"generatedId":"***","channelSecret":"***","channelAccessToken":"***"},
-                                   {"generatedId":"two","channelSecret":"***","channelAccessToken":"***"}]
+              "pages":[{"id":"*****","accessToken":"*****"},{"id":"two","accessToken":"*****"}],
+              "lineRegistrations":[{"generatedId":"*****","channelSecret":"*****","channelAccessToken":"*****"},
+                                   {"generatedId":"two","channelSecret":"*****","channelAccessToken":"*****"}]
             }}}
             """);
         var request = UpdateRequest(channel) with
         {
-            SetPage = channel == "facebook" ? ["id=***", "accessToken=***"] : [],
-            SetRegistration = channel == "line" ? ["generatedId=***", "channelSecret=***"] : [],
+            SetPage = channel == "facebook" ? ["id=*****", "accessToken=*****"] : [],
+            SetRegistration = channel == "line" ? ["generatedId=*****", "channelSecret=*****"] : [],
         };
         var write = DeploymentChannelPlan.BuildUpdate(DeploymentChannelPlan.ValidateUpdate(request), existing, BotResourceId, null);
         var items = write.Parameters[channel == "facebook" ? "pages" : "lineRegistrations"];
 
-        Assert.Equal("***", items[0].GetProperty(channel == "facebook" ? "id" : "generatedId").GetString());
-        Assert.Equal("***", items[0].GetProperty(channel == "facebook" ? "accessToken" : "channelSecret").GetString());
+        Assert.Equal("*****", items[0].GetProperty(channel == "facebook" ? "id" : "generatedId").GetString());
+        Assert.Equal("*****", items[0].GetProperty(channel == "facebook" ? "accessToken" : "channelSecret").GetString());
         Assert.Equal(2, items[0].EnumerateObject().Count());
         Assert.Single(items[1].EnumerateObject());
     }
@@ -316,7 +316,7 @@ public sealed class DeploymentChannelPlanTests
         Assert.DoesNotContain("isValidated", create.Parameters);
 
         var existing = Snapshot("""
-            {"properties":{"properties":{"accessToken":"***","isEnabled":true,"isValidated":true}}}
+            {"properties":{"properties":{"accessToken":"*****","isEnabled":true,"isValidated":true}}}
             """);
         var replacement = DeploymentChannelPlan.BuildUpdate(
             DeploymentChannelPlan.ValidateUpdate(UpdateRequest("telegram", "accessToken=synthetic-new-token")),
@@ -408,7 +408,7 @@ public sealed class DeploymentChannelPlanTests
     }
 
     [Theory]
-    [InlineData("\"***\"")]
+    [InlineData("\"*****\"")]
     [InlineData("null")]
     public void Sms_SparseUpdatePreservesSafeStateAndOmitsHiddenToken(string token)
     {
@@ -433,7 +433,7 @@ public sealed class DeploymentChannelPlanTests
     {
         var existing = Snapshot("""
             {"properties":{"properties":{"accountSID":"live-sid","phone":"+12025550123",
-              "isEnabled":false,"isValidated":true,"authToken":"***"}}}
+              "isEnabled":false,"isValidated":true,"authToken":"*****"}}}
             """);
         var plan = DeploymentChannelPlan.ValidateUpdate(UpdateRequest("sms", "authToken=synthetic-new-token"));
         var write = DeploymentChannelPlan.BuildUpdate(plan, existing, BotResourceId, null);
@@ -466,7 +466,7 @@ public sealed class DeploymentChannelPlanTests
         Assert.True(changed.Parameters["isValidated"].GetBoolean());
         Assert.DoesNotContain("etag", changed.Parameters);
         Assert.DoesNotContain("unknown", changed.Parameters);
-        Assert.DoesNotContain("***", JsonSerializer.Serialize(changed.Parameters));
+        Assert.DoesNotContain("*****", JsonSerializer.Serialize(changed.Parameters));
     }
 
     [Theory]
@@ -577,8 +577,8 @@ public sealed class DeploymentChannelPlanTests
     private static BotServiceChannelWriteRequest LineUpdate(DeploymentChannelUpdateRequest request) =>
         DeploymentChannelPlan.BuildUpdate(DeploymentChannelPlan.ValidateUpdate(request), Snapshot("""
             {"properties":{"properties":{"callbackUrl":"https://callback.example/one","isValidated":true,"etag":"ignore","unknown":true,
-              "lineRegistrations":[{"generatedId":"one","channelSecret":"***","channelAccessToken":"***","unknown":"ignore"},
-                                   {"generatedId":"two","channelSecret":"***","channelAccessToken":"***"}]}}}
+              "lineRegistrations":[{"generatedId":"one","channelSecret":"*****","channelAccessToken":"*****","unknown":"ignore"},
+                                   {"generatedId":"two","channelSecret":"*****","channelAccessToken":"*****"}]}}}
             """), BotResourceId, null);
 
     [Fact]
@@ -776,14 +776,14 @@ public sealed class DeploymentChannelPlanTests
 
         var plan = DeploymentChannelPlan.ValidateUpdate(UpdateRequest("facebook") with { RemovePage = ["id=one"] });
         Assert.Throws<UsageException>(() => DeploymentChannelPlan.BuildUpdate(plan,
-            Snapshot("""{"properties":{"properties":{"pages":[{"id":"one","accessToken":"***"}]}}}"""), BotResourceId, null));
+            Snapshot("""{"properties":{"properties":{"pages":[{"id":"one","accessToken":"*****"}]}}}"""), BotResourceId, null));
     }
 
     [Theory]
     [InlineData("null")]
     [InlineData("{}")]
     [InlineData("[null]")]
-    [InlineData("""[{"accessToken":"***"}]""")]
+    [InlineData("""[{"accessToken":"*****"}]""")]
     [InlineData("""[{"id":"one"},{"id":"one"}]""")]
     [InlineData("""[{"id":"   "}]""")]
     public void Facebook_UnreadableLivePagesBlockReuseButAllowExplicitReplacement(string pages)
@@ -801,9 +801,9 @@ public sealed class DeploymentChannelPlanTests
     private static BotServiceChannelWriteRequest FacebookUpdate(DeploymentChannelUpdateRequest request) =>
         DeploymentChannelPlan.BuildUpdate(DeploymentChannelPlan.ValidateUpdate(request),
             Snapshot("""
-                {"properties":{"properties":{"appId":"app-old","appSecret":"***","isEnabled":true,
-                  "callbackUrl":"https://callback.example","verifyToken":"***","etag":"ignore","unknown":true,
-                  "pages":[{"id":"one","accessToken":"***","unknown":"ignore"},{"id":"two","accessToken":"***"}]}}}
+                {"properties":{"properties":{"appId":"app-old","appSecret":"*****","isEnabled":true,
+                  "callbackUrl":"https://callback.example","verifyToken":"*****","etag":"ignore","unknown":true,
+                  "pages":[{"id":"one","accessToken":"*****","unknown":"ignore"},{"id":"two","accessToken":"*****"}]}}}
                 """), BotResourceId, null);
 
     private static string[] PageIds(BotServiceChannelWriteRequest write) =>
@@ -929,27 +929,30 @@ public sealed class DeploymentChannelPlanTests
     [InlineData(false)]
     public void Slack_ExplicitMaskTextIsSentForSecretsAndNonSecrets(bool create)
     {
-        string[] assignments = ["clientId=***", "clientSecret=***", "signingSecret=***", "verificationToken=***", "scopes=***"];
+        string[] assignments = ["clientId=*****", "clientSecret=*****", "signingSecret=*****", "verificationToken=*****", "scopes=*****"];
         var write = create
             ? DeploymentChannelPlan.BuildCreate(DeploymentChannelPlan.ValidateCreate(CreateRequest("slack", assignments)), BotResourceId, null)
             : DeploymentChannelPlan.BuildUpdate(DeploymentChannelPlan.ValidateUpdate(UpdateRequest("slack", assignments)), Snapshot(), BotResourceId, null);
 
         foreach (var assignment in assignments)
-            Assert.Equal("***", write.Parameters[assignment.Split('=', 2)[0]].GetString());
+            Assert.Equal("*****", write.Parameters[assignment.Split('=', 2)[0]].GetString());
     }
 
     [Fact]
     public void Slack_ExistingMaskTextIsPreservedOnlyForNonSecrets()
     {
+        const string mask = "*****";
         var plan = DeploymentChannelPlan.ValidateUpdate(UpdateRequest("slack", "isEnabled=false"));
-        var write = DeploymentChannelPlan.BuildUpdate(plan, Snapshot("""
+        var write = DeploymentChannelPlan.BuildUpdate(plan, Snapshot($$"""
             {"properties":{"properties":{
-              "clientId":"***","scopes":"***","clientSecret":"***","signingSecret":"***","verificationToken":"***"
-            }}}
+              "clientId":"{{mask}}","scopes":"{{mask}}","clientSecret":"{{mask}}","signingSecret":"{{mask}}","verificationToken":"{{mask}}"
+            }
+            }
+            }
             """), BotResourceId, null);
 
-        Assert.Equal("***", write.Parameters["clientId"].GetString());
-        Assert.Equal("***", write.Parameters["scopes"].GetString());
+        Assert.Equal(mask, write.Parameters["clientId"].GetString());
+        Assert.Equal(mask, write.Parameters["scopes"].GetString());
         Assert.DoesNotContain("clientSecret", write.Parameters);
         Assert.DoesNotContain("signingSecret", write.Parameters);
         Assert.DoesNotContain("verificationToken", write.Parameters);
@@ -961,8 +964,8 @@ public sealed class DeploymentChannelPlanTests
         var plan = DeploymentChannelPlan.ValidateUpdate(UpdateRequest("slack", "landingPageUrl=https://new.example"));
         var write = DeploymentChannelPlan.BuildUpdate(plan, Snapshot("""
             {"properties":{"properties":{
-              "clientId":"existing-client","clientSecret":"***","verificationToken":"***","signingSecret":"***",
-              "registerBeforeOAuthFlow":false,"IsValidated":false,"lastSubmissionId":"submission","redirectAction":"***",
+              "clientId":"existing-client","clientSecret":"*****","verificationToken":"*****","signingSecret":"*****",
+              "registerBeforeOAuthFlow":false,"IsValidated":false,"lastSubmissionId":"submission","redirectAction":"*****",
               "scopes":"chat:write","isEnabled":true
             }}}
             """), BotResourceId, null);
@@ -1223,7 +1226,7 @@ public sealed class DeploymentChannelPlanTests
                 {"properties":{"properties":{
                   "isEnabled":true,
                   "clientId":"existing-client",
-                  "clientSecret":"***",
+                  "clientSecret":"*****",
                   "landingPageUrl":"https://old.example"
                 }}}
                 """),
@@ -1238,7 +1241,7 @@ public sealed class DeploymentChannelPlanTests
     }
 
     [Fact]
-    public void BuildUpdate_UsesPersistedParameters_NotRawArmResponse()
+    public void BuildUpdate_MergesPersistedParametersWithRequestedChanges()
     {
         var plan = DeploymentChannelPlan.ValidateUpdate(
             UpdateRequest("msteams", "enableCalling=true"));
@@ -1251,9 +1254,6 @@ public sealed class DeploymentChannelPlanTests
                 ["isEnabled"] = JsonValue("true"),
                 ["callingWebhook"] = JsonValue("\"https://saved.example\""),
             },
-            RawArmResponse = System.Text.Json.JsonDocument.Parse(
-                """{"properties":{"properties":{"isEnabled":false,"callingWebhook":"https://raw.example"}}}""")
-                .RootElement.Clone(),
         };
 
         var upsert = DeploymentChannelPlan.BuildUpdate(plan, existing, BotResourceId, "tenant-1");
@@ -1301,6 +1301,34 @@ public sealed class DeploymentChannelPlanTests
         Assert.Equal("--agent-id must be a valid GUID.", ex.Message);
     }
 
+    [Fact]
+    public void ContentValidators_CheckTheChannelButLeaveTheAmsAddressToTheCaller()
+    {
+        const string AmsAgentId = "{22222222-2222-2222-2222-222222222222}";
+        var show = ShowRequest("MsTeams") with { AgentId = AmsAgentId };
+        var create = CreateRequest("MsTeams", "acceptedTerms=true") with { AgentId = AmsAgentId };
+        var update = UpdateRequest("MsTeams", "acceptedTerms=true") with { AgentId = AmsAgentId };
+        var delete = DeleteRequest("MsTeams") with { AgentId = AmsAgentId };
+
+        DeploymentChannelRequest[] validated =
+        [
+            DeploymentChannelPlan.ValidateShowContent(show),
+            DeploymentChannelPlan.ValidateCreateContent(create).Request,
+            DeploymentChannelPlan.ValidateUpdateContent(update).Request,
+            DeploymentChannelPlan.ValidateDeleteContent(delete),
+        ];
+
+        Assert.All(validated, request => Assert.Equal(("msteams", AmsAgentId, DeploymentId), (request.ChannelName, request.AgentId, request.DeploymentId)));
+        Action[] localValidators =
+        [
+            () => DeploymentChannelPlan.ValidateShow(show),
+            () => DeploymentChannelPlan.ValidateCreate(create),
+            () => DeploymentChannelPlan.ValidateUpdate(update),
+            () => DeploymentChannelPlan.ValidateDelete(delete),
+        ];
+        Assert.All(localValidators, validate => Assert.StartsWith("--deployment-id cannot be combined with --agent-id", Assert.Throws<UsageException>(validate).Message, StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("directline")]
     [InlineData("webchat")]
@@ -1345,7 +1373,7 @@ public sealed class DeploymentChannelPlanTests
             UpdateRequest(channel) with { SetSite = ["isEnabled=false"] },
             UpdateRequest(channel) with { SetSite = ["siteName=Primary"] },
             UpdateRequest(channel) with { SetSite = ["siteName=Primary", "siteId=id-1", "isEnabled=false"] },
-            UpdateRequest(channel) with { SetSite = ["siteId=***", "isEnabled=false"] },
+            UpdateRequest(channel) with { SetSite = ["siteId=*****", "isEnabled=false"] },
             UpdateRequest(channel) with { SetSite = ["siteName=", "appId=a"] },
             UpdateRequest(channel) with { SetSite = ["siteName=Primary", "isTokenEnabled=false"] },
             UpdateRequest(channel) with { SetSite = ["siteName=Primary", "eTag=etag"] },
@@ -1616,7 +1644,7 @@ public sealed class DeploymentChannelPlanTests
         }
 
         Assert.DoesNotContain("SYNTHETIC_KEY", sites.GetRawText());
-        Assert.DoesNotContain("***", sites.GetRawText());
+        Assert.DoesNotContain("*****", sites.GetRawText());
         Assert.DoesNotContain("eTag", sites.GetRawText());
         Assert.DoesNotContain("unknown", sites.GetRawText());
     }
@@ -1710,9 +1738,9 @@ public sealed class DeploymentChannelPlanTests
         {"properties":{"properties":{"sites":[
           {"siteName":"Primary","siteId":"id-1","isTokenEnabled":true,"isEnabled":true,"appId":"app-1",
            "tenantId":"tenant-1","isV1Enabled":true,"isWebchatPreviewEnabled":false,"isDetailedLoggingEnabled":true,
-           "isNoStorageEnabled":false,"key":"SYNTHETIC_KEY","key2":"***","eTag":42,"unknown":true},
+           "isNoStorageEnabled":false,"key":"SYNTHETIC_KEY","key2":"*****","eTag":42,"unknown":true},
           {"siteName":"Secondary","siteId":"id-2","isTokenEnabled":false,"isEnabled":false,
-           "appId":"app-2","key":"***"}
+           "appId":"app-2","key":"*****"}
         ]}}}
         """);
 
@@ -1721,13 +1749,13 @@ public sealed class DeploymentChannelPlanTests
     [InlineData("webchat")]
     public void Sites_MaskTextRemainsUsableAcrossCreationAndUpdates(string channel)
     {
-        var origins = channel == "directline" ? ""","trustedOrigins":["***"]""" : "";
+        var origins = channel == "directline" ? ""","trustedOrigins":["*****"]""" : "";
         var definition = DeploymentChannelCatalog.FindChannelDefinition(channel, ChannelKeyType.Name);
         var created = DeploymentChannelPlan.BuildCreate(DeploymentChannelPlan.ValidateCreate(CreateRequest(channel,
-            $$"""sites=[{"siteName":"***","appId":"***","tenantId":"***"{{origins}}}]""")), BotResourceId, null);
+            $$"""sites=[{"siteName":"*****","appId":"*****","tenantId":"*****"{{origins}}}]""")), BotResourceId, null);
         var response = Snapshot($$"""
             {"properties":{"properties":{"sites":[
-              {"siteName":"***","siteId":"***","appId":"***","tenantId":"***","key":"***"{{origins}}}
+              {"siteName":"*****","siteId":"*****","appId":"*****","tenantId":"*****","key":"*****"{{origins}}}
             ]}
             }
             }
@@ -1736,7 +1764,7 @@ public sealed class DeploymentChannelPlanTests
         Assert.NotNull(configured);
         var update = UpdateRequest(channel) with
         {
-            SetSite = ["siteName=***", "appId=***", "tenantId=***", .. channel == "directline" ? new[] { "trustedOrigins=***" } : []],
+            SetSite = ["siteName=*****", "appId=*****", "tenantId=*****", .. channel == "directline" ? new[] { "trustedOrigins=*****" } : []],
         };
         var updated = DeploymentChannelPlan.BuildUpdate(DeploymentChannelPlan.ValidateUpdate(update), response, BotResourceId, null);
 
@@ -1744,15 +1772,15 @@ public sealed class DeploymentChannelPlanTests
         foreach (var parameters in writes)
         {
             var site = Assert.Single(parameters["sites"].EnumerateArray());
-            Assert.Equal("***", site.GetProperty("siteName").GetString());
-            Assert.Equal("***", site.GetProperty("appId").GetString());
-            Assert.Equal("***", site.GetProperty("tenantId").GetString());
+            Assert.Equal("*****", site.GetProperty("siteName").GetString());
+            Assert.Equal("*****", site.GetProperty("appId").GetString());
+            Assert.Equal("*****", site.GetProperty("tenantId").GetString());
             Assert.False(site.TryGetProperty("key", out _));
             if (channel == "directline")
-                Assert.Equal("***", Assert.Single(site.GetProperty("trustedOrigins").EnumerateArray()).GetString());
+                Assert.Equal("*****", Assert.Single(site.GetProperty("trustedOrigins").EnumerateArray()).GetString());
         }
-        Assert.Equal("***", configured["sites"][0].GetProperty("siteId").GetString());
-        Assert.Equal("***", updated.Parameters["sites"][0].GetProperty("siteId").GetString());
+        Assert.Equal("*****", configured["sites"][0].GetProperty("siteId").GetString());
+        Assert.Equal("*****", updated.Parameters["sites"][0].GetProperty("siteId").GetString());
     }
 
     [Fact]
@@ -1835,7 +1863,6 @@ public sealed class DeploymentChannelPlanTests
                     property => property.Name,
                     property => property.Value.Clone(),
                     StringComparer.Ordinal),
-            RawArmResponse = raw,
         };
     }
 

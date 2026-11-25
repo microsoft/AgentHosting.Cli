@@ -51,6 +51,9 @@ public sealed record AgentHostAuthOptions
     /// <summary>The writer that receives sign-in diagnostics under <c>--debug</c>, or <see langword="null"/> to stay silent.</summary>
     public TextWriter? DebugOutput { get; init; }
 
+    /// <summary>Whether diagnostic heading messages may use color, resolved by the host's stderr color policy.</summary>
+    public bool DebugColor { get; init; }
+
     /// <summary>The writer that receives interactive sign-in and consent messages, or <see langword="null"/> for standard error.</summary>
     public TextWriter? MessageOutput { get; init; }
 

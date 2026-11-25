@@ -5,7 +5,7 @@ namespace Microsoft.Agents.Hosting.Cli.E2E.Scenarios.Azure;
 /// <summary>Azure Bot Service preview and apply, against a bot the harness creates and deletes.</summary>
 public static class AbsScenarios
 {
-    private static readonly ScenarioBuilder Builder = new("abs");
+    private static readonly ScenarioBuilder Builder = new("abs", MsagentFeatures.AzureBotService);
 
     private static readonly Capability[] None = [];
     private static readonly Capability[] Read = [Capability.Auth, Capability.AzureRead];

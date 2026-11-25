@@ -329,15 +329,15 @@ public sealed class DeploymentServiceTests
     }
 
     [Fact]
-    public async Task CreateAsync_SurfacesRawArmResponse()
+    public async Task CreateAsync_ReturnsTheCanonicalBotSnapshot()
     {
-        using var doc = JsonDocument.Parse("""{"id":"/bot","properties":{"msaAppType":"SingleTenant"}}""");
-        var bots = new CapturingBotProvisioningPort { RawArmResponse = doc.RootElement.Clone() };
+        var bots = new CapturingBotProvisioningPort();
         var service = Service(out _, bots: bots);
 
         var result = await service.CreateAsync(ValidCreate(), CancellationToken.None);
 
-        Assert.Equal("/bot", result.ArmResponse!.Value.GetProperty("id").GetString());
+        Assert.Equal(AppId, result.Payload!.Bot.EntraId);
+        Assert.Contains("/providers/Microsoft.BotService/botServices/", result.Payload.Bot.ResourceId);
     }
 
     [Fact]

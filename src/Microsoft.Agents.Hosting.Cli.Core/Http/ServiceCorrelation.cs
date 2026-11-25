@@ -4,7 +4,7 @@ public sealed record ServiceCorrelation(string? ClientRequestId, string? Service
 {
     public const string ClientRequestIdHeader = "x-ms-client-request-id";
 
-    private static readonly string[] ServiceRequestIdHeaders = ["x-ms-request-id", "x-ms-correlation-request-id", "request-id"];
+    private static readonly string[] ServiceRequestIdHeaders = ["x-ms-request-id", "x-ms-correlation-request-id", "request-id", "x-ms-service-request-id"];
 
     public static ServiceCorrelation None { get; } = new(null, null);
 

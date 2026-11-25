@@ -9,6 +9,18 @@ You can provide optional compatible skills and an agent.md file to assist your c
 - Start with [agent.md](agent.md). For guided workflows, see the optional
   [msagent-assistant plugin setup](#msagent-assistant-plugin).
 
+## In-app chat canvas
+
+The `msagent-assistant` plugin includes an optional
+[Copilot Studio chat canvas](../.github/plugins/msagent-assistant/extensions/copilot-studio-chat/README.md)
+for GitHub Copilot app hosts supporting extension canvases. It runs `test ask`
+in the background and keeps chat inside the app, with progressive reply updates
+and safe Markdown formatting. Update granularity depends on activities emitted
+by the agent and SDK. It reuses the CLI account from `msagent auth create` and
+never signs in itself; no chat browser or terminal is used. See the extension
+guide for exact target selection, setup and limitations. Live conversation
+starts and sends may consume credits or affect real data.
+
 ## Using natural language
 
 Coding agents are driven by natural language, and the CLI works well with local based coding agents that have access to other tools that help advanced makers and developers in their flow of work. Coding agents do best when they have an initial grounding, typically through an agents.md file or similar, and a set of optional skills to assist in the use of CLIs which can help guide them to a specific outcome or task. 

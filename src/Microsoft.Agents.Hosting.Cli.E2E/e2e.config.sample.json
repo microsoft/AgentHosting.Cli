@@ -131,11 +131,35 @@
   },
 
 
-  // OPTIONAL. Agent Management Service, for CodeAgent *agent creation*
-  // (CA-19, CA-20). The CodeAgent deployment lifecycle does NOT need this —
-  // it talks to ARM directly and needs only the azure block above.
-  // Format: "https://...", or null.
+  // OPTIONAL. Agent Management Service, for the `ams-code-agent` scenarios
+  // (AC-*) and CA-19, CA-20. msagent must be signed in to the cloud and tenant
+  // above, and `az` to the same tenant for the throwaway App Registrations.
+  // Every value can be overridden with an MSAGENT_E2E_AMS_* environment variable,
+  // e.g. MSAGENT_E2E_AMS_DEV_ENVIRONMENT_ID.
   "ams": {
-    "endpoint": null
+    // REQUIRED for every AMS scenario. The control plane and data plane msagent
+    // reaches. Format: "https://...".
+    "controlPlane": { "endpoint": null },
+    "dataPlane": { "endpoint": null },
+
+    // The cloud `msagent auth status` must report, e.g. "test", or null.
+    "cloud": null,
+
+    // REQUIRED. The home environment of every agent the run creates.
+    // Format: GUID, never one in mcs.forbiddenEnvironmentIds.
+    "devEnvironmentId": null,
+
+    // The targets of the Test and Prod deployments. Format: GUID, or null.
+    "testEnvironmentId": null,
+    "prodEnvironmentId": null,
+
+    // Set true to allow the scenarios that create agents, deployments, bots
+    // and App Registrations. Cleanup deletes them all; the hosted runtime
+    // copies the service keeps are listed in the report instead.
+    "allowCreate": false,
+
+    // The hosted package the upload and hosted deploy scenarios copy and
+    // upload. Format: a path to the .zip, or null.
+    "packagePath": null
   }
 }

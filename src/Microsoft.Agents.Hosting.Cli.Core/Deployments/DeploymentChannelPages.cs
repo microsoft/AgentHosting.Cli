@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -142,7 +143,7 @@ internal static class DeploymentChannelPages
             var pageId = DeploymentChannelPlan.ReadSelector(page, "id").Trim();
             var fields = new Dictionary<string, JsonElement> { ["id"] = JsonSerializer.SerializeToElement(pageId) };
             if (page.TryGetProperty("accessToken", out var token) && token.ValueKind == JsonValueKind.String &&
-                !string.IsNullOrWhiteSpace(token.GetString()) && token.GetString() != BotServiceResponseRedactor.Mask)
+                !string.IsNullOrWhiteSpace(token.GetString()) && !SecretRedaction.IsMasked(token.GetString()))
             {
                 fields["accessToken"] = token.Clone();
             }

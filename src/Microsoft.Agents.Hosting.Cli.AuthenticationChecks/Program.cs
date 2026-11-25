@@ -19,7 +19,7 @@ internal static class Program
                 {
                     if (!switches.Add(args[i])) throw new InvalidOperationException("Duplicate switch.");
                 }
-                else if (args[i] is "--expected-rid" or "--package-directory" or "--root" && i + 1 < args.Length)
+                else if (args[i] is "--expected-rid" or "--package-directory" or "--root" or "--canvas-smoke" && i + 1 < args.Length)
                 {
                     if (!values.TryAdd(args[i], args[++i])) throw new InvalidOperationException("Duplicate option.");
                 }
@@ -46,8 +46,11 @@ internal static class Program
                 return 0;
             }
             var packages = Path.GetFullPath(values["--package-directory"]);
+            string? canvasSmoke = values.TryGetValue("--canvas-smoke", out var script) ? Path.GetFullPath(script) : null;
+            if (canvasSmoke is not null && (tier != "package" || !OperatingSystem.IsWindows()))
+                throw new InvalidOperationException("Canvas smoke checks require Windows package acceptance.");
             if (tier == "native") await NativeChecks.RunAsync(Path.GetFullPath(values["--root"]), rid, packages);
-            else await InstalledToolChecks.RunAsync(packages, rid);
+            else await InstalledToolChecks.RunAsync(packages, rid, canvasSmokeScript: canvasSmoke);
             return 0;
         }
         catch (Exception failure)

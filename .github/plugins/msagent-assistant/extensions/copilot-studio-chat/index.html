@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Copilot Studio chat</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <header>
+    <div class="chat-heading">
+      <h1>Copilot Studio</h1>
+      <p id="agent">Checking agent...</p>
+    </div>
+    <div class="header-actions">
+      <span id="status" role="status" hidden></span>
+      <button id="new-chat" type="button" title="Discard this conversation and start a new one" disabled>New chat</button>
+      <details id="connection">
+        <summary aria-label="Connection details" title="Connection details"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg></summary>
+        <div class="connection-panel">
+          <h2>Connection</h2>
+          <dl class="connection-details">
+            <dt>Account</dt><dd id="conn-account">Checking...</dd>
+            <dt>Agent</dt><dd id="conn-agent"></dd>
+            <dt>Deployment</dt><dd id="conn-deployment"></dd>
+            <dt>Environment ID</dt><dd id="conn-environment"></dd>
+            <dt>Tenant ID</dt><dd id="conn-tenant"></dd>
+          </dl>
+        </div>
+      </details>
+    </div>
+  </header>
+  <div id="view-controls" class="view-controls" role="group" aria-label="Conversation view">
+    <button id="view-chat" type="button" aria-pressed="true" aria-controls="chat-view">Chat</button>
+    <button id="view-debug" type="button" aria-pressed="false" aria-controls="debug-view">Debug</button>
+  </div>
+  <main>
+    <section id="setup" hidden aria-labelledby="setup-title">
+      <h2 id="setup-title">Choose an agent</h2>
+      <p id="setup-description">Choose your Copilot Studio agent in the main Copilot chat.</p>
+      <button id="choose-agent" type="button">Choose an agent with Copilot</button>
+    </section>
+    <div id="chat-view">
+      <div id="messages" role="log" aria-label="Conversation"></div>
+      <section id="conversation-issue" role="alert" hidden>
+        <h2>This chat can't continue</h2>
+        <p id="conversation-issue-message"></p>
+        <button id="start-new-chat" type="button">Start new chat</button>
+      </section>
+    </div>
+    <div id="typing" class="typing" role="status" aria-live="polite" hidden>
+      <span class="typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span id="typing-text">Waiting for Copilot Studio</span>
+    </div>
+    <section id="debug-view" hidden aria-label="Conversation data (JSON)">
+      <p id="debug-status" class="notice" hidden></p>
+      <div class="debug-search" role="search" aria-label="Search conversation data">
+        <input id="debug-search" type="search" placeholder="Find in debug data" aria-label="Find in debug data" autocomplete="off">
+        <span id="debug-search-count" role="status" aria-live="polite" aria-atomic="true"></span>
+        <button id="debug-expand" type="button" aria-pressed="false" title="Expand or collapse all streaming chunks" disabled>Expand chunks</button>
+        <button id="debug-previous" type="button" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled>Previous</button>
+        <button id="debug-next" type="button" aria-label="Next match" title="Next match (Enter)" disabled>Next</button>
+      </div>
+      <div id="debug-output" tabindex="0"></div>
+    </section>
+    <p id="error" role="alert" hidden></p>
+  </main>
+  <form id="composer">
+    <div class="composer-input">
+      <textarea id="query" rows="3" placeholder="Ask your agent…" aria-label="Ask your agent" required></textarea>
+      <label class="file-picker" for="files" title="Attach files: up to 5 files, 10 MiB total. Sent only with your message."><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 7.5 7 13a3 3 0 0 1-4.25-4.25l6.5-6.5a2 2 0 0 1 2.83 2.83L6 11.17a1 1 0 0 1-1.42-1.42l5.3-5.3"/></svg><input id="files" type="file" aria-label="Attach files" multiple></label>
+    </div>
+    <div id="pending-files" aria-label="Attached files"></div>
+    <div class="composer-actions">
+      <button id="send" type="submit" disabled>Send</button>
+    </div>
+  </form>
+</body>
+</html>

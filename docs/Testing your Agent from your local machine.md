@@ -6,6 +6,12 @@ Use `msagent test ask` for terminal queries or `msagent test playground` for an
 interactive UI. Testing is available without a feature-flag opt-in. The agent
 runs in Copilot Studio; the CLI and Playground are clients, not local emulators.
 
+For an in-app text pane in GitHub Copilot, the optional
+[chat canvas](../.github/plugins/msagent-assistant/extensions/copilot-studio-chat/README.md)
+in the `msagent-assistant` plugin wraps `test ask`
+without a separate chat browser or terminal. It reuses the CLI sign-in from
+`msagent auth create`; cards are not interactive in this renderer.
+
 ## Billing and channel IDs in usage telemetry
 
 **Testing through the CLI invokes the real Copilot Studio service and incurs
@@ -116,7 +122,11 @@ msagent test ask --project <project-path> --agent-name <agentname> --deployment-
 ```
 
 - The Copilot Studio client's discovery service resolves the runtime endpoints from the environment and schema name; no harness argument is needed. DirectEngine Playground also discovers its app endpoint automatically, using the selected CLI account before the playground's own sign-in.
-- `--query` (`-q`) is a required nonblank literal question. Live actions it triggers are not rolled back, and the query may enter your shell history.
+- Supply a nonblank literal `--query` (`-q`), or `--start-conversation` to receive
+  the agent's opening activities without sending a user message. The start-only
+  switch cannot be combined with `--query` or `--conversation-id`. Starting a
+  conversation can itself execute configured topics/actions. Live effects are
+  not rolled back, and query arguments may enter your shell history.
 - For a registered project, select an agent and deployment with `--project`, `--agent-id`/`--agent-name`, and `--deployment-id`/`--deployment-name`. A deployment selector can identify its owning agent. An omitted deployment requires exactly one marked default; a single non-default deployment is not automatically selected.
 - The deployment determines the environment. Additional `--schema-name`, `--environment-id`, and `--tenant` values assert that destination, rather than retargeting it.
 - `--conversation-id` continues an existing conversation; omit it to start a new one (the id is not saved automatically, so save it yourself to continue later).
@@ -150,6 +160,16 @@ Expect a browser to open if this is the first time you have used this to agree t
 Use `--conversation-id <returned-id>` with the same destination to continue a
 conversation. Without it, each command starts a new conversation. The CLI does
 not save the last conversation ID or automatically replay a failed query.
+
+To connect and receive an opening greeting before composing a message:
+
+```text
+msagent test ask --schema-name <schema-name> --environment-id <environment-id> --tenant <tenant-id> --deployment-name explicit-target --start-conversation --non-interactive --json
+```
+
+Continue with the returned conversation ID and `--query`. A successful start-only
+result has `queryDelivery: "not-attempted"` because no query was sent; opening
+activities may still have run actions, and a greeting is not guaranteed.
 
 ### How it works
 

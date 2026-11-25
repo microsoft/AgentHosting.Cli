@@ -212,7 +212,7 @@ public sealed class MakerEvaluationAdapter : IAgentEvaluationPort, IDisposable
         {
             ["testSetId"] = start.TestSetId,
             ["clientRequestedEvaluationRunName"] = start.Name,
-            ["runOnPublishedBot"] = start.RunOnPublishedBot,
+            ["runOnPublishedBot"] = false,
         };
 
         if (!string.IsNullOrWhiteSpace(start.ConnectionId))
@@ -496,7 +496,6 @@ public sealed class MakerEvaluationAdapter : IAgentEvaluationPort, IDisposable
         TestCaseCount = EvaluationJson.Int(element, "testCaseCount") ?? EvaluationJson.Int(element, "TotalItemCount") ?? 0,
         StartTime = EvaluationJson.Timestamp(element, "startTime"),
         EndTime = EvaluationJson.Timestamp(element, "endTime"),
-        RunOnPublishedBot = EvaluationJson.Bool(element, "runOnPublishedBot") ?? false,
         EvaluationSetType = EvaluationJson.String(element, "evaluationSetType"),
         Totals = ReadTotals(element),
         Credits = element.TryGetProperty("consumption", out var consumption) && consumption.ValueKind == JsonValueKind.Object && consumption.TryGetProperty("evaluators", out var evaluators)
@@ -605,10 +604,13 @@ public sealed class MakerEvaluationAdapter : IAgentEvaluationPort, IDisposable
             await tokens.AcquireTokenSilentAsync([DelegatedScope], environment.TenantId, cancellationToken).ConfigureAwait(false),
             environment.TenantId);
 
+        var clientRequestId = Guid.NewGuid().ToString();
+
         using var client = new HttpClient(SharedHandler(), disposeHandler: false);
         using var request = new HttpRequestMessage(method, new Uri(endpoint, $"api/botmanagement/v2/environments/{Uri.EscapeDataString(environment.EnvironmentId)}/bots/{Uri.EscapeDataString(agentId)}/makerevaluations{route}"));
         request.Headers.Add("Authorization", $"Bearer {token}");
         request.Headers.Add("Accept", "application/json");
+        request.Headers.Add(ServiceCorrelation.ClientRequestIdHeader, clientRequestId);
 
         foreach (var (name, value) in RoutingHeaders(environment, agentId))
         {
@@ -630,7 +632,7 @@ public sealed class MakerEvaluationAdapter : IAgentEvaluationPort, IDisposable
 
         if (!response.IsSuccessStatusCode)
         {
-            throw CopilotStudioException.ServiceError(operation, Describe(response, payload));
+            throw CopilotStudioException.ServiceError(operation, new ServiceCorrelation(clientRequestId, ServiceCorrelation.ReadServiceRequestId(response)).Annotate(Describe(response, payload)));
         }
 
         return string.IsNullOrWhiteSpace(payload) ? null : JsonDocument.Parse(payload);
@@ -693,10 +695,6 @@ internal static class EvaluationJson
     /// <summary>The number a property carries, or null when it is absent or another kind.</summary>
     internal static double? Double(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) ? number : null;
-
-    /// <summary>The boolean a property carries, or null when it is absent or another kind.</summary>
-    internal static bool? Bool(JsonElement element, string name) =>
-        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False ? value.GetBoolean() : null;
 
     /// <summary>The timestamp a property carries, or null when it is absent or unparsable.</summary>
     internal static DateTimeOffset? Timestamp(JsonElement element, string name) =>

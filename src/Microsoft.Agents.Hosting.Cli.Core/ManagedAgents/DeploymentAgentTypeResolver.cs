@@ -38,13 +38,15 @@ public sealed class DeploymentAgentTypeResolver
 
         if (configured)
         {
-            if (MatchDeployment(projectDirectory, query) is { } deployment)
+            var owner = ScopingAgent(projectDirectory, query);
+
+            if (MatchDeployment(projectDirectory, query, owner) is { } deployment)
             {
                 AddressedAgentObservation.Observe(_agentObserver, deployment.AgentType);
                 return new DeploymentAgentTypeResult { AgentType = deployment.AgentType, Source = DeploymentAgentTypeSource.DeploymentRecord };
             }
 
-            if (MatchAgent(projectDirectory, query) is { } agent)
+            if (MatchAgent(projectDirectory, query, owner) is { } agent)
             {
                 AddressedAgentObservation.Observe(_agentObserver, agent.AgentType, agent.McsSchemaName);
                 AddressedAgentObservation.ObserveResources(_agentObserver, agent.AgentType, mcsWorkflowId: agent.McsWorkflowId);
@@ -69,14 +71,14 @@ public sealed class DeploymentAgentTypeResolver
         };
     }
 
-    private AgentDeploymentRecord? MatchDeployment(string projectDirectory, DeploymentAgentTypeQuery query)
+    private AgentDeploymentRecord? MatchDeployment(string projectDirectory, DeploymentAgentTypeQuery query, ManagedAgentRecord? owner)
     {
         if (string.IsNullOrWhiteSpace(query.DeploymentId) && string.IsNullOrWhiteSpace(query.DeploymentName))
         {
             return null;
         }
 
-        var deployments = _deployments.List(projectDirectory);
+        var deployments = _deployments.List(projectDirectory).Where(deployment => owner is not null || !query.RequireNamedAgentMatch || !NamesAgent(query) || Matches(deployment.AgentId, query.AgentId)).ToArray();
 
         if (!string.IsNullOrWhiteSpace(query.DeploymentId))
         {
@@ -85,7 +87,7 @@ public sealed class DeploymentAgentTypeResolver
 
         var named = deployments.Where(deployment => Matches(deployment.DeploymentName, query.DeploymentName)).ToArray();
 
-        if (ScopingAgent(projectDirectory, query) is { } owner)
+        if (owner is not null)
         {
             named = [.. named.Where(deployment => string.Equals(deployment.AgentId, owner.AgentId, StringComparison.OrdinalIgnoreCase))];
         }
@@ -110,14 +112,14 @@ public sealed class DeploymentAgentTypeResolver
             || (string.IsNullOrWhiteSpace(query.AgentId) && Matches(agent.DisplayName, query.AgentName)));
     }
 
-    private ManagedAgentRecord? MatchAgent(string projectDirectory, DeploymentAgentTypeQuery query)
+    private ManagedAgentRecord? MatchAgent(string projectDirectory, DeploymentAgentTypeQuery query, ManagedAgentRecord? owner)
     {
-        if (ScopingAgent(projectDirectory, query) is { } selected)
+        if (owner is not null)
         {
-            return selected;
+            return owner;
         }
 
-        if (!string.IsNullOrWhiteSpace(query.AgentId) || !string.IsNullOrWhiteSpace(query.AgentName))
+        if (NamesAgent(query))
         {
             return null;
         }
@@ -126,6 +128,8 @@ public sealed class DeploymentAgentTypeResolver
 
         return agents.Count == 1 ? agents[0] : null;
     }
+
+    private static bool NamesAgent(DeploymentAgentTypeQuery query) => !string.IsNullOrWhiteSpace(query.AgentId) || !string.IsNullOrWhiteSpace(query.AgentName);
 
     private static bool Matches(string stored, string? supplied) => !string.IsNullOrWhiteSpace(supplied) && string.Equals(stored, supplied.Trim(), StringComparison.OrdinalIgnoreCase);
 }

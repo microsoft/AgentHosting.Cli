@@ -4,10 +4,9 @@ using Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.E2EHarness;
 
+[Collection(nameof(HarnessVariablesCollection))]
 public sealed partial class HarnessToolNameTests
 {
-    private static readonly string[] HarnessVariables = ["TENANT_ID", "MCS_DEV_ENV", "AZURE_BOT_PREFIX"];
-
     [Fact]
     public void TheHarnessLooksForTheToolCommandNameTheCliShips()
     {
@@ -269,34 +268,6 @@ public sealed partial class HarnessToolNameTests
             if (Directory.Exists(Path))
             {
                 Directory.Delete(Path, recursive: true);
-            }
-        }
-    }
-
-    private sealed class HarnessVariableScope : IDisposable
-    {
-        private readonly Dictionary<string, string?> _prior = [];
-
-        public HarnessVariableScope()
-        {
-            foreach (var prefix in new[] { E2EConfig.EnvironmentPrefix, E2EConfig.LegacyEnvironmentPrefix })
-            {
-                foreach (var suffix in HarnessVariables)
-                {
-                    var name = prefix + suffix;
-                    _prior[name] = Environment.GetEnvironmentVariable(name);
-                    Environment.SetEnvironmentVariable(name, null);
-                }
-            }
-        }
-
-        public static void Set(string name, string value) => Environment.SetEnvironmentVariable(name, value);
-
-        public void Dispose()
-        {
-            foreach (var entry in _prior)
-            {
-                Environment.SetEnvironmentVariable(entry.Key, entry.Value);
             }
         }
     }

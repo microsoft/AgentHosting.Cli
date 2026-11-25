@@ -12,6 +12,10 @@ $harness = [IO.Path]::Combine($repo, 'src', 'Microsoft.Agents.Hosting.Cli.Authen
     'net10.0', 'Microsoft.Agents.Hosting.Cli.AuthenticationChecks.dll')
 Push-Location $repo
 try {
-    & dotnet $harness package --expected-rid $ExpectedRid --package-directory $PackageDirectory
+    $canvasArguments = @()
+    if ($IsWindows) {
+        $canvasArguments = @('--canvas-smoke', (Join-Path $PSScriptRoot 'verify-canvas-package.mjs'))
+    }
+    & dotnet $harness package --expected-rid $ExpectedRid --package-directory $PackageDirectory @canvasArguments
     if ($LASTEXITCODE -ne 0) { throw 'Isolated installed-package acceptance failed.' }
 } finally { Pop-Location }

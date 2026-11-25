@@ -38,14 +38,16 @@ public sealed partial class Cleanup
     private readonly CloudProbe _cloud;
     private readonly Transcript _transcript;
     private readonly StandaloneServices? _standalone;
+    private readonly AmsCleanupTiming _amsTiming;
 
-    public Cleanup(MsagentCli msagent, AzureCli azure, CloudProbe cloud, Transcript transcript, StandaloneServices? standalone = null)
+    public Cleanup(MsagentCli msagent, AzureCli azure, CloudProbe cloud, Transcript transcript, StandaloneServices? standalone = null, AmsCleanupTiming? amsTiming = null)
     {
         _msagent = msagent;
         _azure = azure;
         _cloud = cloud;
         _transcript = transcript;
         _standalone = standalone;
+        _amsTiming = amsTiming ?? AmsCleanupTiming.Default;
     }
 
     /// <summary>Walks the ledger newest-first within each cleanup phase, removing or restoring each outstanding entry, then removes the recorded copy workflows still listed and notes the unrecorded ones named after this run's copies.</summary>
@@ -129,7 +131,8 @@ public sealed partial class Cleanup
                 ResourceKind.McsCopy => await RemoveCopyAsync(ledger, entry, cancellationToken).ConfigureAwait(false),
                 ResourceKind.McsCopyWorkflow => entry.Cleanup.EnvironmentId is { Length: > 0 } environment ? await RemoveWorkflowsAsync([entry.Id], environment, cancellationToken).ConfigureAwait(false) : "the ledger entry has no environment",
                 ResourceKind.AzureBot => await RemoveAzureBotAsync(entry, cancellationToken).ConfigureAwait(false),
-                ResourceKind.EntraApp => await RemoveEntraAppAsync(entry, cancellationToken).ConfigureAwait(false),
+                ResourceKind.EntraApp => await RemoveEntraAppAsync(ledger, entry, cancellationToken).ConfigureAwait(false),
+                ResourceKind.AmsAgent => await RemoveAmsAgentAsync(ledger, entry, cancellationToken).ConfigureAwait(false),
                 ResourceKind.LocalWorkspace => RemoveLocalWorkspace(entry, ledger),
                 ResourceKind.ConfigEdit => await RestoreConfigEditAsync(entry, cancellationToken).ConfigureAwait(false),
                 ResourceKind.EvaluationTestSet => await RemoveEvaluationTestSetAsync(entry, cancellationToken).ConfigureAwait(false),
@@ -423,8 +426,25 @@ public sealed partial class Cleanup
             : $"az bot delete exited {result.ExitCode}: {Summarize(result)}";
     }
 
-    private async Task<string?> RemoveEntraAppAsync(LedgerEntry entry, CancellationToken cancellationToken)
+    private async Task<string?> RemoveEntraAppAsync(Ledger ledger, LedgerEntry entry, CancellationToken cancellationToken)
     {
+        if (entry.Cleanup.Ams?.TenantId is { Length: > 0 } tenantId && await AmsServices.AzureTenantMismatchAsync(_azure, tenantId, cancellationToken).ConfigureAwait(false) is { } mismatch)
+        {
+            return $"{mismatch}, where this App Registration was created; sign in there and run cleanup again";
+        }
+
+        if (!entry.Resolved)
+        {
+            var (applicationId, failure) = await FindEntraAppAsync(entry.Id, cancellationToken).ConfigureAwait(false);
+
+            if (failure is not null || applicationId is null)
+            {
+                return failure;
+            }
+
+            ledger.ResolveEntraApp(entry.Id, applicationId);
+        }
+
         var result = await _azure.RunAsync(["ad", "app", "delete", "--id", entry.Id], cancellationToken).ConfigureAwait(false);
 
         return result.ExitCode == 0 || IsAlreadyGone(result)
@@ -667,7 +687,9 @@ public sealed partial class Cleanup
     public static string ManualCommand(LedgerEntry entry) => entry.Kind switch
     {
         ResourceKind.AzureBot => $"az bot delete --name {entry.Id} --resource-group {entry.Cleanup.ResourceGroup} --subscription {entry.Cleanup.SubscriptionId} --yes",
-        ResourceKind.EntraApp => $"az ad app delete --id {entry.Id}",
+        ResourceKind.EntraApp => entry.Resolved ? $"az ad app delete --id {entry.Id}" : $"az {string.Join(' ', CloudProbe.AppRegistrationListArguments(entry.Id).Select(CommandLineArgument.Quote))}, then az ad app delete --id <the id> only if it prints exactly one",
+        ResourceKind.AmsAgent => AmsAgentManualCommand(entry),
+        ResourceKind.AmsRuntimeCopy => $"nothing to run: the Agent Management Service keeps the hosted runtime copy of agent {entry.Cleanup.AgentId} in {entry.Cleanup.EnvironmentId} until it can remove it",
         ResourceKind.McsAgent => $"cd {CommandLineArgument.Quote(entry.Cleanup.ProjectDirectory ?? string.Empty)} && msagent deployment delete --deployment-name {entry.Cleanup.DeploymentName} --delete-deployed-mcs-agent",
         ResourceKind.McsWorkflow => $"cd {CommandLineArgument.Quote(entry.Cleanup.ProjectDirectory ?? string.Empty)} && msagent agent delete --agent-id {entry.Cleanup.AgentId}",
         ResourceKind.McsCopy => $"cd {CommandLineArgument.Quote(entry.Cleanup.ProjectDirectory ?? string.Empty)} && msagent agent delete --agent-id {entry.Cleanup.AgentId} --all-resources",

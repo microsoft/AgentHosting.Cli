@@ -42,7 +42,6 @@ public sealed class FacadeHandlerProvider : IServiceProvider
             [typeof(ICommandHandler<AgentCreateRequest, AgentCreateResult>)] = new FacadeHandler<AgentCreateRequest, AgentCreateResult>(operations.CreateAgentAsync),
             [typeof(ICommandHandler<ManagedAgentDeployRequest, ManagedAgentDeployResult>)] = new FacadeHandler<ManagedAgentDeployRequest, ManagedAgentDeployResult>(operations.DeployManagedAgentAsync),
             [typeof(ICommandHandler<AgentDeployRequest, AgentDeployResult>)] = new FacadeHandler<AgentDeployRequest, AgentDeployResult>(operations.DeployAgentAsync),
-            [typeof(ICommandHandler<AgentDeploymentPackageUpdateRequest, AgentDeployResult>)] = new FacadeHandler<AgentDeploymentPackageUpdateRequest, AgentDeployResult>(operations.UpdateAgentDeploymentPackageAsync),
             [typeof(ICommandHandler<AgentPackageUploadRequest, AgentPackageUploadResult>)] = new FacadeHandler<AgentPackageUploadRequest, AgentPackageUploadResult>(operations.UploadAgentPackageAsync),
             [typeof(ICommandHandler<AgentDeploymentListRequest, AgentDeploymentListResult>)] = new FacadeHandler<AgentDeploymentListRequest, AgentDeploymentListResult>(operations.ListAgentDeploymentsAsync),
             [typeof(ICommandHandler<AgentDeploymentCreateRequest, AgentDeploymentCreateResult>)] = new FacadeHandler<AgentDeploymentCreateRequest, AgentDeploymentCreateResult>(operations.CreateAgentDeploymentAsync),

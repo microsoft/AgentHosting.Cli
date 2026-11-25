@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
 
@@ -9,8 +10,6 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
 /// </summary>
 internal static class BotServiceResponseRedactor
 {
-    internal const string Mask = "***";
-
     /// <summary>
     /// The <c>Microsoft.BotService/botServices</c> (2023-09-15-preview) response template — the single
     /// source of truth for the response schema. The set of known <c>properties</c> field names is
@@ -281,7 +280,7 @@ internal static class BotServiceResponseRedactor
         {
             if (parameters[index] is not JsonObject parameter)
             {
-                parameters[index] = parameters[index] is null ? null : JsonValue.Create(Mask);
+                parameters[index] = parameters[index] is null ? null : JsonValue.Create(SecretRedaction.Mask);
                 continue;
             }
 
@@ -296,7 +295,7 @@ internal static class BotServiceResponseRedactor
             var isSecret = key is null ||
                 declaredSecretNames?.Contains(key) == true ||
                 key.Equals(DeploymentOAuthParameters.CommonOAuthParameters.ClientSecret, StringComparison.OrdinalIgnoreCase) ||
-                (DeploymentOAuthParameters.IsSecret(key) &&
+                (SecretRedaction.IsSecret(key) &&
                  parameterValue is not null && !IsBoolean(parameterValue));
 
             RedactObject(
@@ -360,7 +359,7 @@ internal static class BotServiceResponseRedactor
                     }
                     else
                     {
-                        items[index] = items[index] is null ? null : JsonValue.Create(Mask);
+                        items[index] = items[index] is null ? null : JsonValue.Create(SecretRedaction.Mask);
                     }
                 }
 
@@ -383,16 +382,16 @@ internal static class BotServiceResponseRedactor
 
             if (secretProperties?.Contains(property.Key) == true)
             {
-                value[property.Key] = Mask;
+                value[property.Key] = SecretRedaction.Mask;
                 continue;
             }
 
             if (property.Value is not null &&
                 knownProperties?.Contains(property.Key) != true &&
-                DeploymentOAuthParameters.IsSecret(property.Key) &&
+                SecretRedaction.IsSecret(property.Key) &&
                 !IsBoolean(property.Value))
             {
-                value[property.Key] = Mask;
+                value[property.Key] = SecretRedaction.Mask;
                 continue;
             }
 
@@ -422,7 +421,7 @@ internal static class BotServiceResponseRedactor
             return;
         }
 
-        value.ReplaceWith(Mask);
+        value.ReplaceWith(SecretRedaction.Mask);
     }
 
     private static bool IsBoolean(JsonNode value) =>

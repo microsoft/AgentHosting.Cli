@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -40,6 +41,42 @@ public abstract class DeploymentArmClient
 
     /// <summary>The ARM endpoint and api-versions the subclasses build their request URLs from.</summary>
     protected DeploymentTargetConfig Config { get; }
+
+    private static Func<JsonElement, JsonElement>? GetDiagnosticResponseRedactor(Uri uri)
+    {
+        const string resourcePath = "/providers/Microsoft.BotService/botServices";
+        var index = uri.AbsolutePath.IndexOf(resourcePath, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return null;
+        }
+
+        var suffix = uri.AbsolutePath[(index + resourcePath.Length)..];
+        if (suffix.Length > 0 && suffix[0] != '/')
+        {
+            return null;
+        }
+
+        var segments = suffix.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        Func<JsonElement, JsonElement>? resourceRedactor = segments.Length <= 1
+            ? BotServiceResponseRedactor.RedactBot
+            : segments[1].Equals("connections", StringComparison.OrdinalIgnoreCase)
+                ? resource => BotServiceResponseRedactor.RedactOAuth(resource)!.Value
+                : segments[1].Equals("channels", StringComparison.OrdinalIgnoreCase)
+                    ? RedactChannelResponse
+                    : null;
+        return resourceRedactor is null ? null : body => HttpDiagnosticLoggingPolicy.RedactBody(body, resourceRedactor);
+    }
+
+    private static JsonElement RedactChannelResponse(JsonElement resource)
+    {
+        var properties = resource.EnumerateObject().FirstOrDefault(property =>
+            property.Name.Equals("properties", StringComparison.OrdinalIgnoreCase)).Value;
+        var channelName = GetString(properties, "channelName");
+        var definition = channelName is null ? null :
+            DeploymentChannelCatalog.FindChannelDefinitionOrDefault(channelName, ChannelKeyType.ArmName);
+        return BotServiceResponseRedactor.RedactChannel(resource, definition);
+    }
 
     /// <summary>Creates the shared client.</summary>
     /// <param name="httpClient">The transport; a fake handler drives it offline in tests.</param>
@@ -181,6 +218,11 @@ public abstract class DeploymentArmClient
         CancellationToken cancellationToken)
     {
         using var request = await BuildRequestAsync(method, url, body, targetTenantId, cancellationToken).ConfigureAwait(false);
+        if (GetDiagnosticResponseRedactor(request.RequestUri!) is { } redactor)
+        {
+            request.Options.Set(HttpDiagnostics.ResponseBodyRedactor, redactor);
+        }
+
         using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
         var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 

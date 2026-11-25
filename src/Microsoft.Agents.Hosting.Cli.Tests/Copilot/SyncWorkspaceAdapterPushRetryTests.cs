@@ -129,6 +129,11 @@ public sealed class SyncWorkspaceAdapterPushRetryTests
             () => Create(synchronizer, retarget).PushAsync(Workspace(), overwrite, overwriteSharedEnvironmentVariables: false, CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.RemoteChangedDuringPush, failure.ErrorKind);
+        Assert.Equal(
+            overwrite
+                ? "Run `msagent agent pull` to get the latest changes, then deploy again. --overwrite can't replace cloud changes that would delete or replace knowledge files you changed locally."
+                : "Run `msagent agent pull` to get the latest changes, then deploy again — or re-run with --overwrite to replace the cloud with your local content.",
+            failure.Remediation);
         Assert.Equal(1, synchronizer.PushLocalChangesCalls);
         Assert.DoesNotContain(nameof(RecordingRetargetService.SyncWorkspaceAsync), retarget.Calls);
     }

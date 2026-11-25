@@ -6,7 +6,7 @@ namespace Microsoft.Agents.Hosting.Cli.E2E.Scenarios.Azure;
 /// <summary>App registration and blueprint scaffolding, all of it reachable without touching Entra.</summary>
 public static class IdentityScenarios
 {
-    private static readonly ScenarioBuilder Builder = new("identity");
+    private static readonly ScenarioBuilder Builder = new("identity", MsagentFeatures.Identity);
 
     private static readonly Capability[] None = [];
     private static readonly Capability[] Auth = [Capability.Auth];

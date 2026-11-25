@@ -214,9 +214,16 @@ public interface ICopilotWorkspacePort
     /// knowledge file content.
     /// </summary>
     /// <param name="workspace">The workspace to update.</param>
+    /// <param name="overwrite">Whether to delete knowledge files the environment deleted after local edits, instead of keeping them.</param>
     /// <param name="cancellationToken">Cancels the pull.</param>
     /// <returns>The changes that were applied, and anything the merge left unresolved.</returns>
-    Task<CopilotPullOutcome> PullAsync(CopilotWorkspaceInfo workspace, CancellationToken cancellationToken);
+    Task<CopilotPullOutcome> PullAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken);
+
+    /// <summary>Applies remote changes to the workspace and keeps knowledge files the environment deleted after local edits.</summary>
+    /// <param name="workspace">The workspace to update.</param>
+    /// <param name="cancellationToken">Cancels the pull.</param>
+    /// <returns>The changes that were applied, and anything the merge left unresolved.</returns>
+    Task<CopilotPullOutcome> PullAsync(CopilotWorkspaceInfo workspace, CancellationToken cancellationToken) => PullAsync(workspace, overwrite: false, cancellationToken);
 
     /// <summary>
     /// Uploads local changes to the connected agent, including knowledge file content.

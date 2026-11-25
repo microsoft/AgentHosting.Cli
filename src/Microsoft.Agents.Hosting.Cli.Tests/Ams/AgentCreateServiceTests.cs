@@ -10,6 +10,8 @@ public sealed class AgentCreateServiceTests
 {
     private const string Endpoint = "https://amsdp-alias.example";
 
+    private static readonly AmsEndpointProfile DevOverride = new() { DataPlaneEndpoint = Endpoint };
+
     [Fact]
     public async Task Create_UsesConfiguredDevOverrideAndSelectedEnvironment_WithoutRepositoryInput()
     {
@@ -18,11 +20,7 @@ public sealed class AgentCreateServiceTests
         var result = await Service(transport).CreateAsync(Request(), default);
 
         var sent = Assert.IsType<AmsAgentCreationTransportRequest>(transport.LastRequest);
-        Assert.Equal(new Uri(Endpoint), sent.Endpoint);
-        Assert.Equal(AmsAgentCreationRouteMode.DirectDataPlane, sent.RouteMode);
-        Assert.Equal("env-1", sent.EnvironmentId);
-        Assert.Equal(EnvironmentFixtures.ContosoTenant, sent.TenantId);
-        Assert.Equal(EnvironmentFixtures.Audience, sent.Audience);
+        AmsTargetFixtures.AssertTarget(new AmsServiceTarget { Endpoint = new Uri(Endpoint), Audience = EnvironmentFixtures.Audience, RouteForm = AmsRouteForm.Direct, TenantId = EnvironmentFixtures.ContosoTenant, EnvironmentId = "env-1" }, sent.ServiceTarget);
         Assert.True(Guid.TryParse(sent.IdempotencyKey, out _));
         Assert.Equal("My Agent", sent.DisplayName);
         Assert.Equal(0, sent.AgentType);
@@ -136,12 +134,10 @@ public sealed class AgentCreateServiceTests
     {
         var transport = new RecordingAmsAgentCreationTransport(request => Result(request));
 
-        await Service(transport, new AgentCreationTarget()).CreateAsync(Request(), default);
+        await Service(transport, new AmsEndpointProfile()).CreateAsync(Request(), default);
 
-        Assert.Equal(new Uri("https://env-1.api.powerplatform.com/"), transport.LastRequest!.Endpoint);
-        Assert.Equal(
-            AmsAgentCreationRouteMode.PowerPlatformApiFrontDoor,
-            transport.LastRequest.RouteMode);
+        Assert.Equal(new Uri("https://env-1.api.powerplatform.com/"), transport.LastRequest!.ServiceTarget.Endpoint);
+        Assert.Equal(AmsRouteForm.EnvironmentHost, transport.LastRequest.ServiceTarget.RouteForm);
     }
 
     [Fact]
@@ -149,14 +145,17 @@ public sealed class AgentCreateServiceTests
     {
         var transport = new RecordingAmsAgentCreationTransport(request => Result(request));
 
-        var exception = await Assert.ThrowsAsync<AgentCreationException>(() =>
+        var exception = await Assert.ThrowsAsync<AgentDeployException>(() =>
             Service(
                 transport,
-                new AgentCreationTarget { Endpoint = "http://amsdp-alias.example" })
+                new AmsEndpointProfile { DataPlaneEndpoint = "http://amsdp-alias.example" })
                 .CreateAsync(Request(), default));
 
+        Assert.Equal(ErrorCodes.Deployment.AgentDeployEndpointNotUsable, exception.ErrorCode);
         Assert.Equal("endpoint-untrusted", exception.ErrorKind);
+        Assert.StartsWith(AmsEndpointProfile.DataPlaneEndpointVariable, exception.Message, StringComparison.Ordinal);
         Assert.Contains("https", exception.Remediation, StringComparison.Ordinal);
+        Assert.DoesNotContain("idempotency", exception.Remediation, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, transport.Calls);
     }
 
@@ -169,7 +168,7 @@ public sealed class AgentCreateServiceTests
             new InMemoryEnvironmentSelectionStore(),
             InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant));
         var service = new AgentCreateService(
-            new AgentCreationTarget { Endpoint = Endpoint },
+            AmsTargetFixtures.Targets(DevOverride),
             environments,
             transport);
 
@@ -196,15 +195,13 @@ public sealed class AgentCreateServiceTests
                 "op@contoso.com",
                 EnvironmentFixtures.ContosoTenant));
         await environments.SelectAsync("env-1", default);
-        var service = new AgentCreateService(new AgentCreationTarget(), environments, transport);
+        var service = new AgentCreateService(AmsTargetFixtures.Targets(), environments, transport);
 
         await service.CreateAsync(Request() with { EnvironmentId = "env-2" }, default);
 
-        Assert.Equal("env-2", transport.LastRequest!.EnvironmentId);
-        Assert.Equal(new Uri("https://env-2.api.powerplatform.com/"), transport.LastRequest.Endpoint);
-        Assert.Equal(
-            AmsAgentCreationRouteMode.PowerPlatformApiFrontDoor,
-            transport.LastRequest.RouteMode);
+        Assert.Equal("env-2", transport.LastRequest!.ServiceTarget.EnvironmentId);
+        Assert.Equal(new Uri("https://env-2.api.powerplatform.com/"), transport.LastRequest.ServiceTarget.Endpoint);
+        Assert.Equal(AmsRouteForm.EnvironmentHost, transport.LastRequest.ServiceTarget.RouteForm);
         Assert.Equal("env-1", selection.Active!.EnvironmentId);
         Assert.Equal(1, selection.WriteCalls);
     }
@@ -220,11 +217,11 @@ public sealed class AgentCreateServiceTests
             InMemoryAuthProfileStore.SignedIn(
                 "op@contoso.com",
                 EnvironmentFixtures.ContosoTenant));
-        var service = new AgentCreateService(new AgentCreationTarget(), environments, transport);
+        var service = new AgentCreateService(AmsTargetFixtures.Targets(), environments, transport);
 
         await service.CreateAsync(Request() with { EnvironmentId = "env-2" }, default);
 
-        Assert.Equal("env-2", transport.LastRequest!.EnvironmentId);
+        Assert.Equal("env-2", transport.LastRequest!.ServiceTarget.EnvironmentId);
         Assert.Null(selection.Active);
         Assert.Equal(0, selection.WriteCalls);
     }
@@ -239,7 +236,7 @@ public sealed class AgentCreateServiceTests
             InMemoryAuthProfileStore.SignedIn(
                 "op@contoso.com",
                 EnvironmentFixtures.ContosoTenant));
-        var service = new AgentCreateService(new AgentCreationTarget(), environments, transport);
+        var service = new AgentCreateService(AmsTargetFixtures.Targets(), environments, transport);
 
         await Assert.ThrowsAsync<EnvironmentNotFoundException>(() =>
             service.CreateAsync(Request() with { EnvironmentId = "env-missing" }, default));
@@ -286,15 +283,15 @@ public sealed class AgentCreateServiceTests
     private static AmsAgentCreationResult Result(AmsAgentCreationTransportRequest request) => new()
     {
         AgentId = "agent-1",
-        TenantId = request.TenantId,
-        EnvironmentId = request.EnvironmentId,
+        TenantId = request.ServiceTarget.TenantId,
+        EnvironmentId = request.ServiceTarget.EnvironmentId,
         DisplayName = request.DisplayName,
         RepositoryId = "repo-1",
     };
 
     private static AgentCreateService Service(
         IAmsAgentCreationTransport transport,
-        AgentCreationTarget? target = null)
+        AmsEndpointProfile? endpoints = null)
     {
         var profiles = InMemoryAuthProfileStore.SignedIn(
             "op@contoso.com",
@@ -307,7 +304,7 @@ public sealed class AgentCreateServiceTests
         environments.SelectAsync("env-1", default).GetAwaiter().GetResult();
 
         return new AgentCreateService(
-            target ?? new AgentCreationTarget { Endpoint = Endpoint },
+            AmsTargetFixtures.Targets(endpoints ?? DevOverride),
             environments,
             transport);
     }

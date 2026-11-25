@@ -94,6 +94,7 @@ public sealed class CopilotWorkspaceServiceTests
             () => Create(workspaces).PushAsync(new CopilotPushRequest(), CancellationToken.None));
 
         Assert.Equal(CopilotErrorKinds.RemoteChangedDuringPush, failure.ErrorKind);
+        Assert.Equal("Run `msagent agent pull` to get the latest changes, then deploy again — or re-run with --overwrite to replace the cloud with your local content.", failure.Remediation);
         Assert.Equal(1, workspaces.PushCalls);
     }
 

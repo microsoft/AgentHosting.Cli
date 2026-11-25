@@ -16,11 +16,11 @@ public sealed class RunnerResilienceTests : IDisposable
         }
     }
 
-    private RunContext Context()
+    private RunContext Context(string msagentPath = "msagent")
     {
         var config = new E2EConfig();
         var transcript = new Transcript(_runDirectory);
-        var msagent = new MsagentCli("msagent", transcript, Path.Combine(_runDirectory, "dumps"));
+        var msagent = new MsagentCli(msagentPath, transcript, Path.Combine(_runDirectory, "dumps"));
         var azure = new AzureCli(transcript);
 
         return new RunContext
@@ -83,5 +83,22 @@ public sealed class RunnerResilienceTests : IDisposable
         await new Runner(run, TimeSpan.FromMinutes(1)).RunAsync([scenario], CancellationToken.None);
 
         Assert.Contains(run.Ledger.Entries, entry => entry.Kind == ResourceKind.LocalWorkspace);
+    }
+
+    [Fact]
+    public async Task OnlyAScenarioThatNeedsARolloutFeatureRunsMsagentWithIt()
+    {
+        var fake = new FakeMsagent(Path.Combine(_runDirectory, "msagent"), "{}");
+        var scenarios = new[]
+        {
+            ScenarioThat(context => context.Msagent.RunAsync(["abs", "preview"])) with { MsagentFeature = MsagentFeatures.AzureBotService },
+            ScenarioThat(context => context.Msagent.RunAsync(["auth", "status"])),
+        };
+
+        var results = await new Runner(Context(fake.ExecutablePath), TimeSpan.FromMinutes(1)).RunAsync(scenarios, CancellationToken.None);
+
+        var inheritedEndpoints = $"{Environment.GetEnvironmentVariable("AH_CLI_AMS_ENDPOINT")}|{Environment.GetEnvironmentVariable("AH_CLI_AMSDP_ENDPOINT")}";
+        Assert.All(results, result => Assert.Equal(Outcome.Pass, result.Outcome));
+        Assert.Equal(new[] { $"{MsagentFeatures.AzureBotService}|{inheritedEndpoints}", $"{Environment.GetEnvironmentVariable(MsagentFeatures.Variable)}|{inheritedEndpoints}" }, fake.Environments);
     }
 }

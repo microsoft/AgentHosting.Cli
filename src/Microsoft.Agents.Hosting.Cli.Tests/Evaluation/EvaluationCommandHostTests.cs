@@ -35,7 +35,6 @@ public sealed class EvaluationCommandHostTests
             "--name", "Nightly",
             "--update-testset",
             "--connection", "conn-1",
-            "--published",
             "--watch",
             "--timeout-minutes", "15",
             "--output", "run.json");
@@ -53,7 +52,6 @@ public sealed class EvaluationCommandHostTests
         Assert.Equal("Nightly", request?.Name);
         Assert.True(request?.UpdateTestSet);
         Assert.Equal("conn-1", request?.Connection);
-        Assert.True(request?.Published);
         Assert.True(request?.Watch);
         Assert.Equal(15, request?.TimeoutMinutes);
         Assert.Equal("run.json", request?.Output);
@@ -66,14 +64,13 @@ public sealed class EvaluationCommandHostTests
     {
         var operations = new FakeOperations();
 
-        var (exitCode, _, _) = Run(operations, "agent", "eval", "run", "-tset", "Nightly", "-w", "-tmo", "5", "-o", "run.json", "-pubd");
+        var (exitCode, _, _) = Run(operations, "agent", "eval", "run", "-tset", "Nightly", "-w", "-tmo", "5", "-o", "run.json");
 
         Assert.Equal(ExitCodes.Success, exitCode);
         Assert.Equal("Nightly", operations.LastEvaluationRunRequest?.TestSet);
         Assert.True(operations.LastEvaluationRunRequest?.Watch);
         Assert.Equal(5, operations.LastEvaluationRunRequest?.TimeoutMinutes);
         Assert.Equal("run.json", operations.LastEvaluationRunRequest?.Output);
-        Assert.True(operations.LastEvaluationRunRequest?.Published);
     }
 
     [Fact]
@@ -96,7 +93,6 @@ public sealed class EvaluationCommandHostTests
         Run(operations, "agent", "eval", "run", "--testset", "Nightly");
 
         Assert.False(operations.LastEvaluationRunRequest?.Watch);
-        Assert.False(operations.LastEvaluationRunRequest?.Published);
         Assert.False(operations.LastEvaluationRunRequest?.UpdateTestSet);
         Assert.Null(operations.LastEvaluationRunRequest?.TimeoutMinutes);
         Assert.Null(operations.LastEvaluationRunRequest?.Output);
@@ -111,6 +107,18 @@ public sealed class EvaluationCommandHostTests
 
         Assert.Equal(ExitCodes.Usage, exitCode);
         Assert.Contains("--min-score", stderr, StringComparison.Ordinal);
+        Assert.Null(operations.LastEvaluationRunRequest);
+    }
+
+    [Fact]
+    public void Run_RejectsThePublishedSwitch()
+    {
+        var operations = new FakeOperations();
+
+        var (exitCode, _, stderr) = Run(operations, "agent", "eval", "run", "--testset", "Nightly", "--published");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("--published", stderr, StringComparison.Ordinal);
         Assert.Null(operations.LastEvaluationRunRequest);
     }
 

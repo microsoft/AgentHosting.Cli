@@ -354,8 +354,8 @@ public sealed class ProfileResourceConsumerTests
             profileTokens: new ProfileResourceTokenProvider(credentials));
         var request = new AmsAgentCreationTransportRequest
         {
-            Context = context, Endpoint = context.Target.GlobalEndpoint, Audience = context.Target.Audience,
-            TenantId = a.TenantId!, EnvironmentId = "env-a", RouteMode = AmsAgentCreationRouteMode.PowerPlatformApiFrontDoor,
+            ServiceTarget = new AmsServiceTarget { Context = context, Endpoint = context.Target.GlobalEndpoint, Audience = context.Target.Audience,
+                TenantId = a.TenantId!, EnvironmentId = "env-a", RouteForm = AmsRouteForm.EnvironmentHost },
             DisplayName = "A", IdempotencyKey = "operation-a", AgentType = 0, Language = 1, LanguageVersion = "10", Origin = "test",
         };
         if (wrongClient is not null)
@@ -395,8 +395,8 @@ public sealed class ProfileResourceConsumerTests
             profileTokens: new ProfileResourceTokenProvider(credentials));
         var request = new AmsAgentCreationTransportRequest
         {
-            Endpoint = context.Target.GlobalEndpoint, Audience = context.Target.Audience,
-            TenantId = profile.TenantId!, EnvironmentId = "env-a", RouteMode = AmsAgentCreationRouteMode.PowerPlatformApiFrontDoor,
+            ServiceTarget = new AmsServiceTarget { Endpoint = context.Target.GlobalEndpoint, Audience = context.Target.Audience,
+                TenantId = profile.TenantId!, EnvironmentId = "env-a", RouteForm = AmsRouteForm.EnvironmentHost },
             DisplayName = "A", IdempotencyKey = "operation-a", AgentType = 0, Language = 1, LanguageVersion = "10", Origin = "test",
         };
 
@@ -419,9 +419,8 @@ public sealed class ProfileResourceConsumerTests
             new ProfileBoundTokenProvider(new ProfileResourceTokenProvider(credentials), context));
         var request = new AmsAgentCreationTransportRequest
         {
-            Context = new(a with { ProfileId = "b" }, context.Target),
-            Endpoint = context.Target.GlobalEndpoint, Audience = context.Target.Audience,
-            TenantId = a.TenantId!, EnvironmentId = "env-a", RouteMode = AmsAgentCreationRouteMode.PowerPlatformApiFrontDoor,
+            ServiceTarget = new AmsServiceTarget { Context = new(a with { ProfileId = "b" }, context.Target), Endpoint = context.Target.GlobalEndpoint,
+                Audience = context.Target.Audience, TenantId = a.TenantId!, EnvironmentId = "env-a", RouteForm = AmsRouteForm.EnvironmentHost },
             DisplayName = "A", IdempotencyKey = "operation-a", AgentType = 0, Language = 1, LanguageVersion = "10", Origin = "test",
         };
 
@@ -431,6 +430,50 @@ public sealed class ProfileResourceConsumerTests
         Assert.Equal(0, credentials.Calls);
         Assert.Equal(0, handler.Calls);
     }
+
+    [Fact]
+    public async Task AmsBotServiceCallsUseTheTargetsSignInContextAndNeverTheGlobalProvider()
+    {
+        var profile = Profile();
+        var context = new EnvironmentResolutionContext(profile, PowerPlatformApiTargetConfig.Public);
+        var credentials = new Credentials(Jwt(profile));
+        var tokens = new ProfileResourceTokenProvider(credentials);
+        using var handler = new RecordingHttp("{\"value\":[]}");
+        using var channelHttp = new HttpClient(handler, disposeHandler: false);
+        using var oauthHttp = new HttpClient(handler, disposeHandler: false);
+
+        Assert.Empty(await new AmsChannelAdapter(channelHttp, new NoLegacyTokenProvider(), profileTokens: tokens).ListAsync(DeploymentRequest(profile, context), default));
+        Assert.Empty(await new AmsOAuthAdapter(oauthHttp, new NoLegacyTokenProvider(), profileTokens: tokens).ListAsync(DeploymentRequest(profile, context), default));
+
+        Assert.Same(profile, credentials.Profile);
+        Assert.Equal(profile.TenantId, credentials.Tenant);
+        Assert.Equal("https://api.powerplatform.com//.default", Assert.Single(credentials.Scopes));
+        Assert.Equal(2, credentials.Calls);
+        Assert.Equal(2, handler.Calls);
+    }
+
+    [Fact]
+    public async Task AmsBotServiceCallMissingContextIsAnInternalFailureBeforeAcquisitionOrHttp()
+    {
+        var profile = Profile();
+        var credentials = new Credentials(Jwt(profile));
+        using var handler = new RecordingHttp("{\"value\":[]}");
+        using var http = new HttpClient(handler);
+        var adapter = new AmsChannelAdapter(http, new NoLegacyTokenProvider(), profileTokens: new ProfileResourceTokenProvider(credentials));
+
+        var error = await Assert.ThrowsAnyAsync<AgentHostingException>(() => adapter.ListAsync(DeploymentRequest(profile, context: null), default));
+
+        AssertAuthenticationContextFailure(error);
+        Assert.Equal(0, credentials.Calls);
+        Assert.Equal(0, handler.Calls);
+    }
+
+    private static AmsDeploymentReadTransportRequest DeploymentRequest(AuthProfile profile, EnvironmentResolutionContext? context) => new()
+    {
+        ServiceTarget = new AmsServiceTarget { Context = context, Endpoint = PowerPlatformApiTargetConfig.Public.GlobalEndpoint, Audience = PowerPlatformApiTargetConfig.Public.Audience,
+            TenantId = profile.TenantId!, EnvironmentId = "env-a", RouteForm = AmsRouteForm.TenantHost },
+        AgentId = "agent", DeploymentId = "deployment",
+    };
 
     private static void AssertAuthenticationContextFailure(AgentHostingException error)
     {

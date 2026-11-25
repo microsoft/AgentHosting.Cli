@@ -17,7 +17,7 @@ public sealed class AgentPullCommand : CommandBase<ManagedAgentPullRequest, Mana
         OptionCatalog.Value("--agent-name", "Record to pull, by name."),
         OptionCatalog.Value("--deployment-id", "Deployment whose environment is pulled from. Wins over --deployment-name. MCSWorkflow only."),
         OptionCatalog.Value("--deployment-name", "Deployment whose environment is pulled from, by name. MCSWorkflow only."),
-        OptionCatalog.Switch("--overwrite", "Replace local workflow edits the environment has not seen. MCSWorkflow only."),
+        OptionCatalog.Switch("--overwrite", "Replace local workflow edits the environment has not seen, or delete knowledge files the environment deleted after local edits."),
     ];
 
     /// <inheritdoc />

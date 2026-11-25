@@ -5,15 +5,15 @@ namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 /// <summary>Masks anything credential-shaped before it reaches a transcript, a ledger, or a report.</summary>
 public static partial class Redaction
 {
-    private const string Mask = "***";
+    private const string Mask = "*****";
 
-    private const string KeepPrefix = "$1***";
+    private const string KeepPrefix = "$1" + Mask;
 
-    private const string KeepEnds = "$1***$2";
+    private const string KeepEnds = "$1" + Mask + "$2";
 
-    private const string KeepSuffix = "***$1";
+    private const string KeepSuffix = Mask + "$1";
 
-    /// <summary>Masks bearer tokens, client secrets, and anything naming a person.</summary>
+    /// <summary>Masks bearer tokens, any value under a key ending in token, client secrets, and anything naming a person.</summary>
     /// <param name="value">The text about to be written.</param>
     /// <returns>The same text with nothing secret and nobody named.</returns>
     public static string Apply(string value)
@@ -23,7 +23,7 @@ public static partial class Redaction
             return value;
         }
 
-        var masked = BearerToken().Replace(value, "******");
+        var masked = BearerToken().Replace(value, Mask);
         masked = SecretAssignment().Replace(masked, KeepPrefix);
         masked = PersonField().Replace(masked, KeepEnds);
         masked = EmailAddress().Replace(masked, Mask);
@@ -49,7 +49,7 @@ public static partial class Redaction
     [GeneratedRegex(@"Bearer\s+[A-Za-z0-9\-._~+/]+=*", RegexOptions.IgnoreCase)]
     private static partial Regex BearerToken();
 
-    [GeneratedRegex("""(?i)("?(?:client_?secret|password|secretText|accessToken|id_token)"?\s*[:=]\s*"?)[^"',\s]+""")]
+    [GeneratedRegex("""(?i)("?(?:client_?secret|password|secretText|[a-z_]*token)"?\s*[:=]\s*"?)[^"',\s]+""")]
     private static partial Regex SecretAssignment();
 
     [GeneratedRegex("""(?i)("?(?:principalName|signInAddress|userPrincipalName)"?\s*[:=]\s*"?)[^",]*("?)""")]
