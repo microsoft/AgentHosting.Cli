@@ -166,9 +166,10 @@ public sealed class AgentHostCli
     {
         var debug = GlobalOptions.IsPresent(args, "--debug");
         var renderer = new CliOutputRenderer(stdout, stderr, color, deferFinalOutput: debug);
+        int exitCode;
         try
         {
-            return await InvokeCoreAsync(args, stdout, stderr, color, renderer, cancellationToken);
+            exitCode = await InvokeCoreAsync(args, stdout, stderr, color, renderer, cancellationToken);
         }
         finally
         {
@@ -179,9 +180,17 @@ public sealed class AgentHostCli
                     await beforeFinalOutput();
                 }
 
-                renderer.FlushFinalOutput();
+                try
+                {
+                    renderer.FlushFinalOutput();
+                }
+                catch (Exception error) when (error is IOException or ObjectDisposedException)
+                {
+                    exitCode = new CliOutputRenderer(TextWriter.Null, stderr, color).RenderFailure(error, json: false);
+                }
             }
         }
+        return exitCode;
     }
 
     private async Task<int> InvokeCoreAsync(

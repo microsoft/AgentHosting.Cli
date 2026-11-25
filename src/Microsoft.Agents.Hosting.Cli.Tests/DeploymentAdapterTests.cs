@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -27,6 +28,66 @@ public sealed class DeploymentAdapterTests
         new(status) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
 
     private static HttpResponseMessage Empty(HttpStatusCode status) => new(status);
+
+    private sealed class DiagnosticArmClient(HttpClient client) : DeploymentArmClient(client, new StubTokenProvider { AccessToken = "arm-token" })
+    {
+        public Task<string> SendAsync(string path) =>
+            RequestAsync(HttpMethod.Post, Arm + path, new { clientSecret = "request-canary", parameters = new { TenantId = "common" } }, "tenant-1", default);
+    }
+
+    private sealed class DiagnosticSink : IHttpDiagnosticSink
+    {
+        public List<HttpDiagnosticEvent> Events { get; } = [];
+        public void Write(HttpDiagnosticEvent diagnosticEvent) => Events.Add(diagnosticEvent);
+    }
+
+    [Theory]
+    [InlineData("", false)]
+    [InlineData("", true)]
+    [InlineData("/channels", true)]
+    [InlineData("/channels/DirectLineChannel", false)]
+    [InlineData("/connections", true)]
+    [InlineData("/connections/oauth", false)]
+    public async Task ArmDiagnostics_SelectResponseRedactorsCentrally_WithoutChangingRequests(string suffix, bool list)
+    {
+        var resource = suffix.StartsWith("/channels", StringComparison.Ordinal)
+            ? """{"properties":{"channelName":"DirectLineChannel","properties":{"directLineEmbedCode":"response-canary","isEnabled":true}}}"""
+            : suffix.StartsWith("/connections", StringComparison.Ordinal)
+                ? """{"properties":{"serviceProviderId":"provider-id","clientSecret":"response-canary","parameters":[{"key":"TenantId","value":"common"},{"key":"ApiKey","value":"response-canary"}]}}"""
+                : """{"properties":{"displayName":"safe","allSettings":{"opaque":"response-canary"}}}""";
+        var body = list ? "{\"value\":[" + resource + "]}" : resource;
+        var transport = new StubHttpMessageHandler(_ => Json(HttpStatusCode.OK, body));
+        var sink = new DiagnosticSink();
+        using var client = new HttpClient(new HttpDiagnosticHandler(sink, transport));
+        var result = await new DiagnosticArmClient(client).SendAsync(BotResourceId + suffix);
+
+        Assert.Equal(body, result);
+        Assert.Contains("request-canary", Assert.Single(transport.Requests).Body);
+        var request = Assert.Single(sink.Events, entry => entry.Stage == HttpDiagnosticStage.RequestBody).Body;
+        Assert.Contains("common", request);
+        Assert.DoesNotContain("request-canary", request);
+        var response = Assert.Single(sink.Events, entry => entry.Stage == HttpDiagnosticStage.ResponseBody).Body;
+        Assert.DoesNotContain("response-canary", response);
+        Assert.Contains("*****", response);
+    }
+
+    [Theory]
+    [InlineData("/subscriptions/sub-1")]
+    [InlineData("/subscriptions/sub-1/providers/Microsoft.BotService/listAuthServiceProviders")]
+    [InlineData(BotResourceId + "/unknown")]
+    [InlineData(BotResourceId + "Extra/unknown")]
+    public async Task ArmDiagnostics_OtherRoutesUseGenericRedaction(string path)
+    {
+        const string body = """{"properties":{"allSettings":{"region":"west"},"clientSecret":"response-canary"}}""";
+        var transport = new StubHttpMessageHandler(_ => Json(HttpStatusCode.OK, body));
+        var sink = new DiagnosticSink();
+        using var client = new HttpClient(new HttpDiagnosticHandler(sink, transport));
+        Assert.Equal(body, await new DiagnosticArmClient(client).SendAsync(path));
+        using var response = JsonDocument.Parse(Assert.Single(sink.Events, entry => entry.Stage == HttpDiagnosticStage.ResponseBody).Body!);
+        var properties = response.RootElement.GetProperty("properties");
+        Assert.Equal("west", properties.GetProperty("allSettings").GetProperty("region").GetString());
+        Assert.Equal("*****", properties.GetProperty("clientSecret").GetString());
+    }
 
     [Fact]
     public async Task ResolveSubscription_SingleEnabled_ReturnsItAndHitsSubscriptionsUrl()

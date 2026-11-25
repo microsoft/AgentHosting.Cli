@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
 
@@ -186,7 +187,7 @@ public static class DeploymentChannelCatalog
                 new(DeploymentParameterType.Boolean, "isValidated", "Whether the channel is validated.", IsReadOnly: true),
                 new(DeploymentParameterType.String, "landingPageUrl", "The Slack landing page URL."),
                 new(DeploymentParameterType.String, "lastSubmissionId", "The last Slack submission id.", IsReadOnly: true),
-                new(DeploymentParameterType.String, "redirectAction", "The transient Slack authorization action.", IsSecret: true, IsReadOnly: true),
+                new(DeploymentParameterType.String, "redirectAction", "The transient Slack authorization action.", IsReadOnly: true),
                 new(DeploymentParameterType.Boolean, "registerBeforeOAuthFlow", "The CLI-managed OAuth registration control; writes always send true.", IsReadOnly: true),
                 new(DeploymentParameterType.String, "scopes", "The comma-separated Slack scopes.",
                     DefaultValue: "channels:history,channels:read,chat:write,dnd:read,emoji:read,files:read,files:write," +
@@ -375,7 +376,7 @@ public static class DeploymentChannelCatalog
 
             if (definition.IsSecret)
             {
-                result[definition.Name] = JsonSerializer.SerializeToElement(BotServiceResponseRedactor.Mask);
+                result[definition.Name] = JsonSerializer.SerializeToElement(SecretRedaction.Mask);
             }
             else if (definition.ItemParameters is { } itemParameters)
             {

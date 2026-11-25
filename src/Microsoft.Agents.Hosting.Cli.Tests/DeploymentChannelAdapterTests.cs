@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -78,7 +79,7 @@ public sealed class DeploymentChannelAdapterTests
         Assert.Equal("+12025550123", channel.Parameters["phone"].GetString());
         Assert.False(channel.Parameters["isEnabled"].GetBoolean());
         Assert.True(channel.Parameters["isValidated"].GetBoolean());
-        Assert.Equal("***", channel.Parameters["authToken"].GetString());
+        Assert.Equal("*****", channel.Parameters["authToken"].GetString());
         Assert.DoesNotContain("unknown", channel.Parameters);
         Assert.DoesNotContain("synthetic-auth-token", JsonSerializer.Serialize(channel));
     }
@@ -127,8 +128,8 @@ public sealed class DeploymentChannelAdapterTests
         Assert.True(channel.Parameters["isValidated"].GetBoolean());
         foreach (var item in channel.Parameters["lineRegistrations"].EnumerateArray())
         {
-            Assert.Equal("***", item.GetProperty("channelSecret").GetString());
-            Assert.Equal("***", item.GetProperty("channelAccessToken").GetString());
+            Assert.Equal("*****", item.GetProperty("channelSecret").GetString());
+            Assert.Equal("*****", item.GetProperty("channelAccessToken").GetString());
             Assert.False(item.TryGetProperty("unknown", out _));
         }
         Assert.DoesNotContain("synthetic-", JsonSerializer.Serialize(channel));
@@ -189,12 +190,12 @@ public sealed class DeploymentChannelAdapterTests
         Assert.NotNull(channel);
         Assert.Equal(6, channel.Parameters.Count);
         Assert.Equal("https://callback.example", channel.Parameters["callbackUrl"].GetString());
-        Assert.Equal("***", channel.Parameters["appSecret"].GetString());
-        Assert.Equal("***", channel.Parameters["verifyToken"].GetString());
+        Assert.Equal("*****", channel.Parameters["appSecret"].GetString());
+        Assert.Equal("*****", channel.Parameters["verifyToken"].GetString());
         Assert.Equal(2, channel.Parameters["pages"].GetArrayLength());
         foreach (var page in channel.Parameters["pages"].EnumerateArray())
         {
-            Assert.Equal("***", page.GetProperty("accessToken").GetString());
+            Assert.Equal("*****", page.GetProperty("accessToken").GetString());
             Assert.False(page.TryGetProperty("unknown", out _));
         }
 
@@ -361,9 +362,9 @@ public sealed class DeploymentChannelAdapterTests
         Assert.True(channel.Parameters["isEnabled"].GetBoolean());
         Assert.Equal("/channels/SlackChannel", channel.ResourceId);
         Assert.Equal("client-1", channel.Parameters["clientId"].GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, channel.Parameters["clientSecret"].GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, channel.Parameters["verificationToken"].GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, channel.Parameters["signingSecret"].GetString());
+        Assert.Equal(SecretRedaction.Mask, channel.Parameters["clientSecret"].GetString());
+        Assert.Equal(SecretRedaction.Mask, channel.Parameters["verificationToken"].GetString());
+        Assert.Equal(SecretRedaction.Mask, channel.Parameters["signingSecret"].GetString());
         Assert.Equal(JsonValueKind.Null, channel.Parameters["landingPageUrl"].ValueKind);
         Assert.DoesNotContain("unexpected", channel.Parameters);
         Assert.DoesNotContain("must-not-render", JsonSerializer.Serialize(channel));
@@ -413,7 +414,7 @@ public sealed class DeploymentChannelAdapterTests
             "secret-1",
             request.RootElement.GetProperty("properties").GetProperty("properties").GetProperty("clientSecret").GetString());
         Assert.Equal(
-            "***",
+            "*****",
             channel.Parameters["clientSecret"].GetString());
         Assert.Equal("slack", channel.ChannelName);
         Assert.True(channel.Parameters["isEnabled"].GetBoolean());
@@ -564,7 +565,7 @@ public sealed class DeploymentChannelAdapterTests
         Assert.Equal("Default Site", persistedSite.GetProperty("siteName").GetString());
         Assert.True(persistedSite.GetProperty("isEnabled").GetBoolean());
         Assert.Equal("https://example.test", persistedSite.GetProperty("trustedOrigins")[0].GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, persistedSite.GetProperty("key").GetString());
+        Assert.Equal(SecretRedaction.Mask, persistedSite.GetProperty("key").GetString());
         Assert.False(persistedSite.TryGetProperty("unexpected", out _));
         Assert.DoesNotContain("must-not-render", JsonSerializer.Serialize(channel));
     }
@@ -625,7 +626,7 @@ public sealed class DeploymentChannelAdapterTests
         var parameters = channel!.Parameters;
         foreach (var name in new[] { "directLineEmbedCode", "extensionKey1", "extensionKey2" })
         {
-            Assert.Equal(BotServiceResponseRedactor.Mask, parameters[name].GetString());
+            Assert.Equal(SecretRedaction.Mask, parameters[name].GetString());
         }
 
         Assert.False(parameters.ContainsKey("isEnabled"));
@@ -641,8 +642,8 @@ public sealed class DeploymentChannelAdapterTests
         Assert.False(sites[0].TryGetProperty("isWebChatSpeechEnabled", out _));
         foreach (var site in sites.EnumerateArray())
         {
-            Assert.Equal(BotServiceResponseRedactor.Mask, site.GetProperty("key").GetString());
-            Assert.Equal(BotServiceResponseRedactor.Mask, site.GetProperty("key2").GetString());
+            Assert.Equal(SecretRedaction.Mask, site.GetProperty("key").GetString());
+            Assert.Equal(SecretRedaction.Mask, site.GetProperty("key2").GetString());
         }
 
         Assert.False(parameters.ContainsKey("DirectLineEmbedCode"));
@@ -674,7 +675,7 @@ public sealed class DeploymentChannelAdapterTests
         var channel = await Adapter(handler).GetChannelAsync(
             "WebChatChannel", BotResourceId, targetTenantId: null, default);
         var parameters = channel!.Parameters;
-        Assert.Equal(BotServiceResponseRedactor.Mask, parameters["webChatEmbedCode"].GetString());
+        Assert.Equal(SecretRedaction.Mask, parameters["webChatEmbedCode"].GetString());
         Assert.False(parameters.ContainsKey("isEnabled"));
         Assert.False(parameters.ContainsKey("futureChannelField"));
         var sites = parameters["sites"];
@@ -696,8 +697,8 @@ public sealed class DeploymentChannelAdapterTests
         }
         foreach (var site in sites.EnumerateArray())
         {
-            Assert.Equal(BotServiceResponseRedactor.Mask, site.GetProperty("key").GetString());
-            Assert.Equal(BotServiceResponseRedactor.Mask, site.GetProperty("key2").GetString());
+            Assert.Equal(SecretRedaction.Mask, site.GetProperty("key").GetString());
+            Assert.Equal(SecretRedaction.Mask, site.GetProperty("key2").GetString());
             Assert.False(site.TryGetProperty("futureSecret", out _));
         }
 
@@ -749,7 +750,7 @@ public sealed class DeploymentChannelAdapterTests
         Assert.True(channels[0].Parameters["isEnabled"].GetBoolean());
         Assert.False(channels[1].Parameters["isEnabled"].GetBoolean());
         Assert.Equal(
-            BotServiceResponseRedactor.Mask,
+            SecretRedaction.Mask,
             channels[0].Parameters["clientSecret"].GetString());
         Assert.True(channels[1].Parameters["enableCalling"].GetBoolean());
         Assert.DoesNotContain("unknown", channels[1].Parameters);
@@ -871,7 +872,7 @@ public sealed class DeploymentChannelAdapterTests
         var unsupported = channels[1];
         Assert.Equal($"/channels/{armName}", unsupported.ResourceId);
         Assert.Empty(unsupported.Parameters);
-        Assert.Equal(BotServiceResponseRedactor.Mask, channels[0].Parameters["clientSecret"].GetString());
+        Assert.Equal(SecretRedaction.Mask, channels[0].Parameters["clientSecret"].GetString());
         var result = new Core.Operations.DeploymentResult<DeploymentChannelRecord[]>
         {
             Status = Core.Operations.DeploymentOperationStatus.Listed,

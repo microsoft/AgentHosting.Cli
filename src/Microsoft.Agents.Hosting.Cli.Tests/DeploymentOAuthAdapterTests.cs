@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
@@ -43,6 +44,44 @@ public sealed class DeploymentOAuthAdapterTests
         new(status) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
 
     private static HttpResponseMessage Empty(HttpStatusCode status) => new(status);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpsertDiagnostics_RedactByNameRegardlessOfProviderDiscovery(bool discoverProviders)
+    {
+        const string connection = """{"name":"aad-conn","properties":{"serviceProviderId":"provider-id","serviceProviderDisplayName":"Provider","clientId":"client-1","clientSecret":"client-canary","parameters":[{"key":"TenantId","value":"common"},{"key":"ApiKey","value":"provider-canary"},{"key":"ProviderPrivateValue","value":"visible-without-secret-name"}]}}""";
+        var handler = new StubHttpMessageHandler(request => request.RequestUri!.AbsolutePath.EndsWith("listAuthServiceProviders", StringComparison.Ordinal)
+            ? Json(HttpStatusCode.OK, """{"value":[{"properties":{"id":"provider-id","serviceProviderName":"Provider","displayName":"Provider","parameters":[{"name":"TenantId","displayName":"Tenant","type":"string"},{"name":"ProviderPrivateValue","displayName":"Private","type":"securestring"}]}}]}""")
+            : Json(HttpStatusCode.OK, connection));
+        using var output = new StringWriter();
+        using var client = new HttpClient(new HttpDiagnosticHandler(new TextWriterHttpDiagnosticSink(output), handler));
+        var adapter = new DeploymentOAuthAdapter(client, new StubTokenProvider { AccessToken = "arm-token" });
+        if (discoverProviders)
+        {
+            await adapter.ListServiceProvidersAsync("sub-1", TenantId, default);
+        }
+
+        await adapter.UpsertOAuthConnectionAsync(new()
+        {
+            BotResourceId = BotResourceId,
+            TenantId = TenantId,
+            ConnectionName = "aad-conn",
+            ServiceProviderId = "provider-id",
+            ClientId = "client-1",
+            ClientSecret = "client-canary",
+            Parameters = [new("TenantId", "common"), new("ApiKey", "provider-canary"), new("ProviderPrivateValue", "visible-without-secret-name")],
+        }, default);
+
+        Assert.Equal(discoverProviders ? 2 : 1, handler.Requests.Count);
+        Assert.Contains("provider-canary", handler.Requests[^1].Body);
+        Assert.Contains("client-canary", handler.Requests[^1].Body);
+        Assert.Contains("common", output.ToString());
+        Assert.Contains("visible-without-secret-name", output.ToString());
+        Assert.Contains("ProviderPrivateValue", output.ToString());
+        Assert.DoesNotContain("provider-canary", output.ToString());
+        Assert.DoesNotContain("client-canary", output.ToString());
+    }
 
     [Fact]
     public async Task ListServiceProviders_PostsToCatalogueUrl_AndParses()
@@ -219,7 +258,7 @@ public sealed class DeploymentOAuthAdapterTests
         Assert.Equal(["openid", "profile"], connection.Scopes);
         Assert.Equal("common", connection.Parameters["TenantId"]);
         Assert.DoesNotContain("ClientId", connection.Parameters);
-        Assert.Equal("***", connection.Parameters["ApiKey"]);
+        Assert.Equal("*****", connection.Parameters["ApiKey"]);
         Assert.DoesNotContain("secret-1", JsonSerializer.Serialize(connection));
         Assert.DoesNotContain("secret-2", JsonSerializer.Serialize(connection));
         Assert.Equal(HttpMethod.Get, handler.Requests.Single().Method);

@@ -22,6 +22,9 @@ public sealed class HttpDiagnosticHandler(
     {
         var id = Guid.NewGuid();
         var started = _clock.GetTimestamp();
+        CancellationToken? callerCancellation = request.Options.TryGetValue(HttpDiagnostics.CallerCancellationToken, out var callerToken)
+            ? callerToken : null;
+        var responseBodyRedactor = request.Options.TryGetValue(HttpDiagnostics.ResponseBodyRedactor, out var redactor) ? redactor : null;
         void Emit(HttpDiagnosticStage stage, string? body = null, int? status = null,
             IReadOnlyDictionary<string, string>? headers = null, Exception? error = null,
             bool? bodyComplete = null, string? bodyDetail = null) =>
@@ -34,7 +37,7 @@ public sealed class HttpDiagnosticHandler(
                 Body = body,
                 BodyComplete = bodyComplete,
                 Elapsed = _clock.GetElapsedTime(started),
-                Failure = error is null ? null : Classify(error, cancellationToken),
+                Failure = error is null ? null : Classify(error, callerCancellation, cancellationToken),
                 ExceptionType = error?.GetType().Name,
                 ExceptionMessage = error?.Message,
                 BodyDetail = bodyDetail,
@@ -55,7 +58,8 @@ public sealed class HttpDiagnosticHandler(
                      request.Content.Headers.ContentLength is <= HttpDiagnosticLoggingPolicy.MaximumBodyBytes)
             {
                 var bytes = await request.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
-                requestBody = HttpDiagnosticLoggingPolicy.FormatRequestBody(bytes, request.Content.Headers.ContentType?.ToString());
+                requestBody = HttpDiagnosticLoggingPolicy.FormatRequestBody(
+                    bytes, request.Content.Headers.ContentType?.ToString());
             }
             else if (request.Content is ByteArrayContent)
             {
@@ -112,7 +116,7 @@ public sealed class HttpDiagnosticHandler(
                 response.Content = new HttpDiagnosticContent(responseContent, (bytes, complete, error, observed) =>
                 {
                     Emit(error is null ? HttpDiagnosticStage.ResponseBody : HttpDiagnosticStage.Failed, complete
-                        ? HttpDiagnosticLoggingPolicy.FormatResponseBody(bytes.Span, contentType)
+                        ? HttpDiagnosticLoggingPolicy.FormatResponseBody(bytes.Span, contentType, bodyRedactor: responseBodyRedactor)
                         : "[body incomplete: response was not fully consumed]", bodyComplete: complete,
                         error: error,
                         bodyDetail: request.Options.TryGetValue(HttpDiagnostics.ResponseBodyLimit, out var limit) && observed > limit
@@ -142,13 +146,19 @@ public sealed class HttpDiagnosticHandler(
         }
     }
 
-    private static HttpDiagnosticFailure Classify(Exception error, CancellationToken cancellationToken) =>
-        error is OperationCanceledException canceled
-            ? cancellationToken.IsCancellationRequested ||
-              canceled.CancellationToken.IsCancellationRequested
-                ? HttpDiagnosticFailure.Cancellation
-                : HttpDiagnosticFailure.Timeout
-            : HttpDiagnosticFailure.Transport;
+    private static HttpDiagnosticFailure Classify(Exception error, CancellationToken? callerToken, CancellationToken transportToken)
+    {
+        if (error is not OperationCanceledException canceled)
+        {
+            return HttpDiagnosticFailure.Transport;
+        }
+
+        var callerCanceled = callerToken is { } caller
+            ? caller.IsCancellationRequested
+            : canceled.InnerException is not TimeoutException &&
+                (transportToken.IsCancellationRequested || canceled.CancellationToken.IsCancellationRequested);
+        return callerCanceled ? HttpDiagnosticFailure.Cancellation : HttpDiagnosticFailure.Timeout;
+    }
 
     private void Write(HttpDiagnosticEvent diagnosticEvent)
     {

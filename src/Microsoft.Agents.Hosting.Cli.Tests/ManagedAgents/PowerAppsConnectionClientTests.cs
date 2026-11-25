@@ -351,13 +351,18 @@ public sealed class PowerAppsConnectionClientTests
     [Fact]
     public async Task Response_StopsAStalledBodyAtTheRequestTimeout()
     {
+        using var output = new StringWriter();
+        var diagnostics = new HttpDiagnostics(new TextWriterHttpDiagnosticSink(output));
         using var content = new StallingContent();
         using var handler = new ScriptedHandler(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
-        using var client = new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod, () => handler, requestTimeout: TimeSpan.FromMilliseconds(150));
+        using var client = new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod,
+            () => diagnostics.Wrap(handler), requestTimeout: TimeSpan.FromMilliseconds(150));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => client.ReadConnectionAsync(ConnectionFixtures.Environment, "shared_office365", "conn-1", CancellationToken.None))
             .WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Contains("Error: Timeout", output.ToString());
+        Assert.DoesNotContain("Error: Cancellation", output.ToString());
     }
 
     [Fact]

@@ -69,6 +69,14 @@ public sealed class RedactionTests
     public void AClientSecretIsStillMasked() =>
         Assert.DoesNotContain("s3cr3t", Redaction.Apply("""{"client_secret":"s3cr3t"}"""), StringComparison.Ordinal);
 
+    [Theory]
+    [InlineData("Authorization: Bearer abc.def.ghi", "Authorization: *****")]
+    [InlineData("""{"client_secret":"s3cr3t"}""", """{"client_secret":"*****"}""")]
+    [InlineData("""{"principalName":"Sample Person"}""", """{"principalName":"*****"}""")]
+    [InlineData("sample@contoso.com", "*****")]
+    public void CredentialAndPersonalDataMasksAreConsistent(string input, string expected) =>
+        Assert.Equal(expected, Redaction.Apply(input));
+
     [Fact]
     public void TheAgentsOwnNameIsNotMasked() =>
         Assert.Contains("Contoso Agent", Redaction.Apply("""{"displayName":"Contoso Agent"}"""), StringComparison.Ordinal);

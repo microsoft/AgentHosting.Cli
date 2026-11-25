@@ -1,16 +1,17 @@
 using System.Collections.ObjectModel;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Http;
 
 /// <summary>
-/// Formats HTTP diagnostics using Azure CLI's network logging policy.
-/// Ordinary headers and text bodies can contain sensitive data.
+/// Formats bounded HTTP diagnostics, redacting credential fields from structured body copies.
 /// </summary>
 public static class HttpDiagnosticLoggingPolicy
 {
-    public const string Mask = "*****";
     public const int MaximumBodyBytes = 64 * 1024;
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -28,14 +29,15 @@ public static class HttpDiagnosticLoggingPolicy
         string? contentType = null,
         bool isStreaming = false) =>
         GetBodyMarker(contentType, isRequest: true, isStreaming) ??
-        FormatTextBody(body, contentType, isRequest: true);
+        FormatTextBody(body, contentType, isRequest: true, bodyRedactor: null);
 
     public static string FormatResponseBody(
         ReadOnlySpan<byte> body,
         string? contentType = null,
-        string? contentDisposition = null)
+        string? contentDisposition = null,
+        Func<JsonElement, JsonElement>? bodyRedactor = null)
         => GetBodyMarker(contentType, isRequest: false, contentDisposition: contentDisposition) ??
-           FormatTextBody(body, contentType, isRequest: false);
+           FormatTextBody(body, contentType, isRequest: false, bodyRedactor);
 
     internal static string? GetBodyMarker(
         string? contentType, bool isRequest, bool isStreaming = false, string? contentDisposition = null)
@@ -83,7 +85,7 @@ public static class HttpDiagnosticLoggingPolicy
         {
             var redact = isRequest && (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase) ||
                 header.Key.Equals("x-ms-authorization-auxiliary", StringComparison.OrdinalIgnoreCase));
-            var value = redact ? Mask : string.Join(", ", header.Value);
+            var value = redact ? SecretRedaction.Mask : string.Join(", ", header.Value);
             result[header.Key] = result.TryGetValue(header.Key, out var existing)
                 ? existing + ", " + value
                 : value;
@@ -92,7 +94,8 @@ public static class HttpDiagnosticLoggingPolicy
         return new ReadOnlyDictionary<string, string>(result);
     }
 
-    private static string FormatTextBody(ReadOnlySpan<byte> body, string? contentType, bool isRequest)
+    private static string FormatTextBody(
+        ReadOnlySpan<byte> body, string? contentType, bool isRequest, Func<JsonElement, JsonElement>? bodyRedactor)
     {
         if (body.Length > MaximumBodyBytes)
         {
@@ -121,11 +124,69 @@ public static class HttpDiagnosticLoggingPolicy
 
         try
         {
-            return encoding.GetString(body);
+            var text = encoding.GetString(body);
+            using var document = JsonDocument.Parse(text, PowerAppsConnectionBody.Limits);
+            var structured = document.RootElement.ValueKind == JsonValueKind.Object ||
+                (document.RootElement.ValueKind == JsonValueKind.Array &&
+                 document.RootElement.EnumerateArray().All(item => item.ValueKind == JsonValueKind.Object));
+            return structured ? (bodyRedactor is null
+                ? RedactBody(document.RootElement)
+                : bodyRedactor(document.RootElement)).GetRawText()
+                : "[body omitted: no safe structured representation]";
         }
         catch (DecoderFallbackException)
         {
             return "[body omitted: invalid text encoding]";
         }
+        catch (Exception error) when (PowerAppsConnectionBody.IsUnreadable(error))
+        {
+            return "[body omitted: no safe structured representation]";
+        }
+    }
+
+    internal static JsonElement RedactBody(
+        JsonElement body, Func<JsonElement, JsonElement>? resourceRedactor = null) =>
+        JsonSerializer.SerializeToElement(RedactValue(JsonNode.Parse(body.GetRawText()), resourceRedactor));
+
+    private static JsonNode? RedactValue(JsonNode? value, Func<JsonElement, JsonElement>? resourceRedactor)
+    {
+        if (value is JsonObject fields)
+        {
+            if (resourceRedactor is not null && fields.Any(property =>
+                property.Key.Equals("properties", StringComparison.OrdinalIgnoreCase)))
+            {
+                return JsonNode.Parse(resourceRedactor(JsonSerializer.SerializeToElement(fields)).GetRawText());
+            }
+
+            var parameterKey = fields.FirstOrDefault(property =>
+                property.Key.Equals("key", StringComparison.OrdinalIgnoreCase));
+            var parameterName = parameterKey.Value is JsonValue key && key.TryGetValue<string>(out var name) &&
+                fields.Any(property => property.Key.Equals("value", StringComparison.OrdinalIgnoreCase))
+                    ? name : null;
+            foreach (var property in fields.ToList())
+            {
+                var isSecret = parameterName is not null && property.Key.Equals("value", StringComparison.OrdinalIgnoreCase)
+                    ? SecretRedaction.IsSecret(parameterName)
+                    : !(parameterName is not null && property.Key.Equals("key", StringComparison.OrdinalIgnoreCase)) &&
+                        SecretRedaction.IsSecret(property.Key);
+                fields[property.Key] = isSecret
+                    ? JsonValue.Create(SecretRedaction.Mask)
+                    : RedactValue(property.Value, resourceRedactor);
+            }
+        }
+        else if (value is JsonArray array)
+        {
+            for (var index = 0; index < array.Count; index++)
+            {
+                var original = array[index];
+                var redacted = RedactValue(original, resourceRedactor);
+                if (!ReferenceEquals(original, redacted))
+                {
+                    array[index] = redacted;
+                }
+            }
+        }
+
+        return value;
     }
 }

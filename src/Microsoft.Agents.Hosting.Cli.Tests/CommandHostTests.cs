@@ -156,6 +156,60 @@ public class CommandHostTests
         public override void Flush() => throw new IOException("stderr unavailable");
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task HumanStdoutFailureReturnsFailureWithoutRetryingTheResult(bool debug, bool partialWrite)
+    {
+        using var stdout = new FailingResultWriter(partialWrite);
+        using var stderr = new StringWriter();
+        var cli = new AgentHostCli(new FakeOperations(), featureFlags: TestFeatureFlags.AllProductSurfaces);
+        string[] args = debug ? ["auth", "status", "--debug"] : ["auth", "status"];
+
+        var code = await cli.InvokeAsync(args, stdout, stderr, color: false);
+
+        Assert.Equal(ExitCodes.Failure, code);
+        Assert.NotEmpty(stderr.ToString());
+        Assert.Equal(1, stdout.WriteAttempts);
+        Assert.Equal(partialWrite, stdout.ToString().Length > 0);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeferredJsonStdoutFailureDoesNotAppendAnotherEnvelope(bool partialWrite)
+    {
+        using var stdout = new FailingResultWriter(partialWrite);
+        using var stderr = new StringWriter();
+        var cli = new AgentHostCli(new FakeOperations(), featureFlags: TestFeatureFlags.AllProductSurfaces);
+
+        var code = await cli.InvokeAsync(["auth", "status", "--debug", "--json"], stdout, stderr, color: false);
+
+        Assert.Equal(ExitCodes.Failure, code);
+        Assert.Contains("stdout unavailable", stderr.ToString());
+        Assert.Equal(1, stdout.WriteAttempts);
+        Assert.DoesNotContain("\"success\": false", stdout.ToString());
+    }
+
+    private sealed class FailingResultWriter(bool partialWrite) : StringWriter
+    {
+        public int WriteAttempts { get; private set; }
+
+        public override void Write(string? value)
+        {
+            WriteAttempts++;
+            if (partialWrite && value is not null)
+            {
+                base.Write(value[..Math.Min(8, value.Length)]);
+            }
+            throw new IOException("stdout unavailable");
+        }
+
+        public override void WriteLine(string? value) => Write(value);
+    }
+
     [Fact]
     public void DeferredFinalRenderingLeavesStreamingWritersAvailableImmediately()
     {

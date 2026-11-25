@@ -126,7 +126,7 @@ public sealed class DeploymentOAuthAdapter : DeploymentArmClient, IDeploymentOAu
         CancellationToken cancellationToken)
     {
         var connections = new List<DeploymentOAuthConnection>();
-        var next = OAuthConnectionsUrl(botResourceId);;
+        var next = OAuthConnectionsUrl(botResourceId);
         while (!string.IsNullOrWhiteSpace(next))
         {
             var body = await RequestAsync(

@@ -63,6 +63,7 @@ internal sealed partial class AmsRequestSender
         var token = await ResourceTokenContext.AcquireAsync(_tokens, _profileTokens, _claimsValidator, serviceTarget.Context, serviceTarget.Audience, serviceTarget.TenantId, call.RequiredPermissions, cancellationToken).ConfigureAwait(false);
 
         using var message = new HttpRequestMessage(call.Method, call.Uri);
+        message.Options.Set(HttpDiagnostics.CallerCancellationToken, cancellationToken);
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
         message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         message.Headers.TryAddWithoutValidation("x-ms-client-request-id", clientRequestId);

@@ -2,6 +2,8 @@ using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
+using System.Net;
 using System.Text.Json;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -56,6 +58,44 @@ public sealed class DeploymentOAuthServiceTests
             ClientSecret = clientSecret,
             Parameters = parameters,
         };
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadDiagnostics_RedactByNameBeforeProviderDiscovery(bool list)
+    {
+        const string connection = """{"name":"aad-conn","properties":{"serviceProviderId":"provider-id","serviceProviderDisplayName":"Provider","parameters":[{"key":"TenantId","value":"common"},{"key":"ApiKey","value":"provider-canary"}]}}""";
+        var handler = new StubHttpMessageHandler(request => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                request.RequestUri!.AbsolutePath.EndsWith("listAuthServiceProviders", StringComparison.Ordinal)
+                    ? """{"value":[{"properties":{"id":"provider-id","serviceProviderName":"Provider","displayName":"Provider","parameters":[{"name":"TenantId","displayName":"Tenant","type":"string"},{"name":"ProviderPrivateValue","displayName":"Private","type":"securestring"}]}}]}"""
+                    : list ? "{\"value\":[" + connection + "]}" : connection,
+                System.Text.Encoding.UTF8, "application/json"),
+        });
+        using var output = new StringWriter();
+        using var client = new HttpClient(new HttpDiagnosticHandler(new TextWriterHttpDiagnosticSink(output), handler));
+        var service = new DeploymentOAuthService(
+            new FakeStore(ProvisionedRecord()),
+            new DeploymentOAuthAdapter(client, new StubTokenProvider { AccessToken = "arm-token" }),
+            new CompositeDeploymentTransport(subscriptionResolver: new FakeSubscriptionResolver()),
+            new FakeStandardInput());
+
+        if (list)
+        {
+            await service.ListAsync(new() { DeploymentId = DeploymentId }, default);
+        }
+        else
+        {
+            await service.GetAsync(new() { DeploymentId = DeploymentId, ConnectionName = "aad-conn" }, default);
+        }
+
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.DoesNotContain("listAuthServiceProviders", handler.Requests[0].Uri.AbsolutePath);
+        Assert.Contains("common", output.ToString());
+        Assert.Contains("ApiKey", output.ToString());
+        Assert.DoesNotContain("provider-canary", output.ToString());
+    }
 
     [Fact]
     public async Task CreateAsync_UnknownDeployment_ThrowsNotFound()
@@ -280,9 +320,9 @@ public sealed class DeploymentOAuthServiceTests
                 parameters: ["Certificate=must-not-persist"]),
             CancellationToken.None);
 
-        Assert.Equal("***", report.Payload!.Parameters["Certificate"]);
+        Assert.Equal("*****", report.Payload!.Parameters["Certificate"]);
         Assert.Equal(
-            "***",
+            "*****",
             Assert.Single(Assert.Single(store.Records).OAuthConnections).Parameters["Certificate"]);
         Assert.DoesNotContain("must-not-persist", JsonSerializer.Serialize(report));
     }
@@ -792,7 +832,7 @@ public sealed class DeploymentOAuthServiceTests
         Assert.Equal("client-1", persisted.ClientId);
         Assert.Equal("common", persisted.Parameters!["TenantId"]);
         Assert.DoesNotContain("ClientId", persisted.Parameters.Keys);
-        Assert.Equal("***", persisted.Parameters["ClientSecret"]);
+        Assert.Equal("*****", persisted.Parameters["ClientSecret"]);
         Assert.DoesNotContain("Scopes", persisted.Parameters.Keys);
     }
 
@@ -819,7 +859,7 @@ public sealed class DeploymentOAuthServiceTests
             new DeploymentOAuthShowRequest { DeploymentId = DeploymentId, ConnectionName = "aad-conn" },
             CancellationToken.None);
 
-        Assert.Equal("***", report.Payload!.Parameters["ClientSecret"]);
+        Assert.Equal("*****", report.Payload!.Parameters["ClientSecret"]);
         Assert.Equal("common", report.Payload.Parameters["TenantId"]);
         Assert.DoesNotContain("must-not-render", JsonSerializer.Serialize(report));
     }
@@ -849,7 +889,7 @@ public sealed class DeploymentOAuthServiceTests
             CancellationToken.None);
 
         var parameters = Assert.Single(Assert.Single(store.Records).OAuthConnections).Parameters;
-        Assert.Equal("***", parameters["UnknownSecret"]);
+        Assert.Equal("*****", parameters["UnknownSecret"]);
         Assert.Equal("safe-value", parameters["UnknownValue"]);
     }
 

@@ -238,6 +238,7 @@ public sealed class PowerAppsConnectionClient : IDisposable
         using var client = new HttpClient(SharedHandler(), disposeHandler: false);
         using var request = new HttpRequestMessage(method, uri);
         request.Options.Set(HttpDiagnostics.ResponseBodyLimit, MaxResponseBodyBytes);
+        request.Options.Set(HttpDiagnostics.CallerCancellationToken, cancellationToken);
 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Headers.TryAddWithoutValidation(ServiceCorrelation.ClientRequestIdHeader, correlation.ClientRequestId);

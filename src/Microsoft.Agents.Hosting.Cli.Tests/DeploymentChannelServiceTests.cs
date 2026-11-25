@@ -60,12 +60,12 @@ public sealed class DeploymentChannelServiceTests
             IsChannelExisting = true,
             GetRawArmResponse = JsonDocument.Parse("""
                 {"properties":{"properties":{"callbackUrl":"https://callback.example/one","isValidated":true,
-                  "lineRegistrations":[{"generatedId":"one","channelSecret":"***","channelAccessToken":"***"},
-                                       {"generatedId":"two","channelSecret":"***","channelAccessToken":"***"}]}}}
+                  "lineRegistrations":[{"generatedId":"one","channelSecret":"*****","channelAccessToken":"*****"},
+                                       {"generatedId":"two","channelSecret":"*****","channelAccessToken":"*****"}]}}}
                 """).RootElement.Clone(),
             UpsertRawArmResponse = JsonDocument.Parse("""
                 {"properties":{"properties":{"callbackUrl":"https://callback.example/returned","isValidated":true,
-                  "lineRegistrations":[{"generatedId":"returned","channelSecret":"***","channelAccessToken":"***"}]}}}
+                  "lineRegistrations":[{"generatedId":"returned","channelSecret":"*****","channelAccessToken":"*****"}]}}}
                 """).RootElement.Clone(),
         };
         var request = mode switch
@@ -81,7 +81,7 @@ public sealed class DeploymentChannelServiceTests
         var write = Assert.Single(channels.Upserts);
         Assert.Equal(count, write.Parameters["lineRegistrations"].GetArrayLength());
         Assert.Equal("https://callback.example/one", write.Parameters["callbackUrl"].GetString());
-        Assert.DoesNotContain("***", JsonSerializer.Serialize(write.Parameters));
+        Assert.DoesNotContain("*****", JsonSerializer.Serialize(write.Parameters));
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
         Assert.Equal("returned", Assert.Single(saved.Parameters["lineRegistrations"].EnumerateArray()).GetProperty("generatedId").GetString());
         Assert.Equal(result.Payload!.Parameters["callbackUrl"].GetString(), saved.Parameters["callbackUrl"].GetString());
@@ -95,7 +95,7 @@ public sealed class DeploymentChannelServiceTests
         var store = new FakeStore(ProvisionedRecord());
         var response = JsonDocument.Parse("""
             {"properties":{"properties":{"lineRegistrations":[
-              {"generatedId":"one","channelSecret":"***","channelAccessToken":"***"}]}}}
+              {"generatedId":"one","channelSecret":"*****","channelAccessToken":"*****"}]}}}
             """).RootElement.Clone();
         var channels = new RecordingChannelPort { IsChannelExisting = exists, GetRawArmResponse = response, UpsertRawArmResponse = response };
         var result = await new DeploymentChannelService(store, channels).CreateChannelAsync(CreateRequest("line",
@@ -182,8 +182,8 @@ public sealed class DeploymentChannelServiceTests
         }
 
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
-        Assert.Equal("***", saved.Parameters["pages"][0].GetProperty("accessToken").GetString());
-        Assert.Equal("***", saved.Parameters["verifyToken"].GetString());
+        Assert.Equal("*****", saved.Parameters["pages"][0].GetProperty("accessToken").GetString());
+        Assert.Equal("*****", saved.Parameters["verifyToken"].GetString());
     }
 
     [Theory]
@@ -269,13 +269,13 @@ public sealed class DeploymentChannelServiceTests
         {
             IsChannelExisting = true,
             GetRawArmResponse = JsonDocument.Parse("""
-                {"properties":{"properties":{"appId":"app","appSecret":"***","isEnabled":false,
-                  "callbackUrl":"https://callback.example","verifyToken":"***",
-                  "pages":[{"id":"one","accessToken":"***"},{"id":"two","accessToken":"***"}]}}}
+                {"properties":{"properties":{"appId":"app","appSecret":"*****","isEnabled":false,
+                  "callbackUrl":"https://callback.example","verifyToken":"*****",
+                  "pages":[{"id":"one","accessToken":"*****"},{"id":"two","accessToken":"*****"}]}}}
                 """).RootElement.Clone(),
             UpsertRawArmResponse = JsonDocument.Parse("""
                 {"properties":{"properties":{"appId":"returned-app","isEnabled":false,
-                  "pages":[{"id":"returned","accessToken":"***"}]}}}
+                  "pages":[{"id":"returned","accessToken":"*****"}]}}}
                 """).RootElement.Clone(),
         };
         var request = mode switch
@@ -294,11 +294,11 @@ public sealed class DeploymentChannelServiceTests
         Assert.Equal("https://callback.example", write.Parameters["callbackUrl"].GetString());
         Assert.DoesNotContain("appSecret", write.Parameters);
         Assert.DoesNotContain("verifyToken", write.Parameters);
-        Assert.DoesNotContain("***", JsonSerializer.Serialize(write.Parameters));
+        Assert.DoesNotContain("*****", JsonSerializer.Serialize(write.Parameters));
         Assert.Equal("returned-app", result.Payload!.Parameters["appId"].GetString());
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
         Assert.Equal("returned", Assert.Single(saved.Parameters["pages"].EnumerateArray()).GetProperty("id").GetString());
-        Assert.Equal("***", saved.Parameters["pages"][0].GetProperty("accessToken").GetString());
+        Assert.Equal("*****", saved.Parameters["pages"][0].GetProperty("accessToken").GetString());
     }
 
     [Theory]
@@ -311,7 +311,7 @@ public sealed class DeploymentChannelServiceTests
         {
             IsChannelExisting = true,
             GetRawArmResponse = JsonDocument.Parse(rejectWrite
-                ? """{"properties":{"properties":{"pages":[{"id":"one","accessToken":"***"}]}}}"""
+                ? """{"properties":{"properties":{"pages":[{"id":"one","accessToken":"*****"}]}}}"""
                 : """{"properties":{"properties":{"pages":[null]}}}""").RootElement.Clone(),
         };
         if (rejectWrite)
@@ -868,8 +868,8 @@ public sealed class DeploymentChannelServiceTests
             IsChannelExisting = true,
             GetRawArmResponse = JsonDocument.Parse("""
                 {"properties":{"properties":{"sites":[
-                  {"siteName":"Primary","siteId":"id-1","isTokenEnabled":true,"isEnabled":true,"key":"***"},
-                  {"siteName":"Secondary","siteId":"id-2","isTokenEnabled":false,"isEnabled":true,"key2":"***"}
+                  {"siteName":"Primary","siteId":"id-1","isTokenEnabled":true,"isEnabled":true,"key":"*****"},
+                  {"siteName":"Secondary","siteId":"id-2","isTokenEnabled":false,"isEnabled":true,"key2":"*****"}
                 ]}}}
                 """).RootElement.Clone(),
             UpsertRawArmResponse = JsonDocument.Parse("""
@@ -887,7 +887,7 @@ public sealed class DeploymentChannelServiceTests
         Assert.True(sites[0].GetProperty("isTokenEnabled").GetBoolean());
         Assert.Equal("id-2", sites[1].GetProperty("siteId").GetString());
         Assert.True(sites[1].GetProperty("isEnabled").GetBoolean());
-        Assert.DoesNotContain("***", sites.GetRawText());
+        Assert.DoesNotContain("*****", sites.GetRawText());
         Assert.Equal("ServiceResponse", result.Payload!.Parameters["sites"][0].GetProperty("siteName").GetString());
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
         Assert.Equal(result.Payload.Parameters["sites"].GetRawText(), saved.Parameters["sites"].GetRawText());
@@ -938,7 +938,7 @@ public sealed class DeploymentChannelServiceTests
         const string primary = """
             {"siteName":"PRIMARY","siteId":"new-id","isEnabled":true,"isTokenEnabled":false,
              "isBlockUserUploadEnabled":false,"isWebchatPreviewEnabled":true,"trustedOrigins":null,
-             "key":"***","key2":"***","eTag":"server-tag","unknown":"server-value"}
+             "key":"*****","key2":"*****","eTag":"server-tag","unknown":"server-value"}
             """;
         const string secondary = """
             {"siteName":"Secondary","siteId":"new-id-2","isEnabled":true,"isTokenEnabled":false,
@@ -946,7 +946,7 @@ public sealed class DeploymentChannelServiceTests
             """;
         var existing = $$"""
             {"siteName":"Existing","siteId":"old-id","isEnabled":{{(replace ? "false" : "true")}},
-             "isTokenEnabled":true,"appId":"old-app","key":"***"}
+             "isTokenEnabled":true,"appId":"old-app","key":"*****"}
             """;
         channels.WriteResponses.Enqueue(SiteResponse(primary + "," + existing + "," + (replace ? secondary : """
             {"siteName":"Retained","siteId":"retained-id","isEnabled":false,"isTokenEnabled":true}
@@ -1001,7 +1001,7 @@ public sealed class DeploymentChannelServiceTests
         Assert.Equal("old-app", preserved.GetProperty("appId").GetString());
         Assert.Equal(!replace, first.EnumerateArray().Any(site => site.GetProperty("siteName").GetString() == "Retained"));
         Assert.Equal(!replace, configured.EnumerateArray().Any(site => site.GetProperty("siteName").GetString() == "Retained"));
-        Assert.DoesNotContain("***", configured.GetRawText());
+        Assert.DoesNotContain("*****", configured.GetRawText());
         Assert.DoesNotContain("eTag", configured.GetRawText());
         Assert.DoesNotContain("unknown", configured.GetRawText());
         Assert.Equal("FinalResponse", result.Payload!.Parameters["sites"][0].GetProperty("siteName").GetString());
@@ -1116,7 +1116,7 @@ public sealed class DeploymentChannelServiceTests
         var firstResponse = SiteResponse("""
             {"siteName":"Secondary","siteId":"id-2","isEnabled":true,"isTokenEnabled":true,"isV1Enabled":true},
             {"siteName":"PRIMARY","siteId":"id-1","isEnabled":true,"isTokenEnabled":true,"isV1Enabled":true,
-             "appId":null,"tenantId":null,"isWebchatPreviewEnabled":true,"key":"***","eTag":"server-tag","unknown":true}
+             "appId":null,"tenantId":null,"isWebchatPreviewEnabled":true,"key":"*****","eTag":"server-tag","unknown":true}
             """);
         channels.WriteResponses.Enqueue(firstResponse);
         var finalResponse = SiteResponse("""{"siteName":"FinalResponse","siteId":"final-id","isEnabled":null}""");
@@ -1170,7 +1170,7 @@ public sealed class DeploymentChannelServiceTests
                 }
             }
 
-            Assert.DoesNotContain("***", configured.GetRawText());
+            Assert.DoesNotContain("*****", configured.GetRawText());
             Assert.DoesNotContain("eTag", configured.GetRawText());
             Assert.DoesNotContain("unknown", configured.GetRawText());
         }
@@ -1328,8 +1328,8 @@ public sealed class DeploymentChannelServiceTests
         var saved = Assert.Single(Assert.Single(store.Records).Channels);
         Assert.Equal("id-1", saved.Parameters["sites"][0].GetProperty("siteId").GetString());
         Assert.Equal("id-2", saved.Parameters["sites"][1].GetProperty("siteId").GetString());
-        Assert.Equal("***", saved.Parameters["sites"][0].GetProperty("key").GetString());
-        Assert.Equal("***", saved.Parameters["sites"][1].GetProperty("key2").GetString());
+        Assert.Equal("*****", saved.Parameters["sites"][0].GetProperty("key").GetString());
+        Assert.Equal("*****", saved.Parameters["sites"][1].GetProperty("key2").GetString());
         Assert.Empty(channels.Upserts);
     }
 
@@ -1486,7 +1486,7 @@ public sealed class DeploymentChannelServiceTests
         channels.ReadResponses.Enqueue(SlackSnapshot("https://old.example"));
         channels.UpsertRawArmResponse = JsonSerializer.SerializeToElement(new
         {
-            properties = new { redirectAction = "***", scopes = "chat:write" },
+            properties = new { redirectAction = "*****", scopes = "chat:write" },
         });
         var updated = await Invoke("update",
             ["--debug", "--parameters", "landingPageUrl=https://new.example", "scopes=chat:write"]);
@@ -1666,12 +1666,12 @@ public sealed class DeploymentChannelServiceTests
                 {"properties":{"channelName":"SlackChannel","properties":{
                   "isEnabled":true,
                   "clientId":"existing-client",
-                  "clientSecret":"***",
+                  "clientSecret":"*****",
                   "verificationToken":null,
-                  "signingSecret":"***",
-                  "scopes":"***",
+                  "signingSecret":"*****",
+                  "scopes":"*****",
                   "landingPageUrl":"https://old.example",
-                  "unexpected":"***"
+                  "unexpected":"*****"
                 }}}
                 """)
                 .RootElement.Clone(),
@@ -1687,7 +1687,7 @@ public sealed class DeploymentChannelServiceTests
         Assert.DoesNotContain("clientSecret", properties);
         Assert.DoesNotContain("verificationToken", properties);
         Assert.DoesNotContain("signingSecret", properties);
-        Assert.Equal("***", properties["scopes"].GetString());
+        Assert.Equal("*****", properties["scopes"].GetString());
         Assert.DoesNotContain("unexpected", properties);
     }
 
@@ -1703,9 +1703,9 @@ public sealed class DeploymentChannelServiceTests
                 {"properties":{"channelName":"SlackChannel","properties":{
                   "isEnabled":true,
                   "clientId":"existing-client",
-                  "clientSecret":"***",
-                  "verificationToken":"***",
-                  "signingSecret":"***"
+                  "clientSecret":"*****",
+                  "verificationToken":"*****",
+                  "signingSecret":"*****"
                 }}}
                 """)
                 .RootElement.Clone(),
@@ -1762,7 +1762,7 @@ public sealed class DeploymentChannelServiceTests
         };
         var store = new FakeStore(seeded);
         var raw = JsonDocument.Parse(
-            "{\"properties\":{\"channelName\":\"SlackChannel\",\"properties\":{\"isEnabled\":true,\"clientId\":\"client-1\",\"clientSecret\":\"***\"}}}")
+            "{\"properties\":{\"channelName\":\"SlackChannel\",\"properties\":{\"isEnabled\":true,\"clientId\":\"client-1\",\"clientSecret\":\"*****\"}}}")
             .RootElement.Clone();
         var channels = new RecordingChannelPort
         {
@@ -1784,7 +1784,7 @@ public sealed class DeploymentChannelServiceTests
         Assert.Equal("slack", result.Payload!.ChannelName);
         Assert.True(result.Payload.Parameters["isEnabled"].GetBoolean());
         Assert.Equal("client-1", result.Payload.Parameters["clientId"].GetString());
-        Assert.Equal("***", result.Payload.Parameters["clientSecret"].GetString());
+        Assert.Equal("*****", result.Payload.Parameters["clientSecret"].GetString());
 
         var persisted = Assert.Single(store.Records).Channels;
         Assert.Equal(2, persisted.Count);
@@ -1794,7 +1794,7 @@ public sealed class DeploymentChannelServiceTests
             channel => channel.ChannelName.Equals("slack", StringComparison.OrdinalIgnoreCase));
         Assert.True(slack.Parameters["isEnabled"].GetBoolean());
         Assert.Equal("client-1", slack.Parameters["clientId"].GetString());
-        Assert.Equal("***", slack.Parameters["clientSecret"].GetString());
+        Assert.Equal("*****", slack.Parameters["clientSecret"].GetString());
     }
 
     [Fact]

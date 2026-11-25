@@ -2,12 +2,87 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Http;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 public sealed class HttpDiagnosticHandlerTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DiagnosticCopiesHideOAuthSecretsWithoutChangingTransmittedOrReturnedBodies(bool observeSerialization)
+    {
+        const string body = """{"properties":{"serviceProviderId":"provider-id","clientId":"client-1","clientSecret":"credential-canary","parameters":[{"key":"TenantId","value":"common"},{"key":"ApiKey","value":"provider-canary"}]}}""";
+        var sink = new RecordingSink();
+        using HttpContent content = observeSerialization
+            ? JsonContent.Create(JsonSerializer.Deserialize<JsonElement>(body))
+            : new StringContent(body, Encoding.UTF8, "application/json");
+        using var client = new HttpClient(new HttpDiagnosticHandler(sink, new CallbackHandler(async (request, token) =>
+        {
+            Assert.Equal(body, await request.Content!.ReadAsStringAsync(token));
+            return new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+        })));
+        using var request = new HttpRequestMessage(HttpMethod.Put,
+            "https://management.azure.com/subscriptions/sub/resourceGroups/group/providers/Microsoft.BotService/botServices/bot/connections/oauth")
+        {
+            Content = content,
+        };
+        request.Options.Set(HttpDiagnostics.ResponseBodyRedactor, value => HttpDiagnosticLoggingPolicy.RedactBody(value,
+            resource => BotServiceResponseRedactor.RedactOAuth(resource)!.Value));
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(body, await response.Content.ReadAsStringAsync());
+        foreach (var stage in new[] { HttpDiagnosticStage.RequestBody, HttpDiagnosticStage.ResponseBody })
+        {
+            var diagnostic = Assert.Single(sink.Events, entry => entry.Stage == stage);
+            Assert.Contains("client-1", diagnostic.Body);
+            Assert.Contains("common", diagnostic.Body);
+            Assert.DoesNotContain("credential-canary", diagnostic.Body);
+            Assert.DoesNotContain("provider-canary", diagnostic.Body);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResponseRedactor_IsNeverAppliedToRequestBodies(bool observeSerialization)
+    {
+        const string body = """{"clientSecret":"request-canary","parameters":[{"key":"TenantId","value":"common"},{"key":"ApiKey","value":"parameter-canary"}]}""";
+        var sink = new RecordingSink();
+        using HttpContent content = observeSerialization
+            ? JsonContent.Create(JsonSerializer.Deserialize<JsonElement>(body))
+            : new StringContent(body, Encoding.UTF8, "application/json");
+        using var client = new HttpClient(new HttpDiagnosticHandler(sink, new CallbackHandler(async (request, token) =>
+        {
+            Assert.Equal(body, await request.Content!.ReadAsStringAsync(token));
+            return new(HttpStatusCode.OK) { Content = new StringContent("""{"result":"response"}""", Encoding.UTF8, "application/json") };
+        })));
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://example.com/requests") { Content = content };
+        var responseRedactions = 0;
+        request.Options.Set(HttpDiagnostics.ResponseBodyRedactor, response =>
+        {
+            responseRedactions++;
+            Assert.Equal("response", response.GetProperty("result").GetString());
+            return JsonSerializer.SerializeToElement(new { result = "redacted-response" });
+        });
+
+        using var response = await client.SendAsync(request);
+        Assert.Equal("""{"result":"response"}""", await response.Content.ReadAsStringAsync());
+        Assert.Equal(1, responseRedactions);
+        using var diagnostic = JsonDocument.Parse(Assert.Single(sink.Events, entry => entry.Stage == HttpDiagnosticStage.RequestBody).Body!);
+        Assert.Equal("*****", diagnostic.RootElement.GetProperty("clientSecret").GetString());
+        var parameters = diagnostic.RootElement.GetProperty("parameters");
+        Assert.Equal("TenantId", parameters[0].GetProperty("key").GetString());
+        Assert.Equal("common", parameters[0].GetProperty("value").GetString());
+        Assert.Equal("ApiKey", parameters[1].GetProperty("key").GetString());
+        Assert.Equal("*****", parameters[1].GetProperty("value").GetString());
+        Assert.Contains("redacted-response", Assert.Single(sink.Events, entry => entry.Stage == HttpDiagnosticStage.ResponseBody).Body);
+    }
+
     [Fact]
     public async Task RequestIsFlushedBeforeBlockedTransportCompletes_AndUriIsNotRewritten()
     {
@@ -94,7 +169,7 @@ public sealed class HttpDiagnosticHandlerTests
         }
 
         Assert.Equal("{\"error\":\"unfinished", text);
-        Assert.Equal(text, Assert.Single(sink.Events, e => e.Stage == HttpDiagnosticStage.ResponseBody).Body);
+        Assert.Equal("[body omitted: no safe structured representation]", Assert.Single(sink.Events, e => e.Stage == HttpDiagnosticStage.ResponseBody).Body);
         Assert.True(Assert.Single(sink.Events, e => e.Stage == HttpDiagnosticStage.ResponseBody).BodyComplete);
         Assert.Single(sink.Events.Select(e => e.RequestId).Distinct());
     }
@@ -237,7 +312,7 @@ public sealed class HttpDiagnosticHandlerTests
         await stream.CopyToAsync(target);
 
         Assert.Equal("example", Encoding.UTF8.GetString(target.ToArray()));
-        Assert.Equal("example", Assert.Single(sink.Events, e => e.Stage == HttpDiagnosticStage.ResponseBody).Body);
+        Assert.Equal("[body omitted: no safe structured representation]", Assert.Single(sink.Events, e => e.Stage == HttpDiagnosticStage.ResponseBody).Body);
     }
 
     [Fact]
@@ -343,6 +418,31 @@ public sealed class HttpDiagnosticHandlerTests
         Assert.Equal(original.GetType().Name, diagnostic.ExceptionType);
         Assert.Equal(original.Message, diagnostic.ExceptionMessage);
         Assert.DoesNotContain(sink.Events, e => e.Stage == HttpDiagnosticStage.ResponseHeaders);
+    }
+
+    [Theory]
+    [InlineData(false, HttpDiagnosticFailure.Timeout)]
+    [InlineData(true, HttpDiagnosticFailure.Cancellation)]
+    public async Task LinkedDeadlineUsesTheOriginalCallerSignalWithoutReplacingTheException(bool cancelCaller, HttpDiagnosticFailure expected)
+    {
+        var sink = new RecordingSink();
+        using var caller = new CancellationTokenSource();
+        using var deadline = new CancellationTokenSource();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(caller.Token, deadline.Token);
+        var original = new OperationCanceledException(linked.Token);
+        using var invoker = new HttpMessageInvoker(new HttpDiagnosticHandler(sink, new CallbackHandler((_, _) =>
+        {
+            (cancelCaller ? caller : deadline).Cancel();
+            return Task.FromException<HttpResponseMessage>(original);
+        })));
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com");
+        request.Options.Set(HttpDiagnostics.CallerCancellationToken, caller.Token);
+
+        var actual = await Assert.ThrowsAsync<OperationCanceledException>(() => invoker.SendAsync(request, linked.Token));
+
+        Assert.Same(original, actual);
+        Assert.Equal(linked.Token, actual.CancellationToken);
+        Assert.Equal(expected, Assert.Single(sink.Events, entry => entry.Stage == HttpDiagnosticStage.Failed).Failure);
     }
 
     [Fact]

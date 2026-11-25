@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Http;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -43,17 +45,30 @@ public sealed class HttpDiagnosticLoggingPolicyTests
 
     [Theory]
     [InlineData("""{"properties":{"enabled":true,"items":[{"name":"First","value":"literal"}]}}""", "application/json")]
-    [InlineData("""{"error":{"code":"BadRequest","message":"Unknown field","details":"See https://example.com/?code=42"}}""", "application/problem+json")]
-    [InlineData("{\"error\":\"unfinished", "application/json")]
-    [InlineData("Service unavailable\r\nTry again later.", "text/plain")]
-    [InlineData("scope=read+write&custom=first&custom=second&broken=%FF%ZZ", "application/x-www-form-urlencoded")]
-    [InlineData("Body without a content type", null)]
-    public void TextBodies_ArePreservedWithoutSchemaApprovalOrParsing(string input, string? contentType)
+    [InlineData("""{"message":"Unknown field","enabled":true}""", "application/problem+json")]
+    [InlineData("""{"error":{"code":"BadRequest","message":"Unknown field"}}""", "application/problem+json")]
+    [InlineData("""{"allSettings":{"region":"west"},"appSettings":{"mode":"test"},"configuration":{"enabled":true},"connectionParameters":{"TenantId":"common"},"connectionParametersSet":{"name":"default"},"parameters":{"TenantId":"common"},"parameterValues":{"scope":"read"},"authorizationUrl":"https://example.com/authorize","consentLink":"https://example.com/consent","testLinks":["https://example.com/test"]}""", "application/json")]
+    public void StructuredBodies_PreserveNonCredentialFields(string input, string? contentType)
     {
         var bytes = Encoding.UTF8.GetBytes(input);
 
         Assert.Equal(input, HttpDiagnosticLoggingPolicy.FormatRequestBody(bytes, contentType));
         Assert.Equal(input, HttpDiagnosticLoggingPolicy.FormatResponseBody(bytes, contentType));
+    }
+
+    [Theory]
+    [InlineData("{\"error\":\"unfinished", "application/json")]
+    [InlineData("Service unavailable\r\nTry again later.", "text/plain")]
+    [InlineData("scope=read+write&custom=first&custom=second&broken=%FF%ZZ", "application/x-www-form-urlencoded")]
+    [InlineData("Body without a content type", null)]
+    [InlineData("\"opaque credential-canary\"", "application/json")]
+    [InlineData("[\"opaque credential-canary\"]", "application/json")]
+    public void UnstructuredBodies_AreOmittedRatherThanEchoingPotentialCredentials(string input, string? contentType)
+    {
+        var bytes = Encoding.UTF8.GetBytes(input);
+
+        Assert.Equal("[body omitted: no safe structured representation]", HttpDiagnosticLoggingPolicy.FormatRequestBody(bytes, contentType));
+        Assert.Equal("[body omitted: no safe structured representation]", HttpDiagnosticLoggingPolicy.FormatResponseBody(bytes, contentType));
     }
 
     [Fact]
@@ -64,14 +79,100 @@ public sealed class HttpDiagnosticLoggingPolicyTests
     }
 
     [Fact]
-    public void TextBodies_RespectDeclaredCharset_WithoutChangingWhitespace()
+    public void StructuredBodies_RespectDeclaredCharsetBeforeRedaction()
     {
-        const string input = "  caf\u00e9\r\n";
+        const string input = "{\"name\":\"caf\u00e9\"}";
 
-        Assert.Equal(input, HttpDiagnosticLoggingPolicy.FormatRequestBody(
+        using var request = JsonDocument.Parse(HttpDiagnosticLoggingPolicy.FormatRequestBody(
             Encoding.Unicode.GetBytes(input), "application/json; charset=\"utf-16\""));
-        Assert.Equal(input, HttpDiagnosticLoggingPolicy.FormatResponseBody(
+        using var response = JsonDocument.Parse(HttpDiagnosticLoggingPolicy.FormatResponseBody(
             Encoding.Latin1.GetBytes(input), "text/plain; charset=iso-8859-1"));
+        Assert.Equal("caf\u00e9", request.RootElement.GetProperty("name").GetString());
+        Assert.Equal("caf\u00e9", response.RootElement.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public void ChannelDiagnostics_ApplyProviderDeclaredSecretMetadataInsideNestedFields()
+    {
+        const string input = """{"properties":{"channelName":"DirectLineChannel","properties":{"directLineEmbedCode":"channel-credential-canary","sites":[{"siteName":"safe","key":"site-credential-canary"}]}}}""";
+        var bytes = Encoding.UTF8.GetBytes(input);
+        JsonElement Redact(JsonElement body) => HttpDiagnosticLoggingPolicy.RedactBody(body, resource =>
+            BotServiceResponseRedactor.RedactChannel(resource,
+                DeploymentChannelCatalog.FindChannelDefinitionOrDefault("DirectLineChannel", ChannelKeyType.ArmName)));
+        var output = HttpDiagnosticLoggingPolicy.FormatResponseBody(bytes, bodyRedactor: Redact);
+        Assert.Contains("DirectLineChannel", output);
+        Assert.Contains("safe", output);
+        Assert.DoesNotContain("channel-credential-canary", output);
+        Assert.DoesNotContain("site-credential-canary", output);
+    }
+
+    [Theory]
+    [InlineData("""{"properties":{"clientSecret":false,"parameters":{"ProviderSecret":"credential-canary"}}}""")]
+    [InlineData("""{"items":[{"access_token":"credential-canary","secretText":"credential-canary","code":"non-secret-code"}]}""")]
+    public void DiagnosticCopies_UseExistingCredentialRedactionRules(string input)
+    {
+        var bytes = Encoding.UTF8.GetBytes(input);
+        foreach (var output in new[] { HttpDiagnosticLoggingPolicy.FormatRequestBody(bytes), HttpDiagnosticLoggingPolicy.FormatResponseBody(bytes) })
+        {
+            Assert.DoesNotContain("credential-canary", output);
+            Assert.Contains("*****", output);
+        }
+    }
+
+    [Theory]
+    [InlineData("resource")]
+    [InlineData("list")]
+    [InlineData("array")]
+    public void OAuthDiagnostics_ReuseCanonicalNameBasedRedactionWithoutProviderMetadata(string shape)
+    {
+        const string resource = """{"location":"global","properties":{"serviceProviderId":"provider-id","clientId":"client-1","clientSecret":"client-canary","scopes":"id:read","parameters":[{"key":"TenantId","value":"common"},{"key":"ApiKey","value":"provider-canary"}]}}""";
+        using var source = JsonDocument.Parse(resource);
+        var redacted = BotServiceResponseRedactor.RedactOAuth(source.RootElement)!.Value.GetRawText();
+        string Wrap(string value) => shape switch
+        {
+            "list" => "{\"value\":[" + value + "],\"nextLink\":\"https://example.com/next\"}",
+            "array" => "[" + value + "]",
+            _ => value,
+        };
+        var bytes = Encoding.UTF8.GetBytes(Wrap(resource));
+        JsonElement Redact(JsonElement body) => HttpDiagnosticLoggingPolicy.RedactBody(body, item =>
+            BotServiceResponseRedactor.RedactOAuth(item)!.Value);
+
+        Assert.Equal(Wrap(redacted), HttpDiagnosticLoggingPolicy.FormatResponseBody(bytes, bodyRedactor: Redact));
+        Assert.Equal("provider-canary", source.RootElement.GetProperty("properties").GetProperty("parameters")[1].GetProperty("value").GetString());
+    }
+
+    [Theory]
+    [InlineData("DirectLineChannel")]
+    [InlineData("FutureChannel")]
+    public void ChannelDiagnostics_MatchCanonicalRedactionWithoutExtraRules(string channelName)
+    {
+        var input = "{\"properties\":{\"channelName\":\"" + channelName +
+            "\",\"properties\":{\"isEnabled\":true,\"opaque\":\"visible\",\"unknownToken\":false,\"directLineEmbedCode\":\"credential-canary\",\"sites\":[{\"siteName\":\"safe\",\"key\":\"site-canary\"}]}}}";
+        using var source = JsonDocument.Parse(input);
+        var definition = DeploymentChannelCatalog.FindChannelDefinitionOrDefault(channelName, ChannelKeyType.ArmName);
+        var expected = BotServiceResponseRedactor.RedactChannel(source.RootElement, definition).GetRawText();
+        var bytes = Encoding.UTF8.GetBytes(input);
+        JsonElement Redact(JsonElement body) => HttpDiagnosticLoggingPolicy.RedactBody(body, resource =>
+            BotServiceResponseRedactor.RedactChannel(resource, definition));
+
+        Assert.Equal(expected, HttpDiagnosticLoggingPolicy.FormatResponseBody(bytes, bodyRedactor: Redact));
+    }
+
+    [Fact]
+    public void OtherApiBodies_UseOnlySecretNamesWithoutInferringBotServiceSchemas()
+    {
+        const string body = """{"properties":{"channelName":"DirectLineChannel","serviceProviderId":"provider-id","parameters":{"TenantId":"common","apiKey":"credential-canary"},"allSettings":{"region":"west"},"code":"visible-code"}}""";
+        var bytes = Encoding.UTF8.GetBytes(body);
+        foreach (var output in new[] { HttpDiagnosticLoggingPolicy.FormatRequestBody(bytes), HttpDiagnosticLoggingPolicy.FormatResponseBody(bytes) })
+        {
+            using var document = JsonDocument.Parse(output);
+            var properties = document.RootElement.GetProperty("properties");
+            Assert.Equal("common", properties.GetProperty("parameters").GetProperty("TenantId").GetString());
+            Assert.Equal("*****", properties.GetProperty("parameters").GetProperty("apiKey").GetString());
+            Assert.Equal("west", properties.GetProperty("allSettings").GetProperty("region").GetString());
+            Assert.Equal("visible-code", properties.GetProperty("code").GetString());
+        }
     }
 
     [Theory]
@@ -131,7 +232,7 @@ public sealed class HttpDiagnosticLoggingPolicyTests
     [Fact]
     public void CaptureLimit_DoesNotPresentOversizedBodyAsComplete()
     {
-        var input = new string('x', HttpDiagnosticLoggingPolicy.MaximumBodyBytes);
+        var input = "{\"name\":\"" + new string('x', HttpDiagnosticLoggingPolicy.MaximumBodyBytes - 11) + "\"}";
 
         Assert.Equal(input, HttpDiagnosticLoggingPolicy.FormatResponseBody(Encoding.UTF8.GetBytes(input)));
         Assert.Equal("[body omitted: capture limit exceeded]",
