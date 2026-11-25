@@ -1,4 +1,4 @@
-using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -12,13 +12,6 @@ public enum OauthProviderKeyType
 /// <summary>Projects OAuth connection parameters into canonical and provider-declared shapes.</summary>
 internal static class DeploymentOAuthParameters
 {
-    internal static bool IsSecret(string name) =>
-        name.Contains("secret", StringComparison.OrdinalIgnoreCase) ||
-        name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
-        HasNumberedSuffix(name, "key") ||
-        HasNumberedSuffix(name, "token") ||
-        HasNumberedSuffix(name, "credential");
-
     internal static bool IsProviderSecret(string type) =>
         type.Equals("securestring", StringComparison.OrdinalIgnoreCase);
 
@@ -28,13 +21,11 @@ internal static class DeploymentOAuthParameters
     /// <summary>
     /// Produces a safe OAuth connection shape. When a provider definition is supplied, only its declared
     /// parameters remain and its secret metadata drives masking. Without a provider definition, unknown parameters
-    /// remain and recognizable secret names are masked. The raw ARM response is included only when requested and is
-    /// redacted with the same provider metadata.
+    /// remain and recognizable secret names are masked.
     /// </summary>
     internal static DeploymentOAuthConnection Sanitize(
         DeploymentOAuthConnection connection,
         OAuthProviderDefinition? provider,
-        bool includeArmResponse = true,
         bool omitSecrets = false)
     {
         var parameters = connection.Parameters ??
@@ -57,8 +48,8 @@ internal static class DeploymentOAuthParameters
                 continue;
             }
 
-            if (omitSecrets && (parameter.Value == BotServiceResponseRedactor.Mask ||
-                (provider is null ? IsSecret(parameter.Key) : secretNames.Contains(parameter.Key))))
+            if (omitSecrets && (SecretRedaction.IsMasked(parameter.Value) ||
+                (provider is null ? SecretRedaction.IsSecret(parameter.Key) : secretNames.Contains(parameter.Key))))
             {
                 continue;
             }
@@ -76,7 +67,7 @@ internal static class DeploymentOAuthParameters
             {
                 sanitized[parameter.Key] = SanitizeValue(
                     parameter.Value,
-                    IsSecret(parameter.Key) &&
+                    SecretRedaction.IsSecret(parameter.Key) &&
                         (parameter.Value is not null ||
                          parameter.Key.Equals(CommonOAuthParameters.ClientSecret, StringComparison.OrdinalIgnoreCase)));
             }
@@ -85,27 +76,13 @@ internal static class DeploymentOAuthParameters
         return connection with
         {
             Parameters = sanitized,
-            RawArmResponse = includeArmResponse
-                ? BotServiceResponseRedactor.RedactOAuth(connection.RawArmResponse, secretNames)
-                : null,
         };
     }
 
     private static string? SanitizeValue(string? value, bool isSecret) =>
         isSecret
-            ? BotServiceResponseRedactor.Mask
+            ? SecretRedaction.Mask
             : value;
-
-    private static bool HasNumberedSuffix(string name, string suffix)
-    {
-        var suffixEnd = name.Length;
-        while (suffixEnd > 0 && char.IsAsciiDigit(name[suffixEnd - 1]))
-        {
-            suffixEnd--;
-        }
-
-        return name.AsSpan(0, suffixEnd).EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
-    }
 
     /// <summary>
     /// Describes OAuth connection parameters that recur across providers and therefore have named CLI options and

@@ -56,6 +56,7 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
         var token = await ResourceTokenContext.AcquireAsync(_tokens, _profileTokens, _claimsValidator, request.ServiceTarget.Context, request.ServiceTarget.Audience, request.ServiceTarget.TenantId, [PowerPlatformApiPermissions.AppsUpdate], cancellationToken).ConfigureAwait(false);
 
         using var message = new HttpRequestMessage(HttpMethod.Post, targetUri);
+        message.Options.Set(HttpDiagnostics.CallerCancellationToken, cancellationToken);
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
         message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         message.Headers.TryAddWithoutValidation(ClientRequestIdHeaderName, clientRequestId);

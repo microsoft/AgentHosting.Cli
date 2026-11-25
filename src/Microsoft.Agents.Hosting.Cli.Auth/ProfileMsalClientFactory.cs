@@ -1,6 +1,7 @@
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Identity.Client;
 using Microsoft.Identity.Client.Broker;
@@ -15,8 +16,13 @@ public interface IProfileMsalClientFactory
 
 public sealed class ProfileMsalClientFactory(
     IPlatformInfo platform, ProfileCredentialRuntimeOptions runtime,
-    ProfileFederationAssertionProvider federation, IMsalHttpClientFactory? httpClientFactory = null) : IProfileMsalClientFactory
+    ProfileFederationAssertionProvider federation, IMsalHttpClientFactory? httpClientFactory = null,
+    AgentHostAuthOptions? options = null, HttpDiagnostics? httpDiagnostics = null) : IProfileMsalClientFactory
 {
+    private readonly MsalDiagnosticWriter? _diagnosticWriter = options is { DebugOutput: { } output }
+        ? new(output, options.DebugColor, httpDiagnostics is null ? null : httpDiagnostics.RecordWriteError)
+        : null;
+
     public IPublicClientApplication CreatePublic(ProfileTokenRequest request, bool broker)
     {
         var redirect = broker ? null : request.RedirectUri ?? runtime.BrowserRedirectUri ?? "http://localhost";
@@ -28,6 +34,8 @@ public sealed class ProfileMsalClientFactory(
             .WithAuthority(request.Authority.AuthorityUrl, validateAuthority: false)
             .WithInstanceDiscovery(false);
         if (httpClientFactory is not null) builder.WithHttpClientFactory(httpClientFactory);
+        if (_diagnosticWriter is { } diagnosticWriter)
+            builder.WithLogging(diagnosticWriter.Write, LogLevel.Warning, enablePiiLogging: false, enableDefaultPlatformLogging: false);
         if (broker)
         {
             builder.WithBroker(MsalPublicClientProvider.CreateBrokerOptions(platform, listAccounts: false));
@@ -41,6 +49,8 @@ public sealed class ProfileMsalClientFactory(
             .WithAuthority(request.Authority.AuthorityUrl, validateAuthority: false)
             .WithInstanceDiscovery(false);
         if (httpClientFactory is not null) builder.WithHttpClientFactory(httpClientFactory);
+        if (_diagnosticWriter is { } diagnosticWriter)
+            builder.WithLogging(diagnosticWriter.Write, LogLevel.Warning, enablePiiLogging: false, enableDefaultPlatformLogging: false);
         if (certificate is not null) builder.WithCertificate(certificate);
         else if (request.Method == AuthCredentialMethod.ClientSecret) builder.WithClientSecret(request.ClientSecret);
         else builder.WithClientAssertion(assertion => federation.GetAssertionAsync(request.Method, assertion.CancellationToken));

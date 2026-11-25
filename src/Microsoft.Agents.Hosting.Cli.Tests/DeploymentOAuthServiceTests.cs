@@ -2,6 +2,8 @@ using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
+using System.Net;
 using System.Text.Json;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -17,12 +19,6 @@ public sealed class DeploymentOAuthServiceTests
             port,
             new CompositeDeploymentTransport(subscriptionResolver: new FakeSubscriptionResolver()),
             standardInput ?? new FakeStandardInput());
-
-    private static JsonElement Arm(string json)
-    {
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.Clone();
-    }
 
     private static CodeAgentDeployment ProvisionedRecord(string id = DeploymentId, string name = "dev1") =>
         new()
@@ -62,6 +58,44 @@ public sealed class DeploymentOAuthServiceTests
             ClientSecret = clientSecret,
             Parameters = parameters,
         };
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadDiagnostics_RedactByNameBeforeProviderDiscovery(bool list)
+    {
+        const string connection = """{"name":"aad-conn","properties":{"serviceProviderId":"provider-id","serviceProviderDisplayName":"Provider","parameters":[{"key":"TenantId","value":"common"},{"key":"ApiKey","value":"provider-canary"}]}}""";
+        var handler = new StubHttpMessageHandler(request => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                request.RequestUri!.AbsolutePath.EndsWith("listAuthServiceProviders", StringComparison.Ordinal)
+                    ? """{"value":[{"properties":{"id":"provider-id","serviceProviderName":"Provider","displayName":"Provider","parameters":[{"name":"TenantId","displayName":"Tenant","type":"string"},{"name":"ProviderPrivateValue","displayName":"Private","type":"securestring"}]}}]}"""
+                    : list ? "{\"value\":[" + connection + "]}" : connection,
+                System.Text.Encoding.UTF8, "application/json"),
+        });
+        using var output = new StringWriter();
+        using var client = new HttpClient(new HttpDiagnosticHandler(new TextWriterHttpDiagnosticSink(output), handler));
+        var service = new DeploymentOAuthService(
+            new FakeStore(ProvisionedRecord()),
+            new DeploymentOAuthAdapter(client, new StubTokenProvider { AccessToken = "arm-token" }),
+            new CompositeDeploymentTransport(subscriptionResolver: new FakeSubscriptionResolver()),
+            new FakeStandardInput());
+
+        if (list)
+        {
+            await service.ListAsync(new() { DeploymentId = DeploymentId }, default);
+        }
+        else
+        {
+            await service.GetAsync(new() { DeploymentId = DeploymentId, ConnectionName = "aad-conn" }, default);
+        }
+
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.DoesNotContain("listAuthServiceProviders", handler.Requests[0].Uri.AbsolutePath);
+        Assert.Contains("common", output.ToString());
+        Assert.Contains("ApiKey", output.ToString());
+        Assert.DoesNotContain("provider-canary", output.ToString());
+    }
 
     [Fact]
     public async Task CreateAsync_UnknownDeployment_ThrowsNotFound()
@@ -258,7 +292,7 @@ public sealed class DeploymentOAuthServiceTests
     }
 
     [Fact]
-    public async Task CreateAsync_SecureTypedParameter_IsMaskedInResultStoreAndRawArmResponse()
+    public async Task CreateAsync_SecureTypedParameter_IsMaskedInResultAndStore()
     {
         var store = new FakeStore(ProvisionedRecord());
         var port = new FakeOAuthPort
@@ -277,16 +311,6 @@ public sealed class DeploymentOAuthServiceTests
                     ],
                 },
             ],
-            UpsertRawArmResponse = Arm(
-                """
-                {
-                  "properties": {
-                    "parameters": [
-                      { "key": "Certificate", "value": "must-not-render" }
-                    ]
-                  }
-                }
-                """),
         };
 
         var report = await Service(store, port).CreateAsync(
@@ -296,14 +320,11 @@ public sealed class DeploymentOAuthServiceTests
                 parameters: ["Certificate=must-not-persist"]),
             CancellationToken.None);
 
-        Assert.Equal("***", report.Payload!.Parameters["Certificate"]);
+        Assert.Equal("*****", report.Payload!.Parameters["Certificate"]);
         Assert.Equal(
-            "***",
+            "*****",
             Assert.Single(Assert.Single(store.Records).OAuthConnections).Parameters["Certificate"]);
-        var rawParameter = Assert.Single(
-            report.ArmResponse!.Value.GetProperty("properties").GetProperty("parameters").EnumerateArray());
-        Assert.Equal("Certificate", rawParameter.GetProperty("key").GetString());
-        Assert.Equal("***", rawParameter.GetProperty("value").GetString());
+        Assert.DoesNotContain("must-not-persist", JsonSerializer.Serialize(report));
     }
 
     [Fact]
@@ -811,13 +832,12 @@ public sealed class DeploymentOAuthServiceTests
         Assert.Equal("client-1", persisted.ClientId);
         Assert.Equal("common", persisted.Parameters!["TenantId"]);
         Assert.DoesNotContain("ClientId", persisted.Parameters.Keys);
-        Assert.Equal("***", persisted.Parameters["ClientSecret"]);
+        Assert.Equal("*****", persisted.Parameters["ClientSecret"]);
         Assert.DoesNotContain("Scopes", persisted.Parameters.Keys);
-        Assert.Null(persisted.RawArmResponse);
     }
 
     [Fact]
-    public async Task ShowAsync_RedactsSecretsFromRawArmResponse()
+    public async Task ShowAsync_MasksSecretParametersInTheCanonicalResult()
     {
         var store = new FakeStore(ProvisionedRecord());
         var port = new FakeOAuthPort
@@ -826,19 +846,11 @@ public sealed class DeploymentOAuthServiceTests
             {
                 ConnectionName = "aad-conn",
                 ServiceProviderId = "provider-id-Aadv2",
-                RawArmResponse = Arm(
-                    """
-                    {
-                      "name": "aad-conn",
-                      "properties": {
-                        "clientSecret": "must-not-render",
-                        "parameters": [
-                          { "key": "ClientSecret", "value": "must-not-render" },
-                          { "key": "TenantId", "value": "common" }
-                        ]
-                      }
-                    }
-                    """),
+                Parameters = new Dictionary<string, string?>
+                {
+                    ["ClientSecret"] = "must-not-render",
+                    ["TenantId"] = "common",
+                },
             },
         };
         var service = Service(store, port);
@@ -847,13 +859,9 @@ public sealed class DeploymentOAuthServiceTests
             new DeploymentOAuthShowRequest { DeploymentId = DeploymentId, ConnectionName = "aad-conn" },
             CancellationToken.None);
 
-        var properties = report.ArmResponse!.Value.GetProperty("properties");
-        Assert.Equal("***", properties.GetProperty("clientSecret").GetString());
-        var parameters = properties.GetProperty("parameters").EnumerateArray().ToArray();
-        Assert.Equal(2, parameters.Length);
-        Assert.Equal("***", parameters[0].GetProperty("value").GetString());
-        Assert.Equal("TenantId", parameters[1].GetProperty("key").GetString());
-        Assert.Equal("common", parameters[1].GetProperty("value").GetString());
+        Assert.Equal("*****", report.Payload!.Parameters["ClientSecret"]);
+        Assert.Equal("common", report.Payload.Parameters["TenantId"]);
+        Assert.DoesNotContain("must-not-render", JsonSerializer.Serialize(report));
     }
 
     [Fact]
@@ -881,7 +889,7 @@ public sealed class DeploymentOAuthServiceTests
             CancellationToken.None);
 
         var parameters = Assert.Single(Assert.Single(store.Records).OAuthConnections).Parameters;
-        Assert.Equal("***", parameters["UnknownSecret"]);
+        Assert.Equal("*****", parameters["UnknownSecret"]);
         Assert.Equal("safe-value", parameters["UnknownValue"]);
     }
 
@@ -1095,7 +1103,6 @@ public sealed class DeploymentOAuthServiceTests
         public bool IsDeleteSuccessful { get; set; } = true;
         public int ProviderListCallCount { get; private set; }
         public int GetCallCount { get; private set; }
-        public JsonElement? UpsertRawArmResponse { get; set; }
 
         public Task<IReadOnlyList<OAuthProviderDefinition>> ListServiceProvidersAsync(
             string subscriptionId,
@@ -1125,7 +1132,6 @@ public sealed class DeploymentOAuthServiceTests
                     parameter => parameter.Value,
                     StringComparer.Ordinal),
                 ServiceProviderId = upsert.ServiceProviderId,
-                RawArmResponse = Redact(UpsertRawArmResponse),
             });
         }
 
@@ -1177,7 +1183,6 @@ public sealed class DeploymentOAuthServiceTests
                     parameter => parameter.Value,
                     StringComparer.Ordinal),
                 ResourceId = response.ResourceId ?? string.Empty,
-                RawArmResponse = Redact(response.RawArmResponse),
             };
         }
 
@@ -1188,8 +1193,6 @@ public sealed class DeploymentOAuthServiceTests
                     [' ', ','],
                     StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        private static JsonElement? Redact(JsonElement? response)
-            => BotServiceResponseRedactor.RedactOAuth(response);
 
     }
 
@@ -1203,6 +1206,5 @@ public sealed class DeploymentOAuthServiceTests
         public IReadOnlyDictionary<string, string?> Parameters { get; init; } =
             new Dictionary<string, string?>(StringComparer.Ordinal);
         public string? ResourceId { get; init; }
-        public JsonElement? RawArmResponse { get; init; }
     }
 }

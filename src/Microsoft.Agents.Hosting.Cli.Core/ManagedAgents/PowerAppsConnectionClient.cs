@@ -43,7 +43,6 @@ public sealed class PowerAppsConnectionClient : IDisposable
     private readonly IProfileCredentialProvider? _profileCredentials;
     private readonly Func<CoreServicesClusterCategory> _cluster;
     private readonly Func<HttpMessageHandler> _handlerFactory;
-    private readonly TextWriter? _diagnostics;
     private readonly TimeSpan _requestTimeout;
     private readonly Lock _gate = new();
 
@@ -56,29 +55,27 @@ public sealed class PowerAppsConnectionClient : IDisposable
     /// <param name="tokenProvider">Supplies the Power Apps token the API accepts.</param>
     /// <param name="cluster">The cluster category whose API host requests are sent to.</param>
     /// <param name="handlerFactory">Creates the transport, replaced in tests.</param>
-    /// <param name="diagnostics">Receives the redacted detail of what the service answered. Omitted unless the operator asked for it.</param>
     /// <param name="requestTimeout">How long one request may take, headers and body together. Defaults to 100 seconds.</param>
     /// <param name="profileCredentials">Acquires service credentials for captured profiles; required for non-legacy contexts.</param>
-    public PowerAppsConnectionClient(ITokenProvider tokenProvider, CoreServicesClusterCategory cluster, Func<HttpMessageHandler>? handlerFactory = null, TextWriter? diagnostics = null, TimeSpan? requestTimeout = null,
+    public PowerAppsConnectionClient(ITokenProvider tokenProvider, CoreServicesClusterCategory cluster, Func<HttpMessageHandler>? handlerFactory = null, TimeSpan? requestTimeout = null,
         IProfileCredentialProvider? profileCredentials = null)
-        : this(tokenProvider, () => cluster, handlerFactory, diagnostics, requestTimeout, profileCredentials)
+        : this(tokenProvider, () => cluster, handlerFactory, requestTimeout, profileCredentials)
     {
     }
 
     /// <summary>Creates a client that resolves its legacy cluster only when a request needs it.</summary>
     public static PowerAppsConnectionClient CreateDeferred(ITokenProvider tokenProvider, Func<CoreServicesClusterCategory> cluster,
-        Func<HttpMessageHandler>? handlerFactory = null, TextWriter? diagnostics = null, TimeSpan? requestTimeout = null,
+        Func<HttpMessageHandler>? handlerFactory = null, TimeSpan? requestTimeout = null,
         IProfileCredentialProvider? profileCredentials = null) =>
-        new(tokenProvider, cluster, handlerFactory, diagnostics, requestTimeout, profileCredentials);
+        new(tokenProvider, cluster, handlerFactory, requestTimeout, profileCredentials);
 
-    private PowerAppsConnectionClient(ITokenProvider tokenProvider, Func<CoreServicesClusterCategory> cluster, Func<HttpMessageHandler>? handlerFactory, TextWriter? diagnostics, TimeSpan? requestTimeout,
+    private PowerAppsConnectionClient(ITokenProvider tokenProvider, Func<CoreServicesClusterCategory> cluster, Func<HttpMessageHandler>? handlerFactory, TimeSpan? requestTimeout,
         IProfileCredentialProvider? profileCredentials)
     {
         _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
         _profileCredentials = profileCredentials;
         _cluster = cluster ?? throw new ArgumentNullException(nameof(cluster));
         _handlerFactory = handlerFactory ?? TransportDefaults.CreateRedirectRejectingHandler;
-        _diagnostics = diagnostics;
         _requestTimeout = requestTimeout ?? DefaultRequestTimeout;
     }
 
@@ -240,6 +237,8 @@ public sealed class PowerAppsConnectionClient : IDisposable
 
         using var client = new HttpClient(SharedHandler(), disposeHandler: false);
         using var request = new HttpRequestMessage(method, uri);
+        request.Options.Set(HttpDiagnostics.ResponseBodyLimit, MaxResponseBodyBytes);
+        request.Options.Set(HttpDiagnostics.CallerCancellationToken, cancellationToken);
 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Headers.TryAddWithoutValidation(ServiceCorrelation.ClientRequestIdHeader, correlation.ClientRequestId);
@@ -249,34 +248,16 @@ public sealed class PowerAppsConnectionClient : IDisposable
             request.Content = new StringContent(body, Encoding.UTF8, "application/json");
         }
 
-        try
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, bounded.Token).ConfigureAwait(false);
+        var answer = await ReadBodyAsync(response, bounded.Token).ConfigureAwait(false);
+        return new PowerAppsConnectionResponse(
+            response.StatusCode,
+            answer.Text,
+            correlation with { ServiceRequestId = ServiceCorrelation.ReadServiceRequestId(response) })
         {
-            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, bounded.Token).ConfigureAwait(false);
-            var answer = await ReadBodyAsync(response, bounded.Token).ConfigureAwait(false);
-            var answered = new PowerAppsConnectionResponse(
-                response.StatusCode,
-                answer.Text,
-                correlation with { ServiceRequestId = ServiceCorrelation.ReadServiceRequestId(response) })
-            {
-                Oversized = answer.Oversized,
-            };
-
-            Trace(method, uri, $"HTTP {(int)answered.StatusCode} {answered.CorrelationDetail} {Describe(answered)}");
-
-            return answered;
-        }
-        catch (Exception failure)
-        {
-            Trace(method, uri, $"{failure.GetType().Name} {correlation.Describe()} {failure.Message}");
-
-            throw;
-        }
+            Oversized = answer.Oversized,
+        };
     }
-
-    private static string Describe(PowerAppsConnectionResponse response) =>
-        response.Oversized
-            ? $"response larger than {MaxResponseBodyBytes} bytes, discarded unread"
-            : PowerAppsConnectionBody.Redacted(response.Body);
 
     private static async Task<ResponseBody> ReadBodyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
@@ -303,14 +284,6 @@ public sealed class PowerAppsConnectionClient : IDisposable
     }
 
     private readonly record struct ResponseBody(string Text, bool Oversized);
-
-    private void Trace(HttpMethod method, Uri uri, string outcome)
-    {
-        if (_diagnostics is { } diagnostics)
-        {
-            diagnostics.WriteLine($"[connections] {method} {uri.GetLeftPart(UriPartial.Path)} -> {outcome.Trim()}");
-        }
-    }
 
     private async Task<string> AccessTokenAsync(CopilotEnvironmentContext environment, CancellationToken cancellationToken)
     {

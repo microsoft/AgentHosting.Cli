@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -599,7 +600,7 @@ public static class DeploymentChannelPlan
         definition.Type switch
         {
             DeploymentParameterType.String when value.ValueKind == JsonValueKind.String &&
-                                                (!definition.IsSecret || value.GetString() != BotServiceResponseRedactor.Mask) => value.Clone(),
+                                                (!definition.IsSecret || !SecretRedaction.IsMasked(value.GetString())) => value.Clone(),
             DeploymentParameterType.Boolean when value.ValueKind is JsonValueKind.True or JsonValueKind.False =>
                 value.Clone(),
             DeploymentParameterType.Integer when value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out _) =>

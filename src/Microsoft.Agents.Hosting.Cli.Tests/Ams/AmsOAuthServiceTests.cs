@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -161,7 +162,7 @@ public sealed class AmsOAuthServiceTests
         Assert.Equal(DeploymentOperationStatus.Listed, result.Status);
         Assert.Equal("Connections", result.TargetName);
         Assert.Equal([oauth.Connection], result.Payload!);
-        Assert.Null(result.ArmResponse);
+        Assert.DoesNotContain("armResponse", JsonSerializer.Serialize(result), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

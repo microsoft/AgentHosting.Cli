@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
@@ -187,7 +188,7 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
 
     [Theory]
     [InlineData("must-not-persist")]
-    [InlineData("***")]
+    [InlineData("*****")]
     [InlineData(null)]
     public void OAuthConnectionsRoundTripThroughTheProjectStore(string? clientSecret)
     {
@@ -208,7 +209,7 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
                         ["ClientSecret"] = clientSecret,
                         ["Scopes"] = "User.Read",
                         ["TenantId"] = "common",
-                        ["ProviderPrivateValue"] = BotServiceResponseRedactor.Mask,
+                        ["ProviderPrivateValue"] = SecretRedaction.Mask,
                         ["refreshToken"] = null,
                         ["OptionalValue"] = null,
                         ["tokenEndpoint"] = "https://example.test/token",
@@ -244,7 +245,7 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
         Assert.DoesNotContain("ClientSecret", json);
         Assert.DoesNotContain("ProviderPrivateValue", json);
         Assert.DoesNotContain("refreshToken", json);
-        Assert.DoesNotContain(BotServiceResponseRedactor.Mask, json);
+        Assert.DoesNotContain(SecretRedaction.Mask, json);
     }
 
     [Fact]
@@ -260,7 +261,7 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
                     ResourceId = "/channels/TelegramChannel",
                     Parameters = new Dictionary<string, JsonElement>
                     {
-                        ["accessToken"] = JsonSerializer.SerializeToElement(BotServiceResponseRedactor.Mask),
+                        ["accessToken"] = JsonSerializer.SerializeToElement(SecretRedaction.Mask),
                         ["isEnabled"] = JsonSerializer.SerializeToElement(false),
                     },
                 },
@@ -275,7 +276,7 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
                     ResourceId = "/connections/graph",
                     Parameters = new Dictionary<string, string?>
                     {
-                        ["ProviderPrivateValue"] = BotServiceResponseRedactor.Mask,
+                        ["ProviderPrivateValue"] = SecretRedaction.Mask,
                         ["TenantId"] = "common",
                     },
                 },
@@ -291,7 +292,7 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
         var json = File.ReadAllText(Path.Combine(_root, AgentConfigLocator.ConfigDirectoryName, AgentConfigLocator.ConfigFileName));
         Assert.DoesNotContain("accessToken", json);
         Assert.DoesNotContain("ProviderPrivateValue", json);
-        Assert.DoesNotContain(BotServiceResponseRedactor.Mask, json);
+        Assert.DoesNotContain(SecretRedaction.Mask, json);
         Assert.False(Assert.Single(Assert.Single(_store.List(_root)).Channels).Parameters["isEnabled"].GetBoolean());
         Assert.Equal("common", Assert.Single(Assert.Single(_store.List(_root)).OAuthConnections).Parameters["TenantId"]);
     }
@@ -421,11 +422,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
                         ["isEnabled"] = JsonSerializer.SerializeToElement(true),
                         ["enableCalling"] = JsonSerializer.SerializeToElement(true),
                     },
-                    RawArmResponse = JsonSerializer.SerializeToElement(new
-                    {
-                        id = "/subscriptions/sub-1/.../channels/MsTeamsChannel",
-                        properties = new { channelName = "MsTeamsChannel" },
-                    }),
                 },
             ],
         };
@@ -437,7 +433,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
         Assert.True(channel.Parameters["isEnabled"].GetBoolean());
         Assert.Contains("channels/MsTeamsChannel", channel.ResourceId);
         Assert.True(channel.Parameters["enableCalling"].GetBoolean());
-        Assert.Null(channel.RawArmResponse);
         Assert.DoesNotContain(
             "rawArmResponse",
             File.ReadAllText(Path.Combine(_root, AgentConfigLocator.ConfigDirectoryName, AgentConfigLocator.ConfigFileName)),
@@ -486,27 +481,13 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
                 ["redirectAction"] = JsonSerializer.SerializeToElement("https://slack.com/oauth/v2/authorize?state=SYNTHETIC_STATE"),
                 ["futureProperty"] = JsonSerializer.SerializeToElement("unknown"),
             },
-            RawArmResponse = JsonSerializer.SerializeToElement(new
-            {
-                properties = new
-                {
-                    channelName = "SlackChannel",
-                    properties = new { clientSecret = "client-secret", redirectAction = "https://slack.com/oauth/v2/authorize?state=SYNTHETIC_STATE" },
-                },
-            }),
             AuthorizationUrl = new Uri("https://slack.com/oauth/v2/authorize?state=SYNTHETIC_STATE"),
         };
 
         var inMemoryChannel = DeploymentChannelCatalog.Sanitize(unsafeChannel);
         Assert.NotNull(inMemoryChannel);
-        Assert.Equal(BotServiceResponseRedactor.Mask, inMemoryChannel.Parameters["clientSecret"].GetString());
-        Assert.Equal(
-            BotServiceResponseRedactor.Mask,
-            inMemoryChannel.RawArmResponse!.Value
-                .GetProperty("properties")
-                .GetProperty("properties")
-                .GetProperty("clientSecret")
-                .GetString());
+        Assert.Equal(SecretRedaction.Mask, inMemoryChannel.Parameters["clientSecret"].GetString());
+        Assert.Equal(unsafeChannel.AuthorizationUrl, inMemoryChannel.AuthorizationUrl);
 
         var storedRecord = ProjectDeploymentStore.ToAgentDeploymentRecord(
             Record() with { Channels = [unsafeChannel] },
@@ -527,7 +508,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
             Assert.DoesNotContain("verificationToken", channel.Parameters.Keys);
             Assert.DoesNotContain("signingSecret", channel.Parameters.Keys);
             Assert.DoesNotContain("futureProperty", channel.Parameters.Keys);
-            Assert.Null(channel.RawArmResponse);
             Assert.Null(channel.AuthorizationUrl);
             Assert.DoesNotContain("SYNTHETIC_STATE", JsonSerializer.Serialize(channel));
         }
@@ -551,12 +531,11 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
                 ["isValidated"] = JsonSerializer.SerializeToElement(true),
                 ["unknown"] = JsonSerializer.SerializeToElement("ignore"),
             },
-            RawArmResponse = JsonSerializer.SerializeToElement(new { authToken = "synthetic-auth-token" }),
         };
         _store.Upsert(_root, Record() with { Channels = [unsafeChannel] });
         var config = File.ReadAllText(Path.Combine(_root, ".config", "agent.config.json"));
         Assert.DoesNotContain("authToken", config);
-        Assert.DoesNotContain(BotServiceResponseRedactor.Mask, config);
+        Assert.DoesNotContain(SecretRedaction.Mask, config);
         var untrusted = ProjectDeploymentStore.ToAgentDeploymentRecord(Record(), "etag") with { Channels = [unsafeChannel] };
         foreach (var channel in new[] { Assert.Single(Assert.Single(_store.List(_root)).Channels),
             Assert.Single(ProjectDeploymentStore.ToDeployment(untrusted).Channels) })
@@ -568,7 +547,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
             Assert.False(channel.Parameters["isEnabled"].GetBoolean());
             Assert.True(channel.Parameters["isValidated"].GetBoolean());
             Assert.DoesNotContain("unknown", channel.Parameters);
-            Assert.Null(channel.RawArmResponse);
         }
     }
 
@@ -594,7 +572,7 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
         Assert.DoesNotContain("synthetic-", config);
         Assert.DoesNotContain("channelSecret", config);
         Assert.DoesNotContain("channelAccessToken", config);
-        Assert.DoesNotContain(BotServiceResponseRedactor.Mask, config);
+        Assert.DoesNotContain(SecretRedaction.Mask, config);
         var untrusted = ProjectDeploymentStore.ToAgentDeploymentRecord(Record(), "etag") with { Channels = [channel] };
         foreach (var stored in new[] { Assert.Single(Assert.Single(_store.List(_root)).Channels),
             Assert.Single(ProjectDeploymentStore.ToDeployment(untrusted).Channels) })
@@ -626,7 +604,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
             {
                 ["futureField"] = JsonSerializer.SerializeToElement("SYNTHETIC_SECRET"),
             },
-            RawArmResponse = JsonSerializer.SerializeToElement(new { futureField = "SYNTHETIC_RAW_SECRET" }),
         };
         var supportedChannel = new DeploymentChannelRecord
         {
@@ -654,7 +631,6 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
             Assert.Equal(supportedChannel.ResourceId, channel.ResourceId);
             Assert.Equal(supportedChannel.ChannelName, channel.ChannelName);
             Assert.True(channel.Parameters["isEnabled"].GetBoolean());
-            Assert.Null(channel.RawArmResponse);
         }
 
         var config = File.ReadAllText(Path.Combine(
@@ -684,7 +660,7 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
                     {
                         ["EXTENSIONKEY1"] = JsonSerializer.SerializeToElement("SYNTHETIC_EXTENSION_SECRET"),
                         ["extensionKey2"] = JsonSerializer.SerializeToElement<string?>(null),
-                        ["directLineEmbedCode"] = JsonSerializer.SerializeToElement(BotServiceResponseRedactor.Mask),
+                        ["directLineEmbedCode"] = JsonSerializer.SerializeToElement(SecretRedaction.Mask),
                         ["WEBCHATEMBEDCODE"] = JsonSerializer.SerializeToElement("SYNTHETIC_EMBED_SECRET"),
                         ["isEnabled"] = JsonSerializer.SerializeToElement(true),
                         ["sites"] = JsonSerializer.SerializeToElement(new[]
@@ -749,7 +725,7 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
 
         var config = File.ReadAllText(Path.Combine(_root, AgentConfigLocator.ConfigDirectoryName, AgentConfigLocator.ConfigFileName));
         Assert.DoesNotContain("SYNTHETIC_", config);
-        Assert.DoesNotContain(BotServiceResponseRedactor.Mask, config);
+        Assert.DoesNotContain(SecretRedaction.Mask, config);
         Assert.DoesNotContain("key1LastUpdated", config);
         Assert.DoesNotContain("key2LastUpdated", config);
         Assert.DoesNotContain("isWebChatSpeechEnabled", config);
@@ -802,12 +778,11 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
             }
 
             Assert.DoesNotContain("unknown", channel.Parameters);
-            Assert.Null(channel.RawArmResponse);
         }
 
         var config = File.ReadAllText(Path.Combine(_root, AgentConfigLocator.ConfigDirectoryName, AgentConfigLocator.ConfigFileName));
         Assert.DoesNotContain("SYNTHETIC_", config);
-        Assert.DoesNotContain(BotServiceResponseRedactor.Mask, config);
+        Assert.DoesNotContain(SecretRedaction.Mask, config);
     }
 
     [Fact]

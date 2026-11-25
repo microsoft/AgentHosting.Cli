@@ -96,6 +96,7 @@ Global options:
 
 ```bash
 -j,  --json              Emit machine-readable JSON output
+-dbg, --debug            Show diagnostics and command-related HTTP traffic on stderr
 -nc, --no-color          Disable colored output
 -ni, --non-interactive   Fail instead of opening browser-based authentication flows
 -h,  --help              Show help and usage information

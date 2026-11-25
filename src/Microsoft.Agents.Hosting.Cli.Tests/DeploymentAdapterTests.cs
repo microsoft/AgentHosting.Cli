@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -27,6 +28,66 @@ public sealed class DeploymentAdapterTests
         new(status) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
 
     private static HttpResponseMessage Empty(HttpStatusCode status) => new(status);
+
+    private sealed class DiagnosticArmClient(HttpClient client) : DeploymentArmClient(client, new StubTokenProvider { AccessToken = "arm-token" })
+    {
+        public Task<string> SendAsync(string path) =>
+            RequestAsync(HttpMethod.Post, Arm + path, new { clientSecret = "request-canary", parameters = new { TenantId = "common" } }, "tenant-1", default);
+    }
+
+    private sealed class DiagnosticSink : IHttpDiagnosticSink
+    {
+        public List<HttpDiagnosticEvent> Events { get; } = [];
+        public void Write(HttpDiagnosticEvent diagnosticEvent) => Events.Add(diagnosticEvent);
+    }
+
+    [Theory]
+    [InlineData("", false)]
+    [InlineData("", true)]
+    [InlineData("/channels", true)]
+    [InlineData("/channels/DirectLineChannel", false)]
+    [InlineData("/connections", true)]
+    [InlineData("/connections/oauth", false)]
+    public async Task ArmDiagnostics_SelectResponseRedactorsCentrally_WithoutChangingRequests(string suffix, bool list)
+    {
+        var resource = suffix.StartsWith("/channels", StringComparison.Ordinal)
+            ? """{"properties":{"channelName":"DirectLineChannel","properties":{"directLineEmbedCode":"response-canary","isEnabled":true}}}"""
+            : suffix.StartsWith("/connections", StringComparison.Ordinal)
+                ? """{"properties":{"serviceProviderId":"provider-id","clientSecret":"response-canary","parameters":[{"key":"TenantId","value":"common"},{"key":"ApiKey","value":"response-canary"}]}}"""
+                : """{"properties":{"displayName":"safe","allSettings":{"opaque":"response-canary"}}}""";
+        var body = list ? "{\"value\":[" + resource + "]}" : resource;
+        var transport = new StubHttpMessageHandler(_ => Json(HttpStatusCode.OK, body));
+        var sink = new DiagnosticSink();
+        using var client = new HttpClient(new HttpDiagnosticHandler(sink, transport));
+        var result = await new DiagnosticArmClient(client).SendAsync(BotResourceId + suffix);
+
+        Assert.Equal(body, result);
+        Assert.Contains("request-canary", Assert.Single(transport.Requests).Body);
+        var request = Assert.Single(sink.Events, entry => entry.Stage == HttpDiagnosticStage.RequestBody).Body;
+        Assert.Contains("common", request);
+        Assert.DoesNotContain("request-canary", request);
+        var response = Assert.Single(sink.Events, entry => entry.Stage == HttpDiagnosticStage.ResponseBody).Body;
+        Assert.DoesNotContain("response-canary", response);
+        Assert.Contains("*****", response);
+    }
+
+    [Theory]
+    [InlineData("/subscriptions/sub-1")]
+    [InlineData("/subscriptions/sub-1/providers/Microsoft.BotService/listAuthServiceProviders")]
+    [InlineData(BotResourceId + "/unknown")]
+    [InlineData(BotResourceId + "Extra/unknown")]
+    public async Task ArmDiagnostics_OtherRoutesUseGenericRedaction(string path)
+    {
+        const string body = """{"properties":{"allSettings":{"region":"west"},"clientSecret":"response-canary"}}""";
+        var transport = new StubHttpMessageHandler(_ => Json(HttpStatusCode.OK, body));
+        var sink = new DiagnosticSink();
+        using var client = new HttpClient(new HttpDiagnosticHandler(sink, transport));
+        Assert.Equal(body, await new DiagnosticArmClient(client).SendAsync(path));
+        using var response = JsonDocument.Parse(Assert.Single(sink.Events, entry => entry.Stage == HttpDiagnosticStage.ResponseBody).Body!);
+        var properties = response.RootElement.GetProperty("properties");
+        Assert.Equal("west", properties.GetProperty("allSettings").GetProperty("region").GetString());
+        Assert.Equal("*****", properties.GetProperty("clientSecret").GetString());
+    }
 
     [Fact]
     public async Task ResolveSubscription_SingleEnabled_ReturnsItAndHitsSubscriptionsUrl()
@@ -272,7 +333,7 @@ public sealed class DeploymentAdapterTests
     }
 
     [Fact]
-    public async Task GetBot_RedactsSchemaSensitiveFieldsIncludingNulls_PreservesNonSecrets()
+    public async Task GetBot_ProjectsCanonicalStateWithoutRetainingCredentialBags()
     {
         const string botResourceId = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.BotService/botServices/bb";
         var body = """
@@ -300,22 +361,16 @@ public sealed class DeploymentAdapterTests
 
         var snapshot = await Adapter(handler).GetBotAsync(botResourceId, "t", default);
 
-        Assert.NotNull(snapshot.RawArmResponse);
-        var props = snapshot.RawArmResponse!.Value.GetProperty("properties");
-        // Known secret-bearing properties are masked as a whole (object or scalar).
-        Assert.Equal("***", props.GetProperty("publishingCredentials").GetString());
-        Assert.Equal("***", props.GetProperty("developerAppInsightsApiKey").GetString());
-        // Free-form bags are masked entirely, catching secrets under arbitrary key names.
-        Assert.Equal("***", props.GetProperty("allSettings").GetString());
-        Assert.Equal("***", props.GetProperty("luisKey").GetString());
-        // Non-secret fields survive verbatim — including cmekKeyVaultUrl, which the old name heuristic over-redacted.
-        Assert.Equal("https://kv.vault.azure.net/keys/k", props.GetProperty("cmekKeyVaultUrl").GetString());
-        Assert.Equal("app-1", props.GetProperty("msaAppId").GetString());
         Assert.Equal("app-1", snapshot.EntraId);
+        Assert.Equal("https://x.example/messages", snapshot.Endpoint);
+        var serialized = JsonSerializer.Serialize(snapshot);
+        Assert.DoesNotContain("SUPERSECRET", serialized);
+        Assert.DoesNotContain("KEY123", serialized);
+        Assert.DoesNotContain("publishingCredentials", serialized);
     }
 
     [Fact]
-    public async Task GetBot_PreservesUnknownFieldsUnlessTheirNamesIdentifySecrets()
+    public async Task GetBot_DoesNotRetainUnknownResponseFields()
     {
         const string botResourceId = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.BotService/botServices/bb";
         // A future/unknown field and read-only response fields that are NOT in the template schema,
@@ -343,18 +398,12 @@ public sealed class DeploymentAdapterTests
 
         var snapshot = await Adapter(handler).GetBotAsync(botResourceId, "t", default);
 
-        var props = snapshot.RawArmResponse!.Value.GetProperty("properties");
-        // Unknown fields are preserved unless their names identify likely secret material.
-        Assert.Equal("COULD-BE-A-SECRET", props.GetProperty("futureUnknownField").GetString());
-        Assert.Equal("Succeeded", props.GetProperty("provisioningState").GetString());
-        Assert.Equal(BotServiceResponseRedactor.Mask, props.GetProperty("migrationToken").GetString());
-        // A template field on the redact list is masked.
-        Assert.Equal(
-            BotServiceResponseRedactor.Mask,
-            props.GetProperty("publishingCredentials").GetString());
-        // Template fields not on the redact list are preserved verbatim.
-        Assert.Equal("app-1", props.GetProperty("msaAppId").GetString());
-        Assert.Equal("bb", props.GetProperty("displayName").GetString());
+        Assert.Equal("app-1", snapshot.EntraId);
+        Assert.Equal("bb", snapshot.DisplayName);
+        var serialized = JsonSerializer.Serialize(snapshot);
+        Assert.DoesNotContain("futureUnknownField", serialized);
+        Assert.DoesNotContain("MIGRATE-SECRET", serialized);
+        Assert.DoesNotContain("PUBLISH-SECRET", serialized);
     }
 
     [Theory]

@@ -99,7 +99,7 @@ public sealed class AmsChannelAdapterTests
         Assert.Equal("msteams", channel.ChannelName);
         Assert.Equal(["acceptedTerms", "isEnabled"], channel.Parameters.Keys);
         Assert.True(channel.Parameters["acceptedTerms"].GetBoolean());
-        Assert.Null(channel.RawArmResponse);
+        Assert.DoesNotContain("rawArmResponse", JsonSerializer.Serialize(channel), StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

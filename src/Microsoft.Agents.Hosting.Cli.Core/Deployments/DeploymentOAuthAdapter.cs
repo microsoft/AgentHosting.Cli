@@ -126,7 +126,7 @@ public sealed class DeploymentOAuthAdapter : DeploymentArmClient, IDeploymentOAu
         CancellationToken cancellationToken)
     {
         var connections = new List<DeploymentOAuthConnection>();
-        var next = OAuthConnectionsUrl(botResourceId);;
+        var next = OAuthConnectionsUrl(botResourceId);
         while (!string.IsNullOrWhiteSpace(next))
         {
             var body = await RequestAsync(
@@ -201,10 +201,8 @@ public sealed class DeploymentOAuthAdapter : DeploymentArmClient, IDeploymentOAu
                 Scopes = DeploymentOAuthParameters.ParseScopes(GetString(properties, "scopes")),
                 Parameters = ParseConnectionParameters(properties),
                 ResourceId = GetString(element, "id")!,
-                RawArmResponse = element.Clone(),
             },
-            provider: null,
-            includeArmResponse: true);
+            provider: null);
     }
 
     private static Dictionary<string, string?> ParseConnectionParameters(JsonElement properties)

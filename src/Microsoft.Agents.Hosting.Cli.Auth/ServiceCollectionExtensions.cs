@@ -74,10 +74,14 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddAgentHostAuthentication(
         this IServiceCollection services,
         AgentHostAuthOptions options,
-        PowerPlatformApiTargetConfig? powerPlatformApiTarget = null)
+        PowerPlatformApiTargetConfig? powerPlatformApiTarget = null,
+        HttpDiagnostics? httpDiagnostics = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
+        var diagnostics = httpDiagnostics ?? HttpDiagnostics.Disabled;
+        HttpClient CreateArmClient() => new(diagnostics.Wrap(TransportDefaults.CreateRedirectFollowingHandler()));
+        HttpClient CreateIdentityClient() => new(diagnostics.Wrap(TransportDefaults.CreateRedirectRejectingHandler()));
 
         if (powerPlatformApiTarget is not null && powerPlatformApiTarget.Cloud != options.Cloud)
         {
@@ -88,10 +92,13 @@ public static class ServiceCollectionExtensions
 
         var ring = powerPlatformApiTarget?.Ring ?? PowerPlatformApiRing.Production;
 
+        services.AddSingleton(diagnostics);
         services.AddSingleton(options);
         services.AddSingleton<IPlatformInfo, RuntimePlatformInfo>();
         services.AddSingleton<ISecureTokenCacheProbe, MsalSecureTokenCacheProbe>();
-        services.AddSingleton<MsalPublicClientProvider>();
+        services.AddSingleton(sp => new MsalPublicClientProvider(
+            options, sp.GetRequiredService<IPlatformInfo>(), sp.GetRequiredService<ISecureTokenCacheProbe>(),
+            sp.GetService<ILegacyMsalTokenCacheBackend>(), diagnostics));
         services.AddSingleton(new PpapiTokenClaimsValidator(options.ClientId));
         services.AddSingleton(GraphConsentClientConfiguration.ResolveDeferred(
             options.GraphClientId,
@@ -160,7 +167,7 @@ public static class ServiceCollectionExtensions
         // offline-guarantee test stays green. Connection metadata is persisted per-user under the
         // config directory.
         services.AddSingleton(sp =>
-            new ArmAbsProvisioningAdapter(new HttpClient(TransportDefaults.CreateRedirectFollowingHandler()), sp.GetRequiredService<ArmScopedTokenProvider>()));
+            new ArmAbsProvisioningAdapter(CreateArmClient(), sp.GetRequiredService<ArmScopedTokenProvider>()));
         services.AddSingleton<IAbsStateReader>(sp => sp.GetRequiredService<ArmAbsProvisioningAdapter>());
         services.AddSingleton<IAbsMutationPort>(sp => sp.GetRequiredService<ArmAbsProvisioningAdapter>());
         services.AddSingleton<IConnectionMetadataStore>(_ =>
@@ -172,7 +179,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(sp =>
             new IdentityRestClient(
-                new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
+                CreateIdentityClient(),
                 sp.GetRequiredService<ITokenProvider>(),
                 graphConsentTokenProvider: null,
                 armConsentTokenProvider: sp.GetRequiredService<IArmConsentTokenProvider>()));
@@ -187,7 +194,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp =>
             new AppRegistrationIdentityService(
                 new IdentityRestClient(
-                    new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
+                    CreateIdentityClient(),
                     sp.GetRequiredService<ITokenProvider>(),
                     sp.GetRequiredService<IGraphConsentTokenProvider>(),
                     sp.GetRequiredService<IArmConsentTokenProvider>()),
@@ -231,11 +238,11 @@ public static class ServiceCollectionExtensions
         // reuses the deployment transport's subscription resolution for provider discovery. Channels
         // use their own adapter over the shared ARM client.
         services.AddSingleton(sp =>
-            new DeploymentAdapter(new HttpClient(TransportDefaults.CreateRedirectFollowingHandler()), sp.GetRequiredService<ArmScopedTokenProvider>()));
+            new DeploymentAdapter(CreateArmClient(), sp.GetRequiredService<ArmScopedTokenProvider>()));
         services.AddSingleton(sp =>
-            new DeploymentOAuthAdapter(new HttpClient(TransportDefaults.CreateRedirectFollowingHandler()), sp.GetRequiredService<ArmScopedTokenProvider>()));
+            new DeploymentOAuthAdapter(CreateArmClient(), sp.GetRequiredService<ArmScopedTokenProvider>()));
         services.AddSingleton(sp =>
-            new DeploymentChannelAdapter(new HttpClient(TransportDefaults.CreateRedirectFollowingHandler()), sp.GetRequiredService<ArmScopedTokenProvider>()));
+            new DeploymentChannelAdapter(CreateArmClient(), sp.GetRequiredService<ArmScopedTokenProvider>()));
         services.AddSingleton<IDeploymentTransport>(sp => sp.GetRequiredService<DeploymentAdapter>());
         services.AddSingleton<IDeploymentOAuthTransport>(
             sp => sp.GetRequiredService<DeploymentOAuthAdapter>());

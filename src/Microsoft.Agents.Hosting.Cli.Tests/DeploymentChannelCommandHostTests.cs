@@ -444,7 +444,6 @@ public sealed class DeploymentChannelCommandHostTests
                 ChannelName = "slack",
                 ResourceId = "/channels/SlackChannel",
                 AuthorizationUrl = uri,
-                RawArmResponse = JsonSerializer.SerializeToElement(new { redirectAction = "***" }),
             },
         };
         var operations = new FakeOperations { OnCreateChannel = _ => result, OnUpdateChannel = _ => result };
@@ -454,15 +453,7 @@ public sealed class DeploymentChannelCommandHostTests
             ["deployment", "channel", verb, "--deployment-id", "dep-1", "--channel", "slack",
                 "--parameters", "clientId=app", "clientSecret=secret", "signingSecret=sign", .. options]);
         Assert.Equal(ExitCodes.Success, exitCode);
-        if (debug)
-        {
-            Assert.DoesNotContain("SYNTHETIC_STATE", stderr);
-            Assert.Contains("ARM response:", stderr);
-        }
-        else
-        {
-            Assert.Empty(stderr);
-        }
+        Assert.Empty(stderr);
         Assert.Contains("write accepted by Azure", stdout);
         string guidance;
         if (json)
@@ -544,7 +535,6 @@ public sealed class DeploymentChannelCommandHostTests
             {
                 ChannelName = "webchat",
                 ResourceId = "/bots/test/channels/WebChatChannel",
-                RawArmResponse = JsonSerializer.SerializeToElement(new { properties = new { siteName = "Primary" } }),
                 Parameters = new Dictionary<string, JsonElement>
                 {
                     ["sites"] = JsonSerializer.SerializeToElement(new[] { new { siteName = "Primary" } }),
@@ -562,15 +552,7 @@ public sealed class DeploymentChannelCommandHostTests
                 "--parameters", """sites=[{"siteName":"Primary","isEnabled":false}]""", .. options]);
 
         Assert.Equal(ExitCodes.Success, exitCode);
-        if (debug)
-        {
-            Assert.Contains("\"siteName\": \"Primary\"", stderr);
-            Assert.DoesNotContain(warning, stderr);
-        }
-        else
-        {
-            Assert.Empty(stderr);
-        }
+        Assert.Empty(stderr);
         if (json)
         {
             using var document = JsonDocument.Parse(stdout);
@@ -725,17 +707,8 @@ public sealed class DeploymentChannelCommandHostTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void List_Debug_AddsFullArmResponseToFilteredOutput(bool json)
+    public void List_Debug_PreservesNormalOutputWithoutAnArmDump(bool json)
     {
-        using var teamsDocument = System.Text.Json.JsonDocument.Parse(
-            """{"id":"/channels/MsTeamsChannel","properties":{"channelName":"MsTeamsChannel"}}""");
-        using var slackDocument = System.Text.Json.JsonDocument.Parse(
-            """{"id":"/channels/SlackChannel","properties":{"channelName":"SlackChannel","properties":{"clientSecret":"***"}}}""");
-        using var unknownDocument = System.Text.Json.JsonDocument.Parse(
-            """
-            {"id":"/channels/UnknownArmChannel","properties":{"channelName":"UnknownArmChannel",
-              "properties":{"description":"visible","entries":[{"accessToken":"SYNTHETIC_SECRET"}]}}}
-            """);
         var operations = new FakeOperations
         {
             OnListChannels = _ => new DeploymentResult<DeploymentChannelRecord[]>
@@ -748,21 +721,13 @@ public sealed class DeploymentChannelCommandHostTests
                     {
                         ResourceId = "/channels/MsTeamsChannel",
                         ChannelName = "msteams",
-                        RawArmResponse = teamsDocument.RootElement.Clone(),
                     },
                     new()
                     {
                         ResourceId = "/channels/SlackChannel",
                         ChannelName = "slack",
-                        RawArmResponse = slackDocument.RootElement.Clone(),
                     },
                 ],
-                ArmResponse = JsonSerializer.SerializeToElement(new[]
-                {
-                    teamsDocument.RootElement,
-                    slackDocument.RootElement,
-                    BotServiceResponseRedactor.RedactChannel(unknownDocument.RootElement, definition: null),
-                }),
             },
         };
 
@@ -778,26 +743,18 @@ public sealed class DeploymentChannelCommandHostTests
         Assert.Contains("/channels/SlackChannel", stdout);
         Assert.DoesNotContain("UnknownArmChannel", stdout);
         Assert.DoesNotContain("SYNTHETIC_SECRET", stdout);
-        Assert.StartsWith("ARM response:", stderr);
-        Assert.Contains("ARM response:", stderr);
-        Assert.Contains("/channels/MsTeamsChannel", stderr);
-        Assert.Contains("/channels/SlackChannel", stderr);
-        Assert.Contains("/channels/UnknownArmChannel", stderr);
-        Assert.DoesNotContain("SYNTHETIC_SECRET", stderr);
-
-        var response = stderr[stderr.IndexOf('[')..];
-        using var document = System.Text.Json.JsonDocument.Parse(response);
-        Assert.Equal(System.Text.Json.JsonValueKind.Array, document.RootElement.ValueKind);
-        Assert.Equal(3, document.RootElement.GetArrayLength());
-        var unknown = document.RootElement[2].GetProperty("properties").GetProperty("properties");
-        Assert.Equal("visible", unknown.GetProperty("description").GetString());
-        Assert.Equal("***", unknown.GetProperty("entries")[0].GetProperty("accessToken").GetString());
+        Assert.Empty(stderr);
+        var (normalExit, normalStdout, normalStderr) = Run(operations,
+            ["deployment", "channel", "list", "--deployment-id", "dep-1", .. outputOptions]);
+        Assert.Equal(exitCode, normalExit);
+        Assert.Equal(stdout, normalStdout);
+        Assert.Equal(stderr, normalStderr);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void List_ExcludesDiagnosticOnlyChannelsFromNormalOutput(bool json)
+    public void List_RendersOnlyTheCanonicalChannelPayload(bool json)
     {
         var operations = new FakeOperations
         {
@@ -809,11 +766,6 @@ public sealed class DeploymentChannelCommandHostTests
                 [
                     new() { ResourceId = "/channels/SlackChannel", ChannelName = "slack" },
                 ],
-                ArmResponse = JsonSerializer.SerializeToElement(new[]
-                {
-                    new { id = "/channels/SlackChannel" },
-                    new { id = "/channels/UnknownArmChannel" },
-                }),
             },
         };
         var args = new List<string> { "deployment", "channel", "list", "--deployment-id", "dep-1" };
