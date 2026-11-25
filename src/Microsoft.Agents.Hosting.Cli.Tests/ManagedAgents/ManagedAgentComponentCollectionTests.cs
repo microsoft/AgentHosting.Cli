@@ -152,6 +152,21 @@ public sealed class ManagedAgentComponentCollectionTests
         Assert.Equal([Path.Combine(workspace.Root, AgentFolderName)], workspaces.PulledDirectories);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Pull_TellsTheCollectionAndTheAgentWhetherToOverwrite(bool overwrite)
+    {
+        var (workspace, store) = NestedProject();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort { WorkspaceExists = true };
+
+        await CreatePull(store, workspaces).PullAsync(new ManagedAgentPullRequest { Overwrite = overwrite }, CancellationToken.None);
+
+        Assert.Equal([overwrite, overwrite], workspaces.PullOverwrites);
+    }
+
     [Fact]
     public async Task Pull_CapturesOneProfileForCollectionAndAgentAcrossSelectionChanges()
     {
@@ -348,11 +363,11 @@ internal sealed class RecordingPullWorkspacePort : ICopilotWorkspacePort
     public Task<CopilotChangeSnapshot> GetChangesAsync(CopilotWorkspaceInfo workspace, CancellationToken cancellationToken) =>
         _inner.GetChangesAsync(workspace, cancellationToken);
 
-    public Task<CopilotPullOutcome> PullAsync(CopilotWorkspaceInfo workspace, CancellationToken cancellationToken)
+    public Task<CopilotPullOutcome> PullAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         PulledWorkspaces.Add(workspace);
-        return OnPull is null ? _inner.PullAsync(workspace, cancellationToken) : OnPull(workspace, cancellationToken);
+        return OnPull is null ? _inner.PullAsync(workspace, overwrite, cancellationToken) : OnPull(workspace, cancellationToken);
     }
 
     public Task<CopilotPushOutcome> PushAsync(CopilotWorkspaceInfo workspace, bool overwrite, bool overwriteSharedEnvironmentVariables, CancellationToken cancellationToken) =>

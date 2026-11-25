@@ -811,6 +811,26 @@ public sealed class ManagedAgentDeployServiceTests
     }
 
     [Fact]
+    public async Task Deploy_ACloudChangeThatStopsThePushStaysActionableRatherThanBecomingADeployFailure()
+    {
+        var (workspace, store) = Registered();
+        using var _ = workspace;
+        using var scope = new CurrentDirectoryScope(workspace.Root);
+        var workspaces = new FakeCopilotWorkspacePort();
+        workspaces.LocalChanges.Add(CopilotTestFixtures.Change("con_greeting"));
+        workspaces.PushThrowsSequence.Enqueue(CopilotStudioException.RemoteChangedDuringPush(true, new InvalidOperationException("The agent was changed in the cloud while you were editing it.")));
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(store, workspaces, Connecting(workspaces)).DeployAsync(
+            new ManagedAgentDeployRequest { AgentId = "agent-1", DeploymentName = "dev", Overwrite = true },
+            CancellationToken.None));
+
+        Assert.Equal(CopilotErrorKinds.RemoteChangedDuringPush, failure.ErrorKind);
+        Assert.Contains("msagent agent pull", failure.Remediation!, StringComparison.Ordinal);
+        Assert.Contains("knowledge files you changed locally", failure.Remediation!, StringComparison.Ordinal);
+        Assert.Null(store.Read(workspace.Root).AgentDeployments[0].LastDeployedTime);
+    }
+
+    [Fact]
     public async Task Deploy_AnUnreadableWorkspaceStaysActionableRatherThanBecomingADeployFailure()
     {
         var (workspace, store) = Registered();

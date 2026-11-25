@@ -52,7 +52,7 @@ internal sealed class AsyncLocalWorkspacePort : ICopilotWorkspacePort
         return new CopilotChangeSnapshot { Local = [], Remote = [] };
     }
 
-    public async Task<CopilotPullOutcome> PullAsync(CopilotWorkspaceInfo workspace, CancellationToken cancellationToken)
+    public async Task<CopilotPullOutcome> PullAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
     {
         await ConnectAsync(workspace).ConfigureAwait(false);
 

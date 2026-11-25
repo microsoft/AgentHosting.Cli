@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Abs;
 using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
@@ -43,16 +44,17 @@ public sealed class EmbeddabilityTests
             store,
             PowerPlatformCloudMap.ForCloud(CloudInstance.Public),
             new EmbeddedClock());
+        var amsTargets = new AmsTargets(new AmsEndpointProfile(), PowerPlatformApiTargetConfig.Public);
 
         // The apply seam is wired with the pending mutation port: the preview path must never resolve or
         // call it, so any accidental mutation from the read-only path would throw here.
         var platform = new RuntimePlatformInfo();
         var provisioning = new AbsProvisioningService(reader);
         var apply = new AbsApplyService(reader, new PendingAbsMutationPort());
-        var create = new AgentCreateService(new AgentCreationTarget(), environments, new PendingAmsAgentCreationTransport());
-        var upload = new AgentPackageUploadService(environments, new PendingAmsAgentReadTransport(), new PendingAmsPackagePublicationTransport());
-        var deploy = new AgentDeployService(PowerPlatformApiTargetConfig.Public, environments,
-            new PendingAmsAgentReadTransport(), new PendingAmsDeploymentTransport());
+        var create = new AgentCreateService(amsTargets, environments, new PendingAmsAgentCreationTransport());
+        var addresses = new AmsAddressResolver(amsTargets, environments, new PendingAmsAgentReadTransport(), new PendingAmsDeploymentTransport());
+        var upload = new AgentPackageUploadService(addresses, new PendingAmsAgentReadTransport(), new PendingAmsPackagePublicationTransport());
+        var deploy = new AgentDeployService(addresses, new PendingAmsDeploymentTransport());
         return constructorShape switch
         {
             0 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
@@ -139,6 +141,38 @@ public sealed class EmbeddabilityTests
         {
             Assert.DoesNotContain(exact, loadedNames);
         }
+    }
+
+    [Fact]
+    public async Task EmbeddedLegacyLiveTestSessionDelegatesAnEmptyAttachmentList()
+    {
+        var legacy = new LegacyLiveTestSession();
+        ILiveTestSession session = legacy;
+        using var cancellation = new CancellationTokenSource();
+
+        var replies = session.QueryAsync("hello", "conversation", [], cancellation.Token);
+        var messages = new List<string?>();
+        await foreach (var reply in replies)
+            messages.Add(reply.GetString());
+
+        Assert.Equal(["legacy reply"], messages);
+        Assert.Equal(1, legacy.QueryCalls);
+        Assert.Equal("hello", legacy.Query);
+        Assert.Equal("conversation", legacy.ConversationId);
+        Assert.Equal(cancellation.Token, legacy.CancellationToken);
+    }
+
+    [Fact]
+    public void EmbeddedLegacyLiveTestSessionRejectsAttachmentsWithoutSending()
+    {
+        var legacy = new LegacyLiveTestSession();
+        ILiveTestSession session = legacy;
+        var attachment = new LiveTestAttachment("file.txt", "text/plain", [1]);
+
+        Assert.Throws<LiveTestAttachmentsNotSupportedException>(() =>
+            session.QueryAsync("hello", "conversation", [attachment], CancellationToken.None));
+
+        Assert.Equal(0, legacy.QueryCalls);
     }
 
     [Fact]
@@ -245,7 +279,7 @@ public sealed class EmbeddabilityTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData(" \t ")]
-    public async Task EmbeddedDeploy_RequiresExplicitTargetWithoutOpeningAnyLoginFlow(string? targetEnvironmentId)
+    public async Task EmbeddedDeploy_RequiresADeploymentWithoutOpeningAnyLoginFlow(string? deploymentId)
     {
         var session = new EmbeddedAuthenticationSession();
         var presenter = new SilentMessagePresenter();
@@ -253,18 +287,13 @@ public sealed class EmbeddabilityTests
         var request = new AgentDeployRequest
         {
             AgentId = "55555555-5555-5555-5555-555555555555",
-            PackageRevisionId = "66666666-6666-6666-6666-666666666666",
-            TargetEnvironmentId = targetEnvironmentId!,
-            DeploymentName = "dev-proof",
-            DeploymentType = "dev",
-            EntraId = MsaAppId,
-            EntraIdType = "app-reg",
+            DeploymentId = deploymentId,
         };
 
         var exception = await Assert.ThrowsAsync<UsageException>(() =>
             operations.DeployAgentAsync(request, CancellationToken.None));
 
-        Assert.Contains("--target-environment-id", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("--deployment-id", exception.Message, StringComparison.Ordinal);
         Assert.Equal(0, session.LoginFlowCalls);
         Assert.Equal(0, presenter.PresentCalls);
     }
@@ -304,5 +333,36 @@ public sealed class EmbeddabilityTests
         // port would have thrown had preview reached it).
         Assert.Equal(0, session.LoginFlowCalls);
         Assert.Equal(0, presenter.PresentCalls);
+    }
+
+    private sealed class LegacyLiveTestSession : ILiveTestSession
+    {
+        public int QueryCalls { get; private set; }
+        public string? Query { get; private set; }
+        public string? ConversationId { get; private set; }
+        public CancellationToken CancellationToken { get; private set; }
+        public string? ServiceConversationId => null;
+        public IAsyncEnumerable<JsonElement> Replies { get; } = LegacyReplies();
+
+        public IAsyncEnumerable<JsonElement> StartAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The legacy query test does not start a conversation.");
+
+        public IAsyncEnumerable<JsonElement> QueryAsync(
+            string query, string conversationId, CancellationToken cancellationToken)
+        {
+            QueryCalls++;
+            Query = query;
+            ConversationId = conversationId;
+            CancellationToken = cancellationToken;
+            return Replies;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        private static async IAsyncEnumerable<JsonElement> LegacyReplies()
+        {
+            yield return JsonSerializer.SerializeToElement("legacy reply");
+            await Task.CompletedTask;
+        }
     }
 }

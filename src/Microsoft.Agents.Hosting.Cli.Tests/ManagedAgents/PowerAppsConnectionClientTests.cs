@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
@@ -348,32 +349,20 @@ public sealed class PowerAppsConnectionClientTests
     }
 
     [Fact]
-    public async Task Diagnostics_ReportAnOversizedBodyWithoutItsContent()
-    {
-        using var diagnostics = new StringWriter();
-        var oversized = "{\"consentLink\":\"SECRET123\",\"pad\":\"" + new string('x', (1024 * 1024) + 5000) + "\"}";
-
-        using var handler = new ScriptedHandler(ConnectionFixtures.Ok(oversized));
-        using var client = new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod, () => handler, diagnostics);
-
-        await client.ReadConnectionAsync(ConnectionFixtures.Environment, "shared_office365", "conn-1", CancellationToken.None);
-
-        var written = diagnostics.ToString();
-
-        Assert.Contains("discarded unread", written, StringComparison.Ordinal);
-        Assert.DoesNotContain("SECRET123", written, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public async Task Response_StopsAStalledBodyAtTheRequestTimeout()
     {
+        using var output = new StringWriter();
+        var diagnostics = new HttpDiagnostics(new TextWriterHttpDiagnosticSink(output));
         using var content = new StallingContent();
         using var handler = new ScriptedHandler(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
-        using var client = new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod, () => handler, requestTimeout: TimeSpan.FromMilliseconds(150));
+        using var client = new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod,
+            () => diagnostics.Wrap(handler), requestTimeout: TimeSpan.FromMilliseconds(150));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => client.ReadConnectionAsync(ConnectionFixtures.Environment, "shared_office365", "conn-1", CancellationToken.None))
             .WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Contains("Error: Timeout", output.ToString());
+        Assert.DoesNotContain("Error: Cancellation", output.ToString());
     }
 
     [Fact]
@@ -441,11 +430,13 @@ public sealed class PowerAppsConnectionClientTests
     private sealed class CountingContent : HttpContent
     {
         private readonly long _length;
+        private readonly bool _knownLength;
         private readonly GeneratedStream _stream;
 
-        public CountingContent(long length)
+        public CountingContent(long length, bool knownLength = true)
         {
             _length = length;
+            _knownLength = knownLength;
             _stream = new GeneratedStream(length);
         }
 
@@ -459,7 +450,7 @@ public sealed class PowerAppsConnectionClientTests
         {
             length = _length;
 
-            return true;
+            return _knownLength;
         }
     }
 
@@ -519,40 +510,6 @@ public sealed class PowerAppsConnectionClientTests
     }
 
     [Fact]
-    public async Task Diagnostics_RecordTheRedactedAnswerWhenAnOperatorAskedForThem()
-    {
-        using var diagnostics = new StringWriter();
-        using var handler = new ScriptedHandler(ConnectionFixtures.Json(HttpStatusCode.Forbidden, "{\"consentLink\":\"https://login.example/?code=abc123\",\"message\":\"contoso-sql-01 refused\"}", "service-7"));
-        using var client = new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod, () => handler, diagnostics);
-
-        await client.ReadConnectionAsync(ConnectionFixtures.Environment, "shared_office365", "conn-1", CancellationToken.None);
-
-        var written = diagnostics.ToString();
-
-        Assert.Contains("HTTP 403", written, StringComparison.Ordinal);
-        Assert.Contains("serviceRequestId=service-7", written, StringComparison.Ordinal);
-        Assert.Contains("contoso-sql-01 refused", written, StringComparison.Ordinal);
-        Assert.DoesNotContain("abc123", written, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task Diagnostics_RecordATransportFailureAnOperatorFacingMessageOmits()
-    {
-        using var diagnostics = new StringWriter();
-        using var handler = new ScriptedHandler(_ => throw new HttpRequestException("the network is unreachable"));
-        using var client = new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod, () => handler, diagnostics);
-
-        await Assert.ThrowsAsync<HttpRequestException>(
-            () => client.ReadConnectionAsync(ConnectionFixtures.Environment, "shared_office365", "conn-1", CancellationToken.None));
-
-        var written = diagnostics.ToString();
-
-        Assert.Contains("HttpRequestException", written, StringComparison.Ordinal);
-        Assert.Contains("the network is unreachable", written, StringComparison.Ordinal);
-        Assert.Contains("clientRequestId=", written, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public async Task Diagnostics_AreSilentWhenNoOperatorAskedForThem()
     {
         using var handler = new ScriptedHandler(ConnectionFixtures.Json(HttpStatusCode.Forbidden, "denied"));
@@ -561,5 +518,78 @@ public sealed class PowerAppsConnectionClientTests
         var response = await client.ReadConnectionAsync(ConnectionFixtures.Environment, "shared_office365", "conn-1", CancellationToken.None);
 
         Assert.Equal("denied", response.Body);
+    }
+
+    [Fact]
+    public async Task HttpTracingIncludesConnectionStatusCorrelationAndFullAnswerWithoutDuplicateSummaries()
+    {
+        using var output = new StringWriter();
+        var diagnostics = new HttpDiagnostics(new TextWriterHttpDiagnosticSink(output));
+        var body = "{\"message\":\"" + new string('x', 500) + " service refused\"}";
+        using var handler = new ScriptedHandler(ConnectionFixtures.Json(HttpStatusCode.Forbidden, body, "service-7"));
+        using var client = new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod,
+            () => diagnostics.Wrap(handler));
+
+        var response = await client.ReadConnectionAsync(ConnectionFixtures.Environment, "shared_office365", "conn-1", CancellationToken.None);
+
+        var written = output.ToString();
+        Assert.Equal(body, response.Body);
+        Assert.Single(handler.Requests);
+        Assert.Equal(1, written.Split("> Request: GET ").Length - 1);
+        Assert.Equal(1, written.Split("< Response after ").Length - 1);
+        Assert.Contains("Status: 403", written, StringComparison.Ordinal);
+        Assert.Contains("> x-ms-client-request-id: " + response.Correlation!.ClientRequestId, written, StringComparison.Ordinal);
+        Assert.Contains("< x-ms-request-id: service-7", written, StringComparison.Ordinal);
+        Assert.Contains("< Content: " + body, written, StringComparison.Ordinal);
+        Assert.Contains("> Authorization: *****", written, StringComparison.Ordinal);
+        Assert.DoesNotContain("management-token", written, StringComparison.Ordinal);
+        Assert.DoesNotContain("[connections]", written, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HttpTracingIncludesConnectionExceptionTypeMessageAndClientCorrelation()
+    {
+        using var output = new StringWriter();
+        var diagnostics = new HttpDiagnostics(new TextWriterHttpDiagnosticSink(output));
+        var error = new HttpRequestException("the network is unreachable");
+        using var handler = new ScriptedHandler(_ => throw error);
+        using var client = new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod,
+            () => diagnostics.Wrap(handler));
+
+        var actual = await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.ReadConnectionAsync(ConnectionFixtures.Environment, "shared_office365", "conn-1", CancellationToken.None));
+
+        Assert.Same(error, actual);
+        var written = output.ToString();
+        Assert.Equal(1, written.Split("Failed after ").Length - 1);
+        Assert.Contains("> x-ms-client-request-id:", written, StringComparison.Ordinal);
+        Assert.Contains("Error: Transport", written, StringComparison.Ordinal);
+        Assert.Contains("Exception: HttpRequestException", written, StringComparison.Ordinal);
+        Assert.Contains("Message: the network is unreachable", written, StringComparison.Ordinal);
+        Assert.DoesNotContain("[connections]", written, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HttpTracingRetainsTheConnectionApplicationLimitWithoutReadingTheRemainingBody(bool knownLength)
+    {
+        using var output = new StringWriter();
+        var diagnostics = new HttpDiagnostics(new TextWriterHttpDiagnosticSink(output));
+        using var content = new CountingContent((1024 * 1024) * 8, knownLength);
+        using var handler = new ScriptedHandler(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        using var client = new PowerAppsConnectionClient(new RecordingTokenProvider(), CoreServicesClusterCategory.Prod,
+            () => diagnostics.Wrap(handler));
+
+        var response = await client.ReadConnectionAsync(ConnectionFixtures.Environment, "shared_office365", "conn-1", CancellationToken.None);
+
+        Assert.True(response.Oversized);
+        Assert.Equal(string.Empty, response.Body);
+        Assert.True(content.BytesProduced <= (1024 * 1024) + 65536);
+        var written = output.ToString();
+        Assert.Contains("Status: 200", written, StringComparison.Ordinal);
+        Assert.Contains("body incomplete", written, StringComparison.Ordinal);
+        Assert.Contains("< Detail: response larger than 1048576 bytes, discarded unread", written, StringComparison.Ordinal);
+        Assert.DoesNotContain("[connections]", written, StringComparison.Ordinal);
     }
 }

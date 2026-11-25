@@ -82,8 +82,8 @@ normal success envelope.
 | --- | --- | --- |
 | [`msagent auth`](Command_Auth.md) | `create`, `list`, `select`, `delete`, `name`, `clear`, `who`, `status` | Authenticate users/workloads and manage owned profiles without exporting tokens. |
 | [`msagent env`](Command_Env.md) | `list`, `select` | List and select Power Platform environments. |
-| [`msagent agent`](Command_Agent.md) | `create`, `copy` (**MCS-specific**), `init` (**MCS-specific**), `list` (**MCS-specific**), `show`, `pull` (**MCS-specific**), `delete` (**MCS-specific**), `deploy`, `share` (**MCSAgent-only**), `share show` (**MCSAgent-only**), `unshare` (**MCSAgent-only**), `package upload` (**Gated**), [`eval`](Command_Agent_Eval.md) {`run`, `list`, `show`, `cancel`, `delete`, `generate`, `testset`} (**Gated**, **MCSAgent-only**) | Create, list, inspect, and delete hosted agents or standalone workflows; copy an MCS agent or workflow into a new, independent one; initialize or pull MCS source; deploy agents and workflows; manage MCS agent sharing; run MCS evaluations; and upload agent packages. |
-| [`msagent deployment`](Command_Deployment.md) | `create`, `list`, `show`, `update`, `delete`, [`channel`](Command_Deployment_Channel.md) {`create`, `update`, `delete`, `show`, `list`} (**CodeAgent-specific**), [`connection`](Command_Deployment_Connection.md) {`list`, `add`, `update`, `remove`, `connectors`} (**MCS-specific**), [`oauth`](Command_Deployment_OAuth.md) {`create`, `delete`, `list`, `list-providers`, `show`, `update`} (**CodeAgent-specific**) | Manage deployment records, CodeAgent channels and OAuth settings, and MCS connections. |
+| [`msagent agent`](Command_Agent.md) | `create`, `copy` (**MCS-specific**), `init` (**MCS-specific**), `list`, `show`, `update` (**Gated**), `pull` (**MCS-specific**), `delete`, `deploy`, `share` (**MCSAgent-only**), `share show` (**MCSAgent-only**), `unshare` (**MCSAgent-only**), `package upload` (**Gated**), `commit list` (**Gated**), [`eval`](Command_Agent_Eval.md) {`run`, `list`, `show`, `cancel`, `delete`, `generate`, `testset`} (**Gated**, **MCSAgent-only**) | Create, list, inspect, update, and delete hosted agents or standalone workflows; copy an MCS agent or workflow into a new, independent one; initialize or pull MCS source; deploy agents and workflows; manage MCS agent sharing; run MCS evaluations; and upload agent packages and list their commits. |
+| [`msagent deployment`](Command_Deployment.md) | `create`, `list`, `show`, `update`, `delete`, [`channel`](Command_Deployment_Channel.md) {`create`, `update`, `delete`, `show`, `list`, `types` (**Gated**), `token` (**Gated**), `webhook` (**Gated**)} (**CodeAgent-specific**), [`connection`](Command_Deployment_Connection.md) {`list`, `add`, `update`, `remove`, `connectors`} (**MCS-specific**), [`oauth`](Command_Deployment_OAuth.md) {`create`, `delete`, `list`, `list-providers`, `show`, `update`} (**CodeAgent-specific**) | Manage deployment records, CodeAgent channels and OAuth settings, and MCS connections. |
 | [`msagent test`](Command_Test.md) (**MCS-specific**) | `ask`, `playground` | Send a live query or launch the M365 Agents Playground. Actions can have real effects. |
 | [`msagent abs`](Command_Abs.md) (**Gated**) | `preview`, `apply` | Preview and apply Azure Bot Service configuration. |
 | [`msagent identity`](Command_Identity.md) (**Gated**) | `create blueprint`, `create app` | Create and reconcile agent identities. |
@@ -103,7 +103,7 @@ and lists its valid subcommands.
 >
 > | PAC CLI command | `msagent` equivalent |
 > | --- | --- |
-> | `pac copilot list` | [`msagent agent list`](Command_Agent.md#msagent-agent-list---mcs-specific) |
+> | `pac copilot list` | [`msagent agent list`](Command_Agent.md#msagent-agent-list) |
 > | `pac copilot init` | [`msagent agent init`](Command_Agent.md#msagent-agent-init---mcs-specific) |
 > | `pac copilot status` | No direct equivalent. [`msagent agent show`](Command_Agent.md#msagent-agent-show) and [`msagent deployment show`](Command_Deployment.md#msagent-deployment-show) read local state only. |
 > | `pac copilot pack` | No standalone command. Does not apply to Agents created with msagent |
@@ -112,6 +112,6 @@ and lists its valid subcommands.
 > | `pac copilot pull` | [`msagent agent pull`](Command_Agent.md#msagent-agent-pull---mcs-specific) |
 > | `pac copilot clone` | [`msagent agent create --agent-type MCSAgent --mcs-clone-agent-id <id>`](Command_Agent.md#msagent-agent-create) (or `--mcs-clone-agent-schemaname`) |
 > | `pac copilot push` | [`msagent agent deploy`](Command_Agent.md#msagent-agent-deploy) |
-> | `pac copilot delete` | [`msagent agent delete`](Command_Agent.md#msagent-agent-delete---mcs-specific) |
+> | `pac copilot delete` | [`msagent agent delete`](Command_Agent.md#msagent-agent-delete) |
 >
 > Do not use the PAC CLI together with this CLI for these commands. Use `msagent` for them instead.

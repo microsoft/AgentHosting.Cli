@@ -208,6 +208,8 @@ public sealed class DeploymentChannelCommandHostTests
     [InlineData("update", "--set-pages", false)]
     [InlineData("update", "--set-pages=SYNTHETIC_INLINE_SECRET", false)]
     [InlineData("update", "--set-pages=SYNTHETIC_INLINE_SECRET", true)]
+    [InlineData("update", "--set-pages:SYNTHETIC_INLINE_SECRET", false)]
+    [InlineData("create", "--set-pages:SYNTHETIC_INLINE_SECRET", true)]
     [InlineData("create", "-stp", false)]
     public void InvalidOption_ReportsNameAndChannelWithoutValues(string verb, string option, bool json)
     {
@@ -217,7 +219,7 @@ public sealed class DeploymentChannelCommandHostTests
                 option, "id=page-1", "accessToken=SYNTHETIC_FIELD_SECRET", .. json ? ["--json"] : Array.Empty<string>()]);
 
         Assert.Equal(ExitCodes.Usage, exitCode);
-        var expected = $"Option '{option.Split('=', 2)[0]}' is misspelled or not valid for 'facebook' channel {verb}."
+        var expected = $"Option '{option.Split(['=', ':'], 2)[0]}' is misspelled or not valid for 'facebook' channel {verb}."
             + " Run `msagent --help` for usage.";
         if (json)
         {
@@ -442,7 +444,6 @@ public sealed class DeploymentChannelCommandHostTests
                 ChannelName = "slack",
                 ResourceId = "/channels/SlackChannel",
                 AuthorizationUrl = uri,
-                RawArmResponse = JsonSerializer.SerializeToElement(new { redirectAction = "***" }),
             },
         };
         var operations = new FakeOperations { OnCreateChannel = _ => result, OnUpdateChannel = _ => result };
@@ -452,15 +453,7 @@ public sealed class DeploymentChannelCommandHostTests
             ["deployment", "channel", verb, "--deployment-id", "dep-1", "--channel", "slack",
                 "--parameters", "clientId=app", "clientSecret=secret", "signingSecret=sign", .. options]);
         Assert.Equal(ExitCodes.Success, exitCode);
-        if (debug)
-        {
-            Assert.DoesNotContain("SYNTHETIC_STATE", stderr);
-            Assert.Contains("ARM response:", stderr);
-        }
-        else
-        {
-            Assert.Empty(stderr);
-        }
+        Assert.Empty(stderr);
         Assert.Contains("write accepted by Azure", stdout);
         string guidance;
         if (json)
@@ -542,7 +535,6 @@ public sealed class DeploymentChannelCommandHostTests
             {
                 ChannelName = "webchat",
                 ResourceId = "/bots/test/channels/WebChatChannel",
-                RawArmResponse = JsonSerializer.SerializeToElement(new { properties = new { siteName = "Primary" } }),
                 Parameters = new Dictionary<string, JsonElement>
                 {
                     ["sites"] = JsonSerializer.SerializeToElement(new[] { new { siteName = "Primary" } }),
@@ -560,15 +552,7 @@ public sealed class DeploymentChannelCommandHostTests
                 "--parameters", """sites=[{"siteName":"Primary","isEnabled":false}]""", .. options]);
 
         Assert.Equal(ExitCodes.Success, exitCode);
-        if (debug)
-        {
-            Assert.Contains("\"siteName\": \"Primary\"", stderr);
-            Assert.DoesNotContain(warning, stderr);
-        }
-        else
-        {
-            Assert.Empty(stderr);
-        }
+        Assert.Empty(stderr);
         if (json)
         {
             using var document = JsonDocument.Parse(stdout);
@@ -723,17 +707,8 @@ public sealed class DeploymentChannelCommandHostTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void List_Debug_AddsFullArmResponseToFilteredOutput(bool json)
+    public void List_Debug_PreservesNormalOutputWithoutAnArmDump(bool json)
     {
-        using var teamsDocument = System.Text.Json.JsonDocument.Parse(
-            """{"id":"/channels/MsTeamsChannel","properties":{"channelName":"MsTeamsChannel"}}""");
-        using var slackDocument = System.Text.Json.JsonDocument.Parse(
-            """{"id":"/channels/SlackChannel","properties":{"channelName":"SlackChannel","properties":{"clientSecret":"***"}}}""");
-        using var unknownDocument = System.Text.Json.JsonDocument.Parse(
-            """
-            {"id":"/channels/UnknownArmChannel","properties":{"channelName":"UnknownArmChannel",
-              "properties":{"description":"visible","entries":[{"accessToken":"SYNTHETIC_SECRET"}]}}}
-            """);
         var operations = new FakeOperations
         {
             OnListChannels = _ => new DeploymentResult<DeploymentChannelRecord[]>
@@ -746,21 +721,13 @@ public sealed class DeploymentChannelCommandHostTests
                     {
                         ResourceId = "/channels/MsTeamsChannel",
                         ChannelName = "msteams",
-                        RawArmResponse = teamsDocument.RootElement.Clone(),
                     },
                     new()
                     {
                         ResourceId = "/channels/SlackChannel",
                         ChannelName = "slack",
-                        RawArmResponse = slackDocument.RootElement.Clone(),
                     },
                 ],
-                ArmResponse = JsonSerializer.SerializeToElement(new[]
-                {
-                    teamsDocument.RootElement,
-                    slackDocument.RootElement,
-                    BotServiceResponseRedactor.RedactChannel(unknownDocument.RootElement, definition: null),
-                }),
             },
         };
 
@@ -776,26 +743,18 @@ public sealed class DeploymentChannelCommandHostTests
         Assert.Contains("/channels/SlackChannel", stdout);
         Assert.DoesNotContain("UnknownArmChannel", stdout);
         Assert.DoesNotContain("SYNTHETIC_SECRET", stdout);
-        Assert.StartsWith("ARM response:", stderr);
-        Assert.Contains("ARM response:", stderr);
-        Assert.Contains("/channels/MsTeamsChannel", stderr);
-        Assert.Contains("/channels/SlackChannel", stderr);
-        Assert.Contains("/channels/UnknownArmChannel", stderr);
-        Assert.DoesNotContain("SYNTHETIC_SECRET", stderr);
-
-        var response = stderr[stderr.IndexOf('[')..];
-        using var document = System.Text.Json.JsonDocument.Parse(response);
-        Assert.Equal(System.Text.Json.JsonValueKind.Array, document.RootElement.ValueKind);
-        Assert.Equal(3, document.RootElement.GetArrayLength());
-        var unknown = document.RootElement[2].GetProperty("properties").GetProperty("properties");
-        Assert.Equal("visible", unknown.GetProperty("description").GetString());
-        Assert.Equal("***", unknown.GetProperty("entries")[0].GetProperty("accessToken").GetString());
+        Assert.Empty(stderr);
+        var (normalExit, normalStdout, normalStderr) = Run(operations,
+            ["deployment", "channel", "list", "--deployment-id", "dep-1", .. outputOptions]);
+        Assert.Equal(exitCode, normalExit);
+        Assert.Equal(stdout, normalStdout);
+        Assert.Equal(stderr, normalStderr);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void List_ExcludesDiagnosticOnlyChannelsFromNormalOutput(bool json)
+    public void List_RendersOnlyTheCanonicalChannelPayload(bool json)
     {
         var operations = new FakeOperations
         {
@@ -807,11 +766,6 @@ public sealed class DeploymentChannelCommandHostTests
                 [
                     new() { ResourceId = "/channels/SlackChannel", ChannelName = "slack" },
                 ],
-                ArmResponse = JsonSerializer.SerializeToElement(new[]
-                {
-                    new { id = "/channels/SlackChannel" },
-                    new { id = "/channels/UnknownArmChannel" },
-                }),
             },
         };
         var args = new List<string> { "deployment", "channel", "list", "--deployment-id", "dep-1" };
@@ -835,5 +789,336 @@ public sealed class DeploymentChannelCommandHostTests
         Assert.False(channels[0].TryGetProperty("isSupported", out _));
         Assert.Equal("slack", channels[0].GetProperty("channelName").GetString());
         Assert.DoesNotContain("UnknownArmChannel", stdout);
+    }
+
+    private const string AmsAgentId = "44444444-4444-4444-4444-444444444444";
+    private const string AmsDeploymentId = "77777777-7777-7777-7777-777777777777";
+
+    public static TheoryData<string[], Type> AmsChannelCommands => new()
+    {
+        { ["create", "--channel", "msteams", "--parameters", "acceptedTerms=true"], typeof(AgentDeploymentAmsChannelRequest<DeploymentChannelCreateRequest>) },
+        { ["update", "--channel", "directline", "--add-site", "siteName=web"], typeof(AgentDeploymentAmsChannelRequest<DeploymentChannelUpdateRequest>) },
+        { ["delete", "--channel", "msteams"], typeof(AgentDeploymentAmsChannelRequest<DeploymentChannelDeleteRequest>) },
+        { ["show", "--channel", "webchat"], typeof(AgentDeploymentAmsChannelRequest<DeploymentChannelShowRequest>) },
+        { ["list"], typeof(AgentDeploymentAmsChannelRequest<DeploymentChannelListRequest>) },
+    };
+
+    [Theory]
+    [MemberData(nameof(AmsChannelCommands))]
+    public void AmsRoute_DispatchesTheAddressWithoutLocalResolution(string[] verbAndOptions, Type requestType)
+    {
+        var operations = new FakeOperations();
+        var handlers = new AmsChannelHandlers();
+
+        var (exitCode, _, stderr) = RunAms(operations, handlers, ["deployment", "channel", verbAndOptions[0], "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", .. verbAndOptions[1..]]);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var request = Assert.Single(handlers.Requests);
+        Assert.IsType(requestType, request);
+        var address = Assert.IsAssignableFrom<AgentDeploymentAmsRequest>(request);
+        Assert.Equal(AmsAgentId, address.AgentId);
+        Assert.Equal(AmsDeploymentId, address.DeploymentId);
+        Assert.Equal("env-1", address.EnvironmentId);
+        AssertNoLocalChannelRoute(operations);
+    }
+
+    [Fact]
+    public void AmsRoute_PassesTheChannelContentAsLocalModeBindsIt()
+    {
+        var handlers = new AmsChannelHandlers();
+
+        var (exitCode, _, _) = RunAms(new FakeOperations(), handlers, "deployment", "channel", "update", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--channel", "directline", "--set-site", "siteName=web", "isEnabled=false", "--non-interactive");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        var request = Assert.IsType<AgentDeploymentAmsChannelRequest<DeploymentChannelUpdateRequest>>(Assert.Single(handlers.Requests));
+        Assert.Equal("directline", request.Channel.ChannelName);
+        Assert.Equal(["siteName=web", "isEnabled=false"], request.Channel.SetSite);
+        Assert.Empty(request.Channel.Parameters);
+        Assert.True(request.Channel.NonInteractive);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AmsRoute_RendersTheChannelResultLikeLocalMode(bool json)
+    {
+        string[] outputOptions = json ? ["--json"] : [];
+
+        var (exitCode, stdout, stderr) = RunAms(new FakeOperations(), new AmsChannelHandlers(), ["deployment", "channel", "create", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--channel", "msteams", "--debug", .. outputOptions]);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        if (json)
+        {
+            using var document = JsonDocument.Parse(stdout);
+            Assert.Equal("Channel 'msteams' created.", document.RootElement.GetProperty("message").GetString());
+            Assert.Equal(["AMS kept the service defaults."], document.RootElement.GetProperty("warnings").EnumerateArray().Select(warning => warning.GetString()));
+            Assert.Equal("/bots/ams/channels/MsTeamsChannel", document.RootElement.GetProperty("channel").GetProperty("resourceId").GetString());
+        }
+        else
+        {
+            Assert.StartsWith("Channel 'msteams' created.", stdout, StringComparison.Ordinal);
+            Assert.Contains("Warning: AMS kept the service defaults.", stdout, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void AmsRoute_ListPrintsNoArmResponseInDebugOutput()
+    {
+        var (exitCode, stdout, stderr) = RunAms(new FakeOperations(), new AmsChannelHandlers(), "deployment", "channel", "list", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--debug", "--json");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        using var document = JsonDocument.Parse(stdout);
+        Assert.Equal("msteams", document.RootElement.GetProperty("channels")[0].GetProperty("channelName").GetString());
+    }
+
+    [Theory]
+    [InlineData("--agent-id", "--agent-id or --agent-name is required for the AMS route of `msagent deployment channel show`.")]
+    [InlineData("--deployment-id", "--deployment-id or --deployment-name is required for the AMS route of `msagent deployment channel show`.")]
+    public void AmsRoute_MissingAddressOptionDispatchesNothing(string missing, string message)
+    {
+        var operations = new FakeOperations();
+        var handlers = new AmsChannelHandlers();
+        var args = new List<string> { "deployment", "channel", "show", "--environment-id", "env-1", "--channel", "msteams" };
+        foreach (var (option, value) in new[] { ("--agent-id", AmsAgentId), ("--deployment-id", AmsDeploymentId) }.Where(entry => entry.Item1 != missing))
+        {
+            args.AddRange([option, value]);
+        }
+
+        var (exitCode, _, stderr) = RunAms(operations, handlers, [.. args]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains(message, stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+        AssertNoLocalChannelRoute(operations);
+    }
+
+    [Fact]
+    public void AmsRoute_RejectsTheProjectOption()
+    {
+        var operations = new FakeOperations();
+        var handlers = new AmsChannelHandlers();
+
+        var (exitCode, _, stderr) = RunAms(operations, handlers, "deployment", "channel", "list", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--project", ".");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("--project cannot be combined with the AMS route of `msagent deployment channel list`.", stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+        AssertNoLocalChannelRoute(operations);
+    }
+
+    [Fact]
+    public void Types_DispatchesItsAmsRequestAndNestsTheTypesInJson()
+    {
+        var handlers = new AmsChannelHandlers();
+
+        var (exitCode, stdout, stderr) = RunAms(new FakeOperations(), handlers, "deployment", "channel", "types", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--json");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var request = Assert.IsType<AgentDeploymentAmsChannelTypesRequest>(Assert.Single(handlers.Requests));
+        Assert.Equal((AmsAgentId, AmsDeploymentId, "env-1"), (request.AgentId, request.DeploymentId, request.EnvironmentId));
+        using var document = JsonDocument.Parse(stdout);
+        var type = document.RootElement.GetProperty("channelTypes")[0];
+        Assert.Equal("msteams", type.GetProperty("channelType").GetString());
+        var parameter = type.GetProperty("parameters")[0];
+        Assert.Equal("acceptedTerms", parameter.GetProperty("name").GetString());
+        Assert.False(parameter.TryGetProperty("allowedValues", out _));
+        Assert.False(parameter.TryGetProperty("defaultValue", out _));
+        Assert.False(parameter.TryGetProperty("itemParameters", out _));
+    }
+
+    [Fact]
+    public void Token_DispatchesTheSiteAndUserAndPrintsTheToken()
+    {
+        var handlers = new AmsChannelHandlers();
+
+        var (exitCode, stdout, stderr) = RunAms(new FakeOperations(), handlers, "deployment", "channel", "token", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--channel", "directline", "--site", "Default Site", "--user-id", "dl_user");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var request = Assert.IsType<AgentDeploymentAmsChannelTokenRequest>(Assert.Single(handlers.Requests));
+        Assert.Equal(("directline", "Default Site", "dl_user"), (request.ChannelName, request.SiteName, request.UserId));
+        Assert.Equal((AmsAgentId, AmsDeploymentId, "env-1"), (request.AgentId, request.DeploymentId, request.EnvironmentId));
+        Assert.StartsWith("Token 'Default Site' created.", stdout, StringComparison.Ordinal);
+        Assert.Contains("\"token\": \"direct-line-token\"", stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Token_RequiresTheChannel()
+    {
+        var handlers = new AmsChannelHandlers();
+
+        var (exitCode, _, stderr) = RunAms(new FakeOperations(), handlers, "deployment", "channel", "token", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("--channel", stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+    }
+
+    [Fact]
+    public void Token_ByNamesWithoutTheEnvironment_DispatchesForTheActiveEnvironment()
+    {
+        var handlers = new AmsChannelHandlers();
+
+        var (exitCode, _, _) = RunAms(new FakeOperations(), handlers, "deployment", "channel", "token", "--agent-name", "Contoso Agent", "--deployment-name", "dev", "--channel", "directline");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        var request = Assert.IsType<AgentDeploymentAmsChannelTokenRequest>(Assert.Single(handlers.Requests));
+        Assert.Equal(("Contoso Agent", "dev", null), (request.AgentName, request.DeploymentName, request.EnvironmentId));
+    }
+
+    [Theory]
+    [InlineData("directline", ExitCodes.Success)]
+    [InlineData("DirectLine", ExitCodes.Success)]
+    [InlineData("webchat", ExitCodes.Usage)]
+    [InlineData("msteams", ExitCodes.Usage)]
+    public void TokenHelp_AcceptsOnlyDirectLine(string channel, int expectedExitCode)
+    {
+        var handlers = new AmsChannelHandlers();
+
+        var (exitCode, stdout, stderr) = RunAms(new FakeOperations(), handlers, "deployment", "channel", "token", "--channel", channel, "--help");
+
+        Assert.Equal(expectedExitCode, exitCode);
+        Assert.Empty(handlers.Requests);
+        if (expectedExitCode == ExitCodes.Success)
+        {
+            Assert.Contains("--user-id", stdout, StringComparison.Ordinal);
+            Assert.DoesNotContain("Parameters:", stdout, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains($"does not support 'token' operation.", stderr, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Webhook_DispatchesTheChannelAndPrintsTheWebhookValues(bool json)
+    {
+        var handlers = new AmsChannelHandlers();
+
+        var (exitCode, stdout, stderr) = RunAms(new FakeOperations(), handlers, ["deployment", "channel", "webhook", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--channel", "facebook", .. json ? ["--json"] : Array.Empty<string>()]);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var request = Assert.IsType<AgentDeploymentAmsChannelWebhookRequest>(Assert.Single(handlers.Requests));
+        Assert.Equal("facebook", request.ChannelName);
+        Assert.Equal((AmsAgentId, AmsDeploymentId, "env-1"), (request.AgentId, request.DeploymentId, request.EnvironmentId));
+        if (json)
+        {
+            var payload = JsonDocument.Parse(stdout).RootElement.GetProperty("webhook");
+            Assert.Equal("https://facebook.botframework.com/api/v1/bots/ams-bot", payload.GetProperty("callbackUrl").GetString());
+            Assert.Equal("fake-verify-token", payload.GetProperty("verifyToken").GetString());
+        }
+        else
+        {
+            Assert.Contains("\"callbackUrl\": \"https://facebook.botframework.com/api/v1/bots/ams-bot\"", stdout, StringComparison.Ordinal);
+            Assert.Contains("\"verifyToken\": \"fake-verify-token\"", stdout, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void Webhook_RequiresTheChannel()
+    {
+        var handlers = new AmsChannelHandlers();
+
+        var (exitCode, _, stderr) = RunAms(new FakeOperations(), handlers, "deployment", "channel", "webhook", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("--channel", stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+    }
+
+    [Theory]
+    [InlineData("facebook", ExitCodes.Success)]
+    [InlineData("Facebook", ExitCodes.Success)]
+    [InlineData("line", ExitCodes.Usage)]
+    [InlineData("directline", ExitCodes.Usage)]
+    public void WebhookHelp_AcceptsOnlyFacebook(string channel, int expectedExitCode)
+    {
+        var handlers = new AmsChannelHandlers();
+
+        var (exitCode, stdout, stderr) = RunAms(new FakeOperations(), handlers, "deployment", "channel", "webhook", "--channel", channel, "--help");
+
+        Assert.Equal(expectedExitCode, exitCode);
+        Assert.Empty(handlers.Requests);
+        if (expectedExitCode == ExitCodes.Success)
+        {
+            Assert.Contains("--deployment-id", stdout, StringComparison.Ordinal);
+            Assert.DoesNotContain("Parameters:", stdout, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains("does not support 'webhook' operation.", stderr, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData("list")]
+    [InlineData("types")]
+    [InlineData("token")]
+    [InlineData("webhook")]
+    public void AmsFeatureOff_TheAmsRouteAndCommandsAreUnavailable(string verb)
+    {
+        var operations = new FakeOperations();
+
+        var (exitCode, _, stderr) = Run(operations, "deployment", "channel", verb, "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains(verb == "list" ? "--environment-id" : verb, stderr, StringComparison.Ordinal);
+        AssertNoLocalChannelRoute(operations);
+    }
+
+    private static void AssertNoLocalChannelRoute(FakeOperations operations)
+    {
+        Assert.Null(operations.LastDeploymentAgentTypeQuery);
+        Assert.Null(operations.LastCreateChannelRequest);
+        Assert.Null(operations.LastUpdateChannelRequest);
+        Assert.Null(operations.LastDeleteChannelRequest);
+        Assert.Null(operations.LastGetChannelRequest);
+        Assert.Null(operations.LastListChannelsRequest);
+    }
+
+    private static (int ExitCode, string Stdout, string Stderr) RunAms(FakeOperations operations, AmsChannelHandlers handlers, params string[] args) => AmsCommandHost.Run(operations, handlers, new TestFeatureFlags(FeatureName.AmsFeatures), args);
+
+    private sealed class AmsChannelHandlers :
+        ICommandHandler<AgentDeploymentAmsChannelRequest<DeploymentChannelCreateRequest>, DeploymentResult<DeploymentChannelRecord>>,
+        ICommandHandler<AgentDeploymentAmsChannelRequest<DeploymentChannelUpdateRequest>, DeploymentResult<DeploymentChannelRecord>>,
+        ICommandHandler<AgentDeploymentAmsChannelRequest<DeploymentChannelDeleteRequest>, DeploymentResult<DeploymentChannelRecord>>,
+        ICommandHandler<AgentDeploymentAmsChannelRequest<DeploymentChannelShowRequest>, DeploymentResult<DeploymentChannelRecord>>,
+        ICommandHandler<AgentDeploymentAmsChannelRequest<DeploymentChannelListRequest>, DeploymentResult<DeploymentChannelRecord[]>>,
+        ICommandHandler<AgentDeploymentAmsChannelTypesRequest, DeploymentResult<DeploymentChannelType[]>>,
+        ICommandHandler<AgentDeploymentAmsChannelTokenRequest, DeploymentResult<DeploymentChannelToken>>,
+        ICommandHandler<AgentDeploymentAmsChannelWebhookRequest, DeploymentResult<DeploymentChannelWebhook>>
+    {
+        private static readonly DeploymentChannelRecord Channel = new() { ResourceId = "/bots/ams/channels/MsTeamsChannel", ChannelName = "msteams", Parameters = new Dictionary<string, JsonElement> { ["acceptedTerms"] = JsonSerializer.SerializeToElement(true) } };
+
+        public List<object> Requests { get; } = [];
+
+        public Task<DeploymentResult<DeploymentChannelRecord>> HandleAsync(AgentDeploymentAmsChannelRequest<DeploymentChannelCreateRequest> request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentChannelRecord> { Status = DeploymentOperationStatus.Created, Payload = Channel, TargetName = "Channel", TargetInstanceName = "msteams", Warnings = ["AMS kept the service defaults."] });
+
+        public Task<DeploymentResult<DeploymentChannelRecord>> HandleAsync(AgentDeploymentAmsChannelRequest<DeploymentChannelUpdateRequest> request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentChannelRecord> { Status = DeploymentOperationStatus.Updated, Payload = Channel, TargetName = "Channel" });
+
+        public Task<DeploymentResult<DeploymentChannelRecord>> HandleAsync(AgentDeploymentAmsChannelRequest<DeploymentChannelDeleteRequest> request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentChannelRecord> { Status = DeploymentOperationStatus.Deleted, TargetName = "Channel" });
+
+        public Task<DeploymentResult<DeploymentChannelRecord>> HandleAsync(AgentDeploymentAmsChannelRequest<DeploymentChannelShowRequest> request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentChannelRecord> { Status = DeploymentOperationStatus.Retrieved, Payload = Channel, TargetName = "Channel" });
+
+        public Task<DeploymentResult<DeploymentChannelRecord[]>> HandleAsync(AgentDeploymentAmsChannelRequest<DeploymentChannelListRequest> request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentChannelRecord[]> { Status = DeploymentOperationStatus.Listed, Payload = [Channel], TargetName = "Channels" });
+
+        public Task<DeploymentResult<DeploymentChannelType[]>> HandleAsync(AgentDeploymentAmsChannelTypesRequest request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentChannelType[]> { Status = DeploymentOperationStatus.Listed, Payload = [new() { ChannelType = "msteams", DisplayName = "Microsoft Teams", Operations = ["create"], Parameters = [new() { Name = "acceptedTerms", Type = "boolean" }] }], TargetName = "ChannelTypes" });
+
+        public Task<DeploymentResult<DeploymentChannelToken>> HandleAsync(AgentDeploymentAmsChannelTokenRequest request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentChannelToken> { Status = DeploymentOperationStatus.Created, Payload = new() { Token = "direct-line-token", ConversationId = "conversation-1", ExpiresInSeconds = 3600, SiteName = "Default Site", Endpoint = "https://directline.botframework.com" }, TargetName = "Token", TargetInstanceName = "Default Site" });
+
+        public Task<DeploymentResult<DeploymentChannelWebhook>> HandleAsync(AgentDeploymentAmsChannelWebhookRequest request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentChannelWebhook> { Status = DeploymentOperationStatus.Retrieved, Payload = new() { CallbackUrl = "https://facebook.botframework.com/api/v1/bots/ams-bot", VerifyToken = "fake-verify-token" }, TargetName = "Webhook", TargetInstanceName = "facebook" });
+
+        private Task<T> Record<T>(object request, T result)
+        {
+            Requests.Add(request);
+            return Task.FromResult(result);
+        }
     }
 }

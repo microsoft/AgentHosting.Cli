@@ -243,10 +243,13 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
 
     public List<string> PullWarnings { get; } = [];
 
-    public Task<CopilotPullOutcome> PullAsync(CopilotWorkspaceInfo workspace, CancellationToken cancellationToken)
+    public List<bool> PullOverwrites { get; } = [];
+
+    public Task<CopilotPullOutcome> PullAsync(CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
     {
         PullCalls++;
         PulledDirectories.Add(workspace.WorkspacePath);
+        PullOverwrites.Add(overwrite);
         return Task.FromResult(new CopilotPullOutcome { Changes = RemoteChanges, Warnings = PullWarnings });
     }
 

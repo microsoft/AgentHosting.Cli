@@ -12,9 +12,9 @@ public static class DeploymentSelector
     [
         OptionCatalog.Value("--project", "Project directory holding the configuration. Defaults to the current directory."),
         OptionCatalog.Value("--deployment-id", "Deployment id. Supply this, or the agent id with the deployment name."),
-        OptionCatalog.Value("--deployment-name", "Deployment name. Resolved together with the agent id."),
+        OptionCatalog.Value("--deployment-name", "Deployment name. Resolved together with the agent id or name."),
         OptionCatalog.Value("--agent-id", "Owning agent id. Resolved together with the deployment name."),
-        OptionCatalog.Value("--agent-name", "Owning agent name, used when the agent id is omitted. MCS only."),
+        OptionCatalog.Value("--agent-name", "Owning agent name, used when the agent id is omitted."),
     ];
 
     /// <summary>The record selectors plus the Azure coordinates a CodeAgent deployment needs.</summary>

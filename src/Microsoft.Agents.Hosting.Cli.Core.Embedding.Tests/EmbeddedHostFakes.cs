@@ -189,24 +189,44 @@ internal sealed class PendingAmsAgentReadTransport : IAmsAgentReadTransport
         AmsAgentReadTransportRequest request,
         CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Agent read was not expected in this test.");
+
+    public Task<IReadOnlyList<AmsAgentReadResult>> ListAsync(
+        AmsServiceTarget serviceTarget,
+        CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("Agent listing was not expected in this test.");
 }
 
 internal sealed class PendingAmsDeploymentTransport : IAmsDeploymentTransport
 {
-    public Task<AmsDeploymentCurrentResult> GetAsync(
+    public Task<AmsDeploymentResult> ReadAsync(
         AmsDeploymentReadTransportRequest request,
         CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Deployment read was not expected in this test.");
 
-    public Task<AmsDeploymentCreateResult> CreateAsync(
+    public Task<AmsDeploymentListResult> ListAsync(
+        AmsAgentReadTransportRequest request,
+        CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("Deployment listing was not expected in this test.");
+
+    public Task<AmsDeploymentResult> CreateAsync(
         AmsDeploymentCreateTransportRequest request,
         CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Deployment creation was not expected in this test.");
 
-    public Task<AmsDeploymentCreateResult> UpdateAsync(
+    public Task<AmsDeploymentResult> UpdateAsync(
         AmsDeploymentUpdateTransportRequest request,
         CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Deployment update was not expected in this test.");
+
+    public Task<AmsDeploymentResult> DeployAsync(
+        AmsDeploymentDeployTransportRequest request,
+        CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("Deploy was not expected in this test.");
+
+    public Task DeleteAsync(
+        AmsDeploymentDeleteTransportRequest request,
+        CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("Deployment deletion was not expected in this test.");
 }
 
 /// <summary>The embedded composition's pending AMS agent-create transport.</summary>

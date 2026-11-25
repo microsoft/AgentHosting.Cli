@@ -81,6 +81,18 @@ public sealed class AmsPackagePublicationAdapterTests
     }
 
     [Fact]
+    public async Task Publish_ToADirectTarget_UsesTheTenantAndEnvironmentScopedRoute()
+    {
+        var handler = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.OK, SuccessBody));
+        using var packageStream = new MemoryStream(PackageBytes, writable: false);
+        var request = Request(packageStream);
+
+        await Adapter(handler, new FakePpapiTokenProvider()).PublishAsync(request with { ServiceTarget = request.ServiceTarget with { Endpoint = new Uri("https://amsdp-alias.example/"), RouteForm = AmsRouteForm.Direct } }, default);
+
+        Assert.Equal($"https://amsdp-alias.example/agenthosting/tenants/{Tenant}/environments/env%2Fblue/agents/{Agent}/packages?api-version=1", Assert.Single(handler.Requests).Uri.AbsoluteUri);
+    }
+
+    [Fact]
     public async Task Publish_CarriesNoRepositoryStorageOrOwnerIdentifier()
     {
         var handler = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.OK, SuccessBody));
@@ -656,10 +668,14 @@ public sealed class AmsPackagePublicationAdapterTests
 
     private static AmsPackagePublicationTransportRequest Request(Stream packageStream) => new()
     {
-        Endpoint = new Uri(Endpoint),
-        Audience = Audience,
-        TenantId = Tenant,
-        EnvironmentId = "env/blue",
+        ServiceTarget = new AmsServiceTarget
+        {
+            Endpoint = new Uri(Endpoint),
+            Audience = Audience,
+            RouteForm = AmsRouteForm.EnvironmentHost,
+            TenantId = Tenant,
+            EnvironmentId = "env/blue",
+        },
         AgentId = Agent,
         PackageStream = packageStream,
         PackageLength = packageStream.Length,

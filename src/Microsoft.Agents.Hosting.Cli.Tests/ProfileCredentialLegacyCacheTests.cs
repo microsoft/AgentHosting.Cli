@@ -348,6 +348,20 @@ public sealed class ProfileCredentialLegacyCacheTests
         Assert.Equal(1, native.PolicySets);
     }
 
+    [Fact]
+    public async Task LegacyMacAuthFailureExplainsHowToTrustTheCurrentBuild()
+    {
+        using var h = new ProfileCredentialTests.Harness();
+        var native = new Mac { FindStatus = -25293 };
+        var backend = LegacyMsalTokenCacheBackendFactory.MacOs(h.Directory, MacOsKeychainProcessPolicy.EstablishForCliProcess(native, default));
+        var failure = await Assert.ThrowsAsync<CacheProtectionUnavailableException>(() => backend.ReadAsync(default));
+        Assert.Contains("native-status--25293", failure.Message);
+        Assert.Contains("Keychain Access", failure.Remediation);
+        Assert.Contains($"this executable: {Environment.ProcessPath}.", failure.Remediation);
+        Assert.DoesNotContain("readlink", failure.Remediation);
+        Assert.Contains("msagent auth create", failure.Remediation);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -422,6 +436,7 @@ public sealed class ProfileCredentialLegacyCacheTests
     {
         internal byte[]? Value;
         internal bool Locked;
+        internal int? FindStatus;
         internal int PolicySets;
         internal List<(string Service, string Account)> Names { get; } = [];
         public int SetInteractionAllowed(bool allowed) { Assert.False(allowed); PolicySets++; return 0; }
@@ -431,7 +446,7 @@ public sealed class ProfileCredentialLegacyCacheTests
         public int Find(IMacOwnedHandle keychain, string service, string account, bool readData, out byte[]? data, out IMacOwnedHandle? item)
         {
             Names.Add((service, account)); data = readData ? Value?.ToArray() : null; item = Value is null ? null : new Handle();
-            return Value is null ? -25300 : 0;
+            return FindStatus ?? (Value is null ? -25300 : 0);
         }
         public int Add(IMacOwnedHandle keychain, string service, string account, byte[] data) { Names.Add((service, account)); Value = data.ToArray(); return 0; }
         public int Modify(IMacOwnedHandle item, byte[] data) { Value = data.ToArray(); return 0; }

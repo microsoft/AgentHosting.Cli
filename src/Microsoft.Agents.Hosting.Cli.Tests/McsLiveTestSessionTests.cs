@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio.AskClient;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
@@ -23,6 +24,27 @@ public sealed class McsLiveTestSessionTests
         "contoso_schema");
 
     [Fact]
+    public async Task QuerySendsFileBytesOnceWithTheSelectedConversation()
+    {
+        var handler = new RecordingHandler(JsonResponse("""{"activities":[{"type":"message","text":"received"}]}"""));
+        await using var session = new McsLiveTestSession(Target, "token", handler);
+        var attachment = new LiveTestAttachment("study.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", [1, 2, 3]);
+
+        await ReadAsync(session.QueryAsync("compare", "existing", [attachment]));
+
+        Assert.Single(handler.Requests);
+        using var document = JsonDocument.Parse(Assert.IsType<string>(Assert.Single(handler.RequestBodies)));
+        var activity = document.RootElement.GetProperty("activity");
+        Assert.Equal("compare", activity.GetProperty("text").GetString());
+        Assert.Equal("existing", activity.GetProperty("conversation").GetProperty("id").GetString());
+        var file = Assert.Single(activity.GetProperty("attachments").EnumerateArray());
+        Assert.Equal("study.xlsx", file.GetProperty("name").GetString());
+        Assert.Equal(attachment.ContentType, file.GetProperty("contentType").GetString());
+        Assert.Equal($"data:{attachment.ContentType};base64,AQID", file.GetProperty("contentUrl").GetString());
+    }
+
+    [Fact]
     public void PlainActivityFailsClosedInsteadOfUsingLossySerialization()
     {
         McsLiveActivityCodec.Initialize();
@@ -39,8 +61,10 @@ public sealed class McsLiveTestSessionTests
         Assert.Equal("The SDK returned an activity without lossless raw JSON.", error.Message);
     }
 
-    [Fact]
-    public async Task StartThenQueryPreservesOrderAndBindsServiceConversation()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StartThenQueryPreservesOrderAndBindsServiceConversation(bool debug)
     {
         var handler = new RecordingHandler(
             JsonResponse("""
@@ -62,7 +86,9 @@ public sealed class McsLiveTestSessionTests
             }
             """));
 
-        await using var session = new McsLiveTestSession(Target, "delegated-token", handler);
+        using var output = new StringWriter();
+        var diagnostics = new HttpDiagnostics(debug ? new TextWriterHttpDiagnosticSink(output) : null);
+        await using var session = new McsLiveTestSession(Target, new RecordingTokenProvider("delegated-token"), handler, diagnostics);
 
         var initialized = await ReadAsync(session.StartAsync());
         var queried = await ReadAsync(session.QueryAsync("unchanged query"));
@@ -86,6 +112,45 @@ public sealed class McsLiveTestSessionTests
         Assert.Contains("\"activity\"", handler.RequestBodies[1]);
         Assert.Contains("\"text\":\"unchanged query\"", handler.RequestBodies[1]);
         Assert.Contains("\"id\":\"service-conversation\"", handler.RequestBodies[1]);
+        Assert.Equal(string.Empty, output.ToString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OnlyRepositoryEndpointDiscoveryIsTracedAndTheSharedTransportIsDisposedOnce(bool debug)
+    {
+        var handler = new RecordingHandler(JsonResponse("""
+            {"activities":[{"type":"message","text":"sdk-response","conversation":{"id":"service-conversation"}}]}
+            """));
+        using var output = new StringWriter();
+        var diagnostics = new HttpDiagnostics(debug ? new TextWriterHttpDiagnosticSink(output) : null);
+        await using var session = new McsLiveTestSession(Target, new RecordingTokenProvider("delegated-token"), handler, diagnostics);
+
+        var endpoint = await session.DiscoverEndpointAsync();
+        var activities = await ReadAsync(session.StartAsync());
+
+        Assert.Equal(["sdk-response"], activities.Select(GetText));
+        Assert.Equal(2, handler.DiscoveryRequests.Count);
+        Assert.Equal(handler.DiscoveryRequests[0].RequestUri, handler.DiscoveryRequests[1].RequestUri);
+        Assert.Single(handler.Requests);
+        Assert.Equal(handler.Requests[0].RequestUri, endpoint);
+        if (debug)
+        {
+            Assert.Equal(1, output.ToString().Split("Request: GET ", StringSplitOptions.None).Length - 1);
+            Assert.Contains("conversation-endpoints", output.ToString());
+            Assert.Contains("Status: 200", output.ToString());
+            Assert.DoesNotContain("Request: POST ", output.ToString());
+            Assert.DoesNotContain("sdk-response", output.ToString());
+            Assert.DoesNotContain("delegated-token", output.ToString());
+        }
+        else
+        {
+            Assert.Equal(string.Empty, output.ToString());
+        }
+
+        session.Dispose();
+        Assert.Equal(1, handler.DisposeCount);
     }
 
     [Fact]
@@ -1099,10 +1164,21 @@ public sealed class McsLiveTestSessionTests
 
         public List<HttpRequestMessage> Requests { get; } = [];
         public List<HttpRequestMessage> DiscoveryRequests { get; } = [];
+        public int DisposeCount { get; private set; }
         public List<string?> RequestBodies { get; } = [];
         public Uri? DiscoveryEndpoint { get; init; }
         public HttpResponseMessage? DiscoveryResponse { get; init; }
         public string TokenAudience { get; set; } = "https://api.powerplatform.com";
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                DisposeCount++;
+            }
+
+            base.Dispose(disposing);
+        }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {

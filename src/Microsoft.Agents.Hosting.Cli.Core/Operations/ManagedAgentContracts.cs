@@ -720,7 +720,7 @@ public sealed record ManagedAgentPullRequest
     /// <summary>The deployment whose environment is pulled from, by name.</summary>
     public string? DeploymentName { get; init; }
 
-    /// <summary>Whether a local workflow edit the environment has not seen may be replaced. MCSWorkflow only.</summary>
+    /// <summary>Whether to replace local workflow edits the environment has not seen, or delete knowledge files the environment deleted after local edits.</summary>
     public bool Overwrite { get; init; }
 }
 

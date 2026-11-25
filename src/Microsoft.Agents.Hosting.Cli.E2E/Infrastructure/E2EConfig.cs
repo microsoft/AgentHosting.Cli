@@ -77,7 +77,18 @@ public sealed record E2EConfig
             ExistingBotName = Env("AZURE_EXISTING_BOT") ?? Azure.ExistingBotName,
             AllowCreate = EnvFlag("AZURE_ALLOW_CREATE") ?? Azure.AllowCreate,
         },
-        Ams = Ams with { Endpoint = Env("AMS_ENDPOINT") ?? Ams.Endpoint },
+        Ams = Ams with
+        {
+            Endpoint = Env("AMS_ENDPOINT") ?? Ams.Endpoint,
+            ControlPlane = Ams.ControlPlane with { Endpoint = Env("AMS_CONTROL_PLANE_ENDPOINT") ?? Ams.ControlPlane.Endpoint },
+            DataPlane = Ams.DataPlane with { Endpoint = Env("AMS_DATA_PLANE_ENDPOINT") ?? Ams.DataPlane.Endpoint },
+            Cloud = Env("AMS_CLOUD") ?? Ams.Cloud,
+            DevEnvironmentId = Env("AMS_DEV_ENVIRONMENT_ID") ?? Ams.DevEnvironmentId,
+            TestEnvironmentId = Env("AMS_TEST_ENVIRONMENT_ID") ?? Ams.TestEnvironmentId,
+            ProdEnvironmentId = Env("AMS_PROD_ENVIRONMENT_ID") ?? Ams.ProdEnvironmentId,
+            AllowCreate = EnvFlag("AMS_ALLOW_CREATE") ?? Ams.AllowCreate,
+            PackagePath = Env("AMS_PACKAGE_PATH") ?? Ams.PackagePath,
+        },
     };
 
     /// <summary>The prefix every harness environment variable takes.</summary>
@@ -142,8 +153,39 @@ public sealed record AzureConfig
     public bool AllowCreate { get; init; }
 }
 
-/// <summary>The Agent Management Service endpoint, absent until one exists.</summary>
+/// <summary>The Agent Management Service the code-agent scenarios drive, with the environments they use.</summary>
 public sealed record AmsConfig
+{
+    /// <summary>The control-plane endpoint under its original name, used when controlPlane.endpoint is not set.</summary>
+    public string? Endpoint { get; init; }
+
+    public AmsServiceConfig ControlPlane { get; init; } = new();
+
+    public AmsServiceConfig DataPlane { get; init; } = new();
+
+    /// <summary>The cloud msagent must be signed in to, as <c>msagent auth status</c> names it.</summary>
+    public string? Cloud { get; init; }
+
+    /// <summary>The home environment of every agent the run creates, and the target of its Dev deployments.</summary>
+    public string? DevEnvironmentId { get; init; }
+
+    public string? TestEnvironmentId { get; init; }
+
+    public string? ProdEnvironmentId { get; init; }
+
+    /// <summary>Whether the run may create agents, deployments, bots and App Registrations.</summary>
+    public bool AllowCreate { get; init; }
+
+    /// <summary>The hosted echo agent package that the upload scenarios copy.</summary>
+    public string? PackagePath { get; init; }
+
+    /// <summary>The control-plane endpoint, from controlPlane.endpoint or else the original endpoint setting.</summary>
+    [JsonIgnore]
+    public string? ControlPlaneEndpoint => ControlPlane.Endpoint is { Length: > 0 } endpoint ? endpoint : Endpoint;
+}
+
+/// <summary>One Agent Management Service endpoint.</summary>
+public sealed record AmsServiceConfig
 {
     public string? Endpoint { get; init; }
 }

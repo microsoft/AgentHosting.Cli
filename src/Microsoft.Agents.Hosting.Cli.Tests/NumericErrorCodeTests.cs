@@ -288,17 +288,6 @@ public sealed class NumericErrorCodeTests
     }
 
     [Fact]
-    public void DeploymentUpdate_ReadAndMutationFailuresHaveDifferentCodes()
-    {
-        var read = AgentDeployException.DeploymentUpdateTimedOut("read", "request", false, new TimeoutException());
-        var update = AgentDeployException.DeploymentUpdateTimedOut("update", "request", true, new TimeoutException());
-
-        Assert.NotEqual(RenderCode(read), RenderCode(update));
-        Assert.Equal(14, RenderCode(read) / 1000);
-        Assert.Equal(14, RenderCode(update) / 1000);
-    }
-
-    [Fact]
     public void HumanFailure_DoesNotIncludeTheNumericCode()
     {
         var stdout = new StringWriter();

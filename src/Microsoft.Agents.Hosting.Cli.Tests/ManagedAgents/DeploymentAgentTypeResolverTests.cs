@@ -91,6 +91,38 @@ public sealed class DeploymentAgentTypeResolverTests : IDisposable
         Assert.Equal(AgentTypes.McsAgent, _resolver.Resolve(new DeploymentAgentTypeQuery { Project = _root, DeploymentId = "slot-1" }).AgentType);
     }
 
+    [Theory]
+    [InlineData(false, "Other Agent", DeploymentAgentTypeSource.DeploymentRecord)]
+    [InlineData(true, "Other Agent", DeploymentAgentTypeSource.Unresolved)]
+    [InlineData(true, "Contoso Agent", DeploymentAgentTypeSource.DeploymentRecord)]
+    public void RequireNamedAgentMatch_MatchesNoRecordWhenTheAgentNamedHasNone(bool requireNamedAgentMatch, string agentName, DeploymentAgentTypeSource expected)
+    {
+        _store.Add(_root, ManagedAgentFixtures.Agent());
+        _store.Add(_root, ManagedAgentFixtures.Deployment(deploymentId: "slot-1", name: "dev"));
+
+        var resolved = _resolver.Resolve(new DeploymentAgentTypeQuery { Project = _root, AgentName = agentName, DeploymentId = "slot-1", RequireNamedAgentMatch = requireNamedAgentMatch });
+
+        Assert.Equal(expected, resolved.Source);
+    }
+
+    [Theory]
+    [InlineData(true, "agent-code", null, null, "dev", DeploymentAgentTypeSource.DeploymentRecord)]
+    [InlineData(true, " AGENT-CODE ", null, null, "dev", DeploymentAgentTypeSource.DeploymentRecord)]
+    [InlineData(true, "agent-code", null, "slot-code", null, DeploymentAgentTypeSource.DeploymentRecord)]
+    [InlineData(true, "agent-other", null, null, "dev", DeploymentAgentTypeSource.Unresolved)]
+    [InlineData(true, "agent-other", null, "slot-code", null, DeploymentAgentTypeSource.Unresolved)]
+    [InlineData(true, null, "Code Agent", null, "dev", DeploymentAgentTypeSource.Unresolved)]
+    [InlineData(false, "agent-other", null, null, "dev", DeploymentAgentTypeSource.DeploymentRecord)]
+    public void RequireNamedAgentMatch_CodeAgentDeploymentWithoutAgentRecord_MatchesOnlyItsOwnAgentId(bool requireNamedAgentMatch, string? agentId, string? agentName, string? deploymentId, string? deploymentName, DeploymentAgentTypeSource expected)
+    {
+        _store.Add(_root, ManagedAgentFixtures.Deployment(deploymentId: "slot-code", agentId: "agent-code", name: "dev") with { AgentType = AgentTypes.CodeAgent });
+
+        var resolved = _resolver.Resolve(new DeploymentAgentTypeQuery { Project = _root, AgentId = agentId, AgentName = agentName, DeploymentId = deploymentId, DeploymentName = deploymentName, RequireNamedAgentMatch = requireNamedAgentMatch });
+
+        Assert.Equal(expected, resolved.Source);
+        Assert.Equal(AgentTypes.CodeAgent, resolved.AgentType);
+    }
+
     [Fact]
     public void DeploymentRecord_WinsOverEverythingElse()
     {

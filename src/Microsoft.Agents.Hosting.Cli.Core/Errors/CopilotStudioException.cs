@@ -36,6 +36,9 @@ public static class CopilotErrorKinds
     /// <summary>A deploy would replace the values of shared environment variables the target environment already holds.</summary>
     public const string SharedEnvironmentVariablesRequireOverwrite = "shared-environment-variables-require-overwrite";
 
+    /// <summary>A pull stopped because the environment deleted locally edited knowledge files that it cannot keep.</summary>
+    public const string DeletedKnowledgeFileEditsCannotBeKept = "deleted-knowledge-file-edits-cannot-be-kept";
+
     /// <summary>A destructive command was invoked without confirmation.</summary>
     public const string ConfirmationRequired = "confirmation-required";
 
@@ -251,6 +254,18 @@ public sealed class CopilotStudioException : AgentHostingException
         ExitCodes.Usage,
         CopilotErrorKinds.SharedEnvironmentVariablesRequireOverwrite,
         $"Re-run `msagent agent deploy` with --overwrite to replace {(schemaNames.Count == 1 ? "its value" : "their values")} in {environmentId}, or discard the local change to {string.Join(", ", files)}.",
+        innerException);
+
+    /// <summary>A pull stopped before changing the workspace because the environment deleted or replaced locally edited knowledge files that it cannot keep.</summary>
+    /// <param name="filePaths">The workspace files that hold the local edits.</param>
+    /// <param name="innerException">The sync library's refusal.</param>
+    /// <returns>The typed failure.</returns>
+    public static CopilotStudioException DeletedKnowledgeFileEditsCannotBeKept(IReadOnlyList<string> filePaths, Exception innerException) => new(
+        ErrorCodes.CopilotStudio.DeletedKnowledgeFileEditsCannotBeKept,
+        $"The environment deleted or replaced {(filePaths.Count == 1 ? "a knowledge file" : $"{filePaths.Count} knowledge files")} you changed locally, and the pull can't keep {(filePaths.Count == 1 ? "it" : "them")}: {string.Join(", ", filePaths)}.",
+        ExitCodes.Usage,
+        CopilotErrorKinds.DeletedKnowledgeFileEditsCannotBeKept,
+        "Re-run `msagent agent pull` with --overwrite to delete your local copies and get the latest changes, or undo your local changes to these files and pull again.",
         innerException);
 
     /// <summary>A destructive command was invoked without confirmation.</summary>
@@ -502,15 +517,23 @@ public sealed class CopilotStudioException : AgentHostingException
     /// The service rejected a push because the agent changed in the cloud after the workspace's change
     /// token was issued.
     /// </summary>
+    /// <param name="overwriteRequested">Whether the push was asked to overwrite cloud changes, which these changes would not allow.</param>
     /// <param name="innerException">The sync library's failure.</param>
     /// <returns>The typed failure.</returns>
-    public static CopilotStudioException RemoteChangedDuringPush(Exception innerException) => new(
+    public static CopilotStudioException RemoteChangedDuringPush(bool overwriteRequested, Exception innerException) => new(
         ErrorCodes.CopilotStudio.RemoteChangedDuringPush,
         "The agent changed in the cloud while this push was being prepared.",
         ExitCodes.Usage,
         CopilotErrorKinds.RemoteChangedDuringPush,
-        "Run `msagent agent pull` to get the latest changes, then deploy again — or re-run with --overwrite to replace the cloud with your local content.",
+        overwriteRequested
+            ? "Run `msagent agent pull` to get the latest changes, then deploy again. --overwrite can't replace cloud changes that would delete or replace knowledge files you changed locally."
+            : "Run `msagent agent pull` to get the latest changes, then deploy again — or re-run with --overwrite to replace the cloud with your local content.",
         innerException);
+
+    /// <summary>The service rejected a push that did not ask to overwrite because the agent changed in the cloud after the workspace's change token was issued.</summary>
+    /// <param name="innerException">The sync library's failure.</param>
+    /// <returns>The typed failure.</returns>
+    public static CopilotStudioException RemoteChangedDuringPush(Exception innerException) => RemoteChangedDuringPush(overwriteRequested: false, innerException);
 
     /// <summary>
     /// A component push failed after the service had already refused a workflow or AI prompt.

@@ -711,6 +711,32 @@ public sealed class MakerEvaluationAdapterTests
     }
 
     [Fact]
+    public async Task AnyVerb_QuotesTheRequestIdsThatTraceTheFailure()
+    {
+        var handler = new RecordingHandler(["""{"Error":{"Code":"internalservererror","Message":"System Error occurred."}}"""], HttpStatusCode.InternalServerError);
+        handler.ResponseHeaders["x-ms-service-request-id"] = "service-1";
+        var adapter = new MakerEvaluationAdapter(new StubTokens(), CloudMap, () => handler);
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => adapter.StartRunAsync(Context(), BotId, new EvaluationRunStart { TestSetId = TestSetId, Name = "Nightly" }, CancellationToken.None));
+
+        Assert.EndsWith($"System Error occurred. (clientRequestId={handler.Requests[0].Header("x-ms-client-request-id")}, serviceRequestId=service-1).", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnyVerb_SendsEveryRequestItsOwnClientRequestId()
+    {
+        var (adapter, handler, _) = Create("[]", "[]");
+
+        await adapter.ListRunsAsync(Context(), BotId, 20, CancellationToken.None);
+        await adapter.ListRunsAsync(Context(), BotId, 20, CancellationToken.None);
+
+        var clientRequestIds = handler.Requests.Select(request => request.Header("x-ms-client-request-id")).ToArray();
+
+        Assert.All(clientRequestIds, clientRequestId => Assert.True(Guid.TryParse(clientRequestId, out _)));
+        Assert.Equal(2, clientRequestIds.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
     public async Task AnyVerb_FailsWhenTheEnvironmentAdvertisesNoGateway()
     {
         var (adapter, _, _) = Create("[]");
@@ -771,6 +797,8 @@ public sealed class MakerEvaluationAdapterTests
 
         public List<RecordedRequest> Requests { get; } = [];
 
+        public Dictionary<string, string> ResponseHeaders { get; } = [];
+
         public void Respond(Func<string, string> responder) => _responder = responder;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -783,7 +811,14 @@ public sealed class MakerEvaluationAdapterTests
                 ? _responder(body)
                 : _responses.Count > 0 ? _responses.Dequeue() : "{}";
 
-            return new HttpResponseMessage(_status) { Content = new StringContent(payload, Encoding.UTF8, "application/json") };
+            var response = new HttpResponseMessage(_status) { Content = new StringContent(payload, Encoding.UTF8, "application/json") };
+
+            foreach (var (name, value) in ResponseHeaders)
+            {
+                response.Headers.TryAddWithoutValidation(name, value);
+            }
+
+            return response;
         }
     }
 

@@ -255,12 +255,6 @@ public sealed class AgentHostingOperations : IAgentHostingOperations, IAgentEval
     }
 
     /// <inheritdoc />
-    public Task<AgentDeployResult> UpdateAgentDeploymentPackageAsync(
-        AgentDeploymentPackageUpdateRequest request,
-        CancellationToken cancellationToken) =>
-        _agentDeploy.UpdateAsync(request, cancellationToken);
-
-    /// <inheritdoc />
     public Task<AgentDeploymentCreateResult> CreateAgentDeploymentAsync(AgentDeploymentCreateRequest request, CancellationToken cancellationToken) =>
         RequireManagedAgents("deployment create").DeploymentCreate.CreateAsync(request, cancellationToken);
 

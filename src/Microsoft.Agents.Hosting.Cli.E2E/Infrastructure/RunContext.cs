@@ -36,6 +36,9 @@ public sealed class RunContext
 
     public StandaloneServices? Standalone { get; init; }
 
+    /// <summary>The Agent Management Service the code-agent scenarios drive, present when one of them is scheduled.</summary>
+    public AmsServices? Ams { get; init; }
+
     /// <summary>The read-only copy corpus as the run found it, compared again when the run ends.</summary>
     public TreeSnapshot? CorpusSnapshot { get; init; }
 
@@ -43,7 +46,7 @@ public sealed class RunContext
     public ScenarioContext ContextFor(Scenario scenario, Assertions assertions, CancellationToken cancellationToken) => new()
     {
         ScenarioId = scenario.Id,
-        Msagent = Msagent,
+        Msagent = scenario.MsagentFeature is { } feature ? Msagent.With(MsagentFeatures.Only(feature)) : Msagent,
         Config = Config,
         Assert = assertions,
         Ledger = Ledger,
@@ -54,5 +57,6 @@ public sealed class RunContext
         RunSuffix = RunSuffix,
         CancellationToken = cancellationToken,
         Standalone = Standalone,
+        Ams = Ams,
     };
 }

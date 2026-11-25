@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
 
@@ -186,7 +187,7 @@ public static class DeploymentChannelCatalog
                 new(DeploymentParameterType.Boolean, "isValidated", "Whether the channel is validated.", IsReadOnly: true),
                 new(DeploymentParameterType.String, "landingPageUrl", "The Slack landing page URL."),
                 new(DeploymentParameterType.String, "lastSubmissionId", "The last Slack submission id.", IsReadOnly: true),
-                new(DeploymentParameterType.String, "redirectAction", "The transient Slack authorization action.", IsSecret: true, IsReadOnly: true),
+                new(DeploymentParameterType.String, "redirectAction", "The transient Slack authorization action.", IsReadOnly: true),
                 new(DeploymentParameterType.Boolean, "registerBeforeOAuthFlow", "The CLI-managed OAuth registration control; writes always send true.", IsReadOnly: true),
                 new(DeploymentParameterType.String, "scopes", "The comma-separated Slack scopes.",
                     DefaultValue: "channels:history,channels:read,chat:write,dnd:read,emoji:read,files:read,files:write," +
@@ -292,6 +293,8 @@ public static class DeploymentChannelCatalog
             "create" or "list" => true,
             "show" or "update" => channel.Parameters.Count > 0,
             "delete" => channel.Name is not ("directline" or "webchat"),
+            "token" => channel.Name == "directline",
+            "webhook" => channel.Name == "facebook",
             _ => false,
         };
 
@@ -321,11 +324,10 @@ public static class DeploymentChannelCatalog
 
     /// <summary>
     /// Produces the safe canonical channel shape defined by the catalog. Undeclared parameters are removed,
-    /// declared secrets are masked, and the raw ARM response is retained only when requested and redacted.
+    /// declared secrets are masked, and the adapter's authorization link is preserved.
     /// </summary>
     internal static DeploymentChannelRecord? Sanitize(
         DeploymentChannelRecord channel,
-        bool includeArmResponse = true,
         bool omitSecrets = false)
     {
         var definition = FindChannelDefinitionOrDefault(channel.ChannelName, ChannelKeyType.Name)
@@ -343,10 +345,6 @@ public static class DeploymentChannelCatalog
         {
             ChannelName = definition.Name,
             Parameters = sanitized,
-            RawArmResponse = includeArmResponse && channel.RawArmResponse is { } rawArmResponse
-                ? BotServiceResponseRedactor.RedactChannel(rawArmResponse, definition)
-                : null,
-            AuthorizationUrl = includeArmResponse ? channel.AuthorizationUrl : null,
         };
     }
 
@@ -378,7 +376,7 @@ public static class DeploymentChannelCatalog
 
             if (definition.IsSecret)
             {
-                result[definition.Name] = JsonSerializer.SerializeToElement(BotServiceResponseRedactor.Mask);
+                result[definition.Name] = JsonSerializer.SerializeToElement(SecretRedaction.Mask);
             }
             else if (definition.ItemParameters is { } itemParameters)
             {

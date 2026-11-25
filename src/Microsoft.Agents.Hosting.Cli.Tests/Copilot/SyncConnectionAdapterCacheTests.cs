@@ -3,6 +3,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.Platform.Content;
 using Microsoft.CopilotStudio.McsCore;
 using Microsoft.CopilotStudio.Sync;
 using Microsoft.CopilotStudio.Sync.Dataverse;
@@ -234,8 +235,11 @@ internal sealed class RecordingConnectionManagementService : IConnectionManageme
     public Task<DeclareConnectionReferencesResult> DeclareConnectionReferencesAsync(DirectoryPath workspaceFolder, DefinitionBase definition, IReadOnlyList<string> logicalNames, ISyncDataverseClient dataverseClient, CancellationToken cancellationToken) =>
         Task.FromResult(new DeclareConnectionReferencesResult());
 
-    public Task<string> CreateConnectionReferenceForConnectorAsync(DirectoryPath workspaceFolder, DefinitionBase definition, string connectorInternalId, ISyncDataverseClient dataverseClient, CancellationToken cancellationToken) =>
+    public Task<string> CreateConnectionReferenceForConnectorAsync(DirectoryPath workspaceFolder, DefinitionBase definition, string connectorInternalId, CancellationToken cancellationToken) =>
         Task.FromResult(string.Empty);
+
+    public Task<IReadOnlyList<AgentConnectionView>> ManageDeploymentConnectionsAsync(DirectoryPath workspaceFolder, DefinitionBase definition, AuthoringOperationContextBase operationContext, AgentSyncInfo syncInfo, ISyncDataverseClient dataverseClient, IConnectionCatalogClient catalogClient, PowerAppsContext catalogContext, IReadOnlyList<ConnectionBindingRequest> bindings, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<AgentConnectionView>>(Views);
 
     public Task<ConnectionReferenceRemovalResult> RemoveConnectionReferenceAsync(DirectoryPath workspaceFolder, DefinitionBase definition, string logicalName, bool confirmed, CancellationToken cancellationToken) =>
         Task.FromResult(RemovalReturns);

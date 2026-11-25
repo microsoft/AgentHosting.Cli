@@ -165,7 +165,6 @@ public sealed class DeploymentChannelAdapter : DeploymentArmClient, IDeploymentC
             Parameters = channelDefinition is { IsSupported: true }
                 ? ExtractDeclaredChannelProperties(redactedResponse, channelDefinition)
                 : new Dictionary<string, JsonElement>(StringComparer.Ordinal),
-            RawArmResponse = redactedResponse,
         };
     }
 

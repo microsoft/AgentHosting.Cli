@@ -110,7 +110,7 @@ public sealed class AgentCreateCommandHostTests
             "--language-version", "net10.0");
 
         Assert.Contains("Agent and service-owned repository created", stdout, StringComparison.Ordinal);
-        Assert.Contains("does not report package publication or runtime readiness", stdout, StringComparison.Ordinal);
+        Assert.StartsWith("  repository: ", stdout.TrimEnd().Split(Environment.NewLine)[^1], StringComparison.Ordinal);
         Assert.DoesNotContain("running", stdout, StringComparison.OrdinalIgnoreCase);
     }
 

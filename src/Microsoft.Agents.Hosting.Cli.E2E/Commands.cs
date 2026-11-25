@@ -287,6 +287,10 @@ public static class Commands
         Capability.StandaloneOracle => "sw.oracle",
         Capability.StandaloneFlowRuns => "sw.flowRuns",
         Capability.CopyCorpus => "copy.corpus",
+        Capability.AmsCreate => "ams.create",
+        Capability.AmsPackage => "ams.package",
+        Capability.AmsHosted => "ams.hosted",
+        Capability.AmsProd => "ams.prod",
         _ => capability.ToString().ToLowerInvariant(),
     };
 

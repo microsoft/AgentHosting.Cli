@@ -116,7 +116,7 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PullAsync(Workspace(), CancellationToken.None);
+        await Create(synchronizer).PullAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.Equal(1, synchronizer.DownloadKnowledgeFilesCalls);
     }
@@ -126,7 +126,7 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PullAsync(Workspace(), CancellationToken.None);
+        await Create(synchronizer).PullAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.Null(synchronizer.LastDownloadSchemaNames);
     }
@@ -136,11 +136,47 @@ public sealed class SyncWorkspaceAdapterKnowledgeFileTests
     {
         var synchronizer = new RecordingWorkspaceSynchronizer();
 
-        await Create(synchronizer).PullAsync(Workspace(), CancellationToken.None);
+        await Create(synchronizer).PullAsync(Workspace(), overwrite: false, CancellationToken.None);
 
         Assert.Equal(
             [nameof(IWorkspaceSynchronizer.PullExistingChangesAsync), nameof(IWorkspaceSynchronizer.DownloadKnowledgeFilesAsync)],
             synchronizer.Calls.Where(call => call is nameof(IWorkspaceSynchronizer.PullExistingChangesAsync) or nameof(IWorkspaceSynchronizer.DownloadKnowledgeFilesAsync)));
+    }
+
+    [Theory]
+    [InlineData(false, DeletedKnowledgeFileEdits.Keep)]
+    [InlineData(true, DeletedKnowledgeFileEdits.Discard)]
+    public async Task Pull_KeepsKnowledgeFilesTheEnvironmentDeletedAfterLocalEditsUnlessOverwriting(bool overwrite, DeletedKnowledgeFileEdits expected)
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+
+        await Create(synchronizer).PullAsync(Workspace(), overwrite, CancellationToken.None);
+
+        Assert.Equal(expected, synchronizer.LastDeletedKnowledgeFileEdits);
+    }
+
+    [Fact]
+    public async Task Pull_ThroughThePortWithoutAnOverwriteChoice_KeepsKnowledgeFilesTheEnvironmentDeletedAfterLocalEdits()
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+
+        await ((ICopilotWorkspacePort)Create(synchronizer)).PullAsync(Workspace(), CancellationToken.None);
+
+        Assert.Equal(DeletedKnowledgeFileEdits.Keep, synchronizer.LastDeletedKnowledgeFileEdits);
+        Assert.Equal(1, synchronizer.DownloadKnowledgeFilesCalls);
+    }
+
+    [Fact]
+    public async Task Pull_KnowledgeFilesTheEnvironmentDeletedAfterLocalEditsThatCannotBeKept_FailWithOverwriteGuidanceBeforeDownloadingContent()
+    {
+        var synchronizer = new RecordingWorkspaceSynchronizer { PullExistingChangesThrows = new DeletedKnowledgeFileEditsException(["knowledge/files/rules.txt", "knowledge/files/fees.txt"], canBeKept: false) };
+
+        var failure = await Assert.ThrowsAsync<CopilotStudioException>(() => Create(synchronizer).PullAsync(Workspace(), overwrite: false, CancellationToken.None));
+
+        Assert.Equal((17035, CopilotErrorKinds.DeletedKnowledgeFileEditsCannotBeKept), (failure.ErrorCode, failure.ErrorKind));
+        Assert.Equal("The environment deleted or replaced 2 knowledge files you changed locally, and the pull can't keep them: knowledge/files/rules.txt, knowledge/files/fees.txt.", failure.Message);
+        Assert.Contains("--overwrite", failure.Remediation, StringComparison.Ordinal);
+        Assert.DoesNotContain(nameof(IWorkspaceSynchronizer.DownloadKnowledgeFilesAsync), synchronizer.Calls);
     }
 }
 
@@ -337,19 +373,24 @@ internal sealed class RecordingWorkspaceSynchronizer : IWorkspaceSynchronizer, I
 
     public ICollection<WorkspaceDiagnostic>? LastPullConflicts { get; private set; }
 
+    public DeletedKnowledgeFileEdits? LastDeletedKnowledgeFileEdits { get; private set; }
+
     public IReadOnlyList<WorkspaceDiagnostic> PullConflicts { get; init; } = [];
 
-    public Task<DefinitionBase> PullExistingChangesAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, DefinitionBase localWorkspaceDefinition, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, CancellationToken cancellationToken, bool downloadAllKnowledgeFiles = false, ICollection<WorkspaceDiagnostic>? conflicts = null)
+    public Exception? PullExistingChangesThrows { get; init; }
+
+    public Task<DefinitionBase> PullExistingChangesAsync(DirectoryPath workspaceFolder, AuthoringOperationContextBase operationContext, DefinitionBase localWorkspaceDefinition, ISyncDataverseClient dataverseClient, AgentSyncInfo syncInfo, CancellationToken cancellationToken, bool downloadAllKnowledgeFiles = false, ICollection<WorkspaceDiagnostic>? conflicts = null, DeletedKnowledgeFileEdits deletedKnowledgeFileEdits = DeletedKnowledgeFileEdits.Keep, ImmutableArray<string>? approvedKnowledgeFileDeletions = null)
     {
         Calls.Add(nameof(PullExistingChangesAsync));
         LastPullConflicts = conflicts;
+        LastDeletedKnowledgeFileEdits = deletedKnowledgeFileEdits;
 
         foreach (var conflict in PullConflicts)
         {
             conflicts?.Add(conflict);
         }
 
-        return Task.FromResult(localWorkspaceDefinition);
+        return PullExistingChangesThrows is not null ? Task.FromException<DefinitionBase>(PullExistingChangesThrows) : Task.FromResult(localWorkspaceDefinition);
     }
 
     public int ThrowIfWorkspaceInvalidCalls { get; private set; }

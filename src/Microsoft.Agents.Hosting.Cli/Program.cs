@@ -118,7 +118,13 @@ internal static class Program
             outputRedirected: Console.IsOutputRedirected,
             errorRedirected: Console.IsErrorRedirected);
 
-        var progressSpinner = new ProgressSpinner(Console.Error, ConsoleProgressPolicy.ShouldShowProgress(Console.IsErrorRedirected, Environment.GetEnvironmentVariable("CI")), color, TimeProvider.System, ConsoleWidth);
+        var debugRequested = GlobalOptions.IsPresent(args, "--debug");
+        var diagnosticColor = color && !Console.IsErrorRedirected;
+        var httpDiagnostics = new HttpDiagnostics(debugRequested
+            ? new TextWriterHttpDiagnosticSink(Console.Error, diagnosticColor)
+            : null);
+        HttpMessageHandler CreateTransport() => httpDiagnostics.Wrap(TransportDefaults.CreateRedirectRejectingHandler());
+        var progressSpinner = new ProgressSpinner(Console.Error, !debugRequested && ConsoleProgressPolicy.ShouldShowProgress(Console.IsErrorRedirected, Environment.GetEnvironmentVariable("CI")), color, TimeProvider.System, ConsoleWidth);
 
         var options = new AgentHostAuthOptions
         {
@@ -131,11 +137,13 @@ internal static class Program
             AllowUnprotectedCache = ParseBoolean(Environment.GetEnvironmentVariable("AH_CLI_ALLOW_UNPROTECTED_CACHE")),
             Cloud = powerPlatformApiTarget.Cloud,
             InteractionAllowed = AgentHostCli.ResolveInteractionAllowed(args, featureFlags),
-            DebugOutput = GlobalOptions.IsPresent(args, "--debug") ? Console.Error : null,
+            DebugOutput = debugRequested ? Console.Error : null,
+            DebugColor = diagnosticColor,
             MessageOutput = progressSpinner.Error,
         };
 
         var services = new ServiceCollection();
+        services.AddSingleton(httpDiagnostics);
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IProgressStatus>(progressSpinner);
         services.AddSingleton<IFeatureFlags>(featureFlags);
@@ -155,39 +163,37 @@ internal static class Program
         // package: this is the only place that should decide how an HttpClient behaves. Automatic
         // redirect following is disabled so a host-changing redirect can never cause the delegated
         // bearer token to be replayed to a host the cloud map never approved.
-        services.AddSingleton<AgentCreationTarget>();
+        services.AddSingleton(AmsEndpointProfile.FromEnvironment(Environment.GetEnvironmentVariable));
 
         // Automatic redirect following is disabled at client construction — before any authorization
         // header exists — so a host-changing redirect can never cause the delegated bearer token to be
         // resent to a host that is not the configured one.
-        var debugRequested = GlobalOptions.IsPresent(args, "--debug");
         services.AddSingleton<IAmsPackagePublicationTransport>(sp => new AmsPackagePublicationAdapter(
-            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
+            new HttpClient(CreateTransport()),
             sp.GetRequiredService<ITokenProvider>(),
             sp.GetRequiredService<PpapiTokenClaimsValidator>(),
             profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
-        services.AddSingleton(sp => new AmsDeploymentAdapter(
-            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
-            sp.GetRequiredService<ITokenProvider>(),
-            sp.GetRequiredService<PpapiTokenClaimsValidator>(),
-            profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
-        services.AddSingleton<IAmsAgentReadTransport>(
-            sp => sp.GetRequiredService<AmsDeploymentAdapter>());
-        services.AddSingleton<IAmsDeploymentTransport>(
-            sp => sp.GetRequiredService<AmsDeploymentAdapter>());
+        services.AddSingleton<IAmsDeploymentTransport>(sp => new AmsDeploymentAdapter(new HttpClient(CreateTransport()), sp.GetRequiredService<ITokenProvider>(), sp.GetRequiredService<PpapiTokenClaimsValidator>(), profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
+        services.AddSingleton(sp => new AmsAgentAdapter(new HttpClient(CreateTransport()), sp.GetRequiredService<ITokenProvider>(), sp.GetRequiredService<PpapiTokenClaimsValidator>(), profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
+        services.AddSingleton<IAmsAgentReadTransport>(sp => sp.GetRequiredService<AmsAgentAdapter>());
+        services.AddSingleton<IAmsAgentTransport>(sp => sp.GetRequiredService<AmsAgentAdapter>());
+        services.AddSingleton<IAmsChannelTransport>(sp => new AmsChannelAdapter(new HttpClient(CreateTransport()), sp.GetRequiredService<ITokenProvider>(), sp.GetRequiredService<PpapiTokenClaimsValidator>(), sp.GetRequiredService<IProfileResourceTokenProvider>()));
+        services.AddSingleton<IAmsOAuthTransport>(sp => new AmsOAuthAdapter(new HttpClient(CreateTransport()), sp.GetRequiredService<ITokenProvider>(), sp.GetRequiredService<PpapiTokenClaimsValidator>(), sp.GetRequiredService<IProfileResourceTokenProvider>()));
+        services.AddSingleton<IStandardInput>(new ConsoleStandardInput(Console.OpenStandardInput, () => Console.IsInputRedirected));
         services.AddSingleton<IAmsAgentCreationTransport>(sp => new AmsAgentCreationAdapter(
-            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
+            new HttpClient(CreateTransport()),
             sp.GetRequiredService<ITokenProvider>(),
             sp.GetRequiredService<PpapiTokenClaimsValidator>(),
             profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
 
         ConfigureProfileAuthentication(services, options, powerPlatformApiTarget, Environment.GetEnvironmentVariable,
-            bootstrapProfile: invocation.Profile);
+            bootstrapProfile: invocation.Profile, httpDiagnostics: httpDiagnostics);
         services.AddSingleton<ICommandTelemetryProfileContextSource>(
             sp => new CommandTelemetryProfileContextSource(
                 sp.GetRequiredService<IAuthProfileTelemetryStore>(),
                 sp.GetRequiredService<AuthSessionContext>()));
-        services.AddAgentHostCopilotStudio(progressSpinner.Error, powerPlatformApiTarget, debugRequested);
+        services.AddAgentHostCopilotStudio(progressSpinner.Error, powerPlatformApiTarget, debugRequested, httpDiagnostics,
+            diagnosticColor: diagnosticColor);
 
         services.AddSingleton<CopilotSchemaName>();
         services.AddSingleton<CopilotAgentName>();
@@ -228,7 +234,9 @@ internal static class Program
                     await using var session = new McsLiveTestSession(
                         new McsLiveTestTarget(target.EnvironmentId, target.TenantId, target.SchemaName),
                         sp.GetRequiredService<ITokenProvider>(),
-                        cancellationToken: cancellationToken);
+                        transport: null,
+                        cancellationToken: cancellationToken,
+                        httpDiagnostics: httpDiagnostics);
                     return target with
                     {
                         Endpoint = await session.DiscoverEndpointAsync(cancellationToken).ConfigureAwait(false),
@@ -264,7 +272,7 @@ internal static class Program
         services.AddSingleton<DeploymentAgentTypeResolver>();
         services.AddSingleton<IBrowserLauncher, SystemBrowserLauncher>();
         services.AddSingleton<IOperatorInterrupt, ConsoleEscapeInterrupt>();
-        ConfigureConnectionConsent(services, powerPlatformApiTarget, debugRequested);
+        ConfigureConnectionConsent(services, powerPlatformApiTarget, debugRequested, httpDiagnostics);
         services.AddSingleton(serviceProvider => new ConnectorReadinessWait(serviceProvider.GetRequiredService<IConnectorCatalogPort>(), serviceProvider.GetRequiredService<ICopilotNamingRules>()));
         services.AddSingleton<AgentDeploymentConnectionResolver>();
         services.AddSingleton<ConnectionTargetResolver>();
@@ -398,10 +406,18 @@ internal static class Program
         }
 
         Console.CancelKeyPress += OnCancelKeyPress;
+        var finalDiagnosticsWritten = false;
 
         try
         {
-            return await cli.InvokeAsync(args, Console.Out, Console.Error, color, lifetime.Token);
+            return await cli.InvokeAsync(args, Console.Out, Console.Error, color,
+                beforeFinalOutput: async () =>
+                {
+                    await provider.DisposeAsync();
+                    WriteDiagnosticError(httpDiagnostics);
+
+                    finalDiagnosticsWritten = true;
+                }, cancellationToken: lifetime.Token);
         }
         catch (CommandConfigurationException failure)
         {
@@ -414,10 +430,32 @@ internal static class Program
         finally
         {
             Console.CancelKeyPress -= OnCancelKeyPress;
+            if (!finalDiagnosticsWritten)
+            {
+                WriteDiagnosticError(httpDiagnostics);
+            }
         }
     }
 
-    private static HttpClient CreateUpdateHttpClient()
+    internal static void WriteDiagnosticError(HttpDiagnostics diagnostics)
+    {
+        if (diagnostics.DiagnosticWriteError is not { } failure)
+        {
+            return;
+        }
+
+        try
+        {
+            Console.Error.WriteLine($"ERROR: Debug output is incomplete. {failure.GetType().Name}: {failure.Message}");
+            Console.Error.Flush();
+        }
+        catch (Exception error) when (error is IOException or ObjectDisposedException)
+        {
+            diagnostics.RecordWriteError(error);
+        }
+    }
+
+    internal static HttpClient CreateUpdateHttpClient()
     {
         var handler = TransportDefaults.CreateRedirectRejectingHandler();
         handler.UseCookies = false;
@@ -547,8 +585,10 @@ internal static class Program
             : PowerPlatformApiTargetSelection.TargetFor(profile.Cloud, profile.Ring), true, profile);
     }
 
-    internal static void ConfigureConnectionConsent(IServiceCollection services, PowerPlatformApiTargetConfig target, bool debugRequested)
+    internal static void ConfigureConnectionConsent(IServiceCollection services, PowerPlatformApiTargetConfig target, bool debugRequested,
+        HttpDiagnostics? httpDiagnostics = null)
     {
+        var diagnostics = debugRequested ? httpDiagnostics ?? HttpDiagnostics.Disabled : HttpDiagnostics.Disabled;
         services.AddSingleton<IConnectionConsentFlow>(sp => new CapturedConnectionConsentFlow(environment =>
         {
             var cluster = environment.Context is { } context
@@ -558,7 +598,7 @@ internal static class Program
                 new ConsentLinkConnectionConsentFlow(
                     new PowerAppsConnectionClient(
                         sp.GetRequiredService<ITokenProvider>(), cluster,
-                        diagnostics: debugRequested ? Console.Error : null,
+                        handlerFactory: () => diagnostics.Wrap(TransportDefaults.CreateRedirectRejectingHandler()),
                         profileCredentials: sp.GetRequiredService<IProfileCredentialProvider>()),
                     sp.GetRequiredService<IInteractiveMessagePresenter>(),
                     sp.GetRequiredService<IBrowserLauncher>(), cluster,
@@ -579,12 +619,14 @@ internal static class Program
         Func<string, string?> readEnvironment,
         Func<IOwnedProtectedStorageBackend>? createOwnedStorage = null,
         Func<ILegacyMsalTokenCacheBackend>? createLegacyCache = null,
-        AuthProfile? bootstrapProfile = null)
+        AuthProfile? bootstrapProfile = null,
+        HttpDiagnostics? httpDiagnostics = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(readEnvironment);
+        var diagnostics = httpDiagnostics ?? HttpDiagnostics.Disabled;
         var nativeSettings = new Dictionary<string, string?>
         {
             ["DBUS_SESSION_BUS_ADDRESS"] = readEnvironment("DBUS_SESSION_BUS_ADDRESS"),
@@ -592,7 +634,7 @@ internal static class Program
         };
         var macPolicy = new Lazy<MacOsKeychainProcessPolicy?>(() => OperatingSystem.IsMacOS()
             ? MacOsKeychainProcessPolicy.EstablishForCliProcess() : null);
-        services.AddAgentHostAuthentication(options, target);
+        services.AddAgentHostAuthentication(options, target, diagnostics);
         var ownedStorage = new DeferredOwnedProtectedStorage(createOwnedStorage ?? (() =>
             OwnedProtectedStorageBackendFactory.Create(options.ConfigDirectory, macPolicy.Value, nativeSettings.GetValueOrDefault)),
             OperatingSystem.IsLinux() && options.AllowUnprotectedCache ? options.ConfigDirectory : null);
@@ -620,7 +662,7 @@ internal static class Program
         services.AddSingleton<IOwnedProtectedStorageBackend>(_ => ownedStorage);
         services.AddSingleton<ILegacyMsalTokenCacheBackend>(_ => legacyCache);
         services.AddKeyedSingleton<HttpClient>("profile-environments", (_, _) =>
-            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()));
+            new HttpClient(diagnostics.Wrap(TransportDefaults.CreateRedirectRejectingHandler())));
         services.AddSingleton<IProfileResourceTokenProvider>(sp => new ProfileResourceTokenProvider(
             sp.GetRequiredService<IProfileCredentialProvider>(), sp.GetRequiredService<PpapiTokenClaimsValidator>()));
         services.AddSingleton(sp => new CapturedProfileClients(
@@ -628,7 +670,7 @@ internal static class Program
             sp.GetRequiredService<IProfileResourceTokenProvider>(), bootstrapProfile));
         services.AddSingleton<IProfileEnvironmentClientFactory>(sp => sp.GetRequiredService<CapturedProfileClients>());
         services.AddKeyedSingleton<HttpClient>("profile-geography", (_, _) =>
-            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()));
+            new HttpClient(diagnostics.Wrap(TransportDefaults.CreateRedirectRejectingHandler())));
         services.AddSingleton<IEnvironmentGeographyClient>(sp => new CapturedProfileGeographyClient(
             sp.GetRequiredKeyedService<HttpClient>("profile-geography"), sp.GetRequiredService<CapturedProfileClients>(),
             sp.GetRequiredService<MsalSilentTokenProvider>()));

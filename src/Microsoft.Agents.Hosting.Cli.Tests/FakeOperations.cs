@@ -55,7 +55,6 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
     public Func<AgentCreateRequest, AgentCreateResult>? OnAgentCreate { get; init; }
     public Func<AgentPackageUploadRequest, AgentPackageUploadResult>? OnAgentPackageUpload { get; init; }
     public Func<AgentDeployRequest, AgentDeployResult>? OnAgentDeploy { get; init; }
-    public Func<AgentDeploymentPackageUpdateRequest, AgentDeployResult>? OnAgentDeploymentPackageUpdate { get; init; }
     public Func<DeploymentCreateRequest, DeploymentResult<CodeAgentDeployment>>? OnCreateDeployment { get; init; }
     public Func<DeploymentShowRequest, DeploymentResult<CodeAgentDeployment>>? OnGetDeployment { get; init; }
     public Func<DeploymentUpdateRequest, DeploymentResult<CodeAgentDeployment>>? OnUpdateDeployment { get; init; }
@@ -89,7 +88,6 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
     public string? LastSwitchAccount { get; private set; }
     public string? LastSelectedEnvironmentId { get; private set; }
     public AgentDeployRequest? LastDeployRequest { get; private set; }
-    public AgentDeploymentPackageUpdateRequest? LastAgentDeploymentPackageUpdateRequest { get; private set; }
     public AgentPackageUploadRequest? LastPackageUploadRequest { get; private set; }
     public AgentCreateRequest? LastCreateRequest { get; private set; }
 
@@ -132,24 +130,7 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
     public Task<AgentDeployResult> DeployAgentAsync(AgentDeployRequest request, CancellationToken cancellationToken)
     {
         LastDeployRequest = request;
-        return Task.FromResult((OnAgentDeploy ?? (input => CreateStubDeployResult() with
-        {
-            TargetEnvironmentId = input.TargetEnvironmentId,
-        }))(request));
-    }
-
-    public Task<AgentDeployResult> UpdateAgentDeploymentPackageAsync(
-        AgentDeploymentPackageUpdateRequest request,
-        CancellationToken cancellationToken)
-    {
-        LastAgentDeploymentPackageUpdateRequest = request;
-        return Task.FromResult((OnAgentDeploymentPackageUpdate ?? (input => CreateStubDeployResult() with
-        {
-            Status = "agent-deployment-updated",
-            AgentId = input.AgentId ?? "44444444-4444-4444-4444-444444444444",
-            DeploymentId = input.DeploymentId ?? "77777777-7777-7777-7777-777777777777",
-            PackageRevisionId = input.PackageRevisionId ?? "66666666-6666-6666-6666-666666666666",
-        }))(request));
+        return Task.FromResult((OnAgentDeploy ?? (_ => CreateStubDeployResult()))(request));
     }
 
     public Task<AgentPackageUploadResult> UploadAgentPackageAsync(
@@ -648,31 +629,31 @@ internal sealed class FakeOperations : IAgentHostingOperations, IAgentEvaluation
         PackageSizeInBytes = 1024,
     };
 
-    /// <summary>
-    /// A secret-free target-routed projection result for the default host pipeline tests.
-    /// </summary>
-    internal static AgentDeployResult CreateStubDeployResult() => new()
+    internal static AgentDeploymentAmsRecord CreateStubDeploymentRecord() => new()
     {
-        Status = "deployment-projection-acknowledged",
+        DeploymentId = "77777777-7777-7777-7777-777777777777",
+        DeploymentName = "dev-proof",
+        AgentId = "44444444-4444-4444-4444-444444444444",
         TenantId = "11111111-1111-1111-1111-111111111111",
         HomeEnvironmentId = "22222222-2222-2222-2222-222222222222",
         TargetEnvironmentId = "33333333-3333-3333-3333-333333333333",
-        AgentId = "44444444-4444-4444-4444-444444444444",
-        PackageRevisionId = "66666666-6666-6666-6666-666666666666",
-        PackageDigest = new string('a', 64),
-        PackageSizeInBytes = 1024,
-        DeploymentId = "77777777-7777-7777-7777-777777777777",
-        DeploymentName = "dev-proof",
         DeploymentType = "Dev",
         EntraId = "88888888-8888-8888-8888-888888888888",
         EntraIdType = "AppReg",
-        RuntimeEndpoint = "https://runtime.example/api/messages",
-        PackageSource = "current-grs",
-        ProjectionAcknowledged = true,
-        PublicDeployOperationCreated = false,
-        TargetLocalPackageStagingPerformed = false,
-        RuntimeReadinessProven = false,
-        CrossIslandDemonstrated = false,
+        State = "Deployed",
+        Kind = AgentDeploymentAmsRecord.PackageKind,
+        PackageRevisionId = "66666666-6666-6666-6666-666666666666",
+        CommitId = "0123456789abcdef0123456789abcdef01234567",
+        PackageDigest = new string('a', 64),
+        PackageSizeInBytes = 1024,
+        Endpoint = "https://runtime.example/api/messages",
+    };
+
+    internal static AgentDeployResult CreateStubDeployResult() => new()
+    {
+        Status = AgentDeployResult.DeployedStatus,
+        Deployment = CreateStubDeploymentRecord(),
+        Bot = AgentDeployResult.BotNone,
     };
 
     internal static AgentCreateResult CreateStubCreateResult() => new()

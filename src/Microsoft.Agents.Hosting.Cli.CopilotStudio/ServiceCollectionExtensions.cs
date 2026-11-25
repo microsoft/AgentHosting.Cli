@@ -32,12 +32,16 @@ public static class ServiceCollectionExtensions
     /// Platform directly, so the cloud and ring are taken from the caller rather than assumed.
     /// </param>
     /// <param name="verboseProgress">Whether the sync library's progress and diagnostics are shown.</param>
+    /// <param name="httpDiagnostics">Optional invocation-wide HTTP tracing.</param>
+    /// <param name="diagnosticColor">Whether debug Sync timestamps use ANSI gray.</param>
     /// <returns>The same container, for chaining.</returns>
-    public static IServiceCollection AddAgentHostCopilotStudio(this IServiceCollection services, TextWriter standardError, PowerPlatformApiTargetConfig apiTarget, bool verboseProgress = false)
+    public static IServiceCollection AddAgentHostCopilotStudio(this IServiceCollection services, TextWriter standardError, PowerPlatformApiTargetConfig apiTarget, bool verboseProgress = false, HttpDiagnostics? httpDiagnostics = null, bool diagnosticColor = false)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(standardError);
         ArgumentNullException.ThrowIfNull(apiTarget);
+        var diagnostics = httpDiagnostics ?? HttpDiagnostics.Disabled;
+        HttpMessageHandler CreateTransport() => diagnostics.Wrap(TransportDefaults.CreateRedirectRejectingHandler());
 
         services.TryAddSingleton(PowerPlatformCloudMap.ForTarget(apiTarget));
         services.TryAdd(ServiceDescriptor.Singleton(typeof(CliClusterCategory), _ => (object)PowerAppsServiceTarget.ClusterFor(apiTarget)));
@@ -60,8 +64,9 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<ISyncAuthProvider>(provider => new AgentHostSyncAuthProvider(
             provider.GetRequiredService<ITokenProvider>(), provider.GetService<IProfileCredentialProvider>(), apiTarget));
-        services.AddSingleton<ISyncProgress>(_ => new StandardErrorSyncProgress(standardError, verboseProgress));
-        services.AddSingleton<AgentHostDataverseHttpClientAccessor>();
+        services.AddSingleton<ISyncProgress>(_ => new StandardErrorSyncProgress(standardError, verboseProgress, color: diagnosticColor));
+        services.AddSingleton(provider => new AgentHostDataverseHttpClientAccessor(
+            provider.GetRequiredService<ISyncAuthProvider>(), AgentHostDataverseHttpClientAccessor.CreateRedirectRejectingHandler, diagnostics));
         services.AddSingleton<IDataverseHttpClientAccessor>(provider => provider.GetRequiredService<AgentHostDataverseHttpClientAccessor>());
 
         services.AddSyncServices(userAgent: DataverseUserAgent(), isIslandPreauthorized: false);
@@ -83,8 +88,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ICopilotWorkspacePort, SyncWorkspaceAdapter>();
         services.AddSingleton<ICopilotCatalogPort, DataverseCatalogAdapter>();
         services.AddSingleton<DataverseWebApiClient>();
-        services.AddSingleton<IAgentSharingPort>(provider => new IslandSharingAdapter(provider.GetRequiredService<ITokenProvider>(), provider.GetRequiredService<PowerPlatformCloudMap>(), profileCredentials: provider.GetService<IProfileCredentialProvider>()));
-        services.AddSingleton<IAgentEvaluationPort>(provider => new MakerEvaluationAdapter(provider.GetRequiredService<ITokenProvider>(), provider.GetRequiredService<PowerPlatformCloudMap>(), profileCredentials: provider.GetService<IProfileCredentialProvider>()));
+        services.AddSingleton<IAgentSharingPort>(provider => new IslandSharingAdapter(provider.GetRequiredService<ITokenProvider>(), provider.GetRequiredService<PowerPlatformCloudMap>(), CreateTransport, provider.GetService<IProfileCredentialProvider>()));
+        services.AddSingleton<IAgentEvaluationPort>(provider => new MakerEvaluationAdapter(provider.GetRequiredService<ITokenProvider>(), provider.GetRequiredService<PowerPlatformCloudMap>(), CreateTransport, provider.GetService<IProfileCredentialProvider>()));
         services.AddSingleton<IEvaluationComponentStore, DataverseEvaluationComponentStore>();
         services.AddSingleton<IDirectoryPrincipalPort, DataversePrincipalAdapter>();
         services.AddSingleton<IConnectionManagementService>(provider => (IConnectionManagementService)provider.GetRequiredService<IWorkspaceSynchronizer>());
@@ -104,7 +109,7 @@ public static class ServiceCollectionExtensions
             provider.GetService<IProfileCredentialProvider>()));
         services.AddSingleton<ICopilotConnectionPort>(provider => provider.GetRequiredService<SyncConnectionAdapter>());
         services.AddSingleton<IConnectorCatalogPort>(provider => provider.GetRequiredService<SyncConnectionAdapter>());
-        services.AddSingleton<IConnectionLifecyclePort>(provider => new PowerAppsConnectionAdapter(provider.GetRequiredService<ITokenProvider>(), () => provider.GetRequiredService<CliClusterCategory>(), profileCredentials: provider.GetService<IProfileCredentialProvider>()));
+        services.AddSingleton<IConnectionLifecyclePort>(provider => new PowerAppsConnectionAdapter(provider.GetRequiredService<ITokenProvider>(), () => provider.GetRequiredService<CliClusterCategory>(), CreateTransport, provider.GetService<IProfileCredentialProvider>()));
 
         return services;
     }

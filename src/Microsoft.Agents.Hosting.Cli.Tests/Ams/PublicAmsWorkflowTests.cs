@@ -6,6 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Ams;
 
@@ -19,7 +20,6 @@ public sealed class PublicAmsWorkflowTests
     private const string Revision = "66666666-6666-6666-6666-666666666666";
     private const string Deployment = "77777777-7777-7777-7777-777777777777";
     private const string Entra = "88888888-8888-8888-8888-888888888888";
-    private const string UpdatedRevision = "99999999-9999-9999-9999-999999999999";
 
     [Theory]
     [InlineData(
@@ -52,7 +52,7 @@ public sealed class PublicAmsWorkflowTests
         true,
         "https://api.test.powerplatform.com/",
         "https://2222222222222222222222222222222.2.environment.api.test.powerplatform.com/")]
-    public async Task CreateUploadDeployUpdate_ResolvesEnvironmentHostWithoutAdvertisedEndpoints(
+    public async Task CreateUploadCreateDeploymentDeployRename_ResolvesEnvironmentHostWithoutAdvertisedEndpoints(
         PowerPlatformApiRing ring,
         bool useStoredGlobalEndpoint,
         string globalEndpoint,
@@ -126,47 +126,44 @@ public sealed class PublicAmsWorkflowTests
             createdTime = DateTimeOffset.UnixEpoch,
             changedTime = DateTimeOffset.UnixEpoch,
         });
-        string DeploymentBody(string revision) => JsonSerializer.Serialize(new
+        string DeploymentBody(string state, string deploymentName) => JsonSerializer.Serialize(new
         {
             id = Deployment,
             tenantId = Tenant,
             homeEnvironmentId = Home,
             environmentId = Target,
             agentId = Agent,
-            packageRevisionId = revision,
-            packageSha256 = digest,
-            packageSizeInBytes = packageBytes.Length,
+            eTag = $"\"{state}\"",
+            state,
+            packageRevisionId = state == "Deployed" ? Revision : null,
+            packageSha256 = state == "Deployed" ? digest : null,
+            packageSizeInBytes = state == "Deployed" ? packageBytes.Length : (int?)null,
             agentType = "CodeAgent",
             deploymentType = "Dev",
-            deploymentName = "public-proof",
+            deploymentName,
             entraAppId = Entra,
             entraAppIdType = "AppReg",
             language = "DotNet",
             languageVersion = "10",
-            endpoint = "https://runtime.example/api/messages",
+            endpoint = state == "Deployed" ? "https://runtime.example/api/messages" : null,
             isCustomEndpoint = false,
             isQuarantined = false,
         });
 
         static string Resource(Uri uri) => uri.Segments[^1].TrimEnd('/');
 
-        var currentRevision = Revision;
         var handler = new CapturingPackageHandler(request =>
         {
-            var resource = Resource(request.RequestUri!);
-            if (request.Method == HttpMethod.Patch && resource == Deployment)
-            {
-                currentRevision = UpdatedRevision;
-            }
-
-            var body = (request.Method.Method, resource) switch
+            var body = (request.Method.Method, Resource(request.RequestUri!)) switch
             {
                 ("POST", "agents") or ("GET", Agent) => agentBody,
+                ("GET", "agents") => $$"""{ "value": [{{agentBody}}] }""",
                 ("POST", "packages") => packageBody,
-                ("POST", "deployments") or ("GET", Deployment) or ("PATCH", Deployment) =>
-                    DeploymentBody(currentRevision),
-                _ => throw new InvalidOperationException(
-                    $"Unexpected workflow operation: {request.Method} {request.RequestUri!.AbsolutePath}."),
+                ("POST", "deployments") => DeploymentBody("NotDeployed", "public-proof"),
+                ("GET", "deployments") => $$"""{ "value": [{{DeploymentBody("NotDeployed", "public-proof")}}], "keptBots": [] }""",
+                ("POST", "deploy") or ("GET", Deployment) => DeploymentBody("Deployed", "public-proof"),
+                ("PATCH", Deployment) => DeploymentBody("Deployed", "public-renamed"),
+                _ => throw new InvalidOperationException($"Unexpected workflow operation: {request.Method} {request.RequestUri!.AbsolutePath}."),
             };
             return FakeHttpResponse.Json(HttpStatusCode.OK, body);
         });
@@ -178,61 +175,36 @@ public sealed class PublicAmsWorkflowTests
                 PowerPlatformApiPermissions.AppsRead,
                 PowerPlatformApiPermissions.AppsUpdate),
         };
-        var agentAdapter = new AmsAgentCreationAdapter(http, tokens);
+        var agentAdapter = new AmsAgentAdapter(http, tokens);
         var deploymentAdapter = new AmsDeploymentAdapter(http, tokens);
-        var create = new AgentCreateService(new AgentCreationTarget(), environments, agentAdapter);
-        var upload = new AgentPackageUploadService(
-            environments,
-            deploymentAdapter,
-            new AmsPackagePublicationAdapter(http, tokens));
-        var deploy = new AgentDeployService(target, environments, deploymentAdapter, deploymentAdapter);
+        var targets = new AmsTargets(new AmsEndpointProfile(), target);
+        var addresses = new AmsAddressResolver(targets, environments, agentAdapter, deploymentAdapter);
+        var create = new AgentCreateService(targets, environments, new AmsAgentCreationAdapter(http, tokens));
+        var upload = new AgentPackageUploadService(addresses, agentAdapter, new AmsPackagePublicationAdapter(http, tokens));
+        var deployments = new AmsDeploymentService(addresses, agentAdapter, deploymentAdapter, new ScriptedConfirmationPrompt());
+        var deploy = new AgentDeployService(addresses, deploymentAdapter);
         var packagePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.zip");
         try
         {
             await File.WriteAllBytesAsync(packagePath, packageBytes);
-            var created = await create.CreateAsync(new AgentCreateRequest
-            {
-                DisplayName = "public-proof",
-                Language = "DotNet",
-                LanguageVersion = "10",
-            }, default);
-            var uploaded = await upload.UploadAsync(new AgentPackageUploadRequest
-            {
-                AgentId = created.AgentId,
-                PackagePath = packagePath,
-            }, default);
-            var deployed = await deploy.DeployAsync(new AgentDeployRequest
-            {
-                AgentId = created.AgentId,
-                PackageRevisionId = uploaded.PackageRevisionId,
-                TargetEnvironmentId = Target,
-                DeploymentName = "public-proof",
-                DeploymentType = "Dev",
-                EntraId = Entra,
-                EntraIdType = "AppReg",
-            }, default);
-            var updated = await deploy.UpdateAsync(new AgentDeploymentPackageUpdateRequest
-            {
-                AgentId = created.AgentId,
-                DeploymentId = deployed.DeploymentId,
-                PackageRevisionId = UpdatedRevision,
-            }, default);
+            var created = await create.CreateAsync(new AgentCreateRequest { DisplayName = "public-proof", Language = "DotNet", LanguageVersion = "10" }, default);
+            await upload.UploadAsync(new AgentPackageUploadRequest { AgentId = created.AgentId, PackagePath = packagePath }, default);
+            var record = await deployments.CreateAsync(new AgentDeploymentAmsCreateRequest { AgentId = created.AgentId, TargetEnvironmentId = Target, DeploymentName = "public-proof", DeploymentType = "dev", EntraId = Entra, EntraIdType = "app-reg" }, default);
+            var deployed = await deploy.DeployAsync(new AgentDeployRequest { AgentName = "public-proof", DeploymentName = "public-proof" }, default);
+            var renamed = await deployments.UpdateAsync(new AgentDeploymentAmsUpdateRequest { AgentId = created.AgentId, DeploymentId = record.Deployment.DeploymentId, NewName = "public-renamed" }, default);
 
-            Assert.Equal(UpdatedRevision, updated.PackageRevisionId);
-            Assert.Contains(handler.Requests, request =>
-                request.Method == HttpMethod.Post && Resource(request.Uri) == "agents");
-            Assert.Contains(handler.Requests, request =>
-                request.Method == HttpMethod.Post && Resource(request.Uri) == "packages");
-            Assert.Contains(handler.Requests, request =>
-                request.Method == HttpMethod.Post && Resource(request.Uri) == "deployments");
-            Assert.Contains(handler.Requests, request =>
-                request.Method == HttpMethod.Patch && Resource(request.Uri) == Deployment);
-
+            Assert.Equal("NotDeployed", record.Deployment.State);
+            Assert.Equal(Revision, deployed.Deployment.PackageRevisionId);
+            Assert.Equal("public-renamed", renamed.Deployment.DeploymentName);
+            Assert.Equal(
+                ["POST agents", "GET " + Agent, "POST packages", "GET " + Agent, "POST deployments", "GET agents", "GET deployments", "POST deploy", "GET " + Deployment, "PATCH " + Deployment],
+                handler.Requests.Select(request => $"{request.Method.Method} {Resource(request.Uri)}"));
+            Assert.Equal(["\"NotDeployed\"", "\"Deployed\""], handler.Requests.Where(request => request.IfMatch is not null).Select(request => request.IfMatch));
             var environmentOrigin = new Uri(environmentEndpoint).GetLeftPart(UriPartial.Authority);
             var globalOrigin = new Uri(globalEndpoint).GetLeftPart(UriPartial.Authority);
             Assert.All(handler.Requests, request =>
             {
-                var expectedOrigin = Resource(request.Uri) is "deployments" or Deployment
+                var expectedOrigin = Resource(request.Uri) is "deployments" or Deployment or "deploy"
                     ? globalOrigin
                     : environmentOrigin;
                 Assert.Equal(expectedOrigin, request.Uri.GetLeftPart(UriPartial.Authority));

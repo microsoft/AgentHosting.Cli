@@ -91,7 +91,6 @@ internal sealed class CapturingBotProvisioningPort
     public List<string> Deleted { get; } = [];
     public string? LastBotResourceId { get; private set; }
     public string? LastTenantId { get; private set; }
-    public System.Text.Json.JsonElement? RawArmResponse { get; set; }
 
     public Task<DeploymentBotResource> GetBotAsync(string botResourceId, string? targetTenantId, CancellationToken cancellationToken)
     {
@@ -141,7 +140,6 @@ internal sealed class CapturingBotProvisioningPort
             TenantId = request.TenantId ?? "tenant-1",
             DisplayName = request.DisplayName ?? request.DeploymentName ?? "dev",
             Description = request.Description,
-            RawArmResponse = RawArmResponse,
         });
     }
 
@@ -151,7 +149,7 @@ internal sealed class CapturingBotProvisioningPort
         return Task.FromResult(true);
     }
 
-    private DeploymentBotResource FromCreate(DeploymentCreateRequest request) => new()
+    private static DeploymentBotResource FromCreate(DeploymentCreateRequest request) => new()
     {
         ResourceId = BuildBotResourceId(request.SubscriptionId ?? "sub-1", request.ResourceGroup ?? "rg-1", request.DeploymentName),
         Name = request.DeploymentName ?? "dev",
@@ -163,7 +161,6 @@ internal sealed class CapturingBotProvisioningPort
         TenantId = request.TenantId ?? "tenant-1",
         DisplayName = request.DisplayName ?? request.DeploymentName ?? "dev",
         Description = request.Description,
-        RawArmResponse = RawArmResponse,
     };
 
     private static string BuildBotResourceId(string subscriptionId, string resourceGroup, string name) =>

@@ -4,8 +4,9 @@ namespace Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
 public sealed class ScenarioBuilder
 {
     private readonly string _feature;
+    private readonly string? _msagentFeature;
 
-    public ScenarioBuilder(string feature) => _feature = feature;
+    public ScenarioBuilder(string feature, string? msagentFeature = null) => (_feature, _msagentFeature) = (feature, msagentFeature);
 
     /// <summary>Declares one scenario.</summary>
     public Scenario Make(string id, string title, IReadOnlyList<Capability> requires, SafetyTier tier, Func<ScenarioContext, Task> run, bool smoke = false, string? pack = null, TimeSpan? timeout = null) => new()
@@ -18,6 +19,7 @@ public sealed class ScenarioBuilder
         Smoke = smoke,
         Pack = pack,
         Timeout = timeout,
+        MsagentFeature = _msagentFeature,
         Run = run,
     };
 }

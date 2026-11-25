@@ -13,7 +13,6 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 /// </summary>
 public sealed class AmsAgentCreationAdapter : IAmsAgentCreationTransport
 {
-    public const string ApiVersion = "1";
     public const string IdempotencyKeyHeaderName = "Idempotency-Key";
 
     private static readonly JsonSerializerOptions WireJson = new()
@@ -47,19 +46,8 @@ public sealed class AmsAgentCreationAdapter : IAmsAgentCreationTransport
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var url = BuildCollectionUrl(request);
-
-        if (_profileTokens is null) ResourceTokenContext.RequireBinding(_tokenProvider, request.Context);
-        var token = _profileTokens is not null
-            ? (await _profileTokens.AcquireAsync(ResourceTokenContext.Require(request.Context),
-                request.Audience, request.TenantId, [PowerPlatformApiPermissions.AppsCreate], cancellationToken).ConfigureAwait(false)).Token
-            : await _tokenProvider.AcquireTokenSilentAsync(request.Audience, request.TenantId, cancellationToken).ConfigureAwait(false);
-
-        if (_profileTokens is null) ResourceTokenContext.ValidateLegacy(_claimsValidator, _tokenProvider, request.Context,
-            token.AccessToken,
-            request.Audience,
-            request.TenantId,
-            [PowerPlatformApiPermissions.AppsCreate]);
+        var url = AmsRoutes.Agents(request.ServiceTarget);
+        var token = await ResourceTokenContext.AcquireAsync(_tokenProvider, _profileTokens, _claimsValidator, request.ServiceTarget.Context, request.ServiceTarget.Audience, request.ServiceTarget.TenantId, [PowerPlatformApiPermissions.AppsCreate], cancellationToken).ConfigureAwait(false);
 
         var clientRequestId = Guid.NewGuid().ToString();
         using var message = new HttpRequestMessage(HttpMethod.Post, url);
@@ -95,7 +83,7 @@ public sealed class AmsAgentCreationAdapter : IAmsAgentCreationTransport
         {
             if (IsRedirect(response.StatusCode))
             {
-                throw AgentCreationException.RedirectRejected((int)response.StatusCode, request.Endpoint.Host);
+                throw AgentCreationException.RedirectRejected((int)response.StatusCode, request.ServiceTarget.Endpoint.Host);
             }
 
             string responseText;
@@ -123,7 +111,7 @@ public sealed class AmsAgentCreationAdapter : IAmsAgentCreationTransport
                     (int)response.StatusCode,
                     responseText,
                     HttpMethod.Post.Method,
-                    url,
+                    url.AbsoluteUri,
                     _binaryName,
                     clientRequestId,
                     HeaderValue(response, "x-ms-request-id"));
@@ -138,25 +126,6 @@ public sealed class AmsAgentCreationAdapter : IAmsAgentCreationTransport
 
     private static string? HeaderValue(HttpResponseMessage response, string name) =>
         response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
-
-    internal static string BuildCollectionUrl(AmsAgentCreationTransportRequest request)
-    {
-        var endpoint = request.Endpoint.ToString().TrimEnd('/');
-        var path = request.RouteMode switch
-        {
-            AmsAgentCreationRouteMode.PowerPlatformApiFrontDoor => "agenthosting/agents",
-            AmsAgentCreationRouteMode.DirectDataPlane =>
-                $"agenthosting/tenants/{Escape(request.TenantId)}/environments/{Escape(request.EnvironmentId)}/agents",
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(request),
-                request.RouteMode,
-                "Unknown AMS agent-create route mode."),
-        };
-
-        return $"{endpoint}/{path}?api-version={ApiVersion}";
-    }
-
-    private static string Escape(string value) => Uri.EscapeDataString(value);
 
     private static AmsAgentCreationResult Parse(string responseText)
     {

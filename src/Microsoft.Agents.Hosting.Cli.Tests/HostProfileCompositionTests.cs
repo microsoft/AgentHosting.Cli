@@ -26,7 +26,7 @@ public sealed class HostProfileCompositionTests : IDisposable
     private IServiceCollection Configure(bool interactive, Func<string, string?>? environment = null, string? configDirectory = null,
         PowerPlatformApiTargetConfig? target = null)
     {
-        var services = new ServiceCollection().AddSingleton<IClock>(new FixedClock(DateTimeOffset.UnixEpoch));
+        var services = new ServiceCollection().AddSingleton<IClock>(new FixedClock(DateTimeOffset.UnixEpoch)).AddSingleton<IStandardInput>(new FakeStandardInput());
         Program.ConfigureProfileAuthentication(services, new AgentHostAuthOptions { ConfigDirectory = configDirectory ?? _directory, InteractionAllowed = interactive,
             Cloud = target?.Cloud ?? CloudInstance.Public },
             target ?? PowerPlatformApiTargetConfig.Public, environment ?? (_ => null),

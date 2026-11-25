@@ -1,4 +1,4 @@
-using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -19,7 +19,7 @@ public sealed class DeploymentOAuthParametersTests
     [InlineData("serviceCredential3")]
     public void IsSecret_ClassifiesConservativeSecretNames(string name)
     {
-        Assert.True(DeploymentOAuthParameters.IsSecret(name));
+        Assert.True(SecretRedaction.IsSecret(name));
     }
 
     [Theory]
@@ -28,7 +28,29 @@ public sealed class DeploymentOAuthParametersTests
     [InlineData("credentialType")]
     public void IsSecret_PreservesNamesWithoutSecretSuffixes(string name)
     {
-        Assert.False(DeploymentOAuthParameters.IsSecret(name));
+        Assert.False(SecretRedaction.IsSecret(name));
+    }
+
+    [Fact]
+    public void SanitizeConnection_OmitsMasksEvenWithoutSecretNames()
+    {
+        var connection = new DeploymentOAuthConnection
+        {
+            ResourceId = "connection-id",
+            ConnectionName = "connection",
+            ServiceProviderId = "provider",
+            ServiceProviderDisplayName = "Provider",
+            Parameters = new Dictionary<string, string?>
+            {
+                ["ProviderPrivateValue"] = SecretRedaction.Mask,
+                ["TenantId"] = "common",
+            },
+        };
+
+        var result = DeploymentOAuthParameters.Sanitize(connection, provider: null, omitSecrets: true);
+
+        Assert.DoesNotContain("ProviderPrivateValue", result.Parameters.Keys);
+        Assert.Equal("common", result.Parameters["TenantId"]);
     }
 
     [Fact]
@@ -41,7 +63,6 @@ public sealed class DeploymentOAuthParametersTests
     [Fact]
     public void SanitizeConnection_WithoutProviderMasksSecretsAndRetainsUnknownParameters()
     {
-        using var document = JsonDocument.Parse("""{"secret":"value"}""");
         var connection = new DeploymentOAuthConnection
         {
             ResourceId = "connection-id",
@@ -55,21 +76,18 @@ public sealed class DeploymentOAuthParametersTests
                 ["ClientSecret"] = "secret",
                 ["UnknownValue"] = "unknown",
             },
-            RawArmResponse = document.RootElement.Clone(),
         };
 
         var result = DeploymentOAuthParameters.Sanitize(
             connection,
-            provider: null,
-            includeArmResponse: false);
+            provider: null);
 
         Assert.Equal("client-id", result.ClientId);
         Assert.Equal(["scope-a", "scope-b"], result.Scopes);
-        Assert.Equal("***", result.Parameters["ClientSecret"]);
+        Assert.Equal("*****", result.Parameters["ClientSecret"]);
         Assert.Equal("unknown", result.Parameters["UnknownValue"]);
         Assert.DoesNotContain("ClientId", result.Parameters.Keys);
         Assert.DoesNotContain("Scopes", result.Parameters.Keys);
-        Assert.Null(result.RawArmResponse);
     }
 
     [Theory]
@@ -77,7 +95,6 @@ public sealed class DeploymentOAuthParametersTests
     [InlineData(true)]
     public void SanitizeConnection_WithProviderMasksOrOmitsDeclaredSecretsAndRemovesUnknownParameters(bool omitSecrets)
     {
-        using var document = JsonDocument.Parse("""{"secret":"value"}""");
         var connection = new DeploymentOAuthConnection
         {
             ResourceId = "connection-id",
@@ -93,7 +110,6 @@ public sealed class DeploymentOAuthParametersTests
                 ["TenantId"] = "tenant-id",
                 ["UnknownValue"] = "unknown",
             },
-            RawArmResponse = document.RootElement.Clone(),
         };
         var provider = new OAuthProviderDefinition
         {
@@ -138,7 +154,6 @@ public sealed class DeploymentOAuthParametersTests
         var result = DeploymentOAuthParameters.Sanitize(
             connection,
             provider,
-            includeArmResponse: false,
             omitSecrets: omitSecrets);
 
         Assert.Equal("client-id", result.ClientId);
@@ -149,14 +164,13 @@ public sealed class DeploymentOAuthParametersTests
         }
         else
         {
-            Assert.Equal(BotServiceResponseRedactor.Mask, result.Parameters["ProviderPrivateValue"]);
+            Assert.Equal(SecretRedaction.Mask, result.Parameters["ProviderPrivateValue"]);
         }
         Assert.Equal("provider-declared-non-secret", result.Parameters["ApiKey"]);
         Assert.Equal("tenant-id", result.Parameters["TenantId"]);
         Assert.DoesNotContain("ClientId", result.Parameters.Keys);
         Assert.DoesNotContain("Scopes", result.Parameters.Keys);
         Assert.DoesNotContain("UnknownValue", result.Parameters.Keys);
-        Assert.Null(result.RawArmResponse);
     }
 
     [Fact]
@@ -198,16 +212,14 @@ public sealed class DeploymentOAuthParametersTests
 
         var withProvider = DeploymentOAuthParameters.Sanitize(
             connection,
-            provider,
-            includeArmResponse: false);
+            provider);
         var withoutProvider = DeploymentOAuthParameters.Sanitize(
             connection,
-            provider: null,
-            includeArmResponse: false);
+            provider: null);
 
-        Assert.Equal("***", withProvider.Parameters["ClientSecret"]);
-        Assert.Equal("***", withProvider.Parameters["ProviderPrivateValue"]);
-        Assert.Equal("***", withoutProvider.Parameters["ClientSecret"]);
+        Assert.Equal("*****", withProvider.Parameters["ClientSecret"]);
+        Assert.Equal("*****", withProvider.Parameters["ProviderPrivateValue"]);
+        Assert.Equal("*****", withoutProvider.Parameters["ClientSecret"]);
         Assert.Null(withoutProvider.Parameters["ProviderPrivateValue"]);
     }
 }

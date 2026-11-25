@@ -177,23 +177,6 @@ public sealed class WorkflowSafetyFixTests : IDisposable
     }
 
     [Fact]
-    public async Task AnAgentPullRejectsTheWorkflowOnlyOverwriteSwitch()
-    {
-        var workspaces = new FakeCopilotWorkspacePort();
-        var locator = CopilotTestFixtures.Locator(workspaces, new SystemCopilotFileSystem());
-        var service = new ManagedAgentPullService(
-            ManagedAgentFixtures.AgentResolver(_config),
-            locator,
-            new CopilotWorkspaceService(workspaces, locator),
-            ManagedAgentFixtures.Resolver());
-
-        var failure = await Assert.ThrowsAsync<UsageException>(
-            () => service.PullAsync(new ManagedAgentPullRequest { Project = _workspace.Root, AgentId = "wf-1", Overwrite = true }, CancellationToken.None));
-
-        Assert.Contains("--overwrite", failure.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public async Task DeletingByDeploymentAloneResolvesItsOwnerInAMultiAgentProject()
     {
         Register();
