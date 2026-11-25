@@ -531,7 +531,7 @@ public sealed class AgentTypeTelemetryTests
     }
 
     [Fact]
-    public async Task DisposedNestedScopeCannotAttributeLateWorkToItsParent()
+    public async Task DisposedNestedScopeRetainsInvocationCorrelationWithoutAttributingLateObservations()
     {
         var accessor = new CommandTelemetrySessionAccessor();
         var observer = new CommandTelemetryAgentObserver(accessor);
@@ -539,13 +539,15 @@ public sealed class AgentTypeTelemetryTests
         await using var outer = Session(transport);
         outer.RecordAttempt(CommandTelemetryPath.FromMetadata(["agent", "show"]), targetsAgent: true);
         using var outerScope = accessor.Push(outer);
+        Guid parentSessionId = Assert.IsType<Guid>(outer.CorrelationId);
+        Assert.Equal(parentSessionId, accessor.SessionId);
         observer.Observe(AgentTypes.McsAgent, "con_parent_probe");
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var innerScope = accessor.Push(CommandTelemetrySession.Disabled());
         Task late = Task.Run(async () =>
         {
             await release.Task;
-            _ = accessor.SessionId;
+            Assert.Equal(parentSessionId, accessor.SessionId);
             Assert.False(observer.IsObservationEnabled);
             observer.Observe(AgentTypes.McsAgent, "con_child_probe");
             observer.ObserveResources(AgentTypes.McsAgent, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", null, "env-child");
@@ -553,6 +555,7 @@ public sealed class AgentTypeTelemetryTests
         innerScope.Dispose();
         release.SetResult();
         await late;
+        Assert.Equal(parentSessionId, accessor.SessionId);
         outer.RecordOutcome(CommandTelemetryOutcome.Success);
         await outer.DisposeAsync();
         Assert.All(Parse(Assert.IsType<string>(transport.Payload)), item =>
