@@ -1,3 +1,4 @@
+using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Playground;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -294,9 +295,65 @@ public sealed class PlaygroundGlobalInstallerTests
             new PlaygroundGlobalInstaller(locator, runner).InstallAsync(CancellationToken.None));
 
         Assert.Equal(PlaygroundInstallFailureKind.Timeout, failure.Kind);
+        Assert.Equal(ErrorCodes.Playground.InstallTimedOut, failure.ErrorCode);
         Assert.Contains("playground", failure.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Node.js", failure.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("secret", failure.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(PlaygroundFailureKind.ProbeTimedOut, PlaygroundInstallFailureKind.Timeout, ErrorCodes.Playground.InstallTimedOut)]
+    [InlineData(PlaygroundFailureKind.ProbeFailed, PlaygroundInstallFailureKind.PostVerification, ErrorCodes.Playground.PostVerificationFailed)]
+    public async Task InstallAsync_ClassifiesReturnedVerificationRejections(
+        PlaygroundFailureKind rejectionKind, PlaygroundInstallFailureKind expectedKind, int expectedErrorCode)
+    {
+        var locator = new RecordingLocator
+        {
+            LocateResult = Discovery(null, new PlaygroundToolRejection("secret path", new PlaygroundFailure
+            {
+                Kind = rejectionKind,
+                Message = "secret probe output",
+                Remediation = "secret probe remediation",
+            }), new PlaygroundToolRejection("secret later path", new PlaygroundFailure
+            {
+                Kind = PlaygroundFailureKind.InvalidVersion,
+                Message = "secret later probe output",
+            })),
+        };
+        var runner = new RecordingRunner(_ => new PlaygroundProcessResult(0, "secret stdout", "secret stderr"));
+
+        var failure = await Assert.ThrowsAsync<PlaygroundInstallException>(() =>
+            new PlaygroundGlobalInstaller(locator, runner).InstallAsync(CancellationToken.None));
+
+        Assert.Equal(expectedKind, failure.Kind);
+        Assert.Equal(expectedErrorCode, failure.ErrorCode);
+        Assert.Contains("playground", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", failure.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", failure.Remediation, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(failure.ExitCode);
+        Assert.Null(failure.InnerException);
+        Assert.Single(runner.Requests);
+        Assert.Equal(["detect-npm", "locate"], locator.Calls);
+    }
+
+    [Fact]
+    public async Task InstallAsync_AcceptsSuccessfulVerificationAfterAnEarlierCandidateTimesOut()
+    {
+        var installed = Tool("0.2.29", "/usr/bin/agentsplayground");
+        var locator = new RecordingLocator
+        {
+            LocateResult = Discovery(installed, new PlaygroundToolRejection("earlier candidate", new PlaygroundFailure
+            {
+                Kind = PlaygroundFailureKind.ProbeTimedOut,
+                Message = "An earlier candidate timed out.",
+            })),
+        };
+        var runner = new RecordingRunner(_ => new PlaygroundProcessResult(0, string.Empty, string.Empty));
+
+        var result = await new PlaygroundGlobalInstaller(locator, runner).InstallAsync(CancellationToken.None);
+
+        Assert.Same(installed, result);
+        Assert.Equal(["detect-npm", "locate", "detect-node"], locator.Calls);
     }
 
     [Fact]
