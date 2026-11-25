@@ -11,16 +11,19 @@ The command group is described in help as `Agent Hosting agent operations.`
 | [`msagent agent create`](#msagent-agent-create) | Create an agent project or standalone workflow. Creating a CodeAgent is **Gated**; MCS agents and workflows are available by default. |
 | [`msagent agent copy`](#msagent-agent-copy---mcs-specific) | **MCS-specific.** Create a new agent or standalone workflow from an existing one. Prepares local content only; the first deploy creates the new agent or workflow. |
 | [`msagent agent init`](#msagent-agent-init---mcs-specific) | **MCS-specific.** Register an MCS project or standalone workflow that already exists on disk. |
-| [`msagent agent list`](#msagent-agent-list---mcs-specific) | **MCS-specific.** List MCS agents or standalone workflows in an environment or across the tenant. |
-| [`msagent agent show`](#msagent-agent-show) | Show the managed-agent records held by a project. Reads local configuration only. |
+| [`msagent agent list`](#msagent-agent-list) | List MCS agents or standalone workflows in an environment or across the tenant, or the code agents of an AMS environment (**Gated**). |
+| [`msagent agent show`](#msagent-agent-show) | Show the managed-agent records held by a project, read locally, or an AMS code agent with its deployments (**Gated**). |
+| [`msagent agent update`](#msagent-agent-update-gated) (**Gated**) | Rename an AMS code agent or change its description. |
 | [`msagent agent pull`](#msagent-agent-pull---mcs-specific) | **MCS-specific.** Pull a remote agent or standalone workflow into the project. |
-| [`msagent agent delete`](#msagent-agent-delete---mcs-specific) | **MCS-specific.** Delete one cloud agent or standalone workflow and every local record for it. |
-| [`msagent agent deploy`](#msagent-agent-deploy) | Deploy an agent or standalone workflow to a named deployment. The package-revision (AMS) route is **Gated**. |
+| [`msagent agent delete`](#msagent-agent-delete) | Delete one cloud MCS agent or standalone workflow and every local record for it, or an AMS code agent with its deployments and bots (**Gated**). |
+| [`msagent agent deploy`](#msagent-agent-deploy) | Deploy an agent or standalone workflow to a named deployment, or put a deployment of an AMS code agent live (**Gated**). |
 | [`msagent agent share`](#msagent-agent-share---mcs-specific) | **MCS-specific.** Share an MCS agent with a user, or with the organization. |
 | [`msagent agent share show`](#msagent-agent-share-show---mcs-specific) | **MCS-specific.** Show who has access to an MCS agent. |
 | [`msagent agent unshare`](#msagent-agent-unshare---mcs-specific) | **MCS-specific.** Remove a user's access to an MCS agent. |
 | `msagent agent package` | **(Gated)** Navigation group containing the `upload` command. |
-| [`msagent agent package upload`](#msagent-agent-package-upload-gated) (**Gated**) | Upload exact package bytes and confirm a durable AMS Package Revision. |
+| [`msagent agent package upload`](#msagent-agent-package-upload-gated) (**Gated**) | Upload exact package bytes and confirm a durable AMS Package Revision and its commit. |
+| `msagent agent commit` | **(Gated)** Navigation group containing the `list` command. |
+| [`msagent agent commit list`](#msagent-agent-commit-list-gated) (**Gated**) | List the commits of an AMS code agent's uploads, newest first, with the deployments that run each. |
 | [`msagent agent eval`](Command_Agent_Eval.md) | **MCSAgent only; gated by EvaluationFeatures.** Run Copilot Studio evaluations and manage test sets. See [Command_Agent_Eval.md](Command_Agent_Eval.md) for details. |
 
 Options and behaviors labeled **MCS-specific** apply to Microsoft Copilot Studio agents
@@ -44,14 +47,30 @@ selector identifies its owner. `agent show` instead shows every record.
 > `AmsFeatures`, for example through the `AH_CLI_FEATURES` environment variable. Evaluation has the
 > separate `EvaluationFeatures` gate. When `AmsFeatures` is off:
 >
-> - A gated group or command, such as `agent package` or `agent package upload`, is not listed in
->   help, and invoking it fails with `Unrecognized command or argument`.
-> - A gated option, such as `--package-revision` on `agent deploy`, is not listed in help and is
+> - A gated group or command, such as `agent package`, `agent package upload`, `agent commit`, or
+>   `agent update`, is not listed in help, and invoking it fails with `Unrecognized command or argument`.
+> - A gated option, such as `--environment-id` on `agent deploy`, is not listed in help and is
 >   rejected as unrecognized.
-> - A gated route that is reached through a visible command, such as creating a CodeAgent, fails with
+> - A gated route that is reached through a visible command, such as creating or listing CodeAgents, fails with
 >   a message that the capability is disabled by the `AmsFeatures` rollout control.
 >
 > Feature controls are availability switches, not authorization boundaries.
+
+### AMS code agents (Gated)
+
+With `AmsFeatures` on, the commands that act on an existing agent reach an AMS code agent when the local
+project does not know the agent named. With it off, every command routes as it does without AMS.
+
+- A command that names an agent with `--agent-id` or `--agent-name` keeps its MCS route (or, for a
+  `deployment` command, its local Azure Bot Service route) when the project (the current directory, or
+  `--project`) holds a record of that agent or of the deployment named. Otherwise it takes the AMS route.
+  A command that names no agent keeps its local route.
+- `--environment-id` (`-eid`) names the agent's home environment and always selects the AMS route. It is
+  optional on the AMS route and defaults to the active environment (`msagent env select`). The target
+  environment of a deploy always comes from the deployment record.
+- `agent create` and `agent list` take the AMS route with `--agent-type CodeAgent`, and
+  `deployment create` with `--target-environment-id`. `agent update`, `agent package upload`, and
+  `agent commit list` are AMS only.
 
 ## `msagent agent create`
 
@@ -277,22 +296,26 @@ environment is required. For a workflow, the source must hold exactly one readab
 Workflow registration uses the active environment and registers beneath an enclosing project when
 one exists. Neither route creates a deployment.
 
-## `msagent agent list` - MCS-specific
+## `msagent agent list`
 
 Lists cloud MCS agents in an environment or across the tenant, or standalone workflows when
 `--agent-type MCSWorkflow` is supplied. Local-only projects that have never reached the service
-are not listed.
+are not listed. With `--agent-type CodeAgent` (**Gated**), it lists the code agents of an AMS home
+environment.
 
 ```text
 msagent agent list [--environment-id <id> | --tenant-wide] [--limit <number>] [--project <directory>] \
   [--agent-type <MCSAgent|MCSWorkflow>] [--filter <text>]
+
+# Code agents (Gated)
+msagent agent list --agent-type CodeAgent [--environment-id <id>]
 ```
 
 | Option | Shortcut | Value | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--project` | `-p` | Directory path | Enclosing project, else current directory | The project directory used to annotate matching cloud rows. |
 | `--environment-id` | `-eid` | String | Active environment | List this environment instead of the active one. |
-| `--agent-type` | `-at` | `MCSAgent` (alias `mcs`) or `MCSWorkflow` | `MCSAgent` | Select agents or standalone cloud flows. |
+| `--agent-type` | `-at` | `MCSAgent` (alias `mcs`), `MCSWorkflow`, or `CodeAgent` (**Gated**) | `MCSAgent` | Select agents, standalone cloud flows, or code agents. |
 | `--filter` | `-flt` | String | None | Show workflows whose name contains this text, taken literally: `%` and `_` match themselves. Rejected for MCSAgent. |
 | `--tenant-wide` | `-tw` | Flag | Off | List every environment the signed-in account can reach. |
 | `--limit` | `-lim` | Whole number | `20` | Maximum rows to return across the selected scope. Must be positive. |
@@ -307,10 +330,14 @@ it does not promise a complete tenant inventory when the limit is reached.
 
 Shows the managed-agent records a project holds. The command reads the local configuration and
 contacts nothing. It includes each selected record's deployments and supports both agents and
-standalone workflows.
+standalone workflows. With `AmsFeatures` on, an agent the project holds no record of is read from AMS
+instead (see [AMS code agents](#ams-code-agents-gated)).
 
 ```text
 msagent agent show [--project <directory>] [--agent-id <id> | --agent-name <name>]
+
+# AMS code agent (Gated)
+msagent agent show (--agent-id <id> | --agent-name <name>) [--environment-id <id>]
 ```
 
 | Option | Shortcut | Value | Default | Description |
@@ -318,6 +345,33 @@ msagent agent show [--project <directory>] [--agent-id <id> | --agent-name <name
 | `--project` | `-p` | Directory path | Enclosing project, else current directory | The project directory to read. |
 | `--agent-id` | `-aid` | String | None | The record to show. Wins over `--agent-name`. Every record is shown when no selector is supplied. |
 | `--agent-name` | `-an` | String | None | The record to show, by name. |
+| `--environment-id` | `-eid` | String | Active environment | **Gated.** The AMS agent's home environment. Selects the AMS route. |
+
+The AMS route shows the agent (name, type, language, description, home environment, state, and last
+change), a table of its deployments (stage, kind `package` or `dev-endpoint`, state, bot, and a pending
+endpoint change), and the bots AMS keeps from deleted records of live deployments until
+`msagent agent delete` removes them.
+
+## `msagent agent update` (Gated)
+
+> **Gated.** Available only when `AmsFeatures` is enabled. When it is off, `agent update` is not listed in
+> help.
+
+Renames an AMS code agent or changes its description. It reads the agent, then sends the change with the
+agent's entity tag; the result shows the agent as AMS returned it (`agent-updated`).
+
+```text
+msagent agent update (--agent-id <id> | --agent-name <name>) (--new-name <name> | --description <text>) \
+  [--environment-id <id>]
+```
+
+| Option | Shortcut | Value | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--agent-id` | `-aid` | GUID | None | The agent. Wins over `--agent-name`. |
+| `--agent-name` | `-an` | String | None | The agent, by name in its home environment. |
+| `--new-name` | `-nn` | String | None | The agent's new name. |
+| `--description` | `-d` | String | None | The agent's new description. An empty value clears it. |
+| `--environment-id` | `-eid` | String | Active environment | The agent's home environment. |
 
 ## `msagent agent pull` - MCS-specific
 
@@ -353,13 +407,14 @@ and replaces the local workflow from its environment, refusing unpushed local ed
 `--overwrite` is supplied. It can recreate missing workflow files. It does not merge those edits.
 The result reports the environment, changes, and whether the workspace was already up to date.
 
-## `msagent agent delete` - MCS-specific
+## `msagent agent delete`
 
 Deletes one cloud MCS agent or standalone workflow and removes its managed-agent record and all its
 deployment records. Local workspace files are never touched. Cloud copies in other environments
 are not deleted; the result reports the targets left orphaned. The flows, AI prompts, connection
 references, and custom connectors an agent uses stay in the environment unless `--all-resources`
-deletes them too.
+deletes them too. With `AmsFeatures` on, an agent the project holds no record of is deleted in AMS
+instead (see [Deleting an AMS code agent](#deleting-an-ams-code-agent-gated)).
 
 ```text
 msagent agent delete [--project <directory>] [--agent-id <id> | --agent-name <name>] \
@@ -408,42 +463,56 @@ declining reports `cancelled`; neither deletes anything or counts as an error.
 msagent agent delete --agent-name "Support agent copy" --all-resources
 ```
 
+### Deleting an AMS code agent (Gated)
+
+```text
+msagent agent delete (--agent-id <id> | --agent-name <name>) [--environment-id <id>]
+```
+
+| Option | Shortcut | Value | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--agent-id` | `-aid` | GUID | None | The code agent. Wins over `--agent-name`. |
+| `--agent-name` | `-an` | String | None | The code agent, by name in its home environment. |
+| `--environment-id` | `-eid` | String | Active environment | The agent's home environment. Selects the AMS route. |
+
+The AMS route deletes the code agent with every deployment record and Azure Bot Service instance it owns,
+including the bots AMS kept from deleted records of live deployments. `--project`, `--deployment-id`,
+`--deployment-name`, and `--all-resources` keep the MCS route.
+
 ## `msagent agent deploy`
 
 Deploys an agent or standalone workflow to an existing named deployment. There is no
 active-environment fallback on these MCS routes: both require `--deployment-id` or
 `--deployment-name`. Create a slot first with `msagent deployment create` (cloning already creates
 a `dev` slot). A deployment selector can identify its owning record without an agent selector.
+With `AmsFeatures` on, the AMS route (**Gated**) puts an existing deployment of a code agent live.
 
 ```text
 # MCS agent
 msagent agent deploy (--deployment-id <id> | --deployment-name <name>) \
   [--project <directory>] [--agent-id <id> | --agent-name <name>] [--publish] [--overwrite]
 
-# AMS package revision (Gated)
-msagent agent deploy --agent-id <id> --package-revision <revision-id> \
-  --target-environment-id <id> --deployment-name <name> --deployment-type <dev|test|prod> \
-  --entra-id <application-id> --entra-id-type <app-reg|blueprint|default> [--environment-id <id>]
+# AMS code agent (Gated)
+msagent agent deploy (--agent-id <id> | --agent-name <name>) (--deployment-id <id> | --deployment-name <name>) \
+  [--commit-id <commit>] [--environment-id <id>]
 ```
 
 | Option | Shortcut | Value | Applies to | Description |
 | --- | --- | --- | --- | --- |
 | `--project` | `-p` | Directory path | **MCS-specific** | The local MCS project directory. |
-| `--agent-id` | `-aid` | String | All routes | The agent to deploy. |
-| `--agent-name` | `-an` | String | **MCS-specific** | The record to deploy, by name. |
-| `--deployment-id` | `-did` | String | **MCS-specific** | The deployment to target. Wins over `--deployment-name`. |
-| `--deployment-name` | `-dn` | String | MCS and AMS routes | The deployment to target, by name. Required for AMS package-revision deployment. |
+| `--agent-id` | `-aid` | String | All routes | The agent to deploy. Wins over `--agent-name`. |
+| `--agent-name` | `-an` | String | All routes | The agent to deploy, by name. |
+| `--deployment-id` | `-did` | String | All routes | The deployment to target. Wins over `--deployment-name`. |
+| `--deployment-name` | `-dn` | String | All routes | The deployment to target, by name. |
 | `--schema-name` | `-sn` | String | **MCS-specific** | Overrides the project's schema name for this deploy. Valid only for a classic-layout agent: a CLI agent always deploys under the schema name in its `settings.mcs.yml`. A workflow is addressed by its workflow id, so a workflow deploy rejects this option before anything is uploaded. |
 | `--publish` | `-pub` | Flag | **MCS-specific** | Publish an agent after a push that fully landed, or request activation of a standalone workflow. Off by default. |
 | `--overwrite` | `-ow` | Flag | **MCS-specific** | Overwrite cloud content that changed since the last sync, and accept replacing an existing agent this project cannot show is its own. Only a dev deployment refuses drift without it. A workflow deploy always replaces the cloud copy, so the flag is accepted there and changes nothing. |
-| `--commit-id` | `-cid` | String | Not supported | This build has no Git Repository Service, so deploy always uploads the current working tree. Supplying it is a usage error. |
+| `--commit-id` | `-cid` | 40 hexadecimal characters | AMS route (**Gated**) | The commit of one of the code agent's uploads to deploy to a Dev or Test deployment; a Dev dev endpoint deployment switches to that package. When omitted, the deployment's requested or deployed dev endpoint, else the newest upload. On the MCS route this build has no Git Repository Service, so deploy always uploads the current working tree and supplying it is a usage error. |
 | `--async` | `-as` | Flag | Not supported | The deploy is synchronous and returns when the push completes. Supplying it is a usage error. |
-| `--package-revision` | `-pr` | String | **Gated** | Existing immutable AMS Package Revision id. No package bytes are uploaded. |
-| `--environment-id` | `-eid` | String | **Gated** | AMS Agent home environment. Defaults to the active environment. |
-| `--target-environment-id` | `-tenv` | String | **Gated** | Explicit AMS target environment, including for same-home deployment. |
-| `--deployment-type` | `-dt` | `dev`, `test`, or `prod` | **Gated** | AMS deployment stage. |
-| `--entra-id` | `-ent` | String | **Gated** | AMS deployment Entra application id. |
-| `--entra-id-type` | `-eit` | `app-reg`, `blueprint`, or `default` | **Gated** | AMS identity kind. |
+| `--environment-id` | `-eid` | String | **Gated** | The AMS agent's home environment. Selects the AMS route. Defaults to the active environment. |
+| `--target-environment-id`, `--deployment-type`, `--entra-id`, `--entra-id-type` | `-tenv`, `-dt`, `-ent`, `-eit` | | **Gated**, moved | Moved to `msagent deployment create`. Each selects the AMS route, which refuses it with that pointer. |
+| `--endpoint-url` | `-eu` | | **Gated**, moved | Moved to `msagent deployment create` and `msagent deployment update`. Selects the AMS route, which refuses it with that pointer. |
+| `--package-revision` | `-pr` | | **Gated**, moved | Replaced by `--commit-id`; `msagent agent commit list` shows the commits. Selects the AMS route, which refuses it with that pointer. |
 
 ### MCS deployment behavior
 
@@ -464,23 +533,6 @@ msagent agent deploy --agent-id <id> --package-revision <revision-id> \
   with warnings. Bind them with `msagent deployment connection update` before retrying.
 - Output identifies the record, deployment, target environment, action, pushed counts, publication
   or workflow state, and warnings.
-
-Gated behavior:
-
-- The AMS options and the package-revision route are listed in help only when `AmsFeatures` is
-  enabled. When it is off, they are rejected as unrecognized options.
-- A CodeAgent's package bytes must first be uploaded with
-  [`msagent agent package upload`](#msagent-agent-package-upload-gated) (**Gated**), then deployed
-  with `--agent-id`, `--package-revision`, and explicit deployment inputs. `--project` alone does not
-  deploy a CodeAgent.
-- Supplying any AMS-only option selects the AMS route, even `--environment-id` alone. Every input
-  shown in the AMS syntax above is required except the home `--environment-id`; MCS-only options
-  cannot be mixed into that route. The target must belong to the home environment's tenant.
-- AMS agent, package-revision, and Entra application IDs must be non-empty GUIDs; the deployment
-  name is limited to 64 characters. Stage and identity-kind values are case-insensitive;
-  `appreg` is also accepted for `app-reg`.
-- The AMS route creates desired deployment state using an existing package revision and waits for
-  its deployment projection acknowledgement. It does not upload bytes or promise runtime readiness.
 
 A deploy that creates the Copilot Studio agent, or connects the project to another one, records it in
 `agent.config.json` before it sends any content. So when the deploy fails after that, `agent show`
@@ -567,20 +619,36 @@ address, or Entra object id), with the same meanings as for `msagent agent share
 > **Gated.** Available only when `AmsFeatures` is enabled. When it is off, `agent package` and
 > `agent package upload` are not listed in help.
 
-Uploads exact package bytes and confirms a durable AMS Package Revision.
+Uploads exact package bytes and confirms a durable AMS Package Revision and its commit.
 
 ```text
-msagent agent package upload --agent-id <id> --package <file> [--environment-id <id>]
+msagent agent package upload (--agent-id <id> | --agent-name <name>) --package <file> [--environment-id <id>]
 ```
 
 | Option | Shortcut | Value | Required | Default | Description |
 | --- | --- | --- | --- | --- | --- |
-| `--agent-id` | `-aid` | String | Yes | None | Existing repository-bound CodeAgent id. |
+| `--agent-id` | `-aid` | GUID | One of the two | None | Existing repository-bound CodeAgent id. Wins over `--agent-name`. |
+| `--agent-name` | `-an` | String | One of the two | None | The CodeAgent, by name in its home environment. |
 | `--package` | `-pkg` | File path | Yes | None | Exact package file to upload. The CLI does not build or inspect its contents. |
 | `--environment-id` | `-eid` | String | No | Active environment | Agent home environment. |
 
-The agent ID must be a non-empty GUID and identify a repository-bound CodeAgent. The file must be
-readable, non-empty, and no larger than 128 MiB (134,217,728 bytes). The CLI hashes the exact bytes
-with SHA-256 and verifies the service's agent, digest, size, successful operation, and revision ID
-before reporting success. Output includes the package operation ID, package revision ID, digest,
-and size. Uploading does not create a deployment; use the returned revision with `agent deploy`.
+## `msagent agent commit list` (Gated)
+
+> **Gated.** Available only when `AmsFeatures` is enabled. When it is off, `agent commit` and
+> `agent commit list` are not listed in help.
+
+Lists the commits of an AMS code agent's package uploads, newest first: each commit's upload time, size,
+and the deployments that run it.
+
+```text
+msagent agent commit list (--agent-id <id> | --agent-name <name>) [--environment-id <id>]
+```
+
+| Option | Shortcut | Value | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--agent-id` | `-aid` | GUID | None | The code agent. Wins over `--agent-name`. |
+| `--agent-name` | `-an` | String | None | The code agent, by name in its home environment. |
+| `--environment-id` | `-eid` | String | Active environment | The agent's home environment. |
+
+The command reads every page of the agent's uploads and of its deployments once, and names under each
+commit the deployments whose deployed commit or Package Revision is that upload's.

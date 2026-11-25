@@ -12,6 +12,11 @@ public sealed class AgentGroup;
 [RequiredFeatureFlag(FeatureName.AmsFeatures)]
 public sealed class AgentPackageGroup;
 
+/// <summary>The <c>agent commit</c> group.</summary>
+[CommandGroup("commit", Description = "Agent Hosting commit operations.", ParentGroup = typeof(AgentGroup), SortPriority = 65, NoCommandUsage = "No commit command specified. Valid commands: list. Run `msagent agent commit --help` for usage.")]
+[RequiredFeatureFlag(FeatureName.AmsFeatures)]
+public sealed class AgentCommitGroup;
+
 /// <summary>The <c>agent eval</c> group.</summary>
 [CommandGroup("eval", Description = "Run Copilot Studio evaluations against an MCS agent. MCS only.", ParentGroup = typeof(AgentGroup), SortPriority = 100, NoCommandUsage = "No eval command specified. Valid subgroups: testset. Valid commands: run, list, show, cancel, delete, generate. Run `msagent agent eval --help` for usage.")]
 [RequiredFeatureFlag(FeatureName.EvaluationFeatures)]

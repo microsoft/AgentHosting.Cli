@@ -1,5 +1,6 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
 
@@ -18,15 +19,14 @@ public sealed class DeploymentOAuthService
     private readonly IDeploymentStore _store;
     private readonly IDeploymentOAuthTransport _oauthTransport;
     private readonly IDeploymentTransport _deploymentTransport;
+    private readonly IStandardInput _standardInput;
 
-    public DeploymentOAuthService(
-        IDeploymentStore store,
-        IDeploymentOAuthTransport oauthTransport,
-        IDeploymentTransport deploymentTransport)
+    public DeploymentOAuthService(IDeploymentStore store, IDeploymentOAuthTransport oauthTransport, IDeploymentTransport deploymentTransport, IStandardInput standardInput)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _oauthTransport = oauthTransport ?? throw new ArgumentNullException(nameof(oauthTransport));
         _deploymentTransport = deploymentTransport ?? throw new ArgumentNullException(nameof(deploymentTransport));
+        _standardInput = standardInput ?? throw new ArgumentNullException(nameof(standardInput));
     }
 
     public async Task<DeploymentResult<DeploymentOAuthConnection>> GetAsync(
@@ -67,6 +67,7 @@ public sealed class DeploymentOAuthService
             providers,
             plan.Request.ServiceProviderName!,
             OauthProviderKeyType.Name);
+        plan = await DeploymentOAuthPlan.ReadClientSecretAsync(plan, _standardInput, cancellationToken).ConfigureAwait(false);
         var upsertRequest = DeploymentOAuthPlan.BuildCreate(
             serviceProvider,
             plan,
@@ -129,6 +130,7 @@ public sealed class DeploymentOAuthService
             existingOAuthConnection.ServiceProviderId,
             OauthProviderKeyType.Id);
         var safeExisting = DeploymentOAuthParameters.Sanitize(existingOAuthConnection, serviceProvider);
+        plan = await DeploymentOAuthPlan.ReadClientSecretAsync(plan, _standardInput, cancellationToken).ConfigureAwait(false);
 
         var upsertRequest = DeploymentOAuthPlan.BuildUpdate(
             serviceProvider,
@@ -200,12 +202,7 @@ public sealed class DeploymentOAuthService
 
         SaveConnections(request.Project, deployment, safeConnections);
 
-        return new DeploymentResult<DeploymentOAuthConnection[]>
-        {
-            Status = DeploymentOperationStatus.Listed,
-            Payload = safeConnections,
-            TargetName = "Connections",
-        };
+        return ToConnectionListResult(safeConnections);
     }
 
     public async Task<OAuthProviderDefinition[]> ListProvidersAsync(
@@ -223,20 +220,14 @@ public sealed class DeploymentOAuthService
                 cancellationToken)
             .ConfigureAwait(false);
 
-        if (request.ServiceProviderName is null)
-        {
-            return serviceProviders
-                .OrderBy(provider => provider.Name, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
-
-        var serviceProvider = FindServiceProvider(
-            serviceProviders,
-            request.ServiceProviderName,
-            OauthProviderKeyType.Name);
-
-        return [serviceProvider];
+        return SelectProviders(serviceProviders, request.ServiceProviderName);
     }
+
+    /// <summary>Returns every provider ordered by name, or only the one whose name matches the filter case-insensitively.</summary>
+    internal static OAuthProviderDefinition[] SelectProviders(IReadOnlyList<OAuthProviderDefinition> serviceProviders, string? serviceProviderName) => serviceProviderName is null ? [.. serviceProviders.OrderBy(provider => provider.Name, StringComparer.OrdinalIgnoreCase)] : [FindServiceProvider(serviceProviders, serviceProviderName, OauthProviderKeyType.Name)];
+
+    /// <summary>Builds the result of a connection list.</summary>
+    internal static DeploymentResult<DeploymentOAuthConnection[]> ToConnectionListResult(DeploymentOAuthConnection[] connections) => new() { Status = DeploymentOperationStatus.Listed, Payload = connections, TargetName = "Connections" };
 
     private async Task<IReadOnlyList<OAuthProviderDefinition>> ListServiceProvidersAsync(
         CodeAgentDeployment deployment,
@@ -302,7 +293,8 @@ public sealed class DeploymentOAuthService
                     .ToArray(),
             });
 
-    private static DeploymentResult<DeploymentOAuthConnection> ToConnectionResult(
+    /// <summary>Builds the result of an operation on one connection, named by the connection or by the deleted connection's name.</summary>
+    internal static DeploymentResult<DeploymentOAuthConnection> ToConnectionResult(
         DeploymentOperationStatus status,
         DeploymentOAuthConnection? connection = null,
         string? targetInstanceName = null) =>

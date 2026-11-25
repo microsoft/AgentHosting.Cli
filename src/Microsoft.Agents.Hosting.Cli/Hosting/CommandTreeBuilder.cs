@@ -210,7 +210,7 @@ public sealed class CommandTreeBuilder
         symbols.OfType<CommandOption>().Where(option => option.Recursive).Select(option => option.Name).ToHashSet(StringComparer.Ordinal);
 
     private IReadOnlyList<CommandSymbol> Visible(IEnumerable<CommandSymbol> symbols) =>
-        [.. symbols.Where(symbol => symbol.RequiredFeatures.All(_featureFlags.IsFeatureEnabled))];
+        [.. symbols.Where(symbol => symbol.IsVisible(_featureFlags.IsFeatureEnabled))];
 
     private Command Build(
         CommandMetadata metadata,

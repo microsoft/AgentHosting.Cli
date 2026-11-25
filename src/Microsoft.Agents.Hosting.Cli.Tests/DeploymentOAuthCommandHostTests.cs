@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -378,6 +379,62 @@ public sealed class DeploymentOAuthCommandHostTests
     }
 
     [Theory]
+    [InlineData("create", "-clsin", "SYNTHETIC_SECRET", false)]
+    [InlineData("update", "--client-secret-stdin", "SYNTHETIC_SECRET", false)]
+    [InlineData("update", "--client-secret-stdin", "SYNTHETIC_SECRET", true)]
+    [InlineData("create", "--client-secret-stdin=SYNTHETIC_SECRET", null, false)]
+    [InlineData("create", "--client-secret-stdin", "-SYNTHETIC_SECRET", false)]
+    [InlineData("update", "-clsin", "--SYNTHETIC_SECRET", true)]
+    [InlineData("update", "--client-secret-stdin=-SYNTHETIC_SECRET", null, false)]
+    [InlineData("create", "--client-secret-stdin:-SYNTHETIC_SECRET", null, true)]
+    [InlineData("create", "--client-secrt", "SYNTHETIC_SECRET", false)]
+    [InlineData("update", "--client-secrt=SYNTHETIC_SECRET", null, false)]
+    [InlineData("update", "--client-secrt:SYNTHETIC_SECRET", null, true)]
+    [InlineData("update", "-clsc", "SYNTHETIC_SECRET", false)]
+    public void UnmatchedInput_RefusesWithAMessageThatEchoesNoInput(string verb, string option, string? value, bool json)
+    {
+        var operations = new FakeOperations();
+        var (exitCode, stdout, stderr) = Run(operations,
+            ["deployment", "oauth", verb, "--deployment-id", "dep-1", "--connection", "MyOAuth",
+                .. verb == "create" ? ["--provider-name", "Aadv2"] : Array.Empty<string>(),
+                option, .. value is null ? Array.Empty<string>() : [value],
+                .. json ? ["--json"] : Array.Empty<string>()]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        const string expected = "Invalid OAuth command input. Check the options and Key=Value parameters; --client-secret-stdin takes no value. Run `msagent --help` for usage.";
+        if (json)
+        {
+            Assert.Empty(stderr);
+            using var document = JsonDocument.Parse(stdout);
+            Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal(expected, document.RootElement.GetProperty("errorMessage").GetString());
+        }
+        else
+        {
+            Assert.Empty(stdout);
+            Assert.Contains(expected, stderr);
+        }
+
+        Assert.DoesNotContain("SYNTHETIC_SECRET", stdout + stderr);
+        Assert.DoesNotContain("client-secrt", stdout + stderr);
+        Assert.DoesNotContain("-clsc", stdout + stderr);
+        Assert.Null(operations.LastCreateDeploymentOAuthRequest);
+        Assert.Null(operations.LastUpdateDeploymentOAuthRequest);
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    public void StrayValueWithHelp_DoesNotEchoTheValue(string verb)
+    {
+        var (exitCode, stdout, stderr) = Run(new FakeOperations(),
+            "deployment", "oauth", verb, "--connection", "MyOAuth", "-clsin", "SYNTHETIC_SECRET", "--help");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.DoesNotContain("SYNTHETIC_SECRET", stdout + stderr);
+    }
+
+    [Theory]
     [InlineData("--provider-name")]
     [InlineData("-pn")]
     public void OAuthListProviders_SelectedHelpDisplaysLiveParametersWithSingleLookup(string option)
@@ -461,6 +518,268 @@ public sealed class DeploymentOAuthCommandHostTests
         else
         {
             Assert.Contains("Synthetic lookup failure", document.RootElement.GetProperty("errorMessage").GetString());
+        }
+    }
+
+    private const string AmsAgentId = "44444444-4444-4444-4444-444444444444";
+    private const string AmsDeploymentId = "77777777-7777-7777-7777-777777777777";
+
+    public static TheoryData<string[], Type> AmsOAuthCommands => new()
+    {
+        { ["create", "--connection", "graph", "--provider-name", "Aadv2", "--client-id", "client-1"], typeof(AgentDeploymentAmsOAuthRequest<DeploymentOAuthCreateRequest>) },
+        { ["update", "--connection", "graph", "--scopes", "openid"], typeof(AgentDeploymentAmsOAuthRequest<DeploymentOAuthUpdateRequest>) },
+        { ["delete", "--connection", "graph"], typeof(AgentDeploymentAmsOAuthRequest<DeploymentOAuthDeleteRequest>) },
+        { ["show", "--connection", "graph"], typeof(AgentDeploymentAmsOAuthRequest<DeploymentOAuthShowRequest>) },
+        { ["list"], typeof(AgentDeploymentAmsOAuthRequest<DeploymentOAuthListRequest>) },
+        { ["list-providers"], typeof(AgentDeploymentAmsOAuthRequest<DeploymentOAuthProviderListRequest>) },
+    };
+
+    [Theory]
+    [MemberData(nameof(AmsOAuthCommands))]
+    public void AmsRoute_DispatchesTheAddressWithoutLocalResolution(string[] verbAndOptions, Type requestType)
+    {
+        var operations = new FakeOperations();
+        var handlers = new AmsOAuthHandlers();
+
+        var (exitCode, _, stderr) = RunAms(operations, handlers, ["deployment", "oauth", verbAndOptions[0], "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", .. verbAndOptions[1..]]);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var request = Assert.Single(handlers.Requests);
+        Assert.IsType(requestType, request);
+        var address = Assert.IsAssignableFrom<AgentDeploymentAmsRequest>(request);
+        Assert.Equal((AmsAgentId, AmsDeploymentId, "env-1"), (address.AgentId, address.DeploymentId, address.EnvironmentId));
+        AssertNoLocalOAuthRoute(operations);
+    }
+
+    [Fact]
+    public void AmsRoute_ByNamesWithoutTheEnvironment_DispatchesTheNames()
+    {
+        var operations = new FakeOperations();
+        var handlers = new AmsOAuthHandlers();
+
+        var (exitCode, _, _) = RunAms(operations, handlers, "deployment", "oauth", "show", "--connection", "graph", "--agent-name", "Contoso Agent", "--deployment-name", "dev");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        var address = Assert.IsType<AgentDeploymentAmsOAuthRequest<DeploymentOAuthShowRequest>>(Assert.Single(handlers.Requests));
+        Assert.Equal(("Contoso Agent", "dev", null), (address.AgentName, address.DeploymentName, address.EnvironmentId));
+        AssertNoLocalOAuthRoute(operations);
+    }
+
+    [Fact]
+    public void AmsRoute_PassesTheOAuthContentAsLocalModeBindsIt()
+    {
+        var handlers = new AmsOAuthHandlers();
+
+        var (exitCode, _, _) = RunAms(new FakeOperations(), handlers, "deployment", "oauth", "update", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--connection", "graph", "--client-id", "client-2", "--scopes", "", "--parameters", "TokenExchangeUrl=", "TenantId=organizations");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        var content = Assert.IsType<AgentDeploymentAmsOAuthRequest<DeploymentOAuthUpdateRequest>>(Assert.Single(handlers.Requests)).OAuth;
+        Assert.Equal(("graph", "client-2", string.Empty), (content.ConnectionName, content.ClientId, content.Scopes));
+        Assert.Null(content.ClientSecret);
+        Assert.False(content.ClientSecretFromStandardInput);
+        Assert.Equal(["TokenExchangeUrl=", "TenantId=organizations"], content.Parameters);
+    }
+
+    [Fact]
+    public void ClientSecretStdin_BindsOnTheAmsRoute()
+    {
+        var handlers = new AmsOAuthHandlers();
+
+        var create = RunAms(new FakeOperations(), handlers, "deployment", "oauth", "create", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--connection", "graph", "--provider-name", "Aadv2", "--client-secret-stdin");
+        var update = RunAms(new FakeOperations(), handlers, "deployment", "oauth", "update", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--connection", "graph", "-clsin");
+
+        Assert.Equal((ExitCodes.Success, ExitCodes.Success), (create.ExitCode, update.ExitCode));
+        var created = Assert.IsType<AgentDeploymentAmsOAuthRequest<DeploymentOAuthCreateRequest>>(handlers.Requests[0]).OAuth;
+        var updated = Assert.IsType<AgentDeploymentAmsOAuthRequest<DeploymentOAuthUpdateRequest>>(handlers.Requests[1]).OAuth;
+        Assert.Equal((true, null), (created.ClientSecretFromStandardInput, created.ClientSecret));
+        Assert.Equal((true, null), (updated.ClientSecretFromStandardInput, updated.ClientSecret));
+    }
+
+    [Fact]
+    public void ClientSecretStdin_BindsOnTheLocalRoute()
+    {
+        var operations = new FakeOperations();
+
+        var create = Run(operations, "deployment", "oauth", "create", "--deployment-id", "dep-1", "--connection", "graph", "--provider-name", "Aadv2", "--client-secret-stdin");
+        var update = Run(operations, "deployment", "oauth", "update", "--deployment-id", "dep-1", "--connection", "graph", "--client-secret-stdin");
+
+        Assert.Equal((ExitCodes.Success, ExitCodes.Success), (create.ExitCode, update.ExitCode));
+        Assert.Equal((true, null), (operations.LastCreateDeploymentOAuthRequest!.ClientSecretFromStandardInput, operations.LastCreateDeploymentOAuthRequest.ClientSecret));
+        Assert.Equal((true, null), (operations.LastUpdateDeploymentOAuthRequest!.ClientSecretFromStandardInput, operations.LastUpdateDeploymentOAuthRequest.ClientSecret));
+    }
+
+    [Fact]
+    public void AmsRoute_ListPrintsNoArmResponseInDebugOutput()
+    {
+        var (exitCode, stdout, stderr) = RunAms(new FakeOperations(), new AmsOAuthHandlers(), "deployment", "oauth", "list", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--debug", "--json");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        using var document = JsonDocument.Parse(stdout);
+        Assert.Equal("graph", document.RootElement.GetProperty("connections")[0].GetProperty("connectionName").GetString());
+    }
+
+    public static TheoryData<string[], string> AmsCommandsMissingAnAddressOption => new()
+    {
+        { ["show", "--connection", "graph", "--deployment-id", AmsDeploymentId], "--agent-id or --agent-name is required for the AMS route of `msagent deployment oauth show`." },
+        { ["show", "--connection", "graph", "--agent-id", AmsAgentId], "--deployment-id or --deployment-name is required for the AMS route of `msagent deployment oauth show`." },
+        { ["list-providers", "--deployment-id", AmsDeploymentId], "--agent-id or --agent-name is required for the AMS route of `msagent deployment oauth list-providers`." },
+        { ["list-providers", "--agent-id", AmsAgentId], "--deployment-id or --deployment-name is required for the AMS route of `msagent deployment oauth list-providers`." },
+    };
+
+    [Theory]
+    [MemberData(nameof(AmsCommandsMissingAnAddressOption))]
+    public void AmsRoute_MissingAddressOptionDispatchesNothing(string[] verbAndOptions, string message)
+    {
+        var operations = new FakeOperations();
+        var handlers = new AmsOAuthHandlers();
+
+        var (exitCode, _, stderr) = RunAms(operations, handlers, ["deployment", "oauth", .. verbAndOptions, "--environment-id", "env-1"]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains(message, stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+        AssertNoLocalOAuthRoute(operations);
+    }
+
+    public static TheoryData<string[], string> AmsCommandsWithAnotherRoutesOption => new()
+    {
+        { ["list", "--project", "."], "--project" },
+        { ["list-providers", "--subscription", "sub-1"], "--subscription" },
+        { ["list-providers", "--tenant", "tenant-1"], "--tenant" },
+    };
+
+    [Theory]
+    [MemberData(nameof(AmsCommandsWithAnotherRoutesOption))]
+    public void AmsRoute_RejectsTheOptionsOfTheOtherRoutes(string[] verbAndOptions, string option)
+    {
+        var operations = new FakeOperations();
+        var handlers = new AmsOAuthHandlers();
+
+        var (exitCode, _, stderr) = RunAms(operations, handlers, ["deployment", "oauth", .. verbAndOptions, "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1"]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains($"{option} cannot be combined with the AMS route of `msagent deployment oauth {verbAndOptions[0]}`.", stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+        AssertNoLocalOAuthRoute(operations);
+    }
+
+    [Theory]
+    [InlineData("--agent-id", AmsAgentId)]
+    [InlineData("--deployment-id", AmsDeploymentId)]
+    public void ListProviders_AnAmsAddressWithoutTheEnvironmentSelectsTheAmsRoute(string option, string value)
+    {
+        var operations = new FakeOperations();
+        var handlers = new AmsOAuthHandlers();
+
+        var (exitCode, _, stderr) = RunAms(operations, handlers, "deployment", "oauth", "list-providers", "--subscription", "sub-1", option, value);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("--subscription cannot be combined with the AMS route of `msagent deployment oauth list-providers`.", stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+        Assert.Null(operations.LastListDeploymentOAuthProvidersRequest);
+    }
+
+    [Fact]
+    public void ListProviders_SelectedHelpOnTheAmsRouteShowsTheAmsCatalogue()
+    {
+        var operations = new FakeOperations();
+        var handlers = new AmsOAuthHandlers();
+
+        var (exitCode, stdout, stderr) = RunAms(operations, handlers, "deployment", "oauth", "list-providers", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--provider-name", "aadv2", "--help");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Contains("ClientId <string> (REQUIRED)", stdout, StringComparison.Ordinal);
+        var request = Assert.IsType<AgentDeploymentAmsOAuthRequest<DeploymentOAuthProviderListRequest>>(Assert.Single(handlers.Requests));
+        Assert.Equal(("aadv2", AmsDeploymentId), (request.OAuth.ServiceProviderName, request.DeploymentId));
+        Assert.Null(operations.LastListDeploymentOAuthProvidersRequest);
+    }
+
+    [Theory]
+    [InlineData("create", "--client-secret-stdin", "Use an AMS deployment")]
+    [InlineData("update", "--client-secret-stdin", "Use an AMS deployment")]
+    [InlineData("list", "--environment-id", "Use an AMS deployment")]
+    [InlineData("list-providers", "--environment-id", "Use the providers AMS offers for an AMS deployment")]
+    public void Help_ShowsTheAmsRouteWhenTheAmsFeaturesAreOn(string verb, string option, string amsUsage)
+    {
+        var (exitCode, stdout, _) = RunAms(new FakeOperations(), new AmsOAuthHandlers(), "deployment", "oauth", verb, "--help");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Contains(option, stdout, StringComparison.Ordinal);
+        Assert.Contains(amsUsage, stdout, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("list-providers")]
+    public void Help_HidesTheAmsRouteWhenTheAmsFeaturesAreOff(string verb)
+    {
+        var (exitCode, stdout, _) = AmsCommandHost.Run(new FakeOperations(), new AmsOAuthHandlers(), new TestFeatureFlags(), "deployment", "oauth", verb, "--help");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.DoesNotContain("--environment-id", stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("AMS", stdout, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("list")]
+    [InlineData("list-providers")]
+    public void AmsFeatureOff_TheAmsRouteIsUnavailable(string verb)
+    {
+        var operations = new FakeOperations();
+        var handlers = new AmsOAuthHandlers();
+
+        var (exitCode, _, stderr) = AmsCommandHost.Run(operations, handlers, new TestFeatureFlags(), "deployment", "oauth", verb, "--environment-id", "env-1");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("--environment-id", stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+        AssertNoLocalOAuthRoute(operations);
+    }
+
+    private static void AssertNoLocalOAuthRoute(FakeOperations operations)
+    {
+        Assert.Null(operations.LastDeploymentAgentTypeQuery);
+        Assert.Null(operations.LastCreateDeploymentOAuthRequest);
+        Assert.Null(operations.LastUpdateDeploymentOAuthRequest);
+        Assert.Null(operations.LastDeleteDeploymentOAuthRequest);
+        Assert.Null(operations.LastShowDeploymentOAuthRequest);
+        Assert.Null(operations.LastListDeploymentOAuthRequest);
+        Assert.Null(operations.LastListDeploymentOAuthProvidersRequest);
+    }
+
+    private static (int ExitCode, string Stdout, string Stderr) RunAms(FakeOperations operations, AmsOAuthHandlers handlers, params string[] args) => AmsCommandHost.Run(operations, handlers, new TestFeatureFlags(FeatureName.AmsFeatures), args);
+
+    private sealed class AmsOAuthHandlers :
+        ICommandHandler<AgentDeploymentAmsOAuthRequest<DeploymentOAuthCreateRequest>, DeploymentResult<DeploymentOAuthConnection>>,
+        ICommandHandler<AgentDeploymentAmsOAuthRequest<DeploymentOAuthUpdateRequest>, DeploymentResult<DeploymentOAuthConnection>>,
+        ICommandHandler<AgentDeploymentAmsOAuthRequest<DeploymentOAuthDeleteRequest>, DeploymentResult<DeploymentOAuthConnection>>,
+        ICommandHandler<AgentDeploymentAmsOAuthRequest<DeploymentOAuthShowRequest>, DeploymentResult<DeploymentOAuthConnection>>,
+        ICommandHandler<AgentDeploymentAmsOAuthRequest<DeploymentOAuthListRequest>, DeploymentResult<DeploymentOAuthConnection[]>>,
+        ICommandHandler<AgentDeploymentAmsOAuthRequest<DeploymentOAuthProviderListRequest>, OAuthProviderDefinition[]>
+    {
+        private static readonly DeploymentOAuthConnection Connection = new() { ResourceId = "/bots/ams/connections/graph", ConnectionName = "graph", ServiceProviderId = "provider-aadv2", ServiceProviderDisplayName = "Azure Active Directory v2", ClientId = "client-1", Scopes = ["openid"] };
+
+        public List<object> Requests { get; } = [];
+
+        public Task<DeploymentResult<DeploymentOAuthConnection>> HandleAsync(AgentDeploymentAmsOAuthRequest<DeploymentOAuthCreateRequest> request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentOAuthConnection> { Status = DeploymentOperationStatus.Created, Payload = Connection, TargetName = "Connection", TargetInstanceName = "graph" });
+
+        public Task<DeploymentResult<DeploymentOAuthConnection>> HandleAsync(AgentDeploymentAmsOAuthRequest<DeploymentOAuthUpdateRequest> request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentOAuthConnection> { Status = DeploymentOperationStatus.Updated, Payload = Connection, TargetName = "Connection", TargetInstanceName = "graph" });
+
+        public Task<DeploymentResult<DeploymentOAuthConnection>> HandleAsync(AgentDeploymentAmsOAuthRequest<DeploymentOAuthDeleteRequest> request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentOAuthConnection> { Status = DeploymentOperationStatus.Deleted, TargetName = "Connection", TargetInstanceName = "graph" });
+
+        public Task<DeploymentResult<DeploymentOAuthConnection>> HandleAsync(AgentDeploymentAmsOAuthRequest<DeploymentOAuthShowRequest> request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentOAuthConnection> { Status = DeploymentOperationStatus.Retrieved, Payload = Connection, TargetName = "Connection", TargetInstanceName = "graph" });
+
+        public Task<DeploymentResult<DeploymentOAuthConnection[]>> HandleAsync(AgentDeploymentAmsOAuthRequest<DeploymentOAuthListRequest> request, CancellationToken cancellationToken) => Record(request, new DeploymentResult<DeploymentOAuthConnection[]> { Status = DeploymentOperationStatus.Listed, Payload = [Connection], TargetName = "Connections" });
+
+        public Task<OAuthProviderDefinition[]> HandleAsync(AgentDeploymentAmsOAuthRequest<DeploymentOAuthProviderListRequest> request, CancellationToken cancellationToken) => Record<OAuthProviderDefinition[]>(request, [new() { Id = "provider-aadv2", Name = "Aadv2", DisplayName = "Azure Active Directory v2", Parameters = [new() { Name = "ClientId", Type = "string", DisplayName = "Client id", IsRequired = true }] }]);
+
+        private Task<T> Record<T>(object request, T result)
+        {
+            Requests.Add(request);
+            return Task.FromResult(result);
         }
     }
 }

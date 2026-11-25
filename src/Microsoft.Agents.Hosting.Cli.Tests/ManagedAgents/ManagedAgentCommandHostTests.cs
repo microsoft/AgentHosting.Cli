@@ -459,6 +459,7 @@ public sealed class ManagedAgentCommandHostTests
     {
         var operations = new FakeOperations
         {
+            OnResolveDeploymentAgentType = _ => new DeploymentAgentTypeResult { AgentType = AgentTypes.McsAgent, Source = DeploymentAgentTypeSource.DeploymentRecord },
             OnManagedAgentDeploy = _ => new ManagedAgentDeployResult
             {
                 AgentId = "agent-1",
@@ -637,7 +638,7 @@ public sealed class ManagedAgentCommandHostTests
     [Fact]
     public void Delete_PassesNonInteractiveThrough()
     {
-        var operations = new FakeOperations();
+        var operations = McsOperations();
 
         var (exitCode, _, _) = Run(operations, "agent", "delete", "--agent-id", "agent-1", "--non-interactive");
 

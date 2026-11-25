@@ -1,5 +1,6 @@
 using Microsoft.Agents.Hosting.Cli.Commands.Common;
 using Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
+using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Groups;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -12,7 +13,7 @@ public sealed class DeploymentChannelCreateCommand : DeploymentChannelCommand<De
 {
     public override IReadOnlyList<CommandSymbol> Symbols => MutationCommandSymbols;
 
-    public override IReadOnlyList<UsageRoute> UsageRoutes => DeploymentUsage("--channel");
+    public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--channel");
 
     protected override DeploymentChannelCreateRequest Bind(ICommandInput input)
     {
@@ -49,7 +50,7 @@ public sealed class DeploymentChannelUpdateCommand : DeploymentChannelCommand<De
         AssignmentOption("--remove-registration", "Remove a LINE registration using `generatedId` as a selector."),
     ];
 
-    public override IReadOnlyList<UsageRoute> UsageRoutes => DeploymentUsage("--channel");
+    public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--channel");
 
     protected override DeploymentChannelUpdateRequest Bind(ICommandInput input)
     {
@@ -83,7 +84,7 @@ public sealed class DeploymentChannelDeleteCommand : DeploymentChannelCommand<De
 {
     public override IReadOnlyList<CommandSymbol> Symbols => ChannelCommandSymbols;
 
-    public override IReadOnlyList<UsageRoute> UsageRoutes => DeploymentUsage("--channel");
+    public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--channel");
 
     protected override DeploymentChannelDeleteRequest Bind(ICommandInput input)
     {
@@ -106,7 +107,7 @@ public sealed class DeploymentChannelShowCommand : DeploymentChannelCommand<Depl
 {
     public override IReadOnlyList<CommandSymbol> Symbols => ChannelCommandSymbols;
 
-    public override IReadOnlyList<UsageRoute> UsageRoutes => DeploymentUsage("--channel");
+    public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--channel");
 
     protected override DeploymentChannelShowRequest Bind(ICommandInput input)
     {
@@ -127,9 +128,9 @@ public sealed class DeploymentChannelShowCommand : DeploymentChannelCommand<Depl
 [Command("list", Description = "List all channels on a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 50)]
 public sealed class DeploymentChannelListCommand : DeploymentChannelCommand<DeploymentChannelListRequest, DeploymentResult<DeploymentChannelRecord[]>>
 {
-    public override IReadOnlyList<CommandSymbol> Symbols => DeploymentAddressSymbols;
+    public override IReadOnlyList<CommandSymbol> Symbols => ChannelAddressSymbols;
 
-    public override IReadOnlyList<UsageRoute> UsageRoutes => DeploymentUsage();
+    public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage();
 
     protected override DeploymentChannelListRequest Bind(ICommandInput input)
     {
@@ -146,14 +147,84 @@ public sealed class DeploymentChannelListCommand : DeploymentChannelCommand<Depl
     }
 }
 
-public abstract class DeploymentChannelCommand<TRequest, TResult> : CodeAgentDeploymentCommand<TRequest, TResult>
+/// <summary><c>msagent deployment channel types</c>, which lists the channel types AMS can create and edit on a deployment.</summary>
+[Command("types", Description = "List the channel types AMS can create and edit on a deployment. AMS only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 60)]
+[RequiredFeatureFlag(FeatureName.AmsFeatures)]
+public sealed class DeploymentChannelTypesCommand : CommandBase<AgentDeploymentAmsChannelTypesRequest, DeploymentResult<DeploymentChannelType[]>>
+{
+    /// <inheritdoc />
+    public override IReadOnlyList<CommandSymbol> Symbols => AmsRoute.AddressSymbols(withDeployment: true);
+
+    /// <inheritdoc />
+    public override IReadOnlyList<UsageRoute> UsageRoutes => [AmsRoute.Usage("List the channel types of an AMS deployment", withDeployment: true)];
+
+    /// <inheritdoc />
+    protected override string? Validate(ICommandInput input) => AmsRoute.Problem(input, new AmsRouteRules("deployment channel types") { NeedsDeployment = true });
+
+    /// <inheritdoc />
+    protected override AgentDeploymentAmsChannelTypesRequest Bind(ICommandInput input) => AmsRoute.Address(input, new AgentDeploymentAmsChannelTypesRequest());
+}
+
+/// <summary><c>msagent deployment channel token</c>, which gets a Direct Line token from AMS to start a conversation with the agent.</summary>
+[Command("token", Description = "Get a Direct Line token to start a conversation with the agent. AMS only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 70)]
+[RequiredFeatureFlag(FeatureName.AmsFeatures)]
+public sealed class DeploymentChannelTokenCommand : CommandBase<AgentDeploymentAmsChannelTokenRequest, DeploymentResult<DeploymentChannelToken>>
+{
+    /// <inheritdoc />
+    public override IReadOnlyList<CommandSymbol> Symbols =>
+    [
+        .. AmsRoute.AddressSymbols(withDeployment: true),
+        new CommandOption("--channel", "The channel that issues the token. Supported: directline.") { IsRequired = true },
+        OptionCatalog.Value("--site", "The Direct Line site that issues the token. Defaults to the only enabled site that accepts Direct Line 3.0 clients."),
+        OptionCatalog.Value("--user-id", "The user the token is bound to. Must start with dl_."),
+    ];
+
+    /// <inheritdoc />
+    public override IReadOnlyList<UsageRoute> UsageRoutes => [AmsRoute.Usage("Get a Direct Line token for an AMS deployment", withDeployment: true, "--channel")];
+
+    /// <inheritdoc />
+    protected override string? Validate(ICommandInput input) => AmsRoute.Problem(input, new AmsRouteRules("deployment channel token") { NeedsDeployment = true });
+
+    /// <inheritdoc />
+    protected override AgentDeploymentAmsChannelTokenRequest Bind(ICommandInput input) => AmsRoute.Address(input, new AgentDeploymentAmsChannelTokenRequest { ChannelName = input.GetString("--channel"), SiteName = input.GetString("--site"), UserId = input.GetString("--user-id") });
+}
+
+/// <summary><c>msagent deployment channel webhook</c>, which gets from AMS the callback URL and verify token that a channel's webhook settings in the third-party console need.</summary>
+[Command("webhook", Description = "Get the callback URL and verify token for a channel's webhook settings. AMS only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 80)]
+[RequiredFeatureFlag(FeatureName.AmsFeatures)]
+public sealed class DeploymentChannelWebhookCommand : CommandBase<AgentDeploymentAmsChannelWebhookRequest, DeploymentResult<DeploymentChannelWebhook>>
+{
+    /// <inheritdoc />
+    public override IReadOnlyList<CommandSymbol> Symbols =>
+    [
+        .. AmsRoute.AddressSymbols(withDeployment: true),
+        new CommandOption("--channel", "The channel whose webhook values to get. Supported: facebook.") { IsRequired = true },
+    ];
+
+    /// <inheritdoc />
+    public override IReadOnlyList<UsageRoute> UsageRoutes => [AmsRoute.Usage("Get the webhook values of a channel of an AMS deployment", withDeployment: true, "--channel")];
+
+    /// <inheritdoc />
+    protected override string? Validate(ICommandInput input) => AmsRoute.Problem(input, new AmsRouteRules("deployment channel webhook") { NeedsDeployment = true });
+
+    /// <inheritdoc />
+    protected override AgentDeploymentAmsChannelWebhookRequest Bind(ICommandInput input) => AmsRoute.Address(input, new AgentDeploymentAmsChannelWebhookRequest { ChannelName = input.GetString("--channel") });
+}
+
+public abstract class DeploymentChannelCommand<TRequest, TResult> : AmsRoutedDeploymentCommand<TRequest, TResult, AgentDeploymentAmsChannelRequest<TRequest>>
+    where TRequest : DeploymentRequest
     where TResult : notnull
 {
     protected override string CommandPath => "msagent deployment channel";
 
+    protected static IReadOnlyList<CommandSymbol> ChannelAddressSymbols =>
+    [
+        .. RoutedAddressSymbols("AMS agent home environment, which selects the AMS route. Defaults to the active environment."),
+    ];
+
     protected static IReadOnlyList<CommandSymbol> ChannelCommandSymbols =>
     [
-        .. DeploymentAddressSymbols,
+        .. ChannelAddressSymbols,
         ChannelName,
     ];
 
@@ -182,4 +253,7 @@ public abstract class DeploymentChannelCommand<TRequest, TResult> : CodeAgentDep
         {
             AllowMultipleArgumentsPerToken = true,
         };
+
+    /// <inheritdoc />
+    protected override AgentDeploymentAmsChannelRequest<TRequest> BindAms(TRequest content) => new() { Channel = content };
 }

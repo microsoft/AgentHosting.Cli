@@ -1301,6 +1301,34 @@ public sealed class DeploymentChannelPlanTests
         Assert.Equal("--agent-id must be a valid GUID.", ex.Message);
     }
 
+    [Fact]
+    public void ContentValidators_CheckTheChannelButLeaveTheAmsAddressToTheCaller()
+    {
+        const string AmsAgentId = "{22222222-2222-2222-2222-222222222222}";
+        var show = ShowRequest("MsTeams") with { AgentId = AmsAgentId };
+        var create = CreateRequest("MsTeams", "acceptedTerms=true") with { AgentId = AmsAgentId };
+        var update = UpdateRequest("MsTeams", "acceptedTerms=true") with { AgentId = AmsAgentId };
+        var delete = DeleteRequest("MsTeams") with { AgentId = AmsAgentId };
+
+        DeploymentChannelRequest[] validated =
+        [
+            DeploymentChannelPlan.ValidateShowContent(show),
+            DeploymentChannelPlan.ValidateCreateContent(create).Request,
+            DeploymentChannelPlan.ValidateUpdateContent(update).Request,
+            DeploymentChannelPlan.ValidateDeleteContent(delete),
+        ];
+
+        Assert.All(validated, request => Assert.Equal(("msteams", AmsAgentId, DeploymentId), (request.ChannelName, request.AgentId, request.DeploymentId)));
+        Action[] localValidators =
+        [
+            () => DeploymentChannelPlan.ValidateShow(show),
+            () => DeploymentChannelPlan.ValidateCreate(create),
+            () => DeploymentChannelPlan.ValidateUpdate(update),
+            () => DeploymentChannelPlan.ValidateDelete(delete),
+        ];
+        Assert.All(localValidators, validate => Assert.StartsWith("--deployment-id cannot be combined with --agent-id", Assert.Throws<UsageException>(validate).Message, StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("directline")]
     [InlineData("webchat")]

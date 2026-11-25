@@ -7,26 +7,29 @@ using DeploymentModel = Microsoft.Agents.Hosting.Cli.Core.Deployments.CodeAgentD
 
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
-/// <summary><c>msagent deployment update</c>, routed on the resolved agent type.</summary>
+/// <summary><c>msagent deployment update</c>, routed to a deployment of the local project or to AMS.</summary>
 [Command("update", Description = "Update an existing deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 40, ProgressLabel = "Updating deployment")]
 public sealed class DeploymentUpdateCommand : CommandBase<AgentDeploymentUpdateRequest, AgentDeploymentUpdateResult>
 {
-    private static readonly string[] AmsOptions = ["--package-revision", "--environment-id"];
-    private static readonly string[] RequiredAmsOptions =
-        ["--agent-id", "--deployment-id", "--package-revision"];
+    private static readonly AmsRouteRules AmsRules = new("deployment update")
+    {
+        MovedOptions = new Dictionary<string, string> { ["--package-revision"] = "use `msagent agent deploy --commit-id`; `msagent agent commit list` shows the commits." },
+        LocalOptions = ["--project", "--resource-group", "--subscription", "--tenant", "--deployment-type", "--sku", "--display-name", "--description", "--default"],
+        NeedsDeployment = true,
+    };
 
     /// <inheritdoc />
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
         .. DeploymentSelector.Symbols,
-        OptionCatalog.Value("--package-revision", "Existing immutable AMS package revision id.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
-        OptionCatalog.Value("--environment-id", "AMS agent home environment. Defaults to the active environment.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
+        OptionCatalog.Value("--package-revision", "Moved: use `msagent agent deploy --commit-id`.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
+        AmsRoute.EnvironmentOption("AMS agent home environment, which selects the AMS route. Defaults to the active environment."),
         OptionCatalog.Value("--deployment-type", "New stage: dev, test, or prod. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
-        OptionCatalog.Value("--new-name", "New deployment name, unique within the agent. 4-42 characters from -, a-z, A-Z, 0-9 and _. MCS only."),
+        OptionCatalog.Value("--new-name", "New deployment name, unique within the agent. For MCS, 4-42 characters from -, a-z, A-Z, 0-9 and _."),
         OptionCatalog.Value("--sku", "New SKU: F0 or S1. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
         OptionCatalog.Value("--display-name", "New deployment display name. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
         OptionCatalog.Value("--description", "New deployment description. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
-        OptionCatalog.Value("--endpoint-url", "New messaging endpoint. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
+        OptionCatalog.Value("--endpoint-url", "New messaging endpoint. CodeAgent only. On AMS, the dev endpoint of a Dev deployment, which the next `msagent agent deploy` without --commit-id puts live, switching a package deployment to it.") with { AnyOfFeatures = [FeatureName.AzureBotServiceFeatures, FeatureName.AmsFeatures] },
         OptionCatalog.OptionalSwitch("--default", "Make this the agent's default deployment. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
     ];
 
@@ -35,7 +38,7 @@ public sealed class DeploymentUpdateCommand : CommandBase<AgentDeploymentUpdateR
     [
         new RouteMetadata(typeof(AgentDeploymentUpdateRequest), typeof(AgentDeploymentUpdateResult)),
         new RouteMetadata(typeof(DeploymentUpdateRequest), typeof(DeploymentResult<DeploymentModel>)),
-        new RouteMetadata(typeof(AgentDeploymentPackageUpdateRequest), typeof(AgentDeployResult)),
+        new RouteMetadata(typeof(AgentDeploymentAmsUpdateRequest), typeof(AgentDeploymentAmsResult)),
     ];
 
     /// <inheritdoc />
@@ -49,62 +52,8 @@ public sealed class DeploymentUpdateCommand : CommandBase<AgentDeploymentUpdateR
             Summary = "Change an Azure Bot Service deployment",
             RequiredFeatures = [FeatureName.AzureBotServiceFeatures],
         },
-        new("--agent-id", "--deployment-id", "--package-revision")
-        {
-            Summary = "Point a deployment at a new package revision",
-            RequiredFeatures = [FeatureName.AmsFeatures],
-        },
+        AmsRoute.Usage("Rename an AMS deployment or change its dev endpoint", withDeployment: true, "(--new-name <new-name> | --endpoint-url <endpoint-url>)"),
     ];
-
-    /// <inheritdoc />
-    protected override void EnsureAvailable(ICommandInput input, IServiceProvider services)
-    {
-        if (SelectsAms(input))
-        {
-            FeatureGate.RequireEnabled(
-                services,
-                FeatureName.AmsFeatures,
-                "AMS deployment package update",
-                "Remove --package-revision and --environment-id to use an available local or Azure deployment update route.");
-        }
-    }
-
-    /// <inheritdoc />
-    protected override string? Validate(ICommandInput input, IServiceProvider services)
-    {
-        ArgumentNullException.ThrowIfNull(input);
-
-        if (!SelectsAms(input))
-        {
-            return null;
-        }
-
-        string[] incompatibleOptions =
-        [
-            "--project",
-            "--agent-name",
-            "--deployment-name",
-            "--resource-group",
-            "--subscription",
-            "--tenant",
-            "--deployment-type",
-            "--new-name",
-            "--sku",
-            "--display-name",
-            "--description",
-            "--endpoint-url",
-            "--default",
-        ];
-        if (incompatibleOptions.FirstOrDefault(input.WasProvided) is { } incompatible)
-        {
-            return $"{incompatible} cannot be combined with an AMS deployment package update.";
-        }
-
-        return RequiredAmsOptions
-            .FirstOrDefault(option => string.IsNullOrWhiteSpace(input.GetString(option))) is { } missing
-                ? $"{missing} is required for an AMS deployment package update."
-                : null;
-    }
 
     /// <inheritdoc />
     protected override AgentDeploymentUpdateRequest Bind(ICommandInput input)
@@ -124,24 +73,10 @@ public sealed class DeploymentUpdateCommand : CommandBase<AgentDeploymentUpdateR
     }
 
     /// <inheritdoc />
-    protected override Task<object> DispatchAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
+    protected override Task<object> DispatchAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken) => AmsRoute.RouteAsync(input, services, AmsRules, () => DispatchAmsAsync(input, services, cancellationToken), () => DispatchLocalAsync(input, services, cancellationToken));
+
+    private Task<object> DispatchLocalAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(input);
-
-        if (SelectsAms(input))
-        {
-            return InvokeAsync<AgentDeploymentPackageUpdateRequest, AgentDeployResult>(
-                services,
-                new AgentDeploymentPackageUpdateRequest
-                {
-                    AgentId = input.GetString("--agent-id"),
-                    DeploymentId = input.GetString("--deployment-id"),
-                    PackageRevisionId = input.GetString("--package-revision"),
-                    EnvironmentId = input.GetString("--environment-id"),
-                },
-                cancellationToken);
-        }
-
         var resolved = Resolve(input, services);
         DeploymentSelector.RequireAddressable(services, input, resolved);
 
@@ -180,6 +115,10 @@ public sealed class DeploymentUpdateCommand : CommandBase<AgentDeploymentUpdateR
             cancellationToken);
     }
 
+    private static Task<object> DispatchAmsAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken) => string.IsNullOrWhiteSpace(input.GetString("--new-name")) && string.IsNullOrWhiteSpace(input.GetString("--endpoint-url"))
+        ? throw new CommandUsageException("--new-name or --endpoint-url is required for the AMS route of `msagent deployment update`.")
+        : InvokeAsync<AgentDeploymentAmsUpdateRequest, AgentDeploymentAmsResult>(services, AmsRoute.Address(input, new AgentDeploymentAmsUpdateRequest { NewName = input.GetString("--new-name"), EndpointUrl = input.GetString("--endpoint-url") }), cancellationToken);
+
     private static (string Option, bool Supplied)[] CodeAgentOnly(ICommandInput input) =>
     [
         ("--deployment-type", !string.IsNullOrWhiteSpace(input.GetString("--deployment-type"))),
@@ -195,7 +134,4 @@ public sealed class DeploymentUpdateCommand : CommandBase<AgentDeploymentUpdateR
             input,
             hasMcsOptions: !string.IsNullOrWhiteSpace(input.GetString("--new-name")),
             hasCodeAgentOptions: CodeAgentOnly(input).Any(entry => entry.Supplied)));
-
-    private static bool SelectsAms(ICommandInput input) =>
-        AmsOptions.Any(input.WasProvided);
 }

@@ -252,6 +252,18 @@ public sealed class ManagedAgentException : AgentHostingException
             ? "Name the deployment with --deployment-id or --deployment-name."
             : "Name the deployment with --deployment-id, or narrow it with --agent-id or --agent-name.");
 
+    /// <summary>No code agent of the AMS home environment has the name.</summary>
+    public static ManagedAgentException AmsAgentNotFound(string name, string environmentId) => new(ErrorCodes.ManagedAgent.AgentNotFound, $"No code agent named '{TerminalText.Sanitize(name)}' is in environment {environmentId}.", ExitCodes.Usage, "agent-not-found", "Run `msagent agent list --agent-type CodeAgent` to see the environment's code agents, or pass --environment-id with the agent's home environment.");
+
+    /// <summary>More than one code agent of the AMS home environment has the name.</summary>
+    public static ManagedAgentException AmsAgentAmbiguous(string name, IEnumerable<string> agentIds) => new(ErrorCodes.ManagedAgent.AgentAmbiguous, $"More than one code agent is named '{TerminalText.Sanitize(name)}': {string.Join(", ", agentIds)}.", ExitCodes.Usage, "agent-ambiguous", "Name the agent with --agent-id.");
+
+    /// <summary>No deployment of the AMS agent has the name.</summary>
+    public static ManagedAgentException AmsDeploymentNotFound(string name, string agentId) => new(ErrorCodes.Deployment.SlotNotFound, $"Agent {agentId} has no deployment named '{TerminalText.Sanitize(name)}'.", ExitCodes.Usage, "deployment-not-found", "Run `msagent deployment list` to see the agent's deployments, or create it with `msagent deployment create`.");
+
+    /// <summary>More than one deployment of the AMS agent has the name.</summary>
+    public static ManagedAgentException AmsDeploymentAmbiguous(string name, IEnumerable<string> deploymentIds) => new(ErrorCodes.Deployment.SlotAmbiguous, $"More than one deployment is named '{TerminalText.Sanitize(name)}': {string.Join(", ", deploymentIds)}.", ExitCodes.Usage, "deployment-ambiguous", "Name the deployment with --deployment-id.");
+
     /// <summary>A deployment would violate one of the slot uniqueness rules.</summary>
     /// <param name="constraint">The rule that would be broken.</param>
     /// <param name="value">The conflicting value.</param>

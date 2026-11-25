@@ -22,6 +22,9 @@ internal static class DeploymentOAuthParameters
     internal static bool IsProviderSecret(string type) =>
         type.Equals("securestring", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Splits the scopes string of a connection on spaces and commas into its distinct scopes.</summary>
+    internal static string[] ParseScopes(string? scopes) => string.IsNullOrWhiteSpace(scopes) ? [] : scopes.Split([' ', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.Ordinal).ToArray();
+
     /// <summary>
     /// Produces a safe OAuth connection shape. When a provider definition is supplied, only its declared
     /// parameters remain and its secret metadata drives masking. Without a provider definition, unknown parameters

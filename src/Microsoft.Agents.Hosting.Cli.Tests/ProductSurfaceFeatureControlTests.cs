@@ -1,5 +1,6 @@
 using Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 using Microsoft.Agents.Hosting.Cli.Commands.Commands.Auth;
+using Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
@@ -43,6 +44,8 @@ public sealed class ProductSurfaceFeatureControlTests
         var deploy = Run(new FakeOperations(), AllProductSurfacesDisabled, "agent", "deploy", "--help");
         var deploymentCreate = Run(new FakeOperations(), AllProductSurfacesDisabled, "deployment", "create", "--help");
         var deploymentUpdate = Run(new FakeOperations(), AllProductSurfacesDisabled, "deployment", "update", "--help");
+        var deploymentShow = Run(new FakeOperations(), AllProductSurfacesDisabled, "deployment", "show", "--help");
+        var deploymentDelete = Run(new FakeOperations(), AllProductSurfacesDisabled, "deployment", "delete", "--help");
         var deployment = Run(new FakeOperations(), AllProductSurfacesDisabled, "deployment", "--help");
 
         Assert.Equal(ExitCodes.Success, root.ExitCode);
@@ -65,6 +68,8 @@ public sealed class ProductSurfaceFeatureControlTests
         Assert.Contains("--environment-id", deploymentCreate.Stdout, StringComparison.Ordinal);
         Assert.DoesNotContain("Azure Bot Service", deploymentCreate.Stdout, StringComparison.Ordinal);
         Assert.DoesNotContain("--package-revision", deploymentUpdate.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("--environment-id", deploymentShow.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("--environment-id", deploymentDelete.Stdout, StringComparison.Ordinal);
         Assert.Contains(Lines(deployment.Stdout), line => StartsWithCommand(line, "channel"));
     }
 
@@ -291,6 +296,43 @@ public sealed class ProductSurfaceFeatureControlTests
         Assert.Contains(nameof(FeatureName.AmsFeatures), failure.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("show")]
+    [InlineData("delete")]
+    public void DisabledAmsFeature_RejectsAnAmsDeploymentAddressFromTheCommandLine(string verb)
+    {
+        var operations = new FakeOperations();
+        var handlers = new RecordingAmsHandlers();
+
+        var result = AmsCommandHost.Run(operations, handlers, new TestFeatureFlags(FeatureName.AzureBotServiceFeatures), "deployment", verb, "--agent-id", "44444444-4444-4444-4444-444444444444", "--deployment-id", "77777777-7777-7777-7777-777777777777", "--environment-id", "env-1");
+
+        Assert.Equal(ExitCodes.Usage, result.ExitCode);
+        Assert.Contains("--environment-id", result.Stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+        Assert.Null(operations.LastGetDeploymentRequest);
+        Assert.Null(operations.LastDeleteDeploymentRequest);
+    }
+
+    [Theory]
+    [InlineData("show")]
+    [InlineData("delete")]
+    public async Task DisabledAmsFeature_RejectsTheAmsDeploymentRouteBeforeHandlerResolution(string verb)
+    {
+        var input = new DictionaryCommandInput(new Dictionary<string, string?>
+        {
+            ["--agent-id"] = "44444444-4444-4444-4444-444444444444",
+            ["--deployment-id"] = "77777777-7777-7777-7777-777777777777",
+            ["--environment-id"] = "env-1",
+        });
+        var services = new SingleServiceProvider(typeof(IFeatureFlags), AllProductSurfacesDisabled);
+        ICommandImplementation command = verb == "show" ? new DeploymentShowCommand() : new DeploymentDeleteCommand();
+
+        var failure = await Assert.ThrowsAsync<CommandUsageException>(() => command.ExecuteAsync(input, services, CancellationToken.None));
+
+        Assert.StartsWith($"The AMS route of `msagent deployment {verb}`, which --environment-id selects, is disabled by the {nameof(FeatureName.AmsFeatures)} rollout control.", failure.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Remove --environment-id to use a local route.", failure.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void EnablingAllProductSurfaces_RestoresExistingCommandsAndOptions()
     {
@@ -330,17 +372,18 @@ public sealed class ProductSurfaceFeatureControlTests
             "--agent-name", "Code Agent",
             "--language", "dotnet",
             "--language-version", "net10.0");
-        var deploy = Run(
-            operations,
-            flags,
-            "agent", "deploy",
-            "--agent-id", "agent-1",
-            "--package-revision", "revision-1",
-            "--target-environment-id", "env-1",
-            "--deployment-name", "dev-slot",
-            "--deployment-type", "dev",
-            "--entra-id", "app-1",
-            "--entra-id-type", "app-reg");
+        var deploy = Run(operations, flags, "agent", "deploy", "--agent-id", "agent-1", "--deployment-id", "deployment-1");
+        var handlers = new RecordingAmsHandlers();
+        var deploymentCreate = AmsCommandHost.Run(operations, handlers, flags, "deployment", "create", "--agent-id", "agent-1", "--target-environment-id", "env-2", "--deployment-name", "dev-slot", "--deployment-type", "dev", "--entra-id", "app-1", "--entra-id-type", "app-reg", "--endpoint-url", "https://contoso.devtunnels.ms/api/messages");
+        var list = AmsCommandHost.Run(operations, handlers, flags, "deployment", "list", "--agent-id", "agent-1");
+        var show = AmsCommandHost.Run(operations, handlers, flags, "deployment", "show", "--agent-id", "agent-1", "--deployment-id", "deployment-1", "--environment-id", "env-1");
+        var update = AmsCommandHost.Run(operations, handlers, flags, "deployment", "update", "--agent-id", "agent-1", "--deployment-id", "deployment-1", "--endpoint-url", "https://contoso.devtunnels.ms/api/messages");
+        var delete = AmsCommandHost.Run(operations, handlers, flags, "deployment", "delete", "--agent-id", "agent-1", "--deployment-id", "deployment-1", "--environment-id", "env-1");
+        var agentList = AmsCommandHost.Run(operations, handlers, flags, "agent", "list", "--agent-type", "CodeAgent");
+        var agentShow = AmsCommandHost.Run(operations, handlers, flags, "agent", "show", "--agent-id", "agent-1");
+        var agentUpdate = AmsCommandHost.Run(operations, handlers, flags, "agent", "update", "--agent-id", "agent-1", "--new-name", "renamed");
+        var agentDelete = AmsCommandHost.Run(operations, handlers, flags, "agent", "delete", "--agent-id", "agent-1", "--non-interactive");
+        var commits = AmsCommandHost.Run(operations, handlers, flags, "agent", "commit", "list", "--agent-id", "agent-1");
 
         Assert.DoesNotContain(Lines(root.Stdout), line => StartsWithCommand(line, "abs"));
         Assert.DoesNotContain(Lines(root.Stdout), line => StartsWithCommand(line, "identity"));
@@ -350,9 +393,42 @@ public sealed class ProductSurfaceFeatureControlTests
         Assert.Equal(ExitCodes.Success, package.ExitCode);
         Assert.Equal(ExitCodes.Success, create.ExitCode);
         Assert.Equal(ExitCodes.Success, deploy.ExitCode);
+        Assert.All([deploymentCreate, list, show, update, delete, agentList, agentShow, agentUpdate, agentDelete, commits], result => Assert.Equal(ExitCodes.Success, result.ExitCode));
         Assert.NotNull(operations.LastPackageUploadRequest);
         Assert.NotNull(operations.LastCreateRequest);
         Assert.NotNull(operations.LastDeployRequest);
+        Assert.Equal(
+            [typeof(AgentDeploymentAmsCreateRequest), typeof(AgentDeploymentAmsListRequest), typeof(AgentDeploymentAmsShowRequest), typeof(AgentDeploymentAmsUpdateRequest), typeof(AgentDeploymentAmsDeleteRequest), typeof(AgentAmsListRequest), typeof(AgentAmsShowRequest), typeof(AgentAmsUpdateRequest), typeof(AgentAmsDeleteRequest), typeof(AgentCommitListRequest)],
+            handlers.Requests.Select(request => request.GetType()));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void SharedDeploymentOptions_AreVisibleWhenEitherRoutesFeatureIsOn(bool ams, bool abs)
+    {
+        var flags = new TestFeatureFlags([.. ams ? [FeatureName.AmsFeatures] : Array.Empty<FeatureName>(), .. abs ? [FeatureName.AzureBotServiceFeatures] : Array.Empty<FeatureName>()]);
+
+        var create = Run(new FakeOperations(), flags, "deployment", "create", "--help").Stdout;
+        var update = Run(new FakeOperations(), flags, "deployment", "update", "--help").Stdout;
+
+        Assert.All([ListsOption(create, "--entra-id"), ListsOption(create, "--entra-id-type"), ListsOption(create, "--endpoint-url"), ListsOption(update, "--endpoint-url")], visible => Assert.Equal(ams || abs, visible));
+        Assert.Equal(ams, ListsOption(create, "--target-environment-id"));
+        Assert.Equal(abs, ListsOption(create, "--resource-group"));
+    }
+
+    [Fact]
+    public void SharedDeploymentOptions_OnTheAzureRouteStillNeedTheAzureFeature()
+    {
+        var operations = new FakeOperations { OnResolveDeploymentAgentType = _ => new DeploymentAgentTypeResult { AgentType = AgentTypes.CodeAgent, Source = DeploymentAgentTypeSource.DeploymentRecord } };
+
+        var result = Run(operations, new TestFeatureFlags(FeatureName.AmsFeatures), "deployment", "update", "--deployment-id", "deployment-1", "--endpoint-url", "https://contoso.example/api/messages");
+
+        Assert.Equal(ExitCodes.Usage, result.ExitCode);
+        Assert.Contains(nameof(FeatureName.AzureBotServiceFeatures), result.Stderr, StringComparison.Ordinal);
+        Assert.Null(operations.LastUpdateDeploymentRequest);
     }
 
     [Fact]
@@ -428,6 +504,9 @@ public sealed class ProductSurfaceFeatureControlTests
         line.TrimStart().StartsWith($"{command} ", StringComparison.Ordinal);
 
     private static string[] Lines(string value) => value.Split('\n');
+
+    private static bool ListsOption(string help, string option) =>
+        Lines(help).Any(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries) is [_, var name, ..] && name == option);
 
     private sealed class DictionaryCommandInput(IReadOnlyDictionary<string, string?> values) : ICommandInput
     {

@@ -26,21 +26,15 @@ internal sealed record DeploymentChannelOperationPlan<TRequest>
 /// </summary>
 public static class DeploymentChannelPlan
 {
-    internal static DeploymentChannelRequest Validate(DeploymentChannelRequest request)
+    /// <summary>Validates the local deployment address and the channel name of a request.</summary>
+    internal static DeploymentChannelRequest Validate(DeploymentChannelRequest request) => ValidateChannelName((DeploymentChannelRequest)ValidateAddress(request));
+
+    internal static DeploymentChannelShowRequest ValidateShow(DeploymentChannelShowRequest request) => ValidateShowContent((DeploymentChannelShowRequest)ValidateAddress(request));
+
+    /// <summary>Validates the channel of a show request whose deployment is addressed elsewhere, such as through AMS.</summary>
+    internal static DeploymentChannelShowRequest ValidateShowContent(DeploymentChannelShowRequest request)
     {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var validatedRequest = (DeploymentChannelRequest)DeploymentRequestValidator.Validate(request);
-
-        return validatedRequest with
-        {
-            ChannelName = DeploymentChannelCatalog.ValidateChannelName(request.ChannelName),
-        };
-    }
-
-    internal static DeploymentChannelShowRequest ValidateShow(DeploymentChannelShowRequest request)
-    {
-        var validatedRequest = (DeploymentChannelShowRequest)Validate(request);
+        var validatedRequest = (DeploymentChannelShowRequest)ValidateChannelName(request);
         var channelDefinition = DeploymentChannelCatalog.FindChannelDefinition(validatedRequest.ChannelName, ChannelKeyType.Name);
         if (!DeploymentChannelCatalog.SupportsOperation(channelDefinition, "show"))
         {
@@ -52,9 +46,12 @@ public static class DeploymentChannelPlan
 
     /// <summary>Validates create inputs before deployment resolution or Azure writes.</summary>
     internal static DeploymentChannelOperationPlan<DeploymentChannelCreateRequest> ValidateCreate(
-        DeploymentChannelCreateRequest request)
+        DeploymentChannelCreateRequest request) => ValidateCreateContent((DeploymentChannelCreateRequest)ValidateAddress(request));
+
+    /// <summary>Validates the channel content of a create request whose deployment is addressed elsewhere, such as through AMS.</summary>
+    internal static DeploymentChannelOperationPlan<DeploymentChannelCreateRequest> ValidateCreateContent(DeploymentChannelCreateRequest request)
     {
-        var validatedRequest = (DeploymentChannelCreateRequest)Validate(request);
+        var validatedRequest = (DeploymentChannelCreateRequest)ValidateChannelName(request);
 
         var channelDefinition = DeploymentChannelCatalog.FindChannelDefinition(validatedRequest.ChannelName, ChannelKeyType.Name);
         ValidateCollectionOperations(validatedRequest, channelDefinition, isCreate: true);
@@ -80,9 +77,12 @@ public static class DeploymentChannelPlan
 
     /// <summary>Validates assignments or one collection operation before reading existing state.</summary>
     internal static DeploymentChannelOperationPlan<DeploymentChannelUpdateRequest> ValidateUpdate(
-        DeploymentChannelUpdateRequest request)
+        DeploymentChannelUpdateRequest request) => ValidateUpdateContent((DeploymentChannelUpdateRequest)ValidateAddress(request));
+
+    /// <summary>Validates the channel content of an update request whose deployment is addressed elsewhere, such as through AMS.</summary>
+    internal static DeploymentChannelOperationPlan<DeploymentChannelUpdateRequest> ValidateUpdateContent(DeploymentChannelUpdateRequest request)
     {
-        var validatedRequest = (DeploymentChannelUpdateRequest)Validate(request);
+        var validatedRequest = (DeploymentChannelUpdateRequest)ValidateChannelName(request);
         var channelDefinition = DeploymentChannelCatalog.FindChannelDefinition(
             validatedRequest.ChannelName,
             ChannelKeyType.Name);
@@ -124,9 +124,12 @@ public static class DeploymentChannelPlan
         };
     }
 
-    internal static DeploymentChannelDeleteRequest ValidateDelete(DeploymentChannelDeleteRequest request)
+    internal static DeploymentChannelDeleteRequest ValidateDelete(DeploymentChannelDeleteRequest request) => ValidateDeleteContent((DeploymentChannelDeleteRequest)ValidateAddress(request));
+
+    /// <summary>Validates the channel of a delete request whose deployment is addressed elsewhere, such as through AMS.</summary>
+    internal static DeploymentChannelDeleteRequest ValidateDeleteContent(DeploymentChannelDeleteRequest request)
     {
-        var validatedRequest = (DeploymentChannelDeleteRequest)Validate(request);
+        var validatedRequest = (DeploymentChannelDeleteRequest)ValidateChannelName(request);
         var channelDefinition = DeploymentChannelCatalog.FindChannelDefinition(validatedRequest.ChannelName, ChannelKeyType.Name);
         if (!DeploymentChannelCatalog.SupportsOperation(channelDefinition, "delete"))
         {
@@ -138,10 +141,18 @@ public static class DeploymentChannelPlan
         return validatedRequest;
     }
 
-    internal static DeploymentChannelListRequest ValidateList(DeploymentChannelListRequest request)
+    internal static DeploymentChannelListRequest ValidateList(DeploymentChannelListRequest request) => (DeploymentChannelListRequest)ValidateAddress(request);
+
+    private static DeploymentRequest ValidateAddress(DeploymentRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return (DeploymentChannelListRequest)DeploymentRequestValidator.Validate(request);
+        return DeploymentRequestValidator.Validate(request);
+    }
+
+    private static DeploymentChannelRequest ValidateChannelName(DeploymentChannelRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return request with { ChannelName = DeploymentChannelCatalog.ValidateChannelName(request.ChannelName) };
     }
 
     /// <summary>Builds a create PUT payload from a validated plan.</summary>

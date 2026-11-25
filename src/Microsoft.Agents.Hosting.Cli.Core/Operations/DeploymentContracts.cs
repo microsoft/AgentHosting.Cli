@@ -149,13 +149,13 @@ public sealed record DeploymentResult<TPayload> : IDeploymentResult
         {
             CodeAgentDeployment deployment => deployment.Bot.RawArmResponse,
             DeploymentOAuthConnection connection => connection.RawArmResponse,
-            DeploymentOAuthConnection[] connections => JsonSerializer.SerializeToElement(
+            DeploymentOAuthConnection[] connections when connections.Any(connection => connection.RawArmResponse is not null) => JsonSerializer.SerializeToElement(
                 connections
                     .Where(connection => connection.RawArmResponse is not null)
                     .Select(connection => connection.RawArmResponse!.Value)
                     .ToArray()),
             DeploymentChannelRecord channel => channel.RawArmResponse,
-            DeploymentChannelRecord[] channels => JsonSerializer.SerializeToElement(
+            DeploymentChannelRecord[] channels when channels.Any(channel => channel.RawArmResponse is not null) => JsonSerializer.SerializeToElement(
                 channels
                     .Where(channel => channel.RawArmResponse is not null)
                     .Select(channel => channel.RawArmResponse!.Value)
@@ -190,6 +190,9 @@ public record DeploymentOAuthUpdateRequest : DeploymentOAuthRequest
 
     /// <summary>The write-only application secret supplied through <c>--client-secret</c>.</summary>
     public string? ClientSecret { get; init; }
+
+    /// <summary>Whether the application secret is read from standard input (from <c>--client-secret-stdin</c>) once every other check has passed.</summary>
+    public bool ClientSecretFromStandardInput { get; init; }
 
     /// <summary>The space-separated scopes supplied through <c>--scopes</c>.</summary>
     public string? Scopes { get; init; }

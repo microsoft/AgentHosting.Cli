@@ -68,7 +68,8 @@ public static class ServiceCollectionExtensions
     ///
     /// The caller must also register an <see cref="IEnvironmentClient"/>: the Power Platform API
     /// transport adapter is owned by the composition root, which decides the <see cref="HttpClient"/>
-    /// and its redirect policy. The same applies to the AMS transports.
+    /// and its redirect policy. The same applies to the AMS transports, the <see cref="AmsEndpointProfile"/>
+    /// and the <see cref="IStandardInput"/> that OAuth client secrets are read from.
     /// </summary>
     public static IServiceCollection AddAgentHostAuthentication(
         this IServiceCollection services,
@@ -214,10 +215,16 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<EnvironmentSelectionService>();
 
         // AMS operations. The application services are MSAL-free Core; the concrete HTTP transports
-        // remain owned by the composition root.
+        // and the endpoint profile remain owned by the composition root.
+        services.AddSingleton<AmsTargets>();
+        services.AddSingleton<AmsAddressResolver>();
         services.AddSingleton<AgentCreateService>();
         services.AddSingleton<AgentPackageUploadService>();
         services.AddSingleton<AgentDeployService>();
+        AddCommandHandlerService<AmsChannelService>(services);
+        AddCommandHandlerService<AmsOAuthService>(services);
+        AddCommandHandlerService<AmsDeploymentService>(services);
+        AddCommandHandlerService<AmsAgentService>(services);
 
         // Deployments, OAuth, and channels. DeploymentService depends on one provider-neutral transport; the
         // current adapter implements it through direct ARM. OAuth keeps its own connection port and
@@ -263,5 +270,14 @@ public static class ServiceCollectionExtensions
             sp.GetService<EvaluationServices>()));
 
         return services;
+    }
+
+    private static void AddCommandHandlerService<TService>(IServiceCollection services) where TService : class
+    {
+        services.AddSingleton<TService>();
+        foreach (var handler in typeof(TService).GetInterfaces().Where(contract => contract.IsGenericType && contract.GetGenericTypeDefinition() == typeof(ICommandHandler<,>)))
+        {
+            services.AddSingleton(handler, sp => sp.GetRequiredService<TService>());
+        }
     }
 }

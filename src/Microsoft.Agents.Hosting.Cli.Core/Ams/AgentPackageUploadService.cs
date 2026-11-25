@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
@@ -15,16 +14,14 @@ public sealed class AgentPackageUploadService
     public const long MaxPackageSizeBytes = 128L * 1024L * 1024L;
     private const int ReadBufferSizeBytes = 81_920;
 
-    private readonly EnvironmentSelectionService _environments;
+    private readonly AmsAddressResolver _addresses;
     private readonly IAmsAgentReadTransport _agents;
     private readonly IAmsPackagePublicationTransport _packages;
 
-    public AgentPackageUploadService(
-        EnvironmentSelectionService environments,
-        IAmsAgentReadTransport agents,
-        IAmsPackagePublicationTransport packages)
+    /// <summary>Creates the service over the AMS agent read and package upload transports.</summary>
+    public AgentPackageUploadService(AmsAddressResolver addresses, IAmsAgentReadTransport agents, IAmsPackagePublicationTransport packages)
     {
-        _environments = environments ?? throw new ArgumentNullException(nameof(environments));
+        _addresses = addresses ?? throw new ArgumentNullException(nameof(addresses));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
     }
@@ -35,11 +32,11 @@ public sealed class AgentPackageUploadService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var agentId = RequireGuid(request.AgentId, "--agent");
         var packagePath = Require(request.PackagePath, "--package");
-        var environment = await _environments
-            .ResolveForCommandAsync(request.EnvironmentId, cancellationToken)
-            .ConfigureAwait(false);
+        var address = await _addresses.ResolveAgentAsync(request, "agent package upload", cancellationToken).ConfigureAwait(false);
+        var agentId = address.AgentId;
+        var environment = address.Home.Environment;
+        var serviceTarget = address.Home.DataPlane;
 
         await using var package = OpenPackage(packagePath);
         if (package.Length == 0)
@@ -54,30 +51,14 @@ public sealed class AgentPackageUploadService
 
         var packageDigest = await HashAndRewindAsync(package, cancellationToken)
             .ConfigureAwait(false);
-        var agent = await _agents
-            .GetAsync(
-                new AmsAgentReadTransportRequest
-                {
-                    Endpoint = environment.ApiEndpoint,
-                    Context = environment.Context,
-                    Audience = environment.ApiAudience,
-                    TenantId = environment.TenantId,
-                    EnvironmentId = environment.EnvironmentId,
-                    AgentId = agentId,
-                },
-                cancellationToken)
-            .ConfigureAwait(false);
+        var agent = await _agents.GetAsync(address.OnDataPlane, cancellationToken).ConfigureAwait(false);
         AmsAgentResponseValidator.ValidateBoundCodeAgent(agent, environment, agentId);
 
         var uploaded = await _packages
             .PublishAsync(
                 new AmsPackagePublicationTransportRequest
                 {
-                    Endpoint = environment.ApiEndpoint,
-                    Context = environment.Context,
-                    Audience = environment.ApiAudience,
-                    TenantId = environment.TenantId,
-                    EnvironmentId = environment.EnvironmentId,
+                    ServiceTarget = serviceTarget,
                     AgentId = agentId,
                     PackageStream = package,
                     PackageLength = package.Length,
@@ -96,6 +77,7 @@ public sealed class AgentPackageUploadService
             PackageRevisionId = uploaded.PackageRevisionId!,
             PackageDigest = packageDigest,
             PackageSizeInBytes = package.Length,
+            CommitId = uploaded.CommitId,
         };
     }
 
@@ -178,17 +160,6 @@ public sealed class AgentPackageUploadService
         }
 
         return value.Trim();
-    }
-
-    private static string RequireGuid(string? value, string option)
-    {
-        var result = Require(value, option);
-        if (!Guid.TryParse(result, out var parsed) || parsed == Guid.Empty)
-        {
-            throw new UsageException($"{option} must be a non-empty GUID.");
-        }
-
-        return parsed.ToString("D");
     }
 
     private static bool EqualsId(string left, string right) =>

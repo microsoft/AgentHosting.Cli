@@ -292,6 +292,8 @@ public static class DeploymentChannelCatalog
             "create" or "list" => true,
             "show" or "update" => channel.Parameters.Count > 0,
             "delete" => channel.Name is not ("directline" or "webchat"),
+            "token" => channel.Name == "directline",
+            "webhook" => channel.Name == "facebook",
             _ => false,
         };
 

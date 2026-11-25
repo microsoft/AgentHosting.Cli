@@ -163,6 +163,7 @@ public sealed class PpapiScopeBuilderTests{
             PowerPlatformApiPermissions.AppsRead,
             PowerPlatformApiPermissions.AppsCreate,
             PowerPlatformApiPermissions.AppsUpdate,
+            PowerPlatformApiPermissions.AppsDelete,
         };
 
         Assert.All(permissions, p => Assert.StartsWith("PowerApps.", p, StringComparison.Ordinal));
@@ -170,7 +171,7 @@ public sealed class PpapiScopeBuilderTests{
         // The permissions the plan explicitly refuses to request.
         Assert.DoesNotContain("PowerApps.Environments.GenerateResourceStorage", permissions);
         Assert.DoesNotContain(permissions, p => p.StartsWith("GitRepositories.", StringComparison.Ordinal));
-        Assert.DoesNotContain(permissions, p => p.Contains("Delete", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("PowerApps.Apps.Delete", Assert.Single(permissions, p => p.Contains("Delete", StringComparison.OrdinalIgnoreCase)));
     }
 }
 

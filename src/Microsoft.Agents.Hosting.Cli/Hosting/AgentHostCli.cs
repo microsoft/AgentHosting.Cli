@@ -207,7 +207,7 @@ public sealed class AgentHostCli
         var splitHelpSubtree = SubtreesHoldingASubgroup(root, isSubgroup);
         SplitSubgroupHelp(root, splitHelpSubtree, isSubgroup, treeBuilder.UsageLines);
 
-        var channelMutationCommands = AddDeploymentChannelHelp(root);
+        var secretInputCommands = AddDeploymentChannelHelp(root).Concat(DeploymentOAuthWriteCommands(root)).ToHashSet();
 
         var parseResult = root.Parse(ExpandEmptyAssignments(root, args));
         HelpOption[] helpOptions = [.. root.Options.OfType<HelpOption>()];
@@ -278,8 +278,8 @@ public sealed class AgentHostCli
         {
             var message = treeBuilder.SafeParserDiagnostic(
                 parseResult, args,
-                channelMutationCommands.Contains(parseResult.CommandResult.Command)
-                    ? FormatChannelParseErrors(parseResult, channelMutationCommands)
+                secretInputCommands.Contains(parseResult.CommandResult.Command)
+                    ? FormatParseErrors(parseResult, secretInputCommands)
                     : null);
             int exitCode = renderer.RenderUsageError(message, json);
             telemetry.RecordHost(CommandTelemetryHostCategory.ParserRejection);
@@ -392,27 +392,27 @@ public sealed class AgentHostCli
         }
     }
 
-    private static string FormatChannelParseErrors(ParseResult result, HashSet<Command> channelMutationCommands)
+    private static string FormatParseErrors(ParseResult result, HashSet<Command> secretInputCommands)
     {
         var command = result.CommandResult.Command;
-        if (!channelMutationCommands.Contains(command) || result.UnmatchedTokens.Count == 0)
+        if (!secretInputCommands.Contains(command) || result.UnmatchedTokens.Count == 0)
         {
             return string.Join(" ", result.Errors.Select(error => error.Message));
         }
 
+        var channelOption = command.Options.FirstOrDefault(option => option.Name == "--channel");
+        if (channelOption is null)
+        {
+            return "Invalid OAuth command input. Check the options and Key=Value parameters; --client-secret-stdin takes no value.";
+        }
+
         // Echo option names, never unmatched field values or inline option values.
-        var options = result.UnmatchedTokens
-            .Where(token => token.StartsWith('-'))
-            .Select(token => token.Split('=', 2)[0])
-            .Where(option => option is not "-" and not "--")
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        var options = result.UnmatchedTokens.Where(token => token.StartsWith('-')).Select(token => token.Split(['=', ':'], 2)[0]).Where(option => option is not "-" and not "--").Distinct(StringComparer.Ordinal).ToArray();
         if (options.Length == 0)
         {
             return "Invalid channel command input. Check the options and Key=Value fields.";
         }
 
-        var channelOption = command.Options.First(option => option.Name == "--channel");
         var channelResult = result.GetResult(channelOption);
         var channelName = channelResult?.Tokens.Count == 1
             ? DeploymentChannelCatalog.SupportedChannelNames.FirstOrDefault(name =>
@@ -422,6 +422,8 @@ public sealed class AgentHostCli
         return string.Join(" ", options.Select(option =>
             $"Option '{option}' is misspelled or not valid for {target}."));
     }
+
+    private static IEnumerable<Command> DeploymentOAuthWriteCommands(RootCommand root) => root.Subcommands.FirstOrDefault(command => command.Name == "deployment")?.Subcommands.FirstOrDefault(command => command.Name == "oauth")?.Subcommands.Where(command => command.Name is "create" or "update") ?? [];
 
     /// <summary>Wraps channel help with operation availability and create/update parameter metadata.</summary>
     private static HashSet<Command> AddDeploymentChannelHelp(RootCommand root)

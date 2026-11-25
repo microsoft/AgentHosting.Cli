@@ -44,16 +44,17 @@ public sealed class EmbeddabilityTests
             store,
             PowerPlatformCloudMap.ForCloud(CloudInstance.Public),
             new EmbeddedClock());
+        var amsTargets = new AmsTargets(new AmsEndpointProfile(), PowerPlatformApiTargetConfig.Public);
 
         // The apply seam is wired with the pending mutation port: the preview path must never resolve or
         // call it, so any accidental mutation from the read-only path would throw here.
         var platform = new RuntimePlatformInfo();
         var provisioning = new AbsProvisioningService(reader);
         var apply = new AbsApplyService(reader, new PendingAbsMutationPort());
-        var create = new AgentCreateService(new AgentCreationTarget(), environments, new PendingAmsAgentCreationTransport());
-        var upload = new AgentPackageUploadService(environments, new PendingAmsAgentReadTransport(), new PendingAmsPackagePublicationTransport());
-        var deploy = new AgentDeployService(PowerPlatformApiTargetConfig.Public, environments,
-            new PendingAmsAgentReadTransport(), new PendingAmsDeploymentTransport());
+        var create = new AgentCreateService(amsTargets, environments, new PendingAmsAgentCreationTransport());
+        var addresses = new AmsAddressResolver(amsTargets, environments, new PendingAmsAgentReadTransport(), new PendingAmsDeploymentTransport());
+        var upload = new AgentPackageUploadService(addresses, new PendingAmsAgentReadTransport(), new PendingAmsPackagePublicationTransport());
+        var deploy = new AgentDeployService(addresses, new PendingAmsDeploymentTransport());
         return constructorShape switch
         {
             0 => new(session, store, StaticInteractionPolicy.NonInteractive, platform, presenter, Context,
@@ -278,7 +279,7 @@ public sealed class EmbeddabilityTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData(" \t ")]
-    public async Task EmbeddedDeploy_RequiresExplicitTargetWithoutOpeningAnyLoginFlow(string? targetEnvironmentId)
+    public async Task EmbeddedDeploy_RequiresADeploymentWithoutOpeningAnyLoginFlow(string? deploymentId)
     {
         var session = new EmbeddedAuthenticationSession();
         var presenter = new SilentMessagePresenter();
@@ -286,18 +287,13 @@ public sealed class EmbeddabilityTests
         var request = new AgentDeployRequest
         {
             AgentId = "55555555-5555-5555-5555-555555555555",
-            PackageRevisionId = "66666666-6666-6666-6666-666666666666",
-            TargetEnvironmentId = targetEnvironmentId!,
-            DeploymentName = "dev-proof",
-            DeploymentType = "dev",
-            EntraId = MsaAppId,
-            EntraIdType = "app-reg",
+            DeploymentId = deploymentId,
         };
 
         var exception = await Assert.ThrowsAsync<UsageException>(() =>
             operations.DeployAgentAsync(request, CancellationToken.None));
 
-        Assert.Contains("--target-environment-id", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("--deployment-id", exception.Message, StringComparison.Ordinal);
         Assert.Equal(0, session.LoginFlowCalls);
         Assert.Equal(0, presenter.PresentCalls);
     }

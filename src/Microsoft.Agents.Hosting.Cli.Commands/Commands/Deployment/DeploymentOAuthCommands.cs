@@ -1,5 +1,6 @@
 using Microsoft.Agents.Hosting.Cli.Commands.Common;
 using Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
+using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Groups;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -13,7 +14,7 @@ public sealed class DeploymentOAuthCreateCommand :
 {
     public override IReadOnlyList<CommandSymbol> Symbols => CreateCommandSymbols;
 
-    public override IReadOnlyList<UsageRoute> UsageRoutes => DeploymentUsage("--connection", "--provider-name");
+    public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--connection", "--provider-name");
 
     protected override DeploymentOAuthCreateRequest Bind(ICommandInput input)
     {
@@ -30,6 +31,7 @@ public sealed class DeploymentOAuthCreateCommand :
             ServiceProviderName = input.GetString("--provider-name")!,
             ClientId = input.GetString("--client-id"),
             ClientSecret = input.GetString("--client-secret"),
+            ClientSecretFromStandardInput = input.GetSwitch("--client-secret-stdin"),
             Scopes = input.GetString("--scopes"),
             Parameters = input.GetStrings("--parameters"),
         };
@@ -43,7 +45,7 @@ public sealed class DeploymentOAuthUpdateCommand :
 {
     public override IReadOnlyList<CommandSymbol> Symbols => UpdateCommandSymbols;
 
-    public override IReadOnlyList<UsageRoute> UsageRoutes => DeploymentUsage("--connection");
+    public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--connection");
 
     protected override DeploymentOAuthUpdateRequest Bind(ICommandInput input)
     {
@@ -59,6 +61,7 @@ public sealed class DeploymentOAuthUpdateCommand :
             ConnectionName = input.GetString("--connection")!,
             ClientId = input.GetString("--client-id"),
             ClientSecret = input.GetString("--client-secret"),
+            ClientSecretFromStandardInput = input.GetSwitch("--client-secret-stdin"),
             Scopes = input.GetString("--scopes"),
             Parameters = input.GetStrings("--parameters"),
         };
@@ -72,7 +75,7 @@ public sealed class DeploymentOAuthDeleteCommand :
 {
     public override IReadOnlyList<CommandSymbol> Symbols => ConnectionCommandSymbols;
 
-    public override IReadOnlyList<UsageRoute> UsageRoutes => DeploymentUsage("--connection");
+    public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--connection");
 
     protected override DeploymentOAuthDeleteRequest Bind(ICommandInput input)
     {
@@ -96,7 +99,7 @@ public sealed class DeploymentOAuthShowCommand :
 {
     public override IReadOnlyList<CommandSymbol> Symbols => ConnectionCommandSymbols;
 
-    public override IReadOnlyList<UsageRoute> UsageRoutes => DeploymentUsage("--connection");
+    public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--connection");
 
     protected override DeploymentOAuthShowRequest Bind(ICommandInput input)
     {
@@ -118,9 +121,9 @@ public sealed class DeploymentOAuthShowCommand :
 public sealed class DeploymentOAuthListCommand :
     DeploymentOAuthCommand<DeploymentOAuthListRequest, DeploymentResult<DeploymentOAuthConnection[]>>
 {
-    public override IReadOnlyList<CommandSymbol> Symbols => DeploymentAddressSymbols;
+    public override IReadOnlyList<CommandSymbol> Symbols => OAuthAddressSymbols;
 
-    public override IReadOnlyList<UsageRoute> UsageRoutes => DeploymentUsage();
+    public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage();
 
     protected override DeploymentOAuthListRequest Bind(ICommandInput input)
     {
@@ -145,6 +148,19 @@ public sealed class DeploymentOAuthProviderListCommand :
     [
         ProviderFilter,
         .. ProviderCatalogueAddressSymbols,
+        .. AmsRoute.AddressSymbols(withDeployment: true).Select(symbol => symbol with { RequiredFeatures = [FeatureName.AmsFeatures] }),
+    ];
+
+    private static readonly AmsRouteRules AmsRules = new("deployment oauth list-providers") { SelectingOptions = ["--environment-id", "--agent-id", "--agent-name", "--deployment-id", "--deployment-name"], LocalOptions = ["--subscription", "--tenant"], NeedsDeployment = true };
+
+    /// <inheritdoc />
+    public override IReadOnlyList<RouteMetadata> Routes => [new(typeof(DeploymentOAuthProviderListRequest), typeof(OAuthProviderDefinition[])), new(typeof(AgentDeploymentAmsOAuthRequest<DeploymentOAuthProviderListRequest>), typeof(OAuthProviderDefinition[]))];
+
+    /// <inheritdoc />
+    public override IReadOnlyList<UsageRoute> UsageRoutes =>
+    [
+        new() { Summary = "Use the live catalogue of a subscription" },
+        AmsRoute.Usage("Use the providers AMS offers for an AMS deployment", withDeployment: true),
     ];
 
     private static CommandOption ProviderFilter =>
@@ -170,29 +186,43 @@ public sealed class DeploymentOAuthProviderListCommand :
             ServiceProviderName = input.GetString("--provider-name"),
         };
 
-    protected override Task<object> DispatchAsync(
-        ICommandInput input,
-        IServiceProvider services,
-        CancellationToken cancellationToken) =>
-        InvokeAsync<DeploymentOAuthProviderListRequest, OAuthProviderDefinition[]>(
-            services,
-            Bind(input),
-            cancellationToken);
+    /// <inheritdoc />
+    protected override Task<object> DispatchAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
+    {
+        if (!AmsRoute.IsSelected(input, services, AmsRules))
+        {
+            return InvokeAsync<DeploymentOAuthProviderListRequest, OAuthProviderDefinition[]>(services, Bind(input), cancellationToken);
+        }
+
+        AmsRoute.Validate(input, AmsRules);
+        return InvokeAsync<AgentDeploymentAmsOAuthRequest<DeploymentOAuthProviderListRequest>, OAuthProviderDefinition[]>(services, AmsRoute.Address(input, new AgentDeploymentAmsOAuthRequest<DeploymentOAuthProviderListRequest> { OAuth = Bind(input) }), cancellationToken);
+    }
 }
 
-public abstract class DeploymentOAuthCommand<TRequest, TResponse> : CodeAgentDeploymentCommand<TRequest, TResponse>
+public abstract class DeploymentOAuthCommand<TRequest, TResponse> : AmsRoutedDeploymentCommand<TRequest, TResponse, AgentDeploymentAmsOAuthRequest<TRequest>>
+    where TRequest : DeploymentRequest
     where TResponse : notnull
 {
     protected override string CommandPath => "msagent deployment oauth";
 
+    /// <inheritdoc />
+    protected override AgentDeploymentAmsOAuthRequest<TRequest> BindAms(TRequest content) => new() { OAuth = content };
+
+    /// <summary>The deployment selectors of both routes.</summary>
+    protected static IReadOnlyList<CommandSymbol> OAuthAddressSymbols =>
+    [
+        .. RoutedAddressSymbols("AMS agent home environment, which selects the AMS route. Defaults to the active environment."),
+    ];
+
     /// <summary>The options accepted when creating an OAuth connection.</summary>
     protected static IReadOnlyList<CommandSymbol> CreateCommandSymbols =>
     [
-        .. DeploymentAddressSymbols,
+        .. OAuthAddressSymbols,
         ConnectionName,
         ProviderName,
         ClientId,
         ClientSecret,
+        ClientSecretStdin,
         Scopes,
         Parameters,
     ];
@@ -200,10 +230,11 @@ public abstract class DeploymentOAuthCommand<TRequest, TResponse> : CodeAgentDep
     /// <summary>The options accepted when updating an OAuth connection.</summary>
     protected static IReadOnlyList<CommandSymbol> UpdateCommandSymbols =>
     [
-        .. DeploymentAddressSymbols,
+        .. OAuthAddressSymbols,
         ConnectionName,
         ClientId,
         ClientSecret,
+        ClientSecretStdin,
         Scopes,
         Parameters,
     ];
@@ -211,7 +242,7 @@ public abstract class DeploymentOAuthCommand<TRequest, TResponse> : CodeAgentDep
     /// <summary>The options accepted when deleting/retrieving an OAuth connection.</summary>
     protected static IReadOnlyList<CommandSymbol> ConnectionCommandSymbols =>
     [
-        .. DeploymentAddressSymbols,
+        .. OAuthAddressSymbols,
         ConnectionName,
     ];
 
@@ -236,6 +267,11 @@ public abstract class DeploymentOAuthCommand<TRequest, TResponse> : CodeAgentDep
         OptionCatalog.Value(
             "--client-secret",
             "Write-only application secret. Required when the provider catalogue marks ClientSecret required.");
+
+    private static CommandOption ClientSecretStdin =>
+        OptionCatalog.Switch(
+            "--client-secret-stdin",
+            "Read the write-only application secret from piped standard input instead of --client-secret, so it stays out of the command line. Pipe exactly one line.");
 
     private static CommandOption Scopes =>
         OptionCatalog.Value("--scopes", "Space-separated OAuth scopes.");

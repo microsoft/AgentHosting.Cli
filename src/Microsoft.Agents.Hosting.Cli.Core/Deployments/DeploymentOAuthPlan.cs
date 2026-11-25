@@ -1,5 +1,6 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using System.Text.RegularExpressions;
 using CommonOAuthParameters = Microsoft.Agents.Hosting.Cli.Core.Deployments.DeploymentOAuthParameters.CommonOAuthParameters;
 
@@ -22,6 +23,7 @@ public static class DeploymentOAuthPlan
 {
     private const int MinConnectionNameLength = 2;
     private const int MaxConnectionNameLength = 64;
+    private const int MaxClientSecretInputBytes = 16384;
     private static readonly Regex ConnectionNamePattern = new(
         @"^[a-zA-Z0-9][\sa-zA-Z0-9_.-]*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -88,11 +90,15 @@ public static class DeploymentOAuthPlan
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var parsedRequest = (DeploymentOAuthRequest)DeploymentRequestValidator.Validate(request);
-        return parsedRequest with
-        {
-            ConnectionName = ValidateConnectionName(request.ConnectionName),
-        };
+        return ValidateContent((DeploymentOAuthRequest)DeploymentRequestValidator.Validate(request));
+    }
+
+    /// <summary>Validates the connection name of a request whose deployment is addressed elsewhere, such as through AMS.</summary>
+    internal static DeploymentOAuthRequest ValidateContent(DeploymentOAuthRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return request with { ConnectionName = ValidateConnectionName(request.ConnectionName) };
     }
 
     internal static DeploymentOAuthOperationPlan<DeploymentOAuthCreateRequest> ValidateCreate(
@@ -100,53 +106,46 @@ public static class DeploymentOAuthPlan
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var parsedRequest = (DeploymentOAuthCreateRequest)DeploymentRequestValidator.Validate(request);
-        var normalizedRequest = parsedRequest with
-        {
-            ConnectionName = ValidateConnectionName(request.ConnectionName),
-            ServiceProviderName = DeploymentRequestValidator.RequiredEnum(
+        return ValidateCreateContent(
+            (DeploymentOAuthCreateRequest)DeploymentRequestValidator.Validate(request),
+            serviceProviderName => DeploymentRequestValidator.RequiredEnum(
                 "--provider-name",
-                request.ServiceProviderName,
+                serviceProviderName,
                 ServiceProviderNames,
-                "Run `msagent deployment oauth list-providers` to inspect the live Azure Bot Service catalogue."),
-            ClientId = DeploymentRequestValidator.Optional("--client-id", request.ClientId),
-            ClientSecret = DeploymentRequestValidator.Optional("--client-secret", request.ClientSecret),
-            Scopes = DeploymentRequestValidator.Optional("--scopes", request.Scopes),
-        };
-        var parsedParameters = DeploymentParameterValidator.ParseParameterAssignments(
-            "--parameters",
-            request.Parameters,
-            DeploymentParameterEmptyValuePolicy.Reject);
-        RejectCommonOAuthParametersInGenericOptions(parsedParameters);
-
-        return new DeploymentOAuthOperationPlan<DeploymentOAuthCreateRequest>
-        {
-            Request = normalizedRequest,
-            ParsedParameters = parsedParameters,
-        };
+                "Run `msagent deployment oauth list-providers` to inspect the live Azure Bot Service catalogue."));
     }
+
+    /// <summary>Validates the schema-free content of a create request whose deployment is addressed elsewhere, such as through AMS, which checks the provider schema itself.</summary>
+    internal static DeploymentOAuthOperationPlan<DeploymentOAuthCreateRequest> ValidateCreateContent(DeploymentOAuthCreateRequest request) => ValidateCreateContent(request, serviceProviderName => DeploymentRequestValidator.Required("--provider-name", serviceProviderName));
 
     internal static DeploymentOAuthOperationPlan<DeploymentOAuthUpdateRequest> ValidateUpdate(
         DeploymentOAuthUpdateRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var parsedRequest = (DeploymentOAuthUpdateRequest)DeploymentRequestValidator.Validate(request);
+        return ValidateUpdateContent((DeploymentOAuthUpdateRequest)DeploymentRequestValidator.Validate(request));
+    }
+
+    /// <summary>Validates the schema-free content of an update request whose deployment is addressed elsewhere, such as through AMS, which checks the provider schema itself.</summary>
+    internal static DeploymentOAuthOperationPlan<DeploymentOAuthUpdateRequest> ValidateUpdateContent(DeploymentOAuthUpdateRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
 
         if (request.ClientId is null &&
             request.ClientSecret is null &&
+            !request.ClientSecretFromStandardInput &&
             request.Scopes is null &&
             request.Parameters.Count == 0)
         {
             throw new UsageException(
-                "At least one of these fields must be specified: --client-id, --client-secret, --scopes, --parameters.");
+                "At least one of these fields must be specified: --client-id, --client-secret, --client-secret-stdin, --scopes, --parameters.");
         }
 
-        var normalizedRequest = parsedRequest with
+        var normalizedRequest = request with
         {
             ConnectionName = ValidateConnectionName(request.ConnectionName),
             ClientId = DeploymentRequestValidator.Trim(request.ClientId, preserveEmpty: true),
-            ClientSecret = DeploymentRequestValidator.Trim(request.ClientSecret, preserveEmpty: true),
+            ClientSecret = ValidateClientSecret(request),
             Scopes = DeploymentRequestValidator.Trim(request.Scopes, preserveEmpty: true),
         };
         var parsedParameters = DeploymentParameterValidator.ParseParameterAssignments(
@@ -160,6 +159,37 @@ public static class DeploymentOAuthPlan
             Request = normalizedRequest,
             ParsedParameters = parsedParameters,
         };
+    }
+
+    /// <summary>Returns the plan with the client secret read from standard input when its request asks for it, or the plan unchanged.</summary>
+    internal static async Task<DeploymentOAuthOperationPlan<TRequest>> ReadClientSecretAsync<TRequest>(DeploymentOAuthOperationPlan<TRequest> plan, IStandardInput standardInput, CancellationToken cancellationToken) where TRequest : DeploymentOAuthUpdateRequest
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(standardInput);
+
+        if (!plan.Request.ClientSecretFromStandardInput)
+        {
+            return plan;
+        }
+
+        if (!standardInput.IsRedirected)
+        {
+            throw new UsageException("--client-secret-stdin reads the secret from redirected standard input. Pipe the secret into msagent, because a terminal would show it as you type.");
+        }
+
+        var text = await standardInput.ReadToEndAsync(MaxClientSecretInputBytes, cancellationToken).ConfigureAwait(false);
+        var secret = text.EndsWith("\r\n", StringComparison.Ordinal) ? text[..^2] : text.EndsWith('\n') ? text[..^1] : text;
+        if (string.IsNullOrWhiteSpace(secret))
+        {
+            throw new UsageException("--client-secret-stdin read no secret, because standard input was empty or held only white space.");
+        }
+
+        if (secret.AsSpan().IndexOfAny('\r', '\n') >= 0)
+        {
+            throw new UsageException("--client-secret-stdin reads one line, and standard input held more than one.");
+        }
+
+        return plan with { Request = (TRequest)((DeploymentOAuthUpdateRequest)plan.Request with { ClientSecret = secret }) };
     }
 
     public static DeploymentOAuthListRequest ValidateList(DeploymentOAuthListRequest request)
@@ -341,6 +371,36 @@ public static class DeploymentOAuthPlan
             TenantId = tenantId,
         };
     }
+
+    private static DeploymentOAuthOperationPlan<DeploymentOAuthCreateRequest> ValidateCreateContent(DeploymentOAuthCreateRequest request, Func<string?, string> validateServiceProviderName)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var normalizedRequest = request with
+        {
+            ConnectionName = ValidateConnectionName(request.ConnectionName),
+            ServiceProviderName = validateServiceProviderName(request.ServiceProviderName),
+            ClientId = DeploymentRequestValidator.Optional("--client-id", request.ClientId),
+            ClientSecret = ValidateClientSecret(request),
+            Scopes = DeploymentRequestValidator.Optional("--scopes", request.Scopes),
+        };
+        var parsedParameters = DeploymentParameterValidator.ParseParameterAssignments(
+            "--parameters",
+            request.Parameters,
+            DeploymentParameterEmptyValuePolicy.Reject);
+        RejectCommonOAuthParametersInGenericOptions(parsedParameters);
+
+        return new DeploymentOAuthOperationPlan<DeploymentOAuthCreateRequest>
+        {
+            Request = normalizedRequest,
+            ParsedParameters = parsedParameters,
+        };
+    }
+
+    private static string? ValidateClientSecret(DeploymentOAuthUpdateRequest request) =>
+        request.ClientSecretFromStandardInput && request.ClientSecret is not null
+            ? throw new UsageException("--client-secret-stdin cannot be combined with --client-secret.")
+            : DeploymentRequestValidator.Optional("--client-secret", request.ClientSecret);
 
     /// <summary>
     /// Rejects common OAuth parameters supplied through <c>--parameters</c> so callers use their dedicated

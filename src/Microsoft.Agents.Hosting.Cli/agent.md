@@ -45,8 +45,8 @@ values or injected readers; it does not read process environment variables.
 | `AH_CLI_ALLOW_UNPROTECTED_CACHE` | Allow an unprotected token cache when protected storage is unavailable. |
 | `AH_CLI_FEATURES` | Semicolon-separated, case-insensitive, enable-only feature overrides; see [feature controls](#feature-controls). |
 | `AH_CLI_TELEMETRY_OPTOUT` | `1`/`true` opts out, `0`/`false` requests collection; unset defers to the remembered preference and host policy. |
-| `AH_CLI_AMS_ENDPOINT` | AMS control-plane endpoint used by deployment. Absolute HTTPS; not settable per command. |
-| `AH_CLI_AMSDP_ENDPOINT` | AMS data-plane endpoint used by upload and as a direct Dev-island override for creation. Absolute HTTPS. |
+| `AH_CLI_AMS_ENDPOINT` | AMS control-plane endpoint for the AMS deployment routes: `agent deploy`, `agent delete`, the deployment lists of `agent show` and `agent commit list`, `deployment create`, `list`, `show`, `update`, and `delete`, and the `deployment channel` and `deployment oauth` commands. When set, calls use the direct `tenants/{tenant}/environments/{environment}` route; unset uses the ring's trusted Power Platform API endpoint. |
+| `AH_CLI_AMSDP_ENDPOINT` | AMS data-plane endpoint for AMS agent reads, lists, and changes: `agent create`, `agent list --agent-type CodeAgent`, `agent show`, `agent update`, the read before `agent delete`, `agent package upload`, `agent commit list`, the agent lookup by `--agent-name`, and the agent read before `deployment create`. When set, calls use the direct `tenants/{tenant}/environments/{environment}` route; unset uses the environment's Power Platform API host. Same value rules as `AH_CLI_AMS_ENDPOINT`. |
 | `NO_COLOR` | Disable colored output, like `--no-color`. |
 | `CI` | Suppress progress and version checks when nonempty and not `false` or `0`. |
 
@@ -129,7 +129,7 @@ The source of truth is [featureflags.json](featureflags.json):
 
 | Feature | Default | Controlled surface |
 |---|---|---|
-| `AmsFeatures` | `off` | CodeAgent creation, AMS package upload, and package-revision deployment. |
+| `AmsFeatures` | `off` | CodeAgent creation and listing, `agent update`, `agent commit list`, AMS package upload, the AMS routes of `agent show`, `agent delete`, `agent deploy`, `deployment create`, `list`, `show`, `update`, and `delete`, and of the `deployment channel` and `deployment oauth` commands, and `deployment channel types`, `token`, and `webhook`. With it off, every command routes as it does without AMS. |
 | `AzureBotServiceFeatures` | `off` | `abs` and resolved CodeAgent deployment routes backed by Azure Bot Service. |
 | `IdentityFeatures` | `off` | The user-facing `identity` command group. |
 | `LegacyAuth` | `off` | Only `auth login` and `auth logout`; profile commands and `auth status` remain available. |
@@ -171,6 +171,9 @@ user-facing group is disabled because other operations can depend on them.
    command-group class.
 4. For a route-only option, set `RequiredFeatures` on its `CommandSymbol`.
    Call `FeatureGate.RequireEnabled` after route resolution and before dispatch.
+   An option that two routes share, each behind its own feature, sets
+   `AnyOfFeatures` instead: it is listed when any of them is on, and each route
+   still enforces its own feature at dispatch.
 
 `CommandReflector` recursively filters cached metadata before System.CommandLine
 materializes help, parser symbols, and aliases. An enabled leaf cannot bypass a
@@ -179,13 +182,20 @@ disabled ancestor. Do not maintain a second central command-path list.
 Public documentation and maintenance requirements are defined in
 [CONTRIBUTING.md](../../CONTRIBUTING.md#documentation-maintenance).
 
-## AMS package upload and deployment
+## AMS code agents, packages, and deployments
 
-These routes require `AmsFeatures`. Package upload and deployment are separate
-effects; neither is a local CodeAgent build command.
+These routes require `AmsFeatures`. Package upload, deployment records, and
+deploys are separate effects; none is a local CodeAgent build command.
+
+A command that names an agent (`--agent-id` or `--agent-name`) takes its AMS
+route when the local msagent project (the current folder or `--project`) holds
+no record of that agent or of the deployment named, and keeps its MCS or local
+Azure Bot Service route when it does. `--environment-id` names the agent's home
+environment, always selects the AMS route, and defaults to the active
+environment.
 
 ```powershell
-msagent agent package upload --agent-id <agent-id> --package <agent.zip> --environment-id <home-environment-id>
+msagent agent package upload --agent-name <agent-name> --package <agent.zip>
 ```
 
 Upload hashes, sizes, and uploads the exact supplied bytes without opening the
@@ -195,27 +205,35 @@ files may be outside the repository; path normalization is not a symlink,
 junction, or sandbox boundary.
 
 The response identifies the durable Package Upload Operation and, when confirmed,
-the immutable Package Revision. A non-success response with a validated durable
-`Accepted` or `Failed` operation exits nonzero; JSON preserves
+the immutable Package Revision and its commit. A non-success response with a
+validated durable `Accepted` or `Failed` operation exits nonzero; JSON preserves
 `partialResult.packageOperationId` and `partialResult.operationStatus`. No
 revision is confirmed by that failure. Upload does not poll, retry, or create
-an AMS deployment.
+an AMS deployment. `msagent agent commit list` lists the uploads, newest first,
+with the deployments that run each.
 
 ```powershell
-msagent agent deploy --agent-id <agent-id> --package-revision <revision-id> --environment-id <home-environment-id> --target-environment-id <target-environment-id> --deployment-name <name> --deployment-type <dev|test|prod> --entra-id <application-id> --entra-id-type <app-reg|blueprint|default>
+msagent deployment create --agent-name <agent-name> --target-environment-id <target-environment-id> --deployment-name <name> --deployment-type <dev|test|prod> --entra-id <application-id> --entra-id-type <app-reg|blueprint|default>
+msagent deployment create --agent-name <agent-name> --target-environment-id <target-environment-id> --deployment-name <name> --deployment-type dev --entra-id <application-id> --entra-id-type <app-reg|blueprint|default> --endpoint-url <https-dev-tunnel-url>/api/messages
+msagent agent deploy --agent-name <agent-name> --deployment-name <name> [--commit-id <commit>]
 ```
 
-`--environment-id` defaults to the active environment. The target environment
-is mandatory even for same-home deployment. AMS-specific inputs cannot be mixed
-with MCS-only inputs such as `--project`, `--agent-name`, `--deployment-id`, or
-`--publish`. `--agent-id` and `--deployment-name` are shared selectors.
-MCS deploy keeps its own workspace, registry, and backend.
+`deployment create` writes only the record, with the agent's language read
+from AMS; nothing runs until `agent deploy` puts it live. With `--commit-id` (Dev and Test only) AMS deploys that
+upload; without it, the requested or deployed dev endpoint when the record has
+one, else the newest upload. 
 
-Deploy reads the CodeAgent through AMS data plane and sends identifiers and
-explicit desired state through AMS control plane. It does not upload bytes.
-An acknowledged target-routed projection is not proof of runtime readiness,
-recovery, or successful cross-island operation. Do not automatically replay a
-mutating request after ambiguous failure.
+```powershell
+msagent deployment show --agent-name <agent-name> --deployment-name <name>
+msagent deployment delete --agent-name <agent-name> --deployment-name <name>
+msagent agent delete --agent-name <agent-name>
+```
+
+`deployment delete` removes a record in any state. For a live deployment it
+first says what keeps running (the deployment keeps answering, and AMS keeps its
+bot until `agent delete`) and asks for confirmation;
+`--non-interactive` supplies consent. `agent delete` lists the deployments and
+kept bots it removes, asks for the agent's name, sends one cascade delete.
 
 For current identity, deployment, channel, and OAuth command options, use the
 [command reference](../Microsoft.Agents.Hosting.Cli.Docs/ReadMe.md) and command

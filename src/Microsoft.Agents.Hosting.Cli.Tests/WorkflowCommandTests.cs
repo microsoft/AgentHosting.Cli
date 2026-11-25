@@ -204,16 +204,6 @@ public sealed class WorkflowCommandTests
     }
 
     [Fact]
-    public void ListRejectsAnAgentTypeItCannotList()
-    {
-        var (exitCode, _, stderr, operations) = Run("agent", "list", "--agent-type", "CodeAgent");
-
-        Assert.Equal(ExitCodes.Usage, exitCode);
-        Assert.Contains("cannot be listed", stderr, StringComparison.Ordinal);
-        Assert.Null(operations.LastManagedAgentListRequest);
-    }
-
-    [Fact]
     public void ListRejectsAnUnknownAgentType()
     {
         var (exitCode, _, _, operations) = Run("agent", "list", "--agent-type", "MCSFlow");

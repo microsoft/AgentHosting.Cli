@@ -51,22 +51,9 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
             throw new ArgumentException("A non-empty readable package stream is required.", nameof(request));
         }
 
-        var relativePath =
-            $"agenthosting/agents/{Uri.EscapeDataString(request.AgentId)}/packages?api-version=1";
-        var targetUri = new Uri(EnsureTrailingSlash(request.Endpoint), relativePath);
+        var targetUri = AmsRoutes.Packages(request.ServiceTarget, request.AgentId);
         var clientRequestId = Guid.NewGuid().ToString("D");
-        if (_profileTokens is null) ResourceTokenContext.RequireBinding(_tokens, request.Context);
-        var token = _profileTokens is not null
-            ? (await _profileTokens.AcquireAsync(ResourceTokenContext.Require(request.Context), request.Audience,
-                request.TenantId, [PowerPlatformApiPermissions.AppsUpdate], cancellationToken).ConfigureAwait(false)).Token
-            : await _tokens
-            .AcquireTokenSilentAsync(request.Audience, request.TenantId, cancellationToken)
-            .ConfigureAwait(false);
-        if (_profileTokens is null) ResourceTokenContext.ValidateLegacy(_claimsValidator, _tokens, request.Context,
-            token.AccessToken,
-            request.Audience,
-            request.TenantId,
-            [PowerPlatformApiPermissions.AppsUpdate]);
+        var token = await ResourceTokenContext.AcquireAsync(_tokens, _profileTokens, _claimsValidator, request.ServiceTarget.Context, request.ServiceTarget.Audience, request.ServiceTarget.TenantId, [PowerPlatformApiPermissions.AppsUpdate], cancellationToken).ConfigureAwait(false);
 
         using var message = new HttpRequestMessage(HttpMethod.Post, targetUri);
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
@@ -108,7 +95,7 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
                 throw AgentDeployException.RedirectRejected(
                     "package upload",
                     (int)response.StatusCode,
-                    request.Endpoint.Host);
+                    request.ServiceTarget.Endpoint.Host);
             }
 
             string responseBody;
@@ -216,6 +203,7 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
         var size = GetRequiredInt64(root, "sizeInBytes");
         var status = GetUploadStatus(root);
         var revisionId = GetOptionalString(root, "packageRevisionId");
+        var commitId = GetOptionalString(root, "commitId");
         var createdTime = GetRequiredDate(root, "createdTime");
         var changedTime = GetRequiredDate(root, "changedTime");
 
@@ -227,7 +215,8 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
             changedTime < createdTime ||
             status is not ("Accepted" or "Succeeded" or "Failed") ||
             (status == "Succeeded" && !TryParseNonEmptyGuid(revisionId)) ||
-            (status != "Succeeded" && revisionId != null))
+            (status != "Succeeded" && revisionId != null) ||
+            (commitId is not null && !AmsCommitId.IsValid(commitId)))
         {
             throw new FormatException("Required operation identity is malformed.");
         }
@@ -240,6 +229,7 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
             SizeInBytes = size,
             Status = status,
             PackageRevisionId = revisionId,
+            CommitId = commitId?.ToLowerInvariant(),
             CreatedTime = createdTime,
             ChangedTime = changedTime,
         };
@@ -353,11 +343,6 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
 
     private static string AddCorrelation(string message, string clientRequestId, string? serviceRequestId) =>
         new ServiceCorrelation(clientRequestId, serviceRequestId).Annotate(message);
-
-    private static Uri EnsureTrailingSlash(Uri endpoint) =>
-        endpoint.AbsoluteUri.EndsWith('/')
-            ? endpoint
-            : new Uri(endpoint.AbsoluteUri + "/", UriKind.Absolute);
 
     private static bool TryParseNonEmptyGuid(string? value) =>
         Guid.TryParse(value, out var parsed) && parsed != Guid.Empty;

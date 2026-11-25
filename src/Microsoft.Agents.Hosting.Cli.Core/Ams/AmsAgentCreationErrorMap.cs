@@ -2,7 +2,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Errors;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 
-/// <summary>Maps AMSDataPlane agent-create rejections without surfacing response-body text.</summary>
+/// <summary>Maps AMSDataPlane agent-create rejections, surfacing response-body text only for a name conflict.</summary>
 public static class AmsAgentCreationErrorMap
 {
     public static AgentHostingException Map(
@@ -14,7 +14,7 @@ public static class AmsAgentCreationErrorMap
         string clientRequestId,
         string? serviceRequestId)
     {
-        var (code, _) = TargetRequestException.ParseTargetError(bodyText);
+        var (code, serviceMessage) = TargetRequestException.ParseTargetError(bodyText);
 
         AgentHostingException mapped = code?.Trim().ToLowerInvariant() switch
         {
@@ -57,6 +57,12 @@ public static class AmsAgentCreationErrorMap
                 "The Agent Management Service Data Plane could not complete this create attempt because a concurrent durable write won the race.",
                 ExitCodes.Failure,
                 "Wait briefly, then retry the same create request with the same Idempotency-Key so AMS resumes or reconciles the existing reservation. Do not use a new key for this retry."),
+
+            "agentnameinuse" => AgentCreationException.ServiceRejected(
+                "agent-name-in-use",
+                $"AMS refused the agent name: {AmsRefusals.Echo(serviceMessage, "another agent of the environment already uses it.")}",
+                ExitCodes.Usage,
+                "Choose another --agent-name, or use the agent that has it."),
 
             "agentrepositorybindingfailed" => AgentCreationException.ServiceRejected(
                 "agent-repository-binding-failed",

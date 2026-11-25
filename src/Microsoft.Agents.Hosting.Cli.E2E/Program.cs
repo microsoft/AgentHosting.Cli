@@ -112,11 +112,12 @@ public static class CommandLine
 
             Options
               --packs core,azure,eval,copy include the Azure, evaluation, or copy packs;
-                                       swf adds the aggressive standalone-workflow suite, and
-                                       swf-chaos (with swf) adds its kill, concurrency and fault scenarios
-              --feature <names>        mcs-agent, mcs-workflow, mcs-standaloneworkflow, code-agent, abs,
-                                       identity, mcs-eval, mcs-copy
-              --only <patterns>        MA-18, MA-2*, AB-07, EV-01, SW-B0*, MC-35
+                                       swf adds the aggressive standalone-workflow suite,
+                                       swf-chaos (with swf) adds its kill, concurrency and fault scenarios,
+                                       and ams-hosted adds the hosted Agent Management Service deploys
+              --feature <names>        mcs-agent, mcs-workflow, mcs-standaloneworkflow, code-agent,
+                                       ams-code-agent, abs, identity, mcs-eval, mcs-copy
+              --only <patterns>        MA-18, MA-2*, AB-07, EV-01, SW-B0*, MC-35, AC-1*
               --smoke                  a fast subset: one deploy per fixture shape plus the checks
                                        that pin previously shipped bugs
               --msagent-path <file>    drive an existing binary instead of packing one

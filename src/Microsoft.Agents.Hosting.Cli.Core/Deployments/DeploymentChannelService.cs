@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -77,10 +76,11 @@ public sealed class DeploymentChannelService
             plan.ChannelDefinition, write, isCreate: true, cancellationToken).ConfigureAwait(false);
 
         SaveChannel(plan.Request.Project, deployment, channelRecord, channelRecord.ChannelName);
-        return OpenAuthorization(
-            ToChannelResult(plan.ChannelDefinition.Name == "slack" ? DeploymentOperationStatus.WriteAccepted : DeploymentOperationStatus.Created,
-                channelRecord, warnings: warnings),
-            plan.Request.NonInteractive);
+        return DeploymentChannelSlack.OpenAuthorization(
+            ToChannelResult(DeploymentChannelSlack.WriteStatus(plan.ChannelDefinition.Name, DeploymentOperationStatus.Created), channelRecord, warnings: warnings),
+            plan.Request.NonInteractive,
+            _browser,
+            DeploymentChannelSlack.AuthorizationGuidance);
     }
 
     public async Task<DeploymentResult<DeploymentChannelRecord>> UpdateChannelAsync(
@@ -107,10 +107,11 @@ public sealed class DeploymentChannelService
             plan.ChannelDefinition, write, isCreate: false, cancellationToken).ConfigureAwait(false);
 
         SaveChannel(plan.Request.Project, deployment, channelRecord, channelRecord.ChannelName);
-        return OpenAuthorization(
-            ToChannelResult(plan.ChannelDefinition.Name == "slack" ? DeploymentOperationStatus.WriteAccepted : DeploymentOperationStatus.Updated,
-                channelRecord, warnings: warnings),
-            plan.Request.NonInteractive);
+        return DeploymentChannelSlack.OpenAuthorization(
+            ToChannelResult(DeploymentChannelSlack.WriteStatus(plan.ChannelDefinition.Name, DeploymentOperationStatus.Updated), channelRecord, warnings: warnings),
+            plan.Request.NonInteractive,
+            _browser,
+            DeploymentChannelSlack.AuthorizationGuidance);
     }
 
     public async Task<DeploymentResult<DeploymentChannelRecord>> DeleteChannelAsync(
@@ -156,16 +157,10 @@ public sealed class DeploymentChannelService
             .ToArray();
 
         SaveChannels(request.Project, deployment, supportedChannels);
-        return new DeploymentResult<DeploymentChannelRecord[]>
-        {
-            Status = DeploymentOperationStatus.Listed,
-            Payload = supportedChannels,
-            ArmResponse = JsonSerializer.SerializeToElement(
+        return ToChannelListResult(supportedChannels, JsonSerializer.SerializeToElement(
                 channelRecords.Where(channel => channel.RawArmResponse is not null)
                     .Select(channel => channel.RawArmResponse!.Value)
-                    .ToArray()),
-            TargetName = "Channels",
-        };
+                    .ToArray()));
     }
 
     private async Task<(DeploymentChannelRecord Channel, IReadOnlyList<string> Warnings)> WriteChannelAsync(
@@ -206,30 +201,6 @@ public sealed class DeploymentChannelService
         return (response, []);
     }
 
-    private DeploymentResult<DeploymentChannelRecord> OpenAuthorization(
-        DeploymentResult<DeploymentChannelRecord> result,
-        bool nonInteractive)
-    {
-        if (result.Payload?.ChannelName != "slack")
-        {
-            return result;
-        }
-
-        var guidance = DeploymentChannelSlack.AuthorizationGuidance;
-        if (result.AuthorizationUrl is { } url && !nonInteractive && _browser is not null)
-        {
-            try
-            {
-                _browser.Launch(url);
-            }
-            catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or NotSupportedException)
-            {
-                guidance = $"The browser could not be opened. {guidance}";
-            }
-        }
-
-        return result with { Warnings = [.. result.Warnings, guidance] };
-    }
 
     /// <summary>
     /// Saves or removes a channel in the deployment record, keyed by friendly channel name.
@@ -265,7 +236,8 @@ public sealed class DeploymentChannelService
                 Channels = [.. channels.Select(channelRecord => channelRecord with { RawArmResponse = null, AuthorizationUrl = null })],
             });
 
-    private static DeploymentResult<DeploymentChannelRecord> ToChannelResult(
+    /// <summary>Builds the result of a channel operation, named after the channel it acted on.</summary>
+    internal static DeploymentResult<DeploymentChannelRecord> ToChannelResult(
         DeploymentOperationStatus status,
         DeploymentChannelRecord? channel = null,
         string? targetInstanceName = null,
@@ -279,4 +251,7 @@ public sealed class DeploymentChannelService
             Warnings = warnings ?? [],
             AuthorizationUrl = channel?.AuthorizationUrl,
         };
+
+    /// <summary>Builds the result of a channel list.</summary>
+    internal static DeploymentResult<DeploymentChannelRecord[]> ToChannelListResult(DeploymentChannelRecord[] channels, JsonElement? armResponse = null) => new() { Status = DeploymentOperationStatus.Listed, Payload = channels, ArmResponse = armResponse, TargetName = "Channels" };
 }

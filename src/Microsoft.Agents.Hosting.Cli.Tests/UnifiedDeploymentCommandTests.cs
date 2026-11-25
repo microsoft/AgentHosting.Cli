@@ -538,7 +538,7 @@ public class UnifiedDeploymentCommandTests
     {
         var operations = UnresolvedAgent();
 
-        var (exitCode, _, stderr) = Run(operations, "deployment", verb, "--agent-id", "agent-missing");
+        var (exitCode, _, stderr) = Run(operations, new TestFeatureFlags(FeatureName.AzureBotServiceFeatures, FeatureName.IdentityFeatures), "deployment", verb, "--agent-id", "agent-missing");
 
         Assert.Equal(ExitCodes.Usage, exitCode);
         Assert.Contains("Nothing in this project matches --agent-id 'agent-missing'.", stderr, StringComparison.Ordinal);
@@ -573,7 +573,7 @@ public class UnifiedDeploymentCommandTests
 
         var (exitCode, _, stderr) = Run(
             operations,
-            new TestFeatureFlags(FeatureName.AmsFeatures, FeatureName.IdentityFeatures),
+            new TestFeatureFlags(FeatureName.IdentityFeatures),
             "deployment",
             verb,
             "--agent-id",

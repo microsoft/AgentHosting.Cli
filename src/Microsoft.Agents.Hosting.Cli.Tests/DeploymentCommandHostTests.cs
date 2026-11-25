@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Hosting;
 
@@ -17,6 +18,9 @@ namespace Microsoft.Agents.Hosting.Cli.Tests;
 /// </summary>
 public class DeploymentCommandHostTests
 {
+    private const string AmsAgentId = "44444444-4444-4444-4444-444444444444";
+    private const string AmsDeploymentId = "77777777-7777-7777-7777-777777777777";
+
     private static (int ExitCode, string Stdout, string Stderr) Run(
         FakeOperations operations,
         bool color,
@@ -324,5 +328,296 @@ public class DeploymentCommandHostTests
 
         Assert.Equal(ExitCodes.Success, exitCode);
         Assert.Null(ops.LastUpdateDeploymentRequest?.IsDefault);
+    }
+
+    [Fact]
+    public void DeploymentCreate_TargetEnvironmentSelectsTheAmsRouteAndBindsTheRecord()
+    {
+        var ops = new FakeOperations();
+        var handlers = new RecordingAmsHandlers();
+
+        var (exitCode, stdout, stderr) = RunAms(ops, handlers, "deployment", "create", "-aid", AmsAgentId, "-tenv", "target-env", "-dn", "dev-proof", "-dt", "dev", "-ent", "88888888-8888-8888-8888-888888888888", "-eit", "app-reg", "-eu", "https://contoso-3978.usw2.devtunnels.ms/api/messages", "--json");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var request = handlers.Single<AgentDeploymentAmsCreateRequest>();
+        Assert.Equal((AmsAgentId, (string?)null, (string?)null, "target-env", "dev-proof", "dev", "88888888-8888-8888-8888-888888888888", "app-reg", "https://contoso-3978.usw2.devtunnels.ms/api/messages"), (request.AgentId, request.AgentName, request.EnvironmentId, request.TargetEnvironmentId, request.DeploymentName, request.DeploymentType, request.EntraId, request.EntraIdType, request.EndpointUrl));
+        Assert.Null(ops.LastAgentDeploymentCreateRequest);
+        Assert.Null(ops.LastDeploymentRequest);
+        using var document = JsonDocument.Parse(stdout);
+        Assert.Equal(AgentDeploymentAmsResult.CreatedStatus, document.RootElement.GetProperty("status").GetString());
+        Assert.Equal("NotDeployed", document.RootElement.GetProperty("deployment").GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public void DeploymentCreate_AmsRoute_TakesTheAgentNameAndHomeEnvironmentAndShowsOnlyTheRecord()
+    {
+        var handlers = new RecordingAmsHandlers();
+
+        var (exitCode, stdout, _) = RunAms(new FakeOperations(), handlers, "deployment", "create", "-an", "Contoso Agent", "-eid", "home-env", "-tenv", "target-env", "-dn", "dev-proof", "-dt", "dev", "-ent", "88888888-8888-8888-8888-888888888888", "-eit", "app-reg");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        var request = handlers.Single<AgentDeploymentAmsCreateRequest>();
+        Assert.Equal(("Contoso Agent", "home-env"), (request.AgentName, request.EnvironmentId));
+        Assert.Contains("created. It is a record only: nothing runs until it is deployed.", stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("Next:", stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("msagent agent deploy", stdout, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("-dt", "--deployment-type")]
+    [InlineData("-ent", "--entra-id")]
+    [InlineData("-eit", "--entra-id-type")]
+    [InlineData("-dn", "--deployment-name")]
+    [InlineData("-aid", "--agent-id or --agent-name is required for the AMS route of `msagent deployment create`.")]
+    public void DeploymentCreate_AmsRouteWithoutARequiredOption_DispatchesNothing(string missing, string message)
+    {
+        var handlers = new RecordingAmsHandlers();
+        var args = new List<string> { "deployment", "create", "-tenv", "target-env" };
+        foreach (var (option, value) in new[] { ("-aid", AmsAgentId), ("-dn", "dev"), ("-dt", "dev"), ("-ent", "88888888-8888-8888-8888-888888888888"), ("-eit", "app-reg") })
+        {
+            if (option != missing)
+            {
+                args.AddRange([option, value]);
+            }
+        }
+
+        var (exitCode, _, stderr) = RunAms(new FakeOperations(), handlers, [.. args]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains(message, stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+    }
+
+    [Theory]
+    [InlineData("--sku", "S1")]
+    [InlineData("--resource-group", "rg")]
+    [InlineData("--project", ".")]
+    [InlineData("--default", null)]
+    public void DeploymentCreate_AmsRoute_RefusesOptionsOnlyTheLocalRoutesTake(string option, string? value)
+    {
+        var handlers = new RecordingAmsHandlers();
+        string[] args = ["deployment", "create", "-aid", AmsAgentId, "-tenv", "target-env", "-dn", "dev", "-dt", "dev", "-ent", "88888888-8888-8888-8888-888888888888", "-eit", "app-reg", option];
+
+        var (exitCode, _, stderr) = RunAms(new FakeOperations(), handlers, value is null ? args : [.. args, value]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains($"{option} cannot be combined with the AMS route of `msagent deployment create`.", stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+    }
+
+    [Fact]
+    public void DeploymentCreate_WithAmsFeaturesOff_RefusesTheTargetEnvironment()
+    {
+        var ops = new FakeOperations();
+        var handlers = new RecordingAmsHandlers();
+
+        var (exitCode, _, stderr) = AmsCommandHost.Run(ops, handlers, new TestFeatureFlags(Microsoft.Agents.Hosting.Cli.Commands.Features.FeatureName.AzureBotServiceFeatures), "deployment", "create", "-aid", AmsAgentId, "--target-environment-id", "target-env", "-dn", "dev", "-dt", "dev", "-ent", "88888888-8888-8888-8888-888888888888", "-eit", "app-reg");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("--target-environment-id", stderr, StringComparison.Ordinal);
+        Assert.Empty(handlers.Requests);
+        Assert.Null(ops.LastDeploymentRequest);
+    }
+
+    [Fact]
+    public void DeploymentList_OfAnAgentWithoutALocalRecord_ListsItsAmsDeploymentsWithTheKeptBots()
+    {
+        var ops = new FakeOperations();
+        var handlers = new RecordingAmsHandlers();
+
+        var (exitCode, stdout, _) = RunAms(ops, handlers, "deployment", "list", "-aid", AmsAgentId, "--json");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Equal(AmsAgentId, handlers.Single<AgentDeploymentAmsListRequest>().AgentId);
+        Assert.Null(ops.LastAgentDeploymentListRequest);
+        using var document = JsonDocument.Parse(stdout);
+        var deployment = Assert.Single(document.RootElement.GetProperty("deployments").EnumerateArray());
+        Assert.Equal(("Deployed", "package"), (deployment.GetProperty("state").GetString(), deployment.GetProperty("kind").GetString()));
+        Assert.Equal("ams-old", Assert.Single(document.RootElement.GetProperty("keptBots").EnumerateArray()).GetProperty("botName").GetString());
+    }
+
+    [Fact]
+    public void DeploymentList_Text_ShowsTheTableAndTheKeptBots()
+    {
+        var (_, stdout, _) = RunAms(new FakeOperations(), new RecordingAmsHandlers(), "deployment", "list", "-an", "Contoso Agent");
+
+        Assert.Contains($"Deployments of agent {AmsAgentId}", stdout, StringComparison.Ordinal);
+        Assert.Contains("PENDING ENDPOINT", stdout, StringComparison.Ordinal);
+        Assert.Contains("Bots kept from deleted deployment records", stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("msagent", stdout, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DeploymentList_WithoutAnAgentOrWithALocalRecord_ListsTheLocalProject(bool localRecord)
+    {
+        var ops = localRecord ? LocalRecord(DeploymentAgentTypeSource.AgentRecord) : new FakeOperations();
+        var handlers = new RecordingAmsHandlers();
+
+        var (exitCode, _, _) = RunAms(ops, handlers, localRecord ? ["deployment", "list", "-an", "Support"] : ["deployment", "list"]);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.NotNull(ops.LastAgentDeploymentListRequest);
+        Assert.Empty(handlers.Requests);
+    }
+
+    [Fact]
+    public void DeploymentShow_WithEnvironmentId_ReadsOnlyTheAmsDeployment()
+    {
+        var ops = LocalRecord(DeploymentAgentTypeSource.DeploymentRecord);
+        var handlers = new RecordingAmsHandlers();
+
+        var (exitCode, stdout, stderr) = RunAms(ops, handlers, "deployment", "show", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--json");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var request = handlers.Single<AgentDeploymentAmsShowRequest>();
+        Assert.Equal((AmsAgentId, AmsDeploymentId, "env-1"), (request.AgentId, request.DeploymentId, request.EnvironmentId));
+        Assert.Null(ops.LastGetDeploymentRequest);
+        Assert.Null(ops.LastAgentDeploymentShowRequest);
+        using var document = JsonDocument.Parse(stdout);
+        var root = document.RootElement;
+        Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.Equal(AgentDeploymentAmsResult.ReadStatus, root.GetProperty("status").GetString());
+        Assert.Equal(AmsDeploymentId, root.GetProperty("deployment").GetProperty("deploymentId").GetString());
+    }
+
+    [Fact]
+    public void DeploymentShow_ByNamesWithoutALocalRecord_TakesTheAmsRouteWithTheActiveEnvironment()
+    {
+        var handlers = new RecordingAmsHandlers { Deployment = FakeOperations.CreateStubDeploymentRecord() with { Kind = AgentDeploymentAmsRecord.DevEndpointKind, PackageRevisionId = null, Endpoint = "https://old.devtunnels.ms/api/messages", RequestedEndpoint = "https://new.devtunnels.ms/api/messages", EndpointChangePending = true } };
+
+        var (exitCode, stdout, _) = RunAms(new FakeOperations(), handlers, "deployment", "show", "-an", "Contoso Agent", "-dn", "dev-proof");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        var request = handlers.Single<AgentDeploymentAmsShowRequest>();
+        Assert.Equal(("Contoso Agent", "dev-proof", (string?)null), (request.AgentName, request.DeploymentName, request.EnvironmentId));
+        var lines = NormalizeLines(stdout).Split('\n');
+        Assert.Equal($"Deployment dev-proof ({AmsDeploymentId})", lines[0]);
+        Assert.Contains("  endpoint: https://old.devtunnels.ms/api/messages", lines);
+        Assert.Contains("  requested endpoint: https://new.devtunnels.ms/api/messages, not deployed yet; the next `msagent agent deploy` without --commit-id puts it live.", lines);
+    }
+
+    [Fact]
+    public void DeploymentShow_ALocalRecordOfTheDeploymentNamed_KeepsTheLocalRoute()
+    {
+        var ops = LocalRecord(DeploymentAgentTypeSource.DeploymentRecord);
+        var handlers = new RecordingAmsHandlers();
+
+        var (exitCode, _, _) = RunAms(ops, handlers, "deployment", "show", "-an", "Support", "-dn", "dev");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.NotNull(ops.LastAgentDeploymentShowRequest);
+        Assert.Empty(handlers.Requests);
+    }
+
+    [Fact]
+    public void DeploymentDelete_AmsRoute_BindsTheConsentAndSaysWhatKeepsRunning()
+    {
+        var ops = new FakeOperations();
+        var handlers = new RecordingAmsHandlers();
+
+        var (exitCode, stdout, stderr) = RunAms(ops, handlers, "deployment", "delete", "-aid", AmsAgentId, "-dn", "dev-proof", "--non-interactive");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        var request = handlers.Single<AgentDeploymentAmsDeleteRequest>();
+        Assert.Equal((AmsAgentId, "dev-proof", true), (request.AgentId, request.DeploymentName, request.NonInteractive));
+        Assert.Null(ops.LastDeleteDeploymentRequest);
+        Assert.Null(ops.LastAgentDeploymentDeleteRequest);
+        var lines = NormalizeLines(stdout).Split('\n');
+        Assert.Equal($"Deployment record dev-proof ({AmsDeploymentId}) deleted.", lines[0]);
+        Assert.StartsWith("Still running: the deployment keeps answering in environment 33333333-3333-3333-3333-333333333333", lines[1], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(AgentAmsConfirmation.CancelledStatus, "Delete cancelled; nothing was deleted.")]
+    [InlineData(AgentAmsConfirmation.NameMismatchStatus, "The name typed did not match 'dev-proof'; nothing was deleted.")]
+    public void DeploymentDelete_AmsRouteNotConfirmed_ExitsSuccessfullyAndSaysNothingWasDeleted(string status, string text)
+    {
+        var (exitCode, stdout, _) = RunAms(new FakeOperations(), new RecordingAmsHandlers { DeleteStatus = status }, "deployment", "delete", "-aid", AmsAgentId, "-did", AmsDeploymentId);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Equal(text, NormalizeLines(stdout).Trim());
+    }
+
+    [Fact]
+    public void DeploymentDelete_AmsFailureIsReportedWithoutFallingBackToAnotherRoute()
+    {
+        var ops = new FakeOperations();
+        var handlers = new RecordingAmsHandlers { Failure = AgentDeployException.ServiceRejected("AMS does not delete code-agent deployment records in this environment yet.", ExitCodes.Failure, "deployment-delete-unavailable", "Ask the AMS team.") };
+
+        var (exitCode, stdout, _) = RunAms(ops, handlers, "deployment", "delete", "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", "--json");
+
+        Assert.Equal(ExitCodes.Failure, exitCode);
+        Assert.Single(handlers.Requests);
+        Assert.Null(ops.LastDeleteDeploymentRequest);
+        Assert.Null(ops.LastAgentDeploymentDeleteRequest);
+        using var document = JsonDocument.Parse(stdout);
+        Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal("deployment-delete-unavailable", document.RootElement.GetProperty("errorKind").GetString());
+    }
+
+    [Theory]
+    [InlineData("show", "--agent-id", "--agent-id or --agent-name is required for the AMS route of `msagent deployment show`.")]
+    [InlineData("show", "--deployment-id", "--deployment-id or --deployment-name is required for the AMS route of `msagent deployment show`.")]
+    [InlineData("delete", "--agent-id", "--agent-id or --agent-name is required for the AMS route of `msagent deployment delete`.")]
+    [InlineData("delete", "--deployment-id", "--deployment-id or --deployment-name is required for the AMS route of `msagent deployment delete`.")]
+    public void AmsRoute_MissingAddressOptionDispatchesNothing(string verb, string missing, string message)
+    {
+        var ops = new FakeOperations();
+        var handlers = new RecordingAmsHandlers();
+        var args = new List<string> { "deployment", verb, "--environment-id", "env-1" };
+        foreach (var (option, value) in new[] { ("--agent-id", AmsAgentId), ("--deployment-id", AmsDeploymentId) })
+        {
+            if (!string.Equals(option, missing, StringComparison.Ordinal))
+            {
+                args.AddRange([option, value]);
+            }
+        }
+
+        var (exitCode, _, stderr) = RunAms(ops, handlers, [.. args]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains(message, stderr, StringComparison.Ordinal);
+        AssertNoDeploymentRouteDispatched(ops, handlers);
+    }
+
+    [Theory]
+    [InlineData("show", "--project", ".")]
+    [InlineData("show", "--resource-group", "rg")]
+    [InlineData("show", "--subscription", "sub")]
+    [InlineData("show", "--tenant", "tenant")]
+    [InlineData("delete", "--project", ".")]
+    [InlineData("delete", "--resource-group", "rg")]
+    [InlineData("delete", "--subscription", "sub")]
+    [InlineData("delete", "--tenant", "tenant")]
+    [InlineData("delete", "--delete-deployed-mcs-agent", null)]
+    public void AmsRoute_RejectsOtherRouteOptions(string verb, string option, string? value)
+    {
+        var ops = new FakeOperations();
+        var handlers = new RecordingAmsHandlers();
+        string[] extra = value is null ? [option] : [option, value];
+
+        var (exitCode, _, stderr) = RunAms(ops, handlers, ["deployment", verb, "--agent-id", AmsAgentId, "--deployment-id", AmsDeploymentId, "--environment-id", "env-1", .. extra]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains($"{option} cannot be combined with the AMS route of `msagent deployment {verb}`.", stderr, StringComparison.Ordinal);
+        AssertNoDeploymentRouteDispatched(ops, handlers);
+    }
+
+    private static FakeOperations LocalRecord(DeploymentAgentTypeSource source) => new() { OnResolveDeploymentAgentType = _ => new DeploymentAgentTypeResult { AgentType = AgentTypes.McsAgent, Source = source } };
+
+    private static (int ExitCode, string Stdout, string Stderr) RunAms(FakeOperations operations, RecordingAmsHandlers handlers, params string[] args) => AmsCommandHost.Run(operations, handlers, TestFeatureFlags.AllProductSurfaces, args);
+
+    private static void AssertNoDeploymentRouteDispatched(FakeOperations ops, RecordingAmsHandlers handlers)
+    {
+        Assert.Empty(handlers.Requests);
+        Assert.Null(ops.LastGetDeploymentRequest);
+        Assert.Null(ops.LastDeleteDeploymentRequest);
+        Assert.Null(ops.LastAgentDeploymentShowRequest);
+        Assert.Null(ops.LastAgentDeploymentDeleteRequest);
     }
 }

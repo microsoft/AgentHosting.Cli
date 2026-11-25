@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
+using Microsoft.Agents.Hosting.Cli.E2E.Scenarios.Ams;
 using Microsoft.Agents.Hosting.Cli.E2E.Scenarios.Azure;
 using Microsoft.Agents.Hosting.Cli.E2E.Scenarios.StandaloneWorkflow;
 
@@ -8,7 +9,7 @@ namespace Microsoft.Agents.Hosting.Cli.E2E.Scenarios;
 public static class ScenarioCatalogue
 {
     /// <summary>The features a run can be scoped to.</summary>
-    public static IReadOnlyList<string> Features => ["mcs-agent", "mcs-workflow", StandaloneWorkflowScenarios.Feature, "code-agent", "abs", "identity", "mcs-eval", "mcs-copy"];
+    public static IReadOnlyList<string> Features => ["mcs-agent", "mcs-workflow", StandaloneWorkflowScenarios.Feature, "code-agent", AmsSteps.Feature, "abs", "identity", "mcs-eval", "mcs-copy"];
 
     /// <summary>The features whose scenarios create Azure resources.</summary>
     public static IReadOnlyList<string> AzurePack => ["code-agent", "abs", "identity"];
@@ -29,6 +30,7 @@ public static class ScenarioCatalogue
             ["eval"] = EvalPack,
             ["swf"] = StandaloneWorkflowPack,
             [StandaloneWorkflowScenarios.ChaosPack] = [],
+            [AmsSteps.HostedPack] = [],
             ["copy"] = CopyPack,
         };
 
@@ -39,6 +41,7 @@ public static class ScenarioCatalogue
         .. McsWorkflowScenarios.All(),
         .. StandaloneWorkflowScenarios.All(),
         .. CodeAgentScenarios.All(),
+        .. AmsCodeAgentScenarios.All(),
         .. AbsScenarios.All(),
         .. IdentityScenarios.All(),
         .. McsEvalScenarios.All(),

@@ -309,6 +309,24 @@ public sealed class EnvironmentSelectionServiceTests
         Assert.Null(selection.Active);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task ResolveForCommand_WithBlankEnvironment_RefusesBeforeAnyLookup(string environmentId)
+    {
+        var client = new FakeEnvironmentClient(EnvironmentFixtures.Environment("env-1"));
+        var service = EnvironmentFixtures.Service(
+            client,
+            new InMemoryEnvironmentSelectionStore(),
+            InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant));
+
+        var exception = await Assert.ThrowsAsync<UsageException>(() =>
+            service.ResolveForCommandAsync(environmentId, CancellationToken.None));
+
+        Assert.Equal("--environment-id requires a non-empty environment id.", exception.Message);
+        Assert.Equal(0, client.ListCalls);
+    }
+
     [Fact]
     public async Task ResolveForCommand_WithUntrustedEndpoint_RejectsWithoutPersisting()
     {

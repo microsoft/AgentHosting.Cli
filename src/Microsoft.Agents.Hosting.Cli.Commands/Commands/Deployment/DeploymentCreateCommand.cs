@@ -7,27 +7,30 @@ using DeploymentModel = Microsoft.Agents.Hosting.Cli.Core.Deployments.CodeAgentD
 
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
-/// <summary><c>msagent deployment create</c>, routed on the resolved agent type.</summary>
+/// <summary><c>msagent deployment create</c>, routed on the resolved agent type, or to AMS by <c>--target-environment-id</c>.</summary>
 [Command("create", Description = "Create a deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 10, ProgressLabel = "Creating deployment")]
 public sealed class DeploymentCreateCommand : CommandBase<AgentDeploymentCreateRequest, AgentDeploymentCreateResult>
 {
+    private static readonly AmsRouteRules AmsRules = new("deployment create") { SelectingOptions = ["--target-environment-id"], LocalOptions = ["--project", "--sku", "--location", "--resource-group", "--subscription", "--tenant", "--display-name", "--description", "--default"] };
+
     /// <inheritdoc />
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
         OptionCatalog.Value("--project", "Project directory holding the agent. Defaults to the current directory. MCS only until the stores converge."),
         OptionCatalog.Value("--agent-id", "Owning agent id. Defaults to the project's agent for an MCS deployment."),
-        OptionCatalog.Value("--agent-name", "Owning agent name, used when the agent id is omitted. MCS only."),
+        OptionCatalog.Value("--agent-name", "Owning agent name, used when the agent id is omitted. MCS and AMS only."),
         OptionCatalog.Value("--deployment-name", "Deployment name, unique within the agent. 4-42 characters from -, a-z, A-Z, 0-9 and _."),
         OptionCatalog.Value("--deployment-type", "Stage: dev, test, or prod."),
-        OptionCatalog.Value("--environment-id", "Target environment. Required for test and prod, and defaults to the agent's home environment. MCS only."),
-        OptionCatalog.Value("--entra-id", "Entra application (client) id the deployment binds to. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
-        OptionCatalog.Value("--entra-id-type", "Entra identity kind: appReg, blueprint, or default. Only appReg is supported. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
+        OptionCatalog.Value("--environment-id", "Target environment of an MCS deployment, required for test and prod and defaulting to the agent's home environment. On AMS, the agent's home environment, defaulting to the active one."),
+        OptionCatalog.Value("--target-environment-id", "Target environment of an AMS code-agent deployment, which selects the AMS route.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
+        OptionCatalog.Value("--entra-id", "Entra application (client) id the deployment binds to; for blueprint, the id of an agent identity created from the blueprint. CodeAgent only.") with { AnyOfFeatures = [FeatureName.AzureBotServiceFeatures, FeatureName.AmsFeatures] },
+        OptionCatalog.Value("--entra-id-type", "Entra identity kind: app-reg, blueprint, or default. Azure Bot Service supports only app-reg. CodeAgent only.") with { AnyOfFeatures = [FeatureName.AzureBotServiceFeatures, FeatureName.AmsFeatures] },
         OptionCatalog.Value("--sku", "Deployment SKU: F0 or S1. Defaults to F0. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
         OptionCatalog.Value("--location", "Azure region. Defaults to global. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
         OptionCatalog.Value("--resource-group", "Target resource group. Auto-resolved when the subscription has exactly one. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
         OptionCatalog.Value("--subscription", "Target subscription id. Auto-resolved from the signed-in account when omitted. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
         OptionCatalog.Value("--tenant", "Target tenant id. Taken from the resolved subscription when omitted. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
-        OptionCatalog.Value("--endpoint-url", "Messaging endpoint. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
+        OptionCatalog.Value("--endpoint-url", "Messaging endpoint. CodeAgent only. On AMS, the HTTPS dev endpoint of a Dev deployment, which `msagent agent deploy` without --commit-id puts live.") with { AnyOfFeatures = [FeatureName.AzureBotServiceFeatures, FeatureName.AmsFeatures] },
         OptionCatalog.Value("--display-name", "Deployment display name. Defaults to the deployment name. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
         OptionCatalog.Value("--description", "Deployment description. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
         OptionCatalog.Switch("--default", "Make this the agent's default deployment. CodeAgent only.") with { RequiredFeatures = [FeatureName.AzureBotServiceFeatures] },
@@ -38,6 +41,7 @@ public sealed class DeploymentCreateCommand : CommandBase<AgentDeploymentCreateR
     [
         new RouteMetadata(typeof(AgentDeploymentCreateRequest), typeof(AgentDeploymentCreateResult)),
         new RouteMetadata(typeof(DeploymentCreateRequest), typeof(DeploymentResult<DeploymentModel>)),
+        new RouteMetadata(typeof(AgentDeploymentAmsCreateRequest), typeof(AgentDeploymentAmsResult)),
     ];
 
     /// <inheritdoc />
@@ -49,6 +53,7 @@ public sealed class DeploymentCreateCommand : CommandBase<AgentDeploymentCreateR
             Summary = "Provision an Azure Bot Service deployment",
             RequiredFeatures = [FeatureName.AzureBotServiceFeatures],
         },
+        AmsRoute.Usage("Record an AMS code-agent deployment", withDeployment: false, "--target-environment-id", "--deployment-name", "--deployment-type", "--entra-id", "--entra-id-type"),
     ];
 
     /// <inheritdoc />
@@ -71,6 +76,18 @@ public sealed class DeploymentCreateCommand : CommandBase<AgentDeploymentCreateR
     protected override Task<object> DispatchAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(input);
+
+        if (AmsRoute.IsSelected(input, services, AmsRules))
+        {
+            AmsRoute.Validate(input, AmsRules);
+            return UsageMessages.RequiredOptions(
+                ("--deployment-name", input.GetString("--deployment-name")),
+                ("--deployment-type", input.GetString("--deployment-type")),
+                ("--entra-id", input.GetString("--entra-id")),
+                ("--entra-id-type", input.GetString("--entra-id-type"))) is { } amsMissing
+                ? throw new CommandUsageException(amsMissing)
+                : InvokeAsync<AgentDeploymentAmsCreateRequest, AgentDeploymentAmsResult>(services, AmsRoute.Address(input, new AgentDeploymentAmsCreateRequest { TargetEnvironmentId = input.GetString("--target-environment-id"), DeploymentName = input.GetString("--deployment-name"), DeploymentType = input.GetString("--deployment-type"), EntraId = input.GetString("--entra-id"), EntraIdType = input.GetString("--entra-id-type"), EndpointUrl = input.GetString("--endpoint-url") }), cancellationToken);
+        }
 
         var resolved = Resolve(input, services);
 

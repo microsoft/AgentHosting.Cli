@@ -198,7 +198,7 @@ public sealed class DeploymentOAuthAdapter : DeploymentArmClient, IDeploymentOAu
                 ServiceProviderId = serviceProviderId,
                 ServiceProviderDisplayName = serviceProviderDisplayName,
                 ClientId = GetString(properties, "clientId"),
-                Scopes = ParseScopes(GetString(properties, "scopes")),
+                Scopes = DeploymentOAuthParameters.ParseScopes(GetString(properties, "scopes")),
                 Parameters = ParseConnectionParameters(properties),
                 ResourceId = GetString(element, "id")!,
                 RawArmResponse = element.Clone(),
@@ -206,14 +206,6 @@ public sealed class DeploymentOAuthAdapter : DeploymentArmClient, IDeploymentOAu
             provider: null,
             includeArmResponse: true);
     }
-
-    private static string[] ParseScopes(string? scopes) =>
-        string.IsNullOrWhiteSpace(scopes)
-            ? []
-            : scopes
-                .Split([' ', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
 
     private static Dictionary<string, string?> ParseConnectionParameters(JsonElement properties)
     {

@@ -6,37 +6,42 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
-/// <summary><c>msagent agent deploy</c>, routed on whether a deployment is named.</summary>
+/// <summary><c>msagent agent deploy</c>, routed to an agent of the local MCS project or to an AMS code agent.</summary>
 [Command("deploy", Description = "Deploy an agent to a named deployment.", ParentGroup = typeof(AgentGroup), SortPriority = 70, ProgressLabel = "Deploying agent")]
 public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, ManagedAgentDeployResult>
 {
-    private static readonly string[] AmsOptions =
-        ["--package-revision", "--environment-id", "--target-environment-id", "--deployment-type", "--entra-id", "--entra-id-type"];
+    private const string MovedToDeploymentCreate = "this option moved to `msagent deployment create`.";
 
-    private static readonly string[] RequiredAmsOptions =
-        ["--agent-id", "--package-revision", "--target-environment-id", "--deployment-name", "--deployment-type", "--entra-id", "--entra-id-type"];
+    private static readonly AmsRouteRules AmsRules = new("agent deploy")
+    {
+        MovedOptions = new Dictionary<string, string>
+        {
+            ["--target-environment-id"] = MovedToDeploymentCreate,
+            ["--deployment-type"] = MovedToDeploymentCreate,
+            ["--entra-id"] = MovedToDeploymentCreate,
+            ["--entra-id-type"] = MovedToDeploymentCreate,
+            ["--endpoint-url"] = "this option moved to `msagent deployment create` and `msagent deployment update`.",
+            ["--package-revision"] = "use `--commit-id`; `msagent agent commit list` shows the commits.",
+        },
+        LocalOptions = ["--project", "--schema-name", "--publish", "--overwrite", "--async"],
+        NeedsDeployment = true,
+    };
 
-    private static readonly string[] McsOnlyOptions =
-        ["--project", "--agent-name", "--deployment-id", "--schema-name", "--publish", "--overwrite", "--commit-id", "--async"];
     /// <inheritdoc />
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
         OptionCatalog.Value("--project", "Local MCS project directory."),
-        OptionCatalog.Value("--agent-id", "Agent to deploy."),
-        OptionCatalog.Value("--agent-name", "Record to deploy, by name. MCS only."),
-        OptionCatalog.Value("--deployment-id", "Deployment to target. Wins over --deployment-name. MCS only."),
+        OptionCatalog.Value("--agent-id", "Agent to deploy. Wins over --agent-name."),
+        OptionCatalog.Value("--agent-name", "Agent to deploy, by name."),
+        OptionCatalog.Value("--deployment-id", "Deployment to target. Wins over --deployment-name."),
         OptionCatalog.Value("--deployment-name", "Deployment to target, by name."),
         OptionCatalog.Value("--schema-name", "Schema name for this deploy, overriding the project's. MCS only."),
         OptionCatalog.Switch("--publish", "Publish after a push that fully landed, making the content live. MCS only."),
         OptionCatalog.Switch("--overwrite", "Overwrite cloud drift and shared environment variables, and replace an unverified agent. Only dev refuses drift without it. MCS only."),
-        OptionCatalog.Value("--commit-id", "Not supported: this build has no Git Repository Service."),
+        OptionCatalog.Value("--commit-id", "Commit of the code agent's uploads to deploy to a Dev or Test deployment; a dev endpoint deployment switches to it. Without it, the deployment's requested or deployed dev endpoint, else the newest upload. Not supported for MCS, which has no Git Repository Service in this build."),
         OptionCatalog.Switch("--async", "Not supported: this deploy is synchronous."),
-        OptionCatalog.Value("--package-revision", "Existing immutable AMS package revision id. No package bytes are uploaded.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
-        OptionCatalog.Value("--environment-id", "AMS agent home environment. Defaults to the active environment.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
-        OptionCatalog.Value("--target-environment-id", "Explicit AMS target environment, including for same-home deployment.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
-        OptionCatalog.Value("--deployment-type", "AMS deployment stage: dev, test, or prod.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
-        OptionCatalog.Value("--entra-id", "AMS deployment Entra application id.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
-        OptionCatalog.Value("--entra-id-type", "AMS identity kind: app-reg, blueprint, or default.") with { RequiredFeatures = [FeatureName.AmsFeatures] },
+        AmsRoute.EnvironmentOption("AMS agent home environment, which selects the AMS route. Defaults to the active environment."),
+        .. AmsRules.MovedOptions.Keys.Select(option => OptionCatalog.Value(option, $"Moved for code agents: {AmsRules.MovedOptions[option]}") with { RequiredFeatures = [FeatureName.AmsFeatures] }),
     ];
 
     /// <inheritdoc />
@@ -50,48 +55,8 @@ public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, 
     public override IReadOnlyList<UsageRoute> UsageRoutes =>
     [
         new(UsageRoute.Deployment) { Summary = "Deploy an MCS project to a deployment" },
-        new("--agent-id", "--package-revision", "--target-environment-id", "--deployment-name", "--deployment-type", "--entra-id", "--entra-id-type")
-        {
-            Summary = "Deploy an AMS package revision",
-            RequiredFeatures = [FeatureName.AmsFeatures],
-        },
+        AmsRoute.Usage("Deploy an AMS code agent to one of its deployments", withDeployment: true),
     ];
-
-    /// <inheritdoc />
-    protected override void EnsureAvailable(ICommandInput input, IServiceProvider services)
-    {
-        if (SelectsAms(input))
-        {
-            FeatureGate.RequireEnabled(
-                services,
-                FeatureName.AmsFeatures,
-                "AMS package-revision deployment",
-                "Use --deployment-id or --deployment-name for the available MCS route.");
-        }
-    }
-
-    /// <inheritdoc />
-    protected override string? Validate(ICommandInput input, IServiceProvider services)
-    {
-        ArgumentNullException.ThrowIfNull(input);
-
-        if (SelectsAms(input))
-        {
-            return ValidateAms(input);
-        }
-
-        if (!string.IsNullOrWhiteSpace(input.GetString("--commit-id")))
-        {
-            return "--commit-id is not supported: this build has no Git Repository Service, so deploy always publishes the current working tree. Remove --commit-id.";
-        }
-
-        if (input.GetSwitch("--async"))
-        {
-            return "--async is not supported: this deploy is synchronous and returns when the push completes. There is no operation to poll. Remove --async.";
-        }
-
-        return null;
-    }
 
     /// <inheritdoc />
     protected override ManagedAgentDeployRequest Bind(ICommandInput input)
@@ -112,44 +77,17 @@ public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, 
     }
 
     /// <inheritdoc />
-    protected override Task<object> DispatchAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(input);
+    protected override Task<object> DispatchAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken) => AmsRoute.RouteAsync(input, services, AmsRules, () => InvokeAsync<AgentDeployRequest, AgentDeployResult>(services, AmsRoute.Address(input, new AgentDeployRequest { CommitId = input.GetString("--commit-id") }), cancellationToken), () => DispatchLocalAsync(input, services, cancellationToken));
 
-        if (SelectsAms(input))
+    private Task<object> DispatchLocalAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(input.GetString("--commit-id")))
         {
-            return InvokeAsync<AgentDeployRequest, AgentDeployResult>(services, BindAms(input), cancellationToken);
+            throw new CommandUsageException("--commit-id is not supported: this build has no Git Repository Service, so deploy always publishes the current working tree. Remove --commit-id.");
         }
 
-        return InvokeAsync<ManagedAgentDeployRequest, ManagedAgentDeployResult>(services, Bind(input), cancellationToken);
+        return input.GetSwitch("--async")
+            ? throw new CommandUsageException("--async is not supported: this deploy is synchronous and returns when the push completes. There is no operation to poll. Remove --async.")
+            : InvokeAsync<ManagedAgentDeployRequest, ManagedAgentDeployResult>(services, Bind(input), cancellationToken);
     }
-
-    private static AgentDeployRequest BindAms(ICommandInput input) => new()
-    {
-        AgentId = input.GetString("--agent-id"),
-        PackageRevisionId = input.GetString("--package-revision"),
-        EnvironmentId = input.GetString("--environment-id"),
-        TargetEnvironmentId = input.GetString("--target-environment-id")!,
-        DeploymentName = input.GetString("--deployment-name"),
-        DeploymentType = input.GetString("--deployment-type"),
-        EntraId = input.GetString("--entra-id"),
-        EntraIdType = input.GetString("--entra-id-type"),
-    };
-
-    /// <summary>Reports the first AMS rule the input breaks, or null when the AMS route is well formed.</summary>
-    private static string? ValidateAms(ICommandInput input)
-    {
-        if (McsOnlyOptions.FirstOrDefault(option => Supplied(input, option)) is { } conflicting)
-        {
-            return $"{conflicting} cannot be combined with AMS package-revision deployment inputs. MCS deployment and AMS deployment are separate operations.";
-        }
-
-        return RequiredAmsOptions.FirstOrDefault(option => string.IsNullOrWhiteSpace(input.GetString(option))) is { } missing
-            ? $"{missing} is required for an AMS package-revision deploy."
-            : null;
-    }
-
-    private static bool SelectsAms(ICommandInput input) => AmsOptions.Any(option => Supplied(input, option));
-
-    private static bool Supplied(ICommandInput input, string option) => input.WasProvided(option);
 }

@@ -14,6 +14,10 @@ public enum Capability
     AzureCreate,
     AzureExistingBot,
     Ams,
+    AmsCreate,
+    AmsPackage,
+    AmsHosted,
+    AmsProd,
 
     StandaloneFixtures,
 
@@ -111,8 +115,7 @@ public sealed class Capabilities
             states[Capability.AzureRead].Available && existingBot.Supplied,
             !states[Capability.AzureRead].Available ? states[Capability.AzureRead].Detail : existingBot.Detail);
 
-        var ams = ConfigValues.Text(config.Ams.Endpoint, "ams.endpoint", value => value);
-        Add(Capability.Ams, ams.Supplied, ams.Detail);
+        AddAms(Add, states, config, signedIn, tenant, azureCliPresent);
 
         var corpusRoot = ConfigValues.Text(config.Mcs.Copy.CorpusRoot, "mcs.copy.corpusRoot", value => value);
         var corpusAgents = corpusRoot.Usable is { } root && Directory.Exists(root) ? Directory.GetDirectories(root).Length : 0;
@@ -139,6 +142,12 @@ public sealed class Capabilities
 
     private const string NotProbed = "not probed: no mcs-standaloneworkflow scenario is scheduled";
 
+    /// <summary>The Agent Management Service capabilities, each one needing every capability before it.</summary>
+    public static IReadOnlyList<Capability> AmsChain { get; } = [Capability.Ams, Capability.AmsCreate, Capability.AmsPackage, Capability.AmsHosted, Capability.AmsProd];
+
+    /// <summary>Returns these capabilities with one Agent Management Service capability, and every one that needs it, unavailable for the same reason.</summary>
+    public Capabilities WithoutAms(Capability capability, string detail) => AmsChain.SkipWhile(candidate => candidate != capability).Aggregate(this, (capabilities, candidate) => capabilities.With(candidate, false, detail));
+
     public Capabilities With(Capability capability, bool available, string detail)
     {
         var states = new Dictionary<Capability, CapabilityState>(_states)
@@ -147,6 +156,32 @@ public sealed class Capabilities
         };
 
         return new Capabilities(states);
+    }
+
+    private static void AddAms(Action<Capability, bool, string> add, Dictionary<Capability, CapabilityState> states, E2EConfig config, bool signedIn, ConfigValue tenant, bool azureCliPresent)
+    {
+        var controlPlane = ConfigValues.Text(config.Ams.ControlPlaneEndpoint, "ams.controlPlane.endpoint", value => value);
+        var dataPlane = ConfigValues.Text(config.Ams.DataPlane.Endpoint, "ams.dataPlane.endpoint", value => value);
+        var home = ConfigValues.EnvironmentId(config.Ams.DevEnvironmentId, "ams.devEnvironmentId", value => $"home env {Short(value)}");
+        var test = ConfigValues.EnvironmentId(config.Ams.TestEnvironmentId, "ams.testEnvironmentId", value => $"test env {Short(value)}");
+        var prod = ConfigValues.EnvironmentId(config.Ams.ProdEnvironmentId, "ams.prodEnvironmentId", value => $"prod env {Short(value)}");
+        var package = ConfigValues.Text(config.Ams.PackagePath, "ams.packagePath", value => value);
+        var missing = new[] { tenant, controlPlane, dataPlane, home }.FirstOrDefault(value => !value.Supplied);
+
+        add(Capability.Ams, signedIn && missing is null, !signedIn ? "not signed in" : missing?.Detail ?? $"{controlPlane.Value} · {home.Detail}");
+
+        var ams = states[Capability.Ams];
+        add(Capability.AmsCreate, ams.Available && config.Ams.AllowCreate && test.Supplied && azureCliPresent, !ams.Available ? ams.Detail : !config.Ams.AllowCreate ? "ams.allowCreate is false" : !test.Supplied ? test.Detail : !azureCliPresent ? "az is not on PATH, so the run could not create or delete its App Registrations" : "the run creates and deletes its own agents, bots and App Registrations");
+
+        var create = states[Capability.AmsCreate];
+        var packageExists = package.Usable is { } path && File.Exists(path);
+        add(Capability.AmsPackage, create.Available && packageExists, !create.Available ? create.Detail : !package.Supplied ? package.Detail : packageExists ? package.Value! : $"no package at {package.Value}");
+
+        var uploads = states[Capability.AmsPackage];
+        add(Capability.AmsHosted, uploads.Available, uploads.Available ? "hosted deploys leave a hosted runtime copy that the Agent Management Service keeps" : uploads.Detail);
+
+        var hosted = states[Capability.AmsHosted];
+        add(Capability.AmsProd, hosted.Available && prod.Supplied, !hosted.Available ? hosted.Detail : prod.Detail);
     }
 
     private static void AddWorkspace(Action<Capability, bool, string> add, Capability capability, string? configured, string fixturesDirectory, string fixtureName)

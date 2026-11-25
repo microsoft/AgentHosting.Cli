@@ -7,7 +7,7 @@ using DeploymentModel = Microsoft.Agents.Hosting.Cli.Core.Deployments.CodeAgentD
 
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
-/// <summary><c>msagent deployment delete</c>, routed on the resolved agent type.</summary>
+/// <summary><c>msagent deployment delete</c>, routed to a deployment of the local project or to AMS.</summary>
 [Command("delete", Description = "Delete a deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 50, ProgressLabel = "Deleting deployment")]
 public sealed class DeploymentDeleteCommand : CommandBase<AgentDeploymentDeleteRequest, AgentDeploymentDeleteResult>
 {
@@ -16,13 +16,17 @@ public sealed class DeploymentDeleteCommand : CommandBase<AgentDeploymentDeleteR
     [
         .. DeploymentSelector.Symbols,
         OptionCatalog.Switch("--delete-deployed-mcs-agent", "Also delete the Copilot Studio agent this deployment targets. MCS only."),
+        AmsRoute.EnvironmentOption("AMS agent home environment, which selects the AMS route. Defaults to the active environment."),
     ];
+
+    private static readonly AmsRouteRules AmsRules = new("deployment delete") { LocalOptions = ["--project", "--resource-group", "--subscription", "--tenant", "--delete-deployed-mcs-agent"], NeedsDeployment = true };
 
     /// <inheritdoc />
     public override IReadOnlyList<RouteMetadata> Routes =>
     [
         new RouteMetadata(typeof(AgentDeploymentDeleteRequest), typeof(AgentDeploymentDeleteResult)),
         new RouteMetadata(typeof(DeploymentDeleteRequest), typeof(DeploymentResult<DeploymentModel>)),
+        new RouteMetadata(typeof(AgentDeploymentAmsDeleteRequest), typeof(AgentDeploymentAmsDeleteResult)),
     ];
 
     /// <inheritdoc />
@@ -34,6 +38,7 @@ public sealed class DeploymentDeleteCommand : CommandBase<AgentDeploymentDeleteR
             Summary = "Delete an Azure Bot Service deployment",
             RequiredFeatures = [FeatureName.AzureBotServiceFeatures],
         },
+        AmsRoute.Usage("Delete the record of an AMS deployment", withDeployment: true),
     ];
 
     /// <inheritdoc />
@@ -54,10 +59,10 @@ public sealed class DeploymentDeleteCommand : CommandBase<AgentDeploymentDeleteR
     }
 
     /// <inheritdoc />
-    protected override Task<object> DispatchAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(input);
+    protected override Task<object> DispatchAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken) => AmsRoute.RouteAsync(input, services, AmsRules, () => InvokeAsync<AgentDeploymentAmsDeleteRequest, AgentDeploymentAmsDeleteResult>(services, AmsRoute.Address(input, new AgentDeploymentAmsDeleteRequest { NonInteractive = input.NonInteractive }), cancellationToken), () => DispatchLocalAsync(input, services, cancellationToken));
 
+    private Task<object> DispatchLocalAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
+    {
         var resolved = Resolve(input, services);
         DeploymentSelector.RequireAddressable(services, input, resolved);
 

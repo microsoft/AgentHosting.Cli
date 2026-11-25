@@ -75,6 +75,7 @@ public sealed class MsagentCli
     private readonly Transcript _transcript;
     private readonly string _crashDumpDirectory;
     private readonly IReadOnlyCollection<string> _forbiddenEnvironmentIds;
+    private readonly EnvironmentOverlay _environment;
 
     public MsagentCli(string binaryPath, Transcript transcript, string crashDumpDirectory, IReadOnlyCollection<string>? forbiddenEnvironmentIds = null)
     {
@@ -82,12 +83,31 @@ public sealed class MsagentCli
         _transcript = transcript;
         _crashDumpDirectory = crashDumpDirectory;
         _forbiddenEnvironmentIds = forbiddenEnvironmentIds ?? [];
+        _environment = EnvironmentOverlay.Empty;
 
         Directory.CreateDirectory(crashDumpDirectory);
     }
 
+    private MsagentCli(MsagentCli source, EnvironmentOverlay environment)
+    {
+        _binaryPath = source._binaryPath;
+        _transcript = source._transcript;
+        _crashDumpDirectory = source._crashDumpDirectory;
+        _forbiddenEnvironmentIds = source._forbiddenEnvironmentIds;
+        _environment = environment;
+    }
+
     /// <summary>The binary every scenario in this run drives.</summary>
     public string BinaryPath => _binaryPath;
+
+    /// <summary>The environment variables every command this instance runs gets on top of the harness's own.</summary>
+    public EnvironmentOverlay Environment => _environment;
+
+    /// <summary>Returns an instance that runs the same binary with the overlay added to every command's environment.</summary>
+    public MsagentCli With(EnvironmentOverlay environment) => new(this, _environment.Then(environment));
+
+    /// <summary>Reads the sign-in msagent reports, as JSON and without prompts.</summary>
+    public Task<MsagentResult> AuthStatusAsync(CancellationToken cancellationToken = default) => RunAsync(["auth", "status", "--json", "--non-interactive"], cancellationToken: cancellationToken);
 
     /// <summary>Runs a command until it settles or the attempts run out, waiting between attempts; returns the last result and whether it settled.</summary>
     public static async Task<(MsagentResult Result, bool Settled)> RetriedAsync(Func<Task<MsagentResult>> run, Func<MsagentResult, Task<bool>> settled, int attempts, TimeSpan delay, CancellationToken cancellationToken)
@@ -120,10 +140,11 @@ public sealed class MsagentCli
             RedirectStandardInput = true,
             UseShellExecute = false,
             CreateNoWindow = true,
-            WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory,
+            WorkingDirectory = workingDirectory ?? System.Environment.CurrentDirectory,
         };
 
         ArmCrashDumps(startInfo, _crashDumpDirectory);
+        _environment.ApplyTo(startInfo.Environment);
 
         foreach (var argument in arguments)
         {

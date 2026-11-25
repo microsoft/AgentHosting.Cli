@@ -1,6 +1,7 @@
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using System.Text.Json;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -10,11 +11,12 @@ public sealed class DeploymentOAuthServiceTests
     private const string DeploymentId = "11111111-1111-1111-1111-111111111111";
     private const string AgentId = "44444444-4444-4444-4444-444444444444";
 
-    private static DeploymentOAuthService Service(FakeStore store, FakeOAuthPort port) =>
+    private static DeploymentOAuthService Service(FakeStore store, FakeOAuthPort port, IStandardInput? standardInput = null) =>
         new(
             store,
             port,
-            new CompositeDeploymentTransport(subscriptionResolver: new FakeSubscriptionResolver()));
+            new CompositeDeploymentTransport(subscriptionResolver: new FakeSubscriptionResolver()),
+            standardInput ?? new FakeStandardInput());
 
     private static JsonElement Arm(string json)
     {
@@ -663,6 +665,59 @@ public sealed class DeploymentOAuthServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_SecretFromStandardInput_IsSentExactlyAsPiped()
+    {
+        var port = new FakeOAuthPort();
+        var standardInput = new FakeStandardInput(" piped secret \r\n");
+
+        var report = await Service(new FakeStore(ProvisionedRecord()), port, standardInput).CreateAsync(CreateRequest(clientSecret: null) with { ClientSecretFromStandardInput = true }, CancellationToken.None);
+
+        Assert.Equal(DeploymentOperationStatus.Created, report.Status);
+        Assert.Equal(1, standardInput.Reads);
+        Assert.Equal(1, port.ProviderListCallCount);
+        Assert.Equal(" piped secret ", Assert.Single(port.Upserts).ClientSecret);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ProviderNotInCatalogue_ReadsNoStandardInput()
+    {
+        var standardInput = new FakeStandardInput("piped-secret\n");
+
+        await Assert.ThrowsAsync<DeploymentException>(() => Service(new FakeStore(ProvisionedRecord()), new FakeOAuthPort { Providers = [] }, standardInput).CreateAsync(CreateRequest(clientSecret: null) with { ClientSecretFromStandardInput = true }, CancellationToken.None));
+
+        Assert.Equal(0, standardInput.Reads);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_SecretFromStandardInput_IsSentWithTheChangedSettings()
+    {
+        var port = new FakeOAuthPort { Existing = new FakeOAuthConnectionResponse { ConnectionName = "aad-conn", ServiceProviderId = "provider-id-Aadv2", ClientId = "client-1" } };
+        var standardInput = new FakeStandardInput("rotated-secret\n");
+
+        var report = await Service(new FakeStore(ProvisionedRecord()), port, standardInput).UpdateAsync(new DeploymentOAuthUpdateRequest { DeploymentId = DeploymentId, ConnectionName = "aad-conn", ClientSecretFromStandardInput = true }, CancellationToken.None);
+
+        Assert.Equal(DeploymentOperationStatus.Updated, report.Status);
+        Assert.Equal(1, standardInput.Reads);
+        Assert.Equal("rotated-secret", Assert.Single(port.Upserts).ClientSecret);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_MissingConnection_ReadsNoStandardInput()
+    {
+        var standardInput = new FakeStandardInput("rotated-secret\n");
+
+        await Assert.ThrowsAsync<DeploymentException>(() => Service(new FakeStore(ProvisionedRecord()), new FakeOAuthPort(), standardInput).UpdateAsync(new DeploymentOAuthUpdateRequest { DeploymentId = DeploymentId, ConnectionName = "missing", ClientSecretFromStandardInput = true }, CancellationToken.None));
+
+        Assert.Equal(0, standardInput.Reads);
+    }
+
+    [Fact]
+    public void Constructor_RequiresStandardInput()
+    {
+        Assert.Throws<ArgumentNullException>(() => new DeploymentOAuthService(new FakeStore(), new FakeOAuthPort(), new CompositeDeploymentTransport(subscriptionResolver: new FakeSubscriptionResolver()), null!));
+    }
+
+    [Fact]
     public async Task UpdateAsync_UnknownLiveProviderId_DoesNotChangeProvider()
     {
         var store = new FakeStore(ProvisionedRecord() with
@@ -941,7 +996,8 @@ public sealed class DeploymentOAuthServiceTests
         var service = new DeploymentOAuthService(
             new FakeStore(),
             new FakeOAuthPort(),
-            new CompositeDeploymentTransport(subscriptionResolver: resolver));
+            new CompositeDeploymentTransport(subscriptionResolver: resolver),
+            new FakeStandardInput());
 
         await service.ListProvidersAsync(
             new DeploymentOAuthProviderListRequest

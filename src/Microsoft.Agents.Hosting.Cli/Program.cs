@@ -155,7 +155,7 @@ internal static class Program
         // package: this is the only place that should decide how an HttpClient behaves. Automatic
         // redirect following is disabled so a host-changing redirect can never cause the delegated
         // bearer token to be replayed to a host the cloud map never approved.
-        services.AddSingleton<AgentCreationTarget>();
+        services.AddSingleton(AmsEndpointProfile.FromEnvironment(Environment.GetEnvironmentVariable));
 
         // Automatic redirect following is disabled at client construction — before any authorization
         // header exists — so a host-changing redirect can never cause the delegated bearer token to be
@@ -166,15 +166,13 @@ internal static class Program
             sp.GetRequiredService<ITokenProvider>(),
             sp.GetRequiredService<PpapiTokenClaimsValidator>(),
             profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
-        services.AddSingleton(sp => new AmsDeploymentAdapter(
-            new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
-            sp.GetRequiredService<ITokenProvider>(),
-            sp.GetRequiredService<PpapiTokenClaimsValidator>(),
-            profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
-        services.AddSingleton<IAmsAgentReadTransport>(
-            sp => sp.GetRequiredService<AmsDeploymentAdapter>());
-        services.AddSingleton<IAmsDeploymentTransport>(
-            sp => sp.GetRequiredService<AmsDeploymentAdapter>());
+        services.AddSingleton<IAmsDeploymentTransport>(sp => new AmsDeploymentAdapter(new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()), sp.GetRequiredService<ITokenProvider>(), sp.GetRequiredService<PpapiTokenClaimsValidator>(), profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
+        services.AddSingleton(sp => new AmsAgentAdapter(new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()), sp.GetRequiredService<ITokenProvider>(), sp.GetRequiredService<PpapiTokenClaimsValidator>(), profileTokens: sp.GetRequiredService<IProfileResourceTokenProvider>()));
+        services.AddSingleton<IAmsAgentReadTransport>(sp => sp.GetRequiredService<AmsAgentAdapter>());
+        services.AddSingleton<IAmsAgentTransport>(sp => sp.GetRequiredService<AmsAgentAdapter>());
+        services.AddSingleton<IAmsChannelTransport>(sp => new AmsChannelAdapter(new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()), sp.GetRequiredService<ITokenProvider>(), sp.GetRequiredService<PpapiTokenClaimsValidator>(), sp.GetRequiredService<IProfileResourceTokenProvider>()));
+        services.AddSingleton<IAmsOAuthTransport>(sp => new AmsOAuthAdapter(new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()), sp.GetRequiredService<ITokenProvider>(), sp.GetRequiredService<PpapiTokenClaimsValidator>(), sp.GetRequiredService<IProfileResourceTokenProvider>()));
+        services.AddSingleton<IStandardInput>(new ConsoleStandardInput(Console.OpenStandardInput, () => Console.IsInputRedirected));
         services.AddSingleton<IAmsAgentCreationTransport>(sp => new AmsAgentCreationAdapter(
             new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),

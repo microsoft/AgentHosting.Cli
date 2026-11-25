@@ -25,6 +25,9 @@ public sealed record DeploymentAgentTypeQuery
 
     /// <summary>Whether any Azure option was supplied, used only when no record resolves.</summary>
     public bool HasCodeAgentOptions { get; init; }
+
+    /// <summary>Whether a named agent without a record of its own matches only deployment records of the agent id given.</summary>
+    public bool RequireNamedAgentMatch { get; init; }
 }
 
 /// <summary>Where a resolved agent type came from, so callers can explain an ambiguous selection.</summary>

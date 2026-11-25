@@ -31,6 +31,5 @@ public sealed record AgentCreateResult : ITextGridRenderable
         $"  agent: {DisplayName} ({AgentId})",
         $"  environment: {EnvironmentId} (tenant {TenantId})",
         $"  repository: {RepositoryId}",
-        "This reports record and repository creation only. It does not report package publication or runtime readiness.",
     ];
 }
