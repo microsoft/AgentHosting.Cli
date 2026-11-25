@@ -78,8 +78,7 @@ public sealed class ProfileCredentialIntegrationTests
     [InlineData(AuthCredentialMethod.DefaultAzureCredential)]
     [InlineData(AuthCredentialMethod.ClientSecret)]
     [InlineData(AuthCredentialMethod.Certificate)]
-    [InlineData(AuthCredentialMethod.Broker)]
-    public async Task MetadataSelectedTokenSkipsWorkloadDacAndBrokerWithoutConstructingAnyCredential(AuthCredentialMethod method)
+    public async Task MetadataSelectedTokenSkipsWorkloadAndDacWithoutConstructingAnyCredential(AuthCredentialMethod method)
     {
         using var h = new ProfileCredentialTests.Harness();
         h.Profiles.Items.Add(Profile(method));
@@ -89,6 +88,25 @@ public sealed class ProfileCredentialIntegrationTests
         Assert.Null(await provider.TryAcquireTokenSilentAsync("https://example.test", ProfileCredentialTests.Tenant, default));
         Assert.Equal(0, probe.CallCount);
         Assert.Null(credentials.Profile);
+    }
+
+    [Fact]
+    public async Task MetadataBrokerTokenUsesTheCapturedOwnedProfileWithoutLegacyConstruction()
+    {
+        using var h = new ProfileCredentialTests.Harness();
+        var profile = Profile(AuthCredentialMethod.Broker);
+        var credentials = new Credentials { SelectedTokenAllowed = true };
+        var probe = new FakeSecureTokenCacheProbe(false);
+        var provider = new MsalSilentTokenProvider(Public(h, probe), h.Profiles, selectedCredentials: credentials);
+
+        var result = await provider.TryAcquireForProfileAsync(profile, "https://example.test",
+            ProfileCredentialTests.Tenant, default);
+
+        Assert.Equal("bound-token", result!.AccessToken);
+        Assert.Same(profile, credentials.Profile);
+        Assert.Equal(["https://example.test//.default"], credentials.Scopes);
+        Assert.Equal(ProfileCredentialTests.Tenant, result.TenantId);
+        Assert.Equal(0, probe.CallCount);
     }
 
     [Fact]
@@ -163,10 +181,15 @@ public sealed class ProfileCredentialIntegrationTests
         internal AuthProfile? Profile;
         internal IReadOnlyList<string>? Scopes;
         internal bool CleanupFails;
+        internal bool SelectedTokenAllowed;
         public Task<AuthProfile> AuthenticateAsync(Microsoft.Agents.Hosting.Cli.Core.Operations.AuthCreateRequest request, CancellationToken ct) => throw new NotSupportedException();
         public Task<TokenAcquisitionResult> AcquireAsync(AuthProfile profile, IReadOnlyList<string> scopes, string? tenant, CancellationToken ct)
         { Profile = profile; Scopes = scopes; return Task.FromResult(new TokenAcquisitionResult { AccessToken = "bound-token", TenantId = tenant, ExpiresOn = DateTimeOffset.UtcNow.AddHours(1) }); }
-        public Task<TokenAcquisitionResult?> TryAcquireSelectedTokenAsync(AuthProfile profile, IReadOnlyList<string> scopes, string tenant, CancellationToken ct) => throw new InvalidOperationException("No source should be constructed.");
+        public async Task<TokenAcquisitionResult?> TryAcquireSelectedTokenAsync(AuthProfile profile, IReadOnlyList<string> scopes, string tenant, CancellationToken ct)
+        {
+            if (!SelectedTokenAllowed) throw new InvalidOperationException("No source should be constructed.");
+            return await AcquireAsync(profile, scopes, tenant, ct);
+        }
         public Task<TokenAcquisitionResult> AcquireConsentAsync(AuthProfile profile, Guid client, string redirect, IReadOnlyList<string> scopes, string? tenant, CancellationToken ct, bool trySilentFirst = true) => AcquireAsync(profile, scopes, tenant, ct);
         public Task CompleteCreationAsync(AuthProfile profile, CancellationToken ct) => Task.CompletedTask;
         public Task RemoveOwnedCredentialAsync(AuthProfile profile, CancellationToken ct) => Task.CompletedTask;

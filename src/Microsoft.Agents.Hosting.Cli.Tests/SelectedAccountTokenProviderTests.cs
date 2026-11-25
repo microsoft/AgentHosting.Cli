@@ -119,6 +119,112 @@ public sealed class SelectedAccountTokenProviderTests
     public Task AThrottledBroker_IsStillReportedAsThrottled() =>
         Assert.ThrowsAsync<TokenThrottledException>(() => AcquireWhileListingAccountsFailsAsync("broker", new MsalThrottledServiceException(new MsalServiceException("throttled", "Too many requests."))));
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LegacyMetadataBrokerUsesOnlyExactAccountAndExplicitTenant(bool selectedAvailable)
+    {
+        using var directory = new TempDir();
+        const string selected = "selected@example.test";
+        const string resource = "https://api.powerplatform.com/";
+        using var http = new ForbiddenAuthHttp();
+        var clients = new MsalPublicClientProvider(
+            new() { ConfigDirectory = directory.Path, AllowUnprotectedCache = true },
+            FakePlatformInfo.BrokerPlatformOtherThanThisHost(), new FakeSecureTokenCacheProbe(false), legacyCache: null,
+            createClient: configuration =>
+            {
+                Assert.True(configuration.UseBroker);
+                Assert.False(configuration.ListBrokerAccounts);
+                Assert.Equal("/" + Tenant, configuration.AuthorityUrl.AbsolutePath);
+                return PublicClientApplicationBuilder.Create(configuration.ClientId.ToString())
+                    .WithAuthority(configuration.AuthorityUrl, validateAuthority: false)
+                    .WithHttpClientFactory(http).Build();
+            });
+        var client = await clients.GetClientAsync(true, Guid.Parse(Tenant), default);
+        // Model broker cache results; the injected transport rejects any real token exchange.
+        MsalTokenCacheSeed.Seed(client, Tenant, resource + "/.default",
+            selectedAvailable ? ["other@example.test", selected] : ["other@example.test"]);
+        var profile = new AuthProfile
+        {
+            AccountKey = MsalTokenCacheSeed.HomeAccountId(selected, Tenant),
+            Username = selected, CredentialMethod = AuthCredentialMethod.Broker,
+            TenantId = EnvironmentFixtures.FabrikamTenant,
+        };
+        var diagnostics = new GeographyDiagnostics();
+        var provider = new MsalSilentTokenProvider(clients, InMemoryAuthProfileStore.SignedOut());
+
+        var result = await provider.TryAcquireForProfileAsync(profile, resource, Tenant, default, diagnostics);
+
+        if (selectedAvailable)
+        {
+            Assert.True(result is not null, string.Join(",", diagnostics.Stages));
+            Assert.Equal(MsalTokenCacheSeed.AccessToken(selected), result!.AccessToken);
+            Assert.Equal(Tenant, result.TenantId);
+        }
+        else
+        {
+            Assert.Null(result);
+            Assert.Contains(EnvironmentGeographyStage.TokenAccountUnavailable, diagnostics.Stages);
+        }
+        Assert.Equal(0, http.Calls);
+    }
+
+    [Fact]
+    public async Task LegacyMetadataBrokerInitializationFailureHasFixedReason()
+    {
+        using var directory = new TempDir();
+        var clients = FakeClientProviders.Create(FakePlatformInfo.BrokerPlatformOtherThanThisHost(), directory.Path);
+        var client = await clients.GetClientAsync(true, Guid.Parse(Tenant), default);
+        client.UserTokenCache.SetBeforeAccessAsync(_ =>
+            throw new MsalClientException("wam_runtime_init_failed", "private-failure-details"));
+        var diagnostics = new GeographyDiagnostics();
+        var profile = new AuthProfile { AccountKey = "selected", Username = "selected@example.test", TenantId = Tenant };
+
+        Assert.Null(await new MsalSilentTokenProvider(clients, InMemoryAuthProfileStore.SignedOut())
+            .TryAcquireForProfileAsync(profile, "https://api.powerplatform.com/", Tenant, default, diagnostics));
+        Assert.Equal([EnvironmentGeographyStage.TokenBrokerUnavailable], diagnostics.Stages);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LegacyBrokerCannotDowngradeToNonBrokerClient(bool differentClient)
+    {
+        using var directory = new TempDir();
+        var clients = new MsalPublicClientProvider(
+            new() { ConfigDirectory = directory.Path },
+            differentClient ? FakePlatformInfo.BrokerPlatformOtherThanThisHost() : FakePlatformInfo.Unknown(),
+            new FakeSecureTokenCacheProbe(false), legacyCache: null,
+            createClient: _ => throw new InvalidOperationException("No client should be constructed."));
+        var profile = new AuthProfile
+        {
+            AccountKey = "selected", Username = "selected@example.test", TenantId = Tenant,
+            ClientId = differentClient ? "55555555-5555-5555-5555-555555555555" : null,
+        };
+        var diagnostics = new GeographyDiagnostics();
+
+        Assert.Null(await new MsalSilentTokenProvider(clients, InMemoryAuthProfileStore.SignedOut())
+            .TryAcquireForProfileAsync(profile, "https://api.powerplatform.com/", Tenant, default, diagnostics));
+        Assert.Equal([EnvironmentGeographyStage.TokenBrokerUnavailable], diagnostics.Stages);
+    }
+
+    private sealed class GeographyDiagnostics : IEnvironmentGeographyDiagnostics
+    {
+        internal List<EnvironmentGeographyStage> Stages { get; } = [];
+        public void Report(EnvironmentGeographyStage stage, int? httpStatusCode = null) => Stages.Add(stage);
+    }
+
+    private sealed class ForbiddenAuthHttp : HttpMessageHandler, IMsalHttpClientFactory
+    {
+        internal int Calls { get; private set; }
+        public HttpClient GetHttpClient() => new(this, disposeHandler: false);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            throw new InvalidOperationException("Network access is forbidden.");
+        }
+    }
+
     private static async Task<TokenAcquisitionResult> AcquireWhileListingAccountsFailsAsync(string flowType, Exception failure)
     {
         using var directory = new TempDir();

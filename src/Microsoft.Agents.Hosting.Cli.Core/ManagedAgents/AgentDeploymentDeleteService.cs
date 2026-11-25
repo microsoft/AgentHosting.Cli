@@ -65,11 +65,20 @@ public sealed class AgentDeploymentDeleteService
         }
 
         var schemaName = request.DeleteDeployedMcsAgent ? _projectIdentities.FindSchemaName(agent, _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent)) : null;
+        if (agent.AgentType == AgentTypes.McsAgent)
+        {
+            _resolver.ObserveMcsAgentSchemaName(schemaName);
+        }
         var planned = new List<(AgentDeploymentRecord Deployment, string? TargetAgentId)>();
 
         foreach (var deployment in deployments)
         {
-            planned.Add((deployment, schemaName is null ? null : await FindTargetAgentIdAsync(deployment, schemaName, cancellationToken).ConfigureAwait(false)));
+            var targetAgentId = schemaName is null ? null : await FindTargetAgentIdAsync(deployment, schemaName, cancellationToken).ConfigureAwait(false);
+            if (targetAgentId is not null)
+            {
+                _resolver.ObserveMcsAgentTarget(targetAgentId, deployment.EnvironmentId);
+            }
+            planned.Add((deployment, targetAgentId));
         }
 
         var outcome = await ConfirmationPolicy.ConfirmAsync(_confirmations, request.NonInteractive, Describe(agent, planned, request.DeleteDeployedMcsAgent), deployments.Count == 1 ? deployments[0].DeploymentName : agent.DisplayName, cancellationToken).ConfigureAwait(false);

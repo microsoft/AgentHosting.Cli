@@ -53,7 +53,7 @@ public sealed class TelemetryFullTests
             Assert.Equal(
                 tenantId.ToString("D"),
                 Dimensions(item).GetProperty("tenantId").GetString());
-            AssertDeferredIdentityFieldsAbsent(Data(item));
+            AssertTenantOnlyIdentityFields(Data(item));
         });
         Assert.DoesNotContain(
             "22222222-2222-2222-2222-222222222222",
@@ -821,6 +821,40 @@ public sealed class TelemetryFullTests
     }
 
     [Fact]
+    public async Task DefaultDeadlineAllowsFiveSecondResolutionAndOneSecondTransport()
+    {
+        var time = new ManualTimeProvider();
+        var resolver = new CancellationIgnoringResolver(
+            Destination(new Uri("http://127.0.0.1:1/OneCollector/1.0/")));
+        var transport = new CancellationBlockingTransport();
+        var session = new CommandTelemetrySession(
+            resolver, new FixedClock(), "1.2.3-test", transport: transport, timeProvider: time);
+        session.RecordHost(CommandTelemetryHostCategory.Help);
+        Task disposal = session.DisposeAsync().AsTask();
+
+        try
+        {
+            await resolver.Started.WaitAsync(TimeSpan.FromSeconds(2));
+            time.Advance(TimeSpan.FromSeconds(5));
+            Assert.False(resolver.Token.IsCancellationRequested);
+            resolver.Release();
+            await transport.Started.WaitAsync(TimeSpan.FromSeconds(2));
+            time.Advance(TimeSpan.FromSeconds(1));
+            await disposal.WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Equal(resolver.Token, transport.Token);
+            Assert.True(transport.Token.IsCancellationRequested);
+            Assert.Equal(1, transport.CallCount);
+        }
+        finally
+        {
+            resolver.Release();
+            time.Advance(TimeSpan.FromSeconds(6));
+            await disposal.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Fact]
     public async Task SessionCreationFailureDisablesCollectionAndReportsCategory()
     {
         using var listener = new DiagnosticEventListener(
@@ -982,6 +1016,7 @@ public sealed class TelemetryFullTests
                     "session_Id",
                     "severity",
                     "telemetryLocation",
+                    "tenantId",
                     "timestamp",
                 ],
                 data.EnumerateObject()
@@ -993,64 +1028,53 @@ public sealed class TelemetryFullTests
             Assert.Equal(
                 data.GetProperty("telemetryLocation").GetString(),
                 dimensions.GetProperty("telemetryLocation").GetString());
-            Assert.Equal("false", dimensions.GetProperty("isOnePlayer").GetString());
-            Assert.Equal(
-                "AgentHosting_CLI_Authoring",
-                dimensions.GetProperty("webPlayerScenario").GetString());
+            Assert.False(dimensions.TryGetProperty("isOnePlayer", out _));
+            Assert.False(dimensions.TryGetProperty("webPlayerScenario", out _));
             Assert.Equal("prod", dimensions.GetProperty("cloud").GetString());
-            Assert.Equal("Unknown", dimensions.GetProperty("station").GetString());
+            Assert.False(dimensions.TryGetProperty("station", out _));
             Assert.Equal("1.2.3-test", dimensions.GetProperty("cliVersion").GetString());
             Assert.Equal(
                 tenantId.ToString("D"),
                 dimensions.GetProperty("tenantId").GetString());
-            AssertDeferredIdentityFieldsAbsent(data);
+            AssertTenantOnlyIdentityFields(data);
         });
 
         Assert.Equal(
             [
-                "IsFailure",
                 "cliVersion",
                 "cloud",
                 "exitClass",
                 "hostCategory",
-                "isOnePlayer",
+                "isFailure",
                 "operationName",
-                "station",
                 "telemetryLocation",
                 "tenantId",
-                "webPlayerScenario",
             ],
             Dimensions(serialized[0]).EnumerateObject()
                 .Select(property => property.Name)
                 .Order(StringComparer.Ordinal));
         Assert.Equal(
             [
-                "IsFailure",
                 "cliVersion",
                 "cloud",
-                "isOnePlayer",
+                "isFailure",
                 "operationName",
-                "station",
                 "telemetryLocation",
                 "tenantId",
-                "webPlayerScenario",
             ],
             Dimensions(serialized[1]).EnumerateObject()
                 .Select(property => property.Name)
                 .Order(StringComparer.Ordinal));
         Assert.Equal(
             [
-                "IsFailure",
                 "cliVersion",
                 "cloud",
                 "exitClass",
-                "isOnePlayer",
+                "isFailure",
                 "operationName",
                 "outcomeCategory",
-                "station",
                 "telemetryLocation",
                 "tenantId",
-                "webPlayerScenario",
             ],
             Dimensions(serialized[2]).EnumerateObject()
                 .Select(property => property.Name)
@@ -1094,9 +1118,14 @@ public sealed class TelemetryFullTests
 
         JsonElement[] events = Parse(await server.RequestBody);
         Assert.Equal(2, events.Length);
-        Assert.All(events, item => Assert.False(Data(item).TryGetProperty("IsFailure", out _)));
-        Assert.False(Dimensions(events[0]).GetProperty("IsFailure").GetBoolean());
-        Assert.Equal(expectedFailure, Dimensions(events[1]).GetProperty("IsFailure").GetBoolean());
+        Assert.All(events, item =>
+        {
+            Assert.False(Data(item).TryGetProperty("isFailure", out _));
+            Assert.False(Data(item).TryGetProperty("IsFailure", out _));
+            Assert.False(Dimensions(item).TryGetProperty("IsFailure", out _));
+        });
+        Assert.False(Dimensions(events[0]).GetProperty("isFailure").GetBoolean());
+        Assert.Equal(expectedFailure, Dimensions(events[1]).GetProperty("isFailure").GetBoolean());
     }
 
     [Theory]
@@ -1119,8 +1148,10 @@ public sealed class TelemetryFullTests
         await session.DisposeAsync();
 
         JsonElement item = Assert.Single(Parse(await server.RequestBody));
+        Assert.False(Data(item).TryGetProperty("isFailure", out _));
         Assert.False(Data(item).TryGetProperty("IsFailure", out _));
-        Assert.Equal(expectedFailure, Dimensions(item).GetProperty("IsFailure").GetBoolean());
+        Assert.False(Dimensions(item).TryGetProperty("IsFailure", out _));
+        Assert.Equal(expectedFailure, Dimensions(item).GetProperty("isFailure").GetBoolean());
     }
 
     [Theory]
@@ -1282,10 +1313,9 @@ public sealed class TelemetryFullTests
         JsonDocument.Parse(Data(item).GetProperty("customDimensions").GetString()!)
             .RootElement.Clone();
 
-    private static void AssertDeferredIdentityFieldsAbsent(JsonElement data)
+    private static void AssertTenantOnlyIdentityFields(JsonElement data)
     {
         Assert.False(data.TryGetProperty("identityMode", out _));
-        Assert.False(data.TryGetProperty("tenantId", out _));
         Assert.False(data.TryGetProperty("objectId", out _));
         Assert.False(data.TryGetProperty("principalObjectId", out _));
         Assert.False(data.TryGetProperty("pptoolsDeviceId", out _));
@@ -1293,6 +1323,9 @@ public sealed class TelemetryFullTests
         JsonElement dimensions =
             JsonDocument.Parse(data.GetProperty("customDimensions").GetString()!)
                 .RootElement;
+        Assert.Equal(
+            dimensions.GetProperty("tenantId").GetString(),
+            data.GetProperty("tenantId").GetString());
         Assert.False(dimensions.TryGetProperty("identityMode", out _));
         Assert.False(dimensions.TryGetProperty("objectId", out _));
         Assert.False(dimensions.TryGetProperty("principalObjectId", out _));

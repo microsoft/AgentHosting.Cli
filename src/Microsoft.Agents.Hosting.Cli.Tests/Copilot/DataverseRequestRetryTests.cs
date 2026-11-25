@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Headers;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
+using Microsoft.Agents.Hosting.Cli.Core.Auth;
+using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.CopilotStudio.Sync.Dataverse;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.Copilot;
@@ -54,5 +57,120 @@ public sealed class DataverseRequestRetryTests
         Assert.Equal((HttpStatusCode)429, failure.StatusCode);
         Assert.Equal(3, handler.Requests.Count);
         Assert.Single(handler.Requests.Select(request => request.ClientRequestId).Distinct());
+    }
+
+    [Fact]
+    public async Task SessionCorrelationSurvivesPinnedSyncRetryAndPreservesExistingRequestId()
+    {
+        var id = Guid.NewGuid();
+        var requestId = Guid.NewGuid().ToString("D");
+        var context = new InvocationContext { SessionId = id };
+        var sessions = new List<string?>();
+        var handler = new CapturingPackageHandler(request =>
+        {
+            sessions.Add(request.Headers.TryGetValues("x-ms-client-session-id", out var values) ? Assert.Single(values) : null);
+            return sessions.Count == 1 ? Throttled() : new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        using var accessor = new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider(), () => handler, context);
+        accessor.SetDataverseOrganization(new Uri(Organization));
+        using var client = accessor.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{Organization}api/data/v9.2/WhoAmI");
+        request.Headers.Add("x-ms-client-request-id", requestId);
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, sessions.Count);
+        Assert.All(sessions, value => Assert.Equal(id.ToString("D"), value));
+        Assert.All(handler.Requests, value => Assert.Equal(requestId, value.ClientRequestId));
+    }
+
+    [Fact]
+    public async Task SharedClientUsesAsyncInvocationContextWithoutDefaultHeaders()
+    {
+        var context = new InvocationContext();
+        var received = new System.Collections.Concurrent.ConcurrentDictionary<string, string?>();
+        var bothEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var handler = new CorrelationHandler(async request =>
+        {
+            received[request.RequestUri!.AbsolutePath] =
+                request.Headers.TryGetValues("x-ms-client-session-id", out var values) ? Assert.Single(values) : null;
+            if (received.Count == 2)
+            {
+                bothEntered.TrySetResult();
+            }
+            await release.Task;
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        using var accessor = new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider(), () => handler, context);
+        accessor.SetDataverseOrganization(new Uri(Organization));
+        using var client = accessor.CreateClient();
+        var firstId = Guid.NewGuid();
+        var secondId = Guid.NewGuid();
+
+        async Task SendAsync(string path, Guid id)
+        {
+            context.SessionId = id;
+            using var response = await client.GetAsync(Organization + path);
+        }
+
+        var first = SendAsync("first", firstId);
+        var second = SendAsync("second", secondId);
+        try
+        {
+            await bothEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Task.WhenAll(first, second);
+        }
+        Assert.Equal(firstId.ToString("D"), received["/first"]);
+        Assert.Equal(secondId.ToString("D"), received["/second"]);
+        Assert.False(client.DefaultRequestHeaders.Contains("x-ms-client-session-id"));
+        Assert.Null(context.SessionId);
+    }
+
+    [Fact]
+    public async Task SuppressionDoesNotAddSessionHeadersOrRemoveOperationalRequestIds()
+    {
+        var context = new InvocationContext();
+        var handler = new CapturingPackageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        using var accessor = new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider(), () => handler, context);
+        accessor.SetDataverseOrganization(new Uri(Organization));
+        using var client = accessor.CreateClient();
+        using var response = await client.GetAsync(Organization);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.DoesNotContain("x-ms-client-session-id", request.HeaderNames);
+        Assert.True(Guid.TryParse(request.ClientRequestId, out _));
+    }
+
+    [Fact]
+    public async Task GatewayDoesNotReceiveDataverseSessionHeader()
+    {
+        var context = new InvocationContext { SessionId = Guid.NewGuid() };
+        var handler = new CapturingPackageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        using var accessor = new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider(), () => handler, context);
+        using var target = DataverseOperationScope.Push(null);
+        using var client = accessor.CreateGatewayClient(
+            PowerPlatformCloudMap.ForCloud(CloudInstance.Public),
+            Microsoft.Agents.Hosting.Cli.Core.Environments.CoreServicesClusterCategory.Prod);
+        using var response = await client.GetAsync("https://gateway.island.powerapps.com/");
+
+        Assert.DoesNotContain("x-ms-client-session-id", Assert.Single(handler.Requests).HeaderNames);
+    }
+
+    private sealed class InvocationContext : ICommandInvocationContext
+    {
+        private readonly AsyncLocal<Guid?> _current = new();
+
+        public Guid? SessionId { get => _current.Value; set => _current.Value = value; }
+    }
+
+    private sealed class CorrelationHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> send) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            send(request);
     }
 }

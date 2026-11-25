@@ -67,6 +67,7 @@ public sealed class ManagedAgentPullService
     {
         var environment = await _environmentResolver.ResolveAsync(workspace.EnvironmentId, cancellationToken).ConfigureAwait(false);
         WorkspaceConnectionVerifier.RequireOriginMatches(workspace, environment);
+        _resolver.ObserveMcsAgentTarget(workspace.AgentId, environment.EnvironmentId);
 
         var changes = new List<CopilotChange>();
         var warnings = new List<string>();

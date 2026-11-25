@@ -149,6 +149,8 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
 
     public string EnvironmentIdReturns { get; init; } = "env-1";
 
+    public string AgentIdReturns { get; init; } = "agent-1";
+
     public string DataverseOrganizationReturns { get; init; } = "https://contoso.crm.dynamics.com/";
 
     public List<CopilotChange> LocalChanges { get; } = [];
@@ -187,7 +189,7 @@ internal sealed class FakeCopilotWorkspacePort : ICopilotWorkspacePort
         Task.FromResult(new CopilotWorkspaceInfo
         {
             WorkspacePath = directory,
-            AgentId = "agent-1",
+            AgentId = AgentIdReturns,
             EnvironmentId = EnvironmentIdByDirectory.TryGetValue(Path.GetFileName(directory.TrimEnd(Path.DirectorySeparatorChar)), out var mapped) ? mapped : EnvironmentIdReturns,
             DataverseOrganization = new Uri(DataverseOrganizationReturns),
         });

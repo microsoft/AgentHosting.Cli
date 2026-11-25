@@ -167,6 +167,18 @@ server. There is no detach, automatic replay, or transcript feature.
 ## Telemetry and preview limits
 
 Neither command is exempt from [command telemetry controls](Command_Telemetry.md).
+Playground outcomes use the registered [Playground error-code group](ErrorCodes.md#playground)
+for CLI-owned invocation, prerequisite, installation, and launch failures, while preserving
+specific authentication, target, and service error codes. These codes are available in
+command telemetry, not as a new human-output envelope; `--json` remains unsupported.
+Success and caller cancellation omit error codes, and npm/child exit statuses are not
+the five-digit CLI registry codes.
+
+Playground telemetry suppresses tenant and principal attribution. Its outcome details use
+`playgroundInstallResult` (`not-needed`, `installed`, `declined`, or `failed`), validated
+`playgroundVersion` when available, and elapsed `durationMs`. Error-category dimensions
+are not emitted.
+
 The preview README recommends keeping the feature disabled or setting
 `AH_CLI_TELEMETRY_OPTOUT=1` until its identifier-minimization policy is reviewed.
 These command descriptions do not claim that live integration, accessibility, or cross-platform

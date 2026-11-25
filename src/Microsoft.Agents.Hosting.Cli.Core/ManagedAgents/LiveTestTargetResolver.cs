@@ -20,18 +20,21 @@ public sealed class LiveTestTargetResolver
     private readonly IAgentDeploymentRegistry _deployments;
     private readonly AgentConfigLocator _locator;
     private readonly CopilotProjectIdentityReader _projectIdentities;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates a resolver over the existing read-only registry ports.</summary>
     /// <param name="agents">The managed-agent table.</param>
     /// <param name="deployments">The agent-deployment table.</param>
     /// <param name="locator">Resolves project and workspace directories.</param>
     /// <param name="projectIdentities">Reads the schema name a workspace declares.</param>
-    public LiveTestTargetResolver(IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities)
+    /// <param name="agentObserver">Optionally observes the addressed agent type.</param>
+    public LiveTestTargetResolver(IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities, IAddressedAgentObserver? agentObserver = null)
     {
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Resolves one target without authentication, network access or configuration writes.</summary>
@@ -76,11 +79,13 @@ public sealed class LiveTestTargetResolver
             resolved.Source == LiveTestTargetSource.Configured ? "configured" : "explicit");
     }
 
-    private static ResolvedMcsTarget ResolveExplicit(LiveTestTargetRequest request)
+    private ResolvedMcsTarget ResolveExplicit(LiveTestTargetRequest request)
     {
         var schema = RequireSafeSegment(request.SchemaName!, "--schema-name");
         var environment = RequireSafeSegment(request.EnvironmentId!, "--environment-id");
         var tenant = RequireExplicitTenant(request.TenantId!);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsAgent, schema);
+        AddressedAgentObservation.ObserveResources(_agentObserver, AgentTypes.McsAgent, environmentId: environment);
 
         return CreateTarget(
             LiveTestTargetSource.Explicit,
@@ -107,8 +112,13 @@ public sealed class LiveTestTargetResolver
         ValidateRegistryShape(agents, deployments);
 
         var selectedAgent = ResolveAgent(project, agents, deployments, request);
+        if (selectedAgent is not null)
+        {
+            AddressedAgentObservation.Observe(_agentObserver, selectedAgent.AgentType, selectedAgent.McsSchemaName);
+        }
         var selectedDeployment = ResolveDeployment(agents, deployments, selectedAgent, request);
         var owner = selectedAgent ?? FindOwner(agents, selectedDeployment);
+        AddressedAgentObservation.Observe(_agentObserver, owner.AgentType, owner.McsSchemaName);
 
         RequireMcsAgent(owner);
         RequireMcsDeployment(owner, selectedDeployment);
@@ -134,6 +144,7 @@ public sealed class LiveTestTargetResolver
                 "Supply --schema-name or restore schemaName in the managed agent project.");
         }
 
+        AddressedAgentObservation.Observe(_agentObserver, owner.AgentType, schema);
         var environment = RequireSafeSegment(selectedDeployment.EnvironmentId!, "the deployment environment");
         var tenant = RequireConfiguredTenant(selectedDeployment.TenantId);
 
@@ -153,6 +164,7 @@ public sealed class LiveTestTargetResolver
                 "Use the deployment's tenant or select the matching deployment.");
         }
 
+        AddressedAgentObservation.ObserveResources(_agentObserver, AgentTypes.McsAgent, environmentId: environment);
         return CreateTarget(
             LiveTestTargetSource.Configured,
             tenant,

@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Auth.OwnedStorage;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
+using Microsoft.Agents.Hosting.Cli.Core.Diagnostics;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
@@ -139,14 +140,49 @@ public sealed class ProfileCredentialProvider : IProfileCredentialProvider, IOwn
     public async Task<TokenAcquisitionResult> AcquireAsync(AuthProfile profile, IReadOnlyList<string> scopes, string? targetTenantId, CancellationToken ct)
         => await AcquireCoreAsync(profile, scopes, targetTenantId, observe: true, ct).ConfigureAwait(false);
 
-    public async Task<TokenAcquisitionResult?> TryAcquireSelectedTokenAsync(AuthProfile profile, IReadOnlyList<string> scopes, string targetTenantId, CancellationToken ct)
+    public Task<TokenAcquisitionResult?> TryAcquireSelectedTokenAsync(AuthProfile profile, IReadOnlyList<string> scopes, string targetTenantId, CancellationToken ct)
+        => TryAcquireSelectedTokenAsync(profile, scopes, targetTenantId, diagnostics: null, ct);
+
+    public async Task<TokenAcquisitionResult?> TryAcquireSelectedTokenAsync(AuthProfile profile, IReadOnlyList<string> scopes,
+        string targetTenantId, IEnvironmentGeographyDiagnostics? diagnostics, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(profile);
-        if (profile.PrincipalType != AuthPrincipalType.User || !ProfileCredentialValidation.IsPublicUser(profile.CredentialMethod) ||
-            profile.CredentialMethod == AuthCredentialMethod.Broker) return null;
-        try { return await AcquireCoreAsync(profile, scopes, targetTenantId, observe: false, ct).ConfigureAwait(false); }
-        catch (InteractionRequiredException) { return null; }
+        if (profile.PrincipalType != AuthPrincipalType.User || !ProfileCredentialValidation.IsPublicUser(profile.CredentialMethod))
+        {
+            OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenProfileUnsupported);
+            return null;
+        }
+        try
+        {
+            if (profile.CredentialReference is null)
+            {
+                var legacy = _legacyClients ?? throw new AuthProfileStateException("Captured legacy credential adapters are not configured.");
+                return await new MsalSilentTokenProvider(legacy, _profiles).TryAcquireLegacyForProfileAsync(
+                    profile, scopes, targetTenantId, diagnostics, ct).ConfigureAwait(false);
+            }
+            return await AcquireCoreAsync(profile, scopes, targetTenantId, observe: false, ct).ConfigureAwait(false);
+        }
+        catch (InteractionRequiredException)
+        {
+            OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenInteractionRequired);
+            return null;
+        }
+        catch (BrokerUnavailableException)
+        {
+            OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenBrokerUnavailable);
+            return null;
+        }
+        catch (ActiveAccountMismatchException)
+        {
+            OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenAccountMismatch);
+            throw;
+        }
+        catch (AgentHostingException)
+        {
+            OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenAcquisitionFailed);
+            throw;
+        }
     }
 
     public async Task<TokenAcquisitionResult> AcquireConsentAsync(AuthProfile profile, Guid clientId, string redirectUri,

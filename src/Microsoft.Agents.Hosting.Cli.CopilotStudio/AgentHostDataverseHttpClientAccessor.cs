@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Diagnostics;
 using Microsoft.Agents.Hosting.Cli.Core.Http;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
@@ -22,6 +23,7 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
 
     private readonly ISyncAuthProvider _authProvider;
     private readonly Func<HttpMessageHandler> _innerHandlerFactory;
+    private readonly ICommandInvocationContext? _invocationContext;
     private readonly Lock _gate = new();
     private HttpMessageHandler? _sharedHandler;
 
@@ -31,10 +33,14 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
     {
     }
 
-    internal AgentHostDataverseHttpClientAccessor(ISyncAuthProvider authProvider, Func<HttpMessageHandler> innerHandlerFactory)
+    internal AgentHostDataverseHttpClientAccessor(
+        ISyncAuthProvider authProvider,
+        Func<HttpMessageHandler> innerHandlerFactory,
+        ICommandInvocationContext? invocationContext = null)
     {
         _authProvider = authProvider ?? throw new ArgumentNullException(nameof(authProvider));
         _innerHandlerFactory = innerHandlerFactory ?? throw new ArgumentNullException(nameof(innerHandlerFactory));
+        _invocationContext = invocationContext;
     }
 
     /// <summary>Creates the transport handler used for Dataverse calls, which never follows redirects.</summary>
@@ -75,7 +81,7 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
         return new(new BearerTokenHandler(_authProvider, target, target.Organization, new DataverseRetryHandler
         {
             InnerHandler = new NoReplayResponseHandler(SharedHandler(), sdkRequests),
-        }), disposeHandler: true) { Timeout = RequestTimeout };
+        }, invocationContext: _invocationContext), disposeHandler: true) { Timeout = RequestTimeout };
     }
 
     internal HttpClient CreateGatewayClient(PowerPlatformCloudMap legacyCloud, CoreCluster legacyCluster)
@@ -171,13 +177,17 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
         private readonly Uri _audience;
         private readonly DataverseOperationScope.DataverseTarget? _target;
         private readonly PowerPlatformCloudMap? _gatewayTrust;
+        private readonly ICommandInvocationContext? _invocationContext;
 
-        public BearerTokenHandler(ISyncAuthProvider authProvider, DataverseOperationScope.DataverseTarget? target, Uri audience, HttpMessageHandler innerHandler, PowerPlatformCloudMap? gatewayTrust = null) : base(innerHandler)
+        public BearerTokenHandler(ISyncAuthProvider authProvider, DataverseOperationScope.DataverseTarget? target, Uri audience,
+            HttpMessageHandler innerHandler, PowerPlatformCloudMap? gatewayTrust = null,
+            ICommandInvocationContext? invocationContext = null) : base(innerHandler)
         {
             _authProvider = authProvider;
             _audience = audience;
             _target = target;
             _gatewayTrust = gatewayTrust;
+            _invocationContext = invocationContext;
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -195,6 +205,7 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
                 throw CopilotStudioException.UntrustedDataverseOrigin(request.RequestUri?.GetLeftPart(UriPartial.Authority) ?? "(none)", _audience.GetLeftPart(UriPartial.Authority));
             }
 
+            AttachSessionCorrelation(request);
             using var scope = DataverseOperationScope.Push(_target);
             var token = await _authProvider.AcquireTokenAsync(_audience, cancellationToken).ConfigureAwait(false);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -205,6 +216,22 @@ public sealed class AgentHostDataverseHttpClientAccessor : IDataverseHttpClientA
                 throw new EndpointTrustException("The Sync request returned a redirect; redirect destinations are not trusted.");
             }
             return response;
+        }
+
+        private void AttachSessionCorrelation(HttpRequestMessage request)
+        {
+            try
+            {
+                if (_invocationContext?.SessionId is { } sessionId && sessionId != Guid.Empty)
+                {
+                    request.Headers.Remove("x-ms-client-session-id");
+                    request.Headers.Add("x-ms-client-session-id", sessionId.ToString("D"));
+                }
+            }
+            catch (Exception)
+            {
+                OptionalMeasurementDiagnostics.Report(OptionalMeasurementFailureCategory.TelemetryInvocationCorrelation);
+            }
         }
 
         protected override void Dispose(bool disposing)

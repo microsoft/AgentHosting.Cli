@@ -1,3 +1,5 @@
+using Microsoft.Agents.Hosting.Cli.Core.Errors;
+
 namespace Microsoft.Agents.Hosting.Cli.Core.Playground;
 
 /// <summary>Installs the global playground package using the user's detected npm.</summary>
@@ -44,6 +46,27 @@ public sealed class PlaygroundInstallException : Exception
     public PlaygroundInstallFailureKind Kind { get; }
 
     public int? ExitCode { get; }
+
+    /// <summary>The registered CLI error identifier, separate from the npm process exit code.</summary>
+    public int ErrorCode => Kind switch
+    {
+        PlaygroundInstallFailureKind.Prerequisite => ErrorCodes.Playground.PrerequisiteUnavailable,
+        PlaygroundInstallFailureKind.NodeNotFound => ErrorCodes.Playground.NodeNotFound,
+        PlaygroundInstallFailureKind.NodeInvalidVersion => ErrorCodes.Playground.NodeInvalidVersion,
+        PlaygroundInstallFailureKind.NodeBelowMinimum => ErrorCodes.Playground.NodeBelowMinimum,
+        PlaygroundInstallFailureKind.NodeProbeTimedOut => ErrorCodes.Playground.NodeProbeTimedOut,
+        PlaygroundInstallFailureKind.NodeProbeFailed => ErrorCodes.Playground.NodeProbeFailed,
+        PlaygroundInstallFailureKind.NpmNotFound => ErrorCodes.Playground.NpmNotFound,
+        PlaygroundInstallFailureKind.NpmInvalidVersion => ErrorCodes.Playground.NpmInvalidVersion,
+        PlaygroundInstallFailureKind.NpmProbeTimedOut => ErrorCodes.Playground.NpmProbeTimedOut,
+        PlaygroundInstallFailureKind.NpmProbeFailed => ErrorCodes.Playground.NpmProbeFailed,
+        PlaygroundInstallFailureKind.Permission => ErrorCodes.Playground.InstallPermissionDenied,
+        PlaygroundInstallFailureKind.Network => ErrorCodes.Playground.InstallNetworkFailed,
+        PlaygroundInstallFailureKind.Timeout => ErrorCodes.Playground.InstallTimedOut,
+        PlaygroundInstallFailureKind.GenericInstall => ErrorCodes.Playground.InstallFailed,
+        PlaygroundInstallFailureKind.PostVerification => ErrorCodes.Playground.PostVerificationFailed,
+        _ => throw new ArgumentOutOfRangeException(nameof(Kind)),
+    };
 
     public string Remediation { get; }
 }

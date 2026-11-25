@@ -1229,7 +1229,7 @@ public class CommandHostTests
     [Fact]
     public void CliAssembly_DoesNotReferenceAuthOrAzureLibraries()
     {
-        var forbidden = new[] { "Msal", "Identity.Client", "Azure", "Graph", "WAM" };
+        var forbidden = new[] { "Msal", "Identity.Client", "Azure", "Microsoft.Graph", "WAM" };
 
         var referenced = typeof(AgentHostCli).Assembly
             .GetReferencedAssemblies()

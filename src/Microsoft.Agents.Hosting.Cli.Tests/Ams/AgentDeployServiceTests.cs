@@ -441,6 +441,7 @@ public sealed class AgentDeployServiceTests
     [InlineData(false)]
     public async Task Update_RawTransportFailureDistinguishesReadFromMutation(bool failRead)
     {
+        var observer = new RecordingAgentObserver();
         var deployments = UpdateTransport(
             read: request => failRead
                 ? throw new HttpRequestException("private read detail")
@@ -450,9 +451,10 @@ public sealed class AgentDeployServiceTests
                 : throw new HttpRequestException("private update detail"));
 
         var exception = await Assert.ThrowsAsync<AgentDeployException>(() =>
-            Service(new RecordingAgentReadTransport(BoundAgent()), deployments)
+            Service(new RecordingAgentReadTransport(BoundAgent()), deployments, observer: observer)
                 .UpdateAsync(UpdateRequest(), default));
 
+        Assert.Equal(failRead ? Array.Empty<string>() : ["CodeAgent"], observer.Types);
         Assert.Equal(
             failRead ? "agent-deployment-read-failed" : "agent-deployment-transport-failed",
             exception.ErrorKind);
@@ -563,7 +565,8 @@ public sealed class AgentDeployServiceTests
         IAmsDeploymentTransport deployments,
         string targetTenantId = EnvironmentFixtures.ContosoTenant,
         PowerPlatformApiTargetConfig? target = null,
-        FakeEnvironmentClient? inventory = null)
+        FakeEnvironmentClient? inventory = null,
+        IAddressedAgentObserver? observer = null)
     {
         var profiles = InMemoryAuthProfileStore.SignedIn(
             "op@contoso.com",
@@ -583,7 +586,15 @@ public sealed class AgentDeployServiceTests
             target ?? PowerPlatformApiTargetConfig.Public,
             environments,
             agents,
-            deployments);
+            deployments,
+            observer);
+    }
+
+    private sealed class RecordingAgentObserver : IAddressedAgentObserver
+    {
+        public List<string> Types { get; } = [];
+        public bool IsObservationEnabled => true;
+        public void Observe(string agentType) => Types.Add(agentType);
     }
 
     private sealed class RecordingAgentReadTransport(AmsAgentReadResult result) : IAmsAgentReadTransport

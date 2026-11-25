@@ -91,7 +91,6 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
 
         var stopwatch = Stopwatch.StartNew();
         var installResult = PlaygroundInstallResult.NotNeeded;
-        var errorCategory = PlaygroundErrorCategory.None;
         string? version = null;
 
         try
@@ -100,8 +99,8 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
             // playground transport, so it must not touch target configuration, PATH, npm, or prompts.
             if (_request.Json)
             {
+                _errorCode = ErrorCodes.Playground.UnsupportedInvocation;
                 await WriteErrorAsync(stderr, JsonUnsupportedMessage).ConfigureAwait(false);
-                errorCategory = PlaygroundErrorCategory.Unsupported;
                 _semanticOutcome = PlaygroundSemanticOutcome.Usage;
                 return ExitCodes.Usage;
             }
@@ -112,7 +111,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
             var validationError = ValidateRequest(isDirectLine);
             if (validationError is not null)
             {
-                errorCategory = PlaygroundErrorCategory.Unsupported;
+                _errorCode = ErrorCodes.Playground.UnsupportedInvocation;
                 _semanticOutcome = PlaygroundSemanticOutcome.Usage;
                 await WriteErrorAsync(stderr, validationError).ConfigureAwait(false);
                 return ExitCodes.Usage;
@@ -136,7 +135,6 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
                 }
                 catch (Exception failure)
                 {
-                    errorCategory = ResolverCategory(failure);
                     _semanticOutcome = PlaygroundSemanticOutcome.Usage;
                     return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Usage).ConfigureAwait(false);
                 }
@@ -148,12 +146,11 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
                 }
                 catch (AgentHostingException failure)
                 {
-                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
                     return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Failure).ConfigureAwait(false);
                 }
                 catch (Exception)
                 {
-                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                    _errorCode = ErrorCodes.Playground.InvalidLaunchConfiguration;
                     await WriteErrorAsync(stderr, "The playground client configuration could not be created. Configure the AgentHost public-client id and try again.")
                         .ConfigureAwait(false);
                     return ExitCodes.Failure;
@@ -169,22 +166,20 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                errorCategory = PlaygroundErrorCategory.Cancellation;
                 _semanticOutcome = PlaygroundSemanticOutcome.Cancellation;
                 await WriteErrorAsync(stderr, "Playground startup was cancelled.").ConfigureAwait(false);
                 return 130;
             }
             catch (TimeoutException)
             {
-                errorCategory = PlaygroundErrorCategory.Timeout;
+                _errorCode = ErrorCodes.Playground.ToolCheckTimedOut;
                 _semanticOutcome = PlaygroundSemanticOutcome.Timeout;
                 await WriteErrorAsync(stderr, "The playground tool check timed out. Check PATH and try again.").ConfigureAwait(false);
                 return ExitCodes.Failure;
             }
             catch (Exception failure)
             {
-                _errorCode = (failure as AgentHostingException)?.ErrorCode;
-                errorCategory = PlaygroundErrorCategory.ToolNotFound;
+                _errorCode = ErrorCodeFor(failure, ErrorCodes.Playground.ToolCheckFailed);
                 await WriteErrorAsync(stderr, "The playground tool could not be checked safely. Check PATH and try again.").ConfigureAwait(false);
                 return ExitCodes.Failure;
             }
@@ -202,7 +197,9 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
             }
             catch (TimeoutException)
             {
-                errorCategory = PlaygroundErrorCategory.Timeout;
+                _errorCode = tool is null
+                    ? ErrorCodes.Playground.NpmProbeTimedOut
+                    : ErrorCodes.Playground.NodeProbeTimedOut;
                 _semanticOutcome = PlaygroundSemanticOutcome.Timeout;
                 await WriteErrorAsync(stderr,
                     $"The playground prerequisite check timed out. {PlaygroundToolLocator.NodeInstallRemediation}")
@@ -211,8 +208,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
             }
             catch (Exception failure)
             {
-                _errorCode = (failure as AgentHostingException)?.ErrorCode;
-                errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                _errorCode = ErrorCodeFor(failure, ErrorCodes.Playground.PrerequisiteUnavailable);
                 await WriteErrorAsync(stderr,
                     $"The playground prerequisites could not be checked safely. {PlaygroundToolLocator.NodeInstallRemediation}")
                     .ConfigureAwait(false);
@@ -225,7 +221,7 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
                     .LastOrDefault(rejection => rejection.Failure.Kind != PlaygroundFailureKind.InvalidPathEntry)
                     ?.Failure;
                 var timedOut = failure?.Kind is PlaygroundFailureKind.NodeProbeTimedOut or PlaygroundFailureKind.NpmProbeTimedOut;
-                errorCategory = timedOut ? PlaygroundErrorCategory.Timeout : PlaygroundErrorCategory.LaunchFailed;
+                _errorCode = PrerequisiteErrorCode(failure?.Kind);
                 if (timedOut)
                 {
                     _semanticOutcome = PlaygroundSemanticOutcome.Timeout;
@@ -239,12 +235,11 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
 
             if (tool is null)
             {
-                errorCategory = DiscoveryCategory(discovery);
                 var consent = await GetInstallConsentAsync(stderr, cancellationToken).ConfigureAwait(false);
                 if (!consent)
                 {
                     installResult = PlaygroundInstallResult.Declined;
-                    errorCategory = PlaygroundErrorCategory.InstallDeclined;
+                    _errorCode ??= ErrorCodes.Playground.InstallNotAuthorized;
                     await WriteErrorAsync(
                         stderr,
                         "The playground installation was not authorized. Re-run interactively and type install, or pass --install-playground for an explicit unattended opt-in.")
@@ -259,17 +254,14 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    errorCategory = PlaygroundErrorCategory.Cancellation;
                     _semanticOutcome = PlaygroundSemanticOutcome.Cancellation;
                     await WriteErrorAsync(stderr, "Playground installation was cancelled.").ConfigureAwait(false);
                     return 130;
                 }
                 catch (PlaygroundInstallException failure)
                 {
+                    _errorCode = failure.ErrorCode;
                     installResult = PlaygroundInstallResult.Failed;
-                    errorCategory = failure.Kind == PlaygroundInstallFailureKind.Timeout
-                        ? PlaygroundErrorCategory.Timeout
-                        : PlaygroundErrorCategory.InstallFailed;
                     if (failure.Kind == PlaygroundInstallFailureKind.Timeout)
                     {
                         _semanticOutcome = PlaygroundSemanticOutcome.Timeout;
@@ -279,8 +271,8 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
                 }
                 catch (TimeoutException)
                 {
+                    _errorCode = ErrorCodes.Playground.InstallTimedOut;
                     installResult = PlaygroundInstallResult.Failed;
-                    errorCategory = PlaygroundErrorCategory.Timeout;
                     _semanticOutcome = PlaygroundSemanticOutcome.Timeout;
                     await WriteErrorAsync(stderr, "The playground installation timed out. Check registry connectivity and try again.")
                         .ConfigureAwait(false);
@@ -288,9 +280,8 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
                 }
                 catch (Exception failure)
                 {
-                    _errorCode = (failure as AgentHostingException)?.ErrorCode;
+                    _errorCode = ErrorCodeFor(failure, ErrorCodes.Playground.InstallFailed);
                     installResult = PlaygroundInstallResult.Failed;
-                    errorCategory = PlaygroundErrorCategory.InstallFailed;
                     await WriteErrorAsync(stderr,
                         "The playground could not be installed. Check Node.js, npm, and registry configuration, then try again.")
                         .ConfigureAwait(false);
@@ -300,14 +291,13 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
 
             if (tool is null)
             {
-                errorCategory = PlaygroundErrorCategory.ToolNotFound;
+                _errorCode = ErrorCodes.Playground.PostVerificationFailed;
                 await WriteErrorAsync(stderr,
                     "The playground installation did not produce a usable tool. Check npm's global bin directory and try again.")
                     .ConfigureAwait(false);
                 return ExitCodes.Failure;
             }
 
-            errorCategory = PlaygroundErrorCategory.None;
             version = tool.Version.ToString();
             if (connection is PlaygroundConnection.DirectEngine directEngine)
             {
@@ -320,19 +310,17 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    errorCategory = PlaygroundErrorCategory.Cancellation;
                     _semanticOutcome = PlaygroundSemanticOutcome.Cancellation;
                     await WriteErrorAsync(stderr, "Playground endpoint discovery was cancelled.").ConfigureAwait(false);
                     return 130;
                 }
                 catch (AgentHostingException failure)
                 {
-                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
                     return await WriteKnownFailureAsync(stderr, failure, ExitCodes.Failure).ConfigureAwait(false);
                 }
                 catch (Exception)
                 {
-                    errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                    _errorCode = ErrorCodes.Playground.EndpointDiscoveryFailed;
                     await WriteErrorAsync(stderr,
                         "The playground endpoint could not be discovered. Check the selected CLI account, delegated Copilot Studio permissions, and published agent before retrying.")
                         .ConfigureAwait(false);
@@ -363,33 +351,30 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
 
                 if (exitCode == 130 && cancellationToken.IsCancellationRequested)
                 {
-                    errorCategory = PlaygroundErrorCategory.Cancellation;
                     _semanticOutcome = PlaygroundSemanticOutcome.Cancellation;
                     await WriteErrorAsync(stderr, "The playground process was cancelled.").ConfigureAwait(false);
                     return 130;
                 }
 
-                errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                _errorCode = ErrorCodes.Playground.ChildExited;
                 await WriteErrorAsync(stderr, $"The playground process exited with code {exitCode}.").ConfigureAwait(false);
                 return exitCode > 0 ? exitCode : ExitCodes.Failure;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                errorCategory = PlaygroundErrorCategory.Cancellation;
                 _semanticOutcome = PlaygroundSemanticOutcome.Cancellation;
                 await WriteErrorAsync(stderr, "The playground process was cancelled.").ConfigureAwait(false);
                 return 130;
             }
             catch (PlaygroundLaunchException failure)
             {
-                errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                _errorCode = failure.ErrorCode;
                 await WriteErrorAsync(stderr, $"{failure.Message} {failure.Remediation}").ConfigureAwait(false);
                 return ExitCodes.Failure;
             }
             catch (Exception failure)
             {
-                _errorCode = (failure as AgentHostingException)?.ErrorCode;
-                errorCategory = PlaygroundErrorCategory.LaunchFailed;
+                _errorCode = ErrorCodeFor(failure, ErrorCodes.Playground.StartFailed);
                 await WriteErrorAsync(stderr,
                     "The playground process could not be started or stopped safely. Verify the installation and try again.")
                     .ConfigureAwait(false);
@@ -398,28 +383,30 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            errorCategory = PlaygroundErrorCategory.Cancellation;
             _semanticOutcome = PlaygroundSemanticOutcome.Cancellation;
             await WriteErrorAsync(stderr, "Playground startup was cancelled.").ConfigureAwait(false);
             return 130;
         }
         catch (Exception failure)
         {
-            _errorCode = (failure as AgentHostingException)?.ErrorCode;
-            errorCategory = PlaygroundErrorCategory.LaunchFailed;
+            _errorCode = ErrorCodeFor(failure, ErrorCodes.Playground.InvocationFailed);
             await WriteErrorAsync(stderr, "The playground command could not complete safely. Verify the target and installation, then try again.")
                 .ConfigureAwait(false);
             return ExitCodes.Failure;
         }
         finally
         {
+            if (_semanticOutcome == PlaygroundSemanticOutcome.Cancellation)
+            {
+                _errorCode = null;
+            }
+
             try
             {
                 _recordTelemetry(new PlaygroundTelemetryDetails(
                     stopwatch.ElapsedMilliseconds,
                     version,
-                    installResult,
-                    errorCategory));
+                    installResult));
             }
             catch
             {
@@ -491,23 +478,12 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
         }
         catch (Exception failure)
         {
-            _errorCode = (failure as AgentHostingException)?.ErrorCode;
+            _errorCode = ErrorCodeFor(failure, ErrorCodes.Playground.InstallPromptFailed);
             await WriteErrorAsync(stderr, "The playground installation prompt could not be completed. Re-run the command and try again.")
                 .ConfigureAwait(false);
             return false;
         }
     }
-
-    private static PlaygroundErrorCategory DiscoveryCategory(PlaygroundToolDiscoveryResult discovery) =>
-        discovery.Rejections.Any(rejection =>
-            rejection.Failure.Kind is PlaygroundFailureKind.BelowMinimum or PlaygroundFailureKind.InvalidVersion)
-            ? PlaygroundErrorCategory.VersionTooOld
-            : PlaygroundErrorCategory.ToolNotFound;
-
-    private static PlaygroundErrorCategory ResolverCategory(Exception failure) =>
-        failure is LiveTestTargetResolutionException { ErrorKind: "unsupported-target" }
-            ? PlaygroundErrorCategory.Unsupported
-            : PlaygroundErrorCategory.None;
 
     private async Task<int> WriteKnownFailureAsync(
         TextWriter stderr,
@@ -522,10 +498,28 @@ internal sealed class PlaygroundExecution : IPlaygroundStreamingResult, IStreami
             return typed.ExitCode;
         }
 
+        _errorCode = ErrorCodes.Playground.TargetResolutionFailed;
         await WriteErrorAsync(stderr, "The playground target could not be resolved safely. Check the selectors and try again.")
             .ConfigureAwait(false);
         return fallbackExitCode;
     }
+
+    private static int ErrorCodeFor(Exception failure, int fallback) =>
+        (failure as AgentHostingException)?.ErrorCode ?? fallback;
+
+    private static int PrerequisiteErrorCode(PlaygroundFailureKind? kind) => kind switch
+    {
+        PlaygroundFailureKind.NodeNotFound => ErrorCodes.Playground.NodeNotFound,
+        PlaygroundFailureKind.NodeInvalidVersion => ErrorCodes.Playground.NodeInvalidVersion,
+        PlaygroundFailureKind.NodeBelowMinimum => ErrorCodes.Playground.NodeBelowMinimum,
+        PlaygroundFailureKind.NodeProbeFailed => ErrorCodes.Playground.NodeProbeFailed,
+        PlaygroundFailureKind.NodeProbeTimedOut => ErrorCodes.Playground.NodeProbeTimedOut,
+        PlaygroundFailureKind.NpmNotFound => ErrorCodes.Playground.NpmNotFound,
+        PlaygroundFailureKind.NpmInvalidVersion => ErrorCodes.Playground.NpmInvalidVersion,
+        PlaygroundFailureKind.NpmProbeFailed => ErrorCodes.Playground.NpmProbeFailed,
+        PlaygroundFailureKind.NpmProbeTimedOut => ErrorCodes.Playground.NpmProbeTimedOut,
+        _ => ErrorCodes.Playground.PrerequisiteUnavailable,
+    };
 
     private static Task WriteLineAsync(TextWriter writer, string message) =>
         writer.WriteLineAsync(message);

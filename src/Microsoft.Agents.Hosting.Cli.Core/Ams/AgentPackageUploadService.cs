@@ -3,6 +3,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 
@@ -18,15 +19,18 @@ public sealed class AgentPackageUploadService
     private readonly EnvironmentSelectionService _environments;
     private readonly IAmsAgentReadTransport _agents;
     private readonly IAmsPackagePublicationTransport _packages;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     public AgentPackageUploadService(
         EnvironmentSelectionService environments,
         IAmsAgentReadTransport agents,
-        IAmsPackagePublicationTransport packages)
+        IAmsPackagePublicationTransport packages,
+        IAddressedAgentObserver? agentObserver = null)
     {
         _environments = environments ?? throw new ArgumentNullException(nameof(environments));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
+        _agentObserver = agentObserver;
     }
 
     public async Task<AgentPackageUploadResult> UploadAsync(
@@ -68,6 +72,7 @@ public sealed class AgentPackageUploadService
                 cancellationToken)
             .ConfigureAwait(false);
         AmsAgentResponseValidator.ValidateBoundCodeAgent(agent, environment, agentId);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.CodeAgent);
 
         var uploaded = await _packages
             .PublishAsync(

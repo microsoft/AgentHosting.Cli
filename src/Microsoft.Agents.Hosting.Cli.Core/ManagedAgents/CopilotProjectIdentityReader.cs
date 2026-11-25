@@ -67,5 +67,17 @@ public sealed class CopilotProjectIdentityReader
     /// <param name="agent">The agent's record.</param>
     /// <param name="workspaceDirectory">The directory holding the agent's workspace, or <see langword="null"/> when it has none.</param>
     /// <returns>The schema name or cloud agent identifier, or <see langword="null"/> when the agent has neither.</returns>
-    public string? FindSelector(ManagedAgentRecord agent, string? workspaceDirectory) => FindSchemaName(agent, workspaceDirectory) ?? (string.IsNullOrWhiteSpace(agent.McsAgentId) ? null : agent.McsAgentId.Trim());
+    public string? FindSelector(ManagedAgentRecord agent, string? workspaceDirectory) =>
+        FindSelector(agent, workspaceDirectory, out _);
+
+    /// <summary>Finds the service selector while distinguishing its schema name from a cloud identifier.</summary>
+    /// <param name="agent">The agent's record.</param>
+    /// <param name="workspaceDirectory">The workspace directory, when available.</param>
+    /// <param name="schemaName">The schema name obtained by the same identity read.</param>
+    /// <returns>The schema name or cloud agent identifier, or <see langword="null"/>.</returns>
+    public string? FindSelector(ManagedAgentRecord agent, string? workspaceDirectory, out string? schemaName)
+    {
+        schemaName = FindSchemaName(agent, workspaceDirectory);
+        return schemaName ?? (string.IsNullOrWhiteSpace(agent.McsAgentId) ? null : agent.McsAgentId.Trim());
+    }
 }

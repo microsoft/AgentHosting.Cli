@@ -67,8 +67,8 @@ Normal leaf dispatch can record an attempt and an outcome. Telemetry includes co
 and bounded outcome metadata, not raw command arguments, queries, error messages, or stack traces.
 
 Failure events can include `customDimensions.errorCode` as a string representation of the
-numeric error code. `customDimensions.IsFailure` is a JSON boolean: true for error outcomes,
+numeric error code. `customDimensions.isFailure` is a JSON boolean: true for error outcomes,
 usage, sign-in-required, timeout, parser rejection, and group usage; false for success,
-cancellation, help, version, and attempts. An attempt with `IsFailure: false` is not evidence of
+cancellation, help, version, and attempts. An attempt with `isFailure: false` is not evidence of
 a completed successful command. Both fields are inside the JSON-encoded `customDimensions`
 object, not new top-level OneDS fields.

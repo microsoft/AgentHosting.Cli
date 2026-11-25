@@ -31,6 +31,7 @@ mean a change partially completed or its result is uncertain.
 | 16 | [Provisioning](#provisioning) |
 | 17 | [Copilot Studio](#copilot-studio) |
 | 18 | [Evaluation](#evaluation) |
+| 19 | [Playground](#playground) |
 | 99 | [General](#general) |
 
 ## Workspace
@@ -319,6 +320,43 @@ mean a change partially completed or its result is uncertain.
 | [18013](ErrorCodes/18013.md) | Concurrent changes prevented safe completion of a test-set replacement. |
 | [18014](ErrorCodes/18014.md) | An accepted run may be charged and active but the service did not identify it. |
 | [18015](ErrorCodes/18015.md) | A failed replacement left the test set short because recovery was incomplete. |
+
+## Playground
+
+These codes identify CLI-owned playground failures in command telemetry. Human output and
+process exit behavior are unchanged; playground rejects `--json`. Existing specific
+authentication, configuration, target, and service codes remain in use. Success and caller
+cancellation omit telemetry error codes. A child or npm exit status is not a registry code.
+
+| Code | Description |
+| --- | --- |
+| [19001](ErrorCodes/19001.md) | Unsupported playground invocation. |
+| [19002](ErrorCodes/19002.md) | Playground tool check failed. |
+| [19003](ErrorCodes/19003.md) | Playground tool check timed out. |
+| [19004](ErrorCodes/19004.md) | Node.js was not found. |
+| [19005](ErrorCodes/19005.md) | Node.js version could not be validated. |
+| [19006](ErrorCodes/19006.md) | Node.js is below the required version. |
+| [19007](ErrorCodes/19007.md) | Node.js probe failed. |
+| [19008](ErrorCodes/19008.md) | Node.js probe timed out. |
+| [19009](ErrorCodes/19009.md) | npm was not found. |
+| [19010](ErrorCodes/19010.md) | npm version could not be validated. |
+| [19011](ErrorCodes/19011.md) | npm probe failed. |
+| [19012](ErrorCodes/19012.md) | npm probe timed out. |
+| [19013](ErrorCodes/19013.md) | Playground prerequisites could not be established. |
+| [19014](ErrorCodes/19014.md) | Playground installation was not authorized. |
+| [19015](ErrorCodes/19015.md) | Playground installation permission failure. |
+| [19016](ErrorCodes/19016.md) | Playground installation registry/network failure. |
+| [19017](ErrorCodes/19017.md) | Playground installation timed out. |
+| [19018](ErrorCodes/19018.md) | Playground installation failed. |
+| [19019](ErrorCodes/19019.md) | Playground post-install verification failed. |
+| [19020](ErrorCodes/19020.md) | Invalid playground launch configuration. |
+| [19021](ErrorCodes/19021.md) | Playground process start failed. |
+| [19022](ErrorCodes/19022.md) | Playground child process exited unsuccessfully. |
+| [19023](ErrorCodes/19023.md) | Playground cleanup failed. |
+| [19024](ErrorCodes/19024.md) | Playground endpoint discovery failed. |
+| [19025](ErrorCodes/19025.md) | Playground target resolution failed. |
+| [19026](ErrorCodes/19026.md) | Playground invocation failed unexpectedly. |
+| [19027](ErrorCodes/19027.md) | Playground installation prompt failed. |
 
 ## General
 

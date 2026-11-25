@@ -140,6 +140,9 @@ internal static class Program
         services.AddSingleton<IProgressStatus>(progressSpinner);
         services.AddSingleton<IFeatureFlags>(featureFlags);
         services.AddSingleton<CommandTelemetrySessionAccessor>();
+        services.AddSingleton<IAddressedAgentObserver, CommandTelemetryAgentObserver>();
+        services.AddSingleton<ICommandInvocationContext>(
+            sp => sp.GetRequiredService<CommandTelemetrySessionAccessor>());
         services.AddSingleton<CommandTelemetryTenantObserver>();
         services.AddSingleton<IAuthenticationResultObserver>(
             sp => sp.GetRequiredService<CommandTelemetryTenantObserver>());
@@ -161,6 +164,8 @@ internal static class Program
         // header exists — so a host-changing redirect can never cause the delegated bearer token to be
         // resent to a host that is not the configured one.
         var debugRequested = GlobalOptions.IsPresent(args, "--debug");
+        if (debugRequested)
+            services.AddSingleton(new TelemetryRoutingDiagnostics(Console.Error));
         services.AddSingleton<IAmsPackagePublicationTransport>(sp => new AmsPackagePublicationAdapter(
             new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()),
             sp.GetRequiredService<ITokenProvider>(),
@@ -333,7 +338,10 @@ internal static class Program
                 sp.GetRequiredService<CapturedProfileClients>(),
                 sp.GetRequiredService<IEnvironmentGeographyClient>(),
                 powerPlatformApiTarget, invocation.RingKnown,
-                sp.GetRequiredService<CommandTelemetryTenantObserver>()));
+                sp.GetRequiredService<CommandTelemetryTenantObserver>(),
+                sp.GetService<TelemetryRoutingDiagnostics>(),
+                new FileTelemetryCollectorCache(options.ConfigDirectory, TimeProvider.System,
+                    sp.GetService<TelemetryRoutingDiagnostics>())));
         services.AddSingleton(sp => new TelemetryControlService(
             sp.GetRequiredService<ITelemetryPreferenceStore>(),
             () => Environment.GetEnvironmentVariable(
@@ -631,7 +639,8 @@ internal static class Program
             new HttpClient(TransportDefaults.CreateRedirectRejectingHandler()));
         services.AddSingleton<IEnvironmentGeographyClient>(sp => new CapturedProfileGeographyClient(
             sp.GetRequiredKeyedService<HttpClient>("profile-geography"), sp.GetRequiredService<CapturedProfileClients>(),
-            sp.GetRequiredService<MsalSilentTokenProvider>()));
+            sp.GetRequiredService<MsalSilentTokenProvider>(),
+            sp.GetService<TelemetryRoutingDiagnostics>()));
         services.AddSingleton(sp => new EnvironmentSelectionService(
             sp.GetRequiredService<IProfileEnvironmentClientFactory>(),
             sp.GetRequiredService<IEnvironmentSelectionStore>(),

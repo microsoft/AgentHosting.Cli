@@ -18,9 +18,9 @@ public sealed class TelemetryGeographyRoutingTests
     [Theory]
     [InlineData("unitedstates", "Global")]
     [InlineData("europe", "Europe")]
-    [InlineData("atlantis", "Europe")]
-    [InlineData(null, "Europe")]
-    public async Task ProductionRoutingUsesAuthoritativeGeographyAndFailsClosed(
+    [InlineData("atlantis", "Global")]
+    [InlineData(null, "Global")]
+    public async Task ProductionRoutingUsesKnownGeographyAndDefaultsToGlobal(
         string? geography,
         string expected)
     {
@@ -34,11 +34,16 @@ public sealed class TelemetryGeographyRoutingTests
                     CancellationToken.None));
 
         Assert.Equal(expected, destination.Location.ToString());
+        Assert.Equal(
+            expected == "Europe"
+                ? OneDSCollectorEndpoints.RegionalPublicCloud.EU
+                : OneDSCollectorEndpoints.RegionalPublicCloud.US,
+            destination.Endpoint);
         Assert.Single(geographyClient.Targets);
     }
 
     [Fact]
-    public async Task GeographyFailureFallsBackToEurope()
+    public async Task GeographyFailureFallsBackToGlobal()
     {
         var resolver = Resolver(new ThrowingGeographyClient());
 
@@ -48,14 +53,36 @@ public sealed class TelemetryGeographyRoutingTests
                     ResolvedTarget("environment-one"),
                     CancellationToken.None));
 
-        Assert.Equal(TelemetryLocation.Europe, destination.Location);
+        Assert.Equal(TelemetryLocation.Global, destination.Location);
+    }
+
+    [Fact]
+    public async Task CompleteTargetWithoutGeographyClientDefaultsToGlobal()
+    {
+        var resolver = new TelemetryDestinationResolver(
+            PowerPlatformApiTargetConfig.Public,
+            geographyClient: null,
+            productionKey: SyntheticApiKey());
+
+        TelemetryDestination destination =
+            Assert.IsType<TelemetryDestination>(
+                await resolver.ResolveAsync(
+                    ResolvedTarget("environment-one"),
+                    CancellationToken.None));
+
+        Assert.Equal(TelemetryLocation.Global, destination.Location);
+        Assert.Equal(
+            OneDSCollectorEndpoints.RegionalPublicCloud.US,
+            destination.Endpoint);
     }
 
     [Theory]
     [InlineData("unitedstates", "canada", "Global")]
     [InlineData("unitedstates", "europe", "Europe")]
-    [InlineData("unitedstates", "atlantis", "Europe")]
-    public async Task MultipleTargetsRouteGlobalOnlyWhenEveryTargetIsKnownNonEu(
+    [InlineData("unitedstates", "atlantis", "Global")]
+    [InlineData("atlantis", "europe", "Europe")]
+    [InlineData("europe", "atlantis", "Europe")]
+    public async Task MultipleTargetsRouteToEuropeWhenAnyTargetIsKnownEu(
         string first,
         string second,
         string expected)
@@ -360,7 +387,7 @@ public sealed class TelemetryGeographyRoutingTests
 
         Assert.False(capture.LastTarget!.IsComplete);
         Assert.Empty(geography.Targets);
-        Assert.Equal(TelemetryLocation.Europe, capture.LastDestination?.Location);
+        Assert.Equal(TelemetryLocation.Global, capture.LastDestination?.Location);
     }
 
     [Fact]
@@ -391,7 +418,7 @@ public sealed class TelemetryGeographyRoutingTests
 
         Assert.False(capture.LastTarget!.IsComplete);
         Assert.Empty(geography.Targets);
-        Assert.Equal(TelemetryLocation.Europe, capture.LastDestination?.Location);
+        Assert.Equal(TelemetryLocation.Global, capture.LastDestination?.Location);
     }
 
     [Fact]
@@ -420,7 +447,7 @@ public sealed class TelemetryGeographyRoutingTests
             await session.DisposeAsync();
             Assert.Equal(1, transport.CallCount);
             Assert.Equal(
-                OneDSCollectorEndpoints.RegionalPublicCloud.EU,
+                OneDSCollectorEndpoints.RegionalPublicCloud.US,
                 transport.Destination?.Endpoint);
         }
         finally
@@ -431,7 +458,7 @@ public sealed class TelemetryGeographyRoutingTests
         await geography.Returned.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.Equal(1, transport.CallCount);
         Assert.Equal(
-            OneDSCollectorEndpoints.RegionalPublicCloud.EU,
+            OneDSCollectorEndpoints.RegionalPublicCloud.US,
             transport.Destination?.Endpoint);
     }
 

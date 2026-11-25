@@ -6,7 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent show</c>.</summary>
-[Command("show", Description = "Show the managed-agent records this project holds. Reads the local configuration and contacts nothing.", ParentGroup = typeof(AgentGroup), SortPriority = 40)]
+[Command("show", Description = "Show the managed-agent records this project holds. Reads the local configuration and contacts nothing.", ParentGroup = typeof(AgentGroup), SortPriority = 40, TargetsAgent = true)]
 public sealed class AgentShowCommand : CommandBase<ManagedAgentShowRequest, ManagedAgentShowResult>
 {
     /// <inheritdoc />

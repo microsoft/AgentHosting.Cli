@@ -6,7 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
 /// <summary><c>msagent deployment connection list</c>.</summary>
-[Command("list", Description = "Report the agent's connection references and the connection behind each. Changes nothing. MCS only.", ParentGroup = typeof(DeploymentConnectionGroup), SortPriority = 10)]
+[Command("list", Description = "Report the agent's connection references and the connection behind each. Changes nothing. MCS only.", ParentGroup = typeof(DeploymentConnectionGroup), SortPriority = 10, TargetsAgent = true)]
 public sealed class DeploymentConnectionListCommand : CommandBase<AgentDeploymentConnectionShowRequest, AgentDeploymentConnectionResult>
 {
     /// <inheritdoc />

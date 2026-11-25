@@ -16,6 +16,7 @@ public sealed class ManagedAgentInitService
     private readonly CopilotWorkspaceLocator _workspaceLocator;
     private readonly CopilotEnvironmentResolver _environmentResolver;
     private readonly CopilotProjectIdentityReader _projectIdentities;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the service.</summary>
     /// <param name="agents">The managed-agent table.</param>
@@ -23,13 +24,15 @@ public sealed class ManagedAgentInitService
     /// <param name="workspaceLocator">Reads the project's cloud baseline when it has one.</param>
     /// <param name="environmentResolver">Resolves the environment for an unconnected project.</param>
     /// <param name="projectIdentities">Reads the schema name the workspace declares.</param>
-    public ManagedAgentInitService(IManagedAgentRegistry agents, AgentConfigLocator locator, CopilotWorkspaceLocator workspaceLocator, CopilotEnvironmentResolver environmentResolver, CopilotProjectIdentityReader projectIdentities)
+    /// <param name="agentObserver">Optionally observes the addressed agent type.</param>
+    public ManagedAgentInitService(IManagedAgentRegistry agents, AgentConfigLocator locator, CopilotWorkspaceLocator workspaceLocator, CopilotEnvironmentResolver environmentResolver, CopilotProjectIdentityReader projectIdentities, IAddressedAgentObserver? agentObserver = null)
     {
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _workspaceLocator = workspaceLocator ?? throw new ArgumentNullException(nameof(workspaceLocator));
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
         _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Registers an existing project.</summary>
@@ -89,6 +92,7 @@ public sealed class ManagedAgentInitService
             throw ManagedAgentException.WorkspaceSchemaUnreadable(workspaceDirectory, agentLocation);
         }
 
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsAgent, schemaName);
         var workspace = await _workspaceLocator.FindAsync(workspaceDirectory, cancellationToken).ConfigureAwait(false);
         var environment = await _environmentResolver.ResolveAsync(workspace?.EnvironmentId, cancellationToken).ConfigureAwait(false);
 

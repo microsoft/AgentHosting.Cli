@@ -24,6 +24,7 @@ public sealed class ManagedAgentCreateService
     private readonly CopilotAgentName _agentNames;
     private readonly ICopilotNamingRules _namingRules;
     private readonly ManagedAgentRegistration _registration;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the service.</summary>
     /// <param name="scaffolds">Writes the project files.</param>
@@ -38,7 +39,8 @@ public sealed class ManagedAgentCreateService
     /// <param name="workspaces">Names the folder the agent's workspace occupies.</param>
     /// <param name="agentNames">Refuses a new agent's display name Copilot Studio would refuse.</param>
     /// <param name="namingRules">Supplies the publisher prefix a new agent's schema name carries.</param>
-    public ManagedAgentCreateService(CopilotScaffoldService scaffolds, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, IManagedAgentRegistry agents, HomeDeploymentRegistrar homeDeployments, ManagedAgentCloneMaterialiser materialiser, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities, ManagedAgentPrincipalResolver principals, ICopilotWorkspacePort workspaces, CopilotAgentName agentNames, ICopilotNamingRules namingRules)
+    /// <param name="agentObserver">Optionally observes the addressed agent type.</param>
+    public ManagedAgentCreateService(CopilotScaffoldService scaffolds, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, IManagedAgentRegistry agents, HomeDeploymentRegistrar homeDeployments, ManagedAgentCloneMaterialiser materialiser, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities, ManagedAgentPrincipalResolver principals, ICopilotWorkspacePort workspaces, CopilotAgentName agentNames, ICopilotNamingRules namingRules, IAddressedAgentObserver? agentObserver = null)
     {
         _scaffolds = scaffolds ?? throw new ArgumentNullException(nameof(scaffolds));
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
@@ -52,6 +54,7 @@ public sealed class ManagedAgentCreateService
         _agentNames = agentNames ?? throw new ArgumentNullException(nameof(agentNames));
         _namingRules = namingRules ?? throw new ArgumentNullException(nameof(namingRules));
         _registration = new ManagedAgentRegistration(agents, locator);
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Creates a managed agent, scaffolding a project or recording a clone source.</summary>
@@ -116,6 +119,7 @@ public sealed class ManagedAgentCreateService
         }
 
         var displayName = _agentNames.Require(request.Name!.Trim(), "--agent-name");
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsAgent);
         var environment = await _environmentResolver.ResolveAsync(request.EnvironmentId, cancellationToken).ConfigureAwait(false);
         environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
         var projectDirectory = ResolveProjectDirectory(request.Project);
@@ -136,6 +140,7 @@ public sealed class ManagedAgentCreateService
             },
             cancellationToken);
 
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsAgent, scaffolded.SchemaName);
         var stored = _registration.Register(projectDirectory, displayName, request.Description, agentLocation, environment.TenantId, environment.EnvironmentId, await _principals.ResolveAsync(environment, cancellationToken).ConfigureAwait(false), scaffolded.SchemaName);
 
         return new ManagedAgentCreateResult
@@ -182,6 +187,7 @@ public sealed class ManagedAgentCreateService
             ?? throw ManagedAgentException.CloneSourceNotFound(selector, source.EnvironmentId);
 
         var sourceAgent = await _catalog.GetAgentAsync(source, mcsAgentId, cancellationToken).ConfigureAwait(false);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsAgent, sourceAgent.SchemaName);
         var displayName = string.IsNullOrWhiteSpace(request.Name) ? sourceAgent.DisplayName : request.Name.Trim();
         var agentLocation = _workspaces.ProjectFolderName(displayName);
         var workspaceDirectory = Path.Combine(projectDirectory, agentLocation);

@@ -16,6 +16,7 @@ public sealed class WorkflowInitService
     private readonly ManagedAgentPrincipalResolver _principals;
     private readonly IWorkflowWorkspacePort _workspace;
     private readonly ManagedAgentRegistration _registration;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the service.</summary>
     /// <param name="agents">The managed-agent table.</param>
@@ -24,7 +25,8 @@ public sealed class WorkflowInitService
     /// <param name="workflows">Reads the workflow the directory defines.</param>
     /// <param name="principals">Resolves the signed-in operator recorded as owner and creator.</param>
     /// <param name="workspace">Finds the workflows a workspace holds.</param>
-    public WorkflowInitService(IManagedAgentRegistry agents, AgentConfigLocator locator, CopilotEnvironmentResolver environmentResolver, IWorkflowStorePort workflows, ManagedAgentPrincipalResolver principals, IWorkflowWorkspacePort workspace)
+    /// <param name="agentObserver">Optionally observes the addressed agent type.</param>
+    public WorkflowInitService(IManagedAgentRegistry agents, AgentConfigLocator locator, CopilotEnvironmentResolver environmentResolver, IWorkflowStorePort workflows, ManagedAgentPrincipalResolver principals, IWorkflowWorkspacePort workspace, IAddressedAgentObserver? agentObserver = null)
     {
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
@@ -33,6 +35,7 @@ public sealed class WorkflowInitService
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _registration = new ManagedAgentRegistration(_agents, _locator);
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Registers a workflow that already exists on disk.</summary>
@@ -56,6 +59,8 @@ public sealed class WorkflowInitService
         }
 
         var folder = _workspace.RequireSingle(workspaceRoot);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsWorkflow);
+        AddressedAgentObservation.ObserveResources(_agentObserver, AgentTypes.McsWorkflow, mcsWorkflowId: folder.WorkflowId.ToString());
         var local = await _workflows.ReadLocalAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
         var projectDirectory = _locator.EnclosingProjectDirectory(workspaceRoot);
         var agentLocation = Path.GetRelativePath(projectDirectory, workspaceRoot).Replace('\\', '/');

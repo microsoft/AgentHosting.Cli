@@ -79,6 +79,9 @@ internal sealed class UnclassifiedTelemetryDestinationResolver : ITelemetryDesti
 }
 
 internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolver{
+    // TEMPORARY: default/fallback routing uses Global; known EU geography stays EU.
+    private const TelemetryLocation DefaultLocation = TelemetryLocation.Global;
+
     private static readonly HashSet<string> EuGeographies = new(StringComparer.Ordinal)
     {
         "europe",
@@ -121,15 +124,17 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
 
     private readonly PowerPlatformApiTargetConfig _target;
     internal static readonly TimeSpan DefaultMetadataTimeout =
-        TimeSpan.FromMilliseconds(400);
+        TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MaximumMetadataTimeout =
-        TimeSpan.FromSeconds(1);
+        TimeSpan.FromSeconds(5);
 
     private readonly IEnvironmentGeographyClient? _geographyClient;
     private readonly CommandTelemetryTenantObserver? _tenantObserver;
     private readonly string? _productionKey;
     private readonly string? _nonProductionKey;
     private readonly TimeSpan _metadataTimeout;
+    private readonly TelemetryRoutingDiagnostics? _diagnostics;
+    private readonly FileTelemetryCollectorCache? _collectorCache;
 
     internal TelemetryDestinationResolver(
         PowerPlatformApiTargetConfig target,
@@ -160,7 +165,9 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
         string? productionKey,
         string? nonProductionKey,
         CommandTelemetryTenantObserver? tenantObserver = null,
-        TimeSpan? metadataTimeout = null)
+        TimeSpan? metadataTimeout = null,
+        TelemetryRoutingDiagnostics? diagnostics = null,
+        FileTelemetryCollectorCache? collectorCache = null)
     {
         _target = target ?? throw new ArgumentNullException(nameof(target));
         _geographyClient = geographyClient;
@@ -168,6 +175,8 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
         _nonProductionKey = nonProductionKey;
         _tenantObserver = tenantObserver;
         _metadataTimeout = metadataTimeout ?? DefaultMetadataTimeout;
+        _diagnostics = diagnostics;
+        _collectorCache = collectorCache;
         if (_metadataTimeout <= TimeSpan.Zero
             || _metadataTimeout > MaximumMetadataTimeout)
         {
@@ -185,44 +194,98 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
         TelemetryEnvironmentTarget target,
         CancellationToken cancellationToken)
     {
-        // Sovereign selections are an explicit no-send boundary. Never fall back to public.
-        if (_target.Cloud != CloudInstance.Public
-            || !TryValidateKey(SelectedKey(), out string apiKey))
+        try
         {
-            return null;
-        }
+            _diagnostics?.Write("routing-start", FormattableString.Invariant(
+                $"cloud={_target.Cloud} ring={_target.Ring} targetComplete={target.IsComplete} environmentCount={target.Environments.Count}"));
+            // Sovereign selections are an explicit no-send boundary. Never fall back to public.
+            if (_target.Cloud != CloudInstance.Public)
+            {
+                _diagnostics?.Write("routing-skipped", "reason=cloud-no-send collector=none");
+                return null;
+            }
 
-        bool production = _target.Ring == PowerPlatformApiRing.Production;
-        TelemetryLocation location =
-            production ? TelemetryLocation.Europe : TelemetryLocation.Global;
-        if (production
-            && target.IsComplete
-            && target.Environments.Count > 0
-            && _geographyClient is not null)
+            if (!TryValidateKey(SelectedKey(), out string apiKey))
+            {
+                _diagnostics?.Write("routing-skipped", "reason=ingestion-key-unavailable collector=none");
+                return null;
+            }
+
+            bool production = _target.Ring == PowerPlatformApiRing.Production;
+            TelemetryLocation location =
+                production ? DefaultLocation : TelemetryLocation.Global;
+            if (production
+                && target.IsComplete
+                && target.Environments.Count > 0
+                && _geographyClient is not null)
+            {
+                location = await ResolveProductionLocationAsync(
+                    target.Environments,
+                    cancellationToken);
+            }
+            else
+            {
+                _diagnostics?.Write("lookup-skipped", "reason=" + (!production
+                    ? "nonproduction"
+                    : !target.IsComplete
+                        ? "target-incomplete"
+                        : target.Environments.Count == 0
+                            ? "no-environment-targets"
+                            : "geography-client-unavailable"));
+            }
+
+            _diagnostics?.Write("destination", location == TelemetryLocation.Europe
+                ? "collector=EU" : "collector=Global");
+            return new TelemetryDestination(
+                location == TelemetryLocation.Europe
+                    ? OneDSCollectorEndpoints.RegionalPublicCloud.EU
+                    : OneDSCollectorEndpoints.RegionalPublicCloud.US,
+                apiKey,
+                production ? "powerappsclient" : "powerappsclientnonprod",
+                production ? "prod" : "test",
+                production ? "prod" : "test",
+                location);
+        }
+        finally
         {
-            location = await ResolveProductionLocationAsync(
-                target.Environments,
-                cancellationToken);
+            _diagnostics?.Complete();
         }
-
-        return new TelemetryDestination(
-            location == TelemetryLocation.Europe
-                ? OneDSCollectorEndpoints.RegionalPublicCloud.EU
-                : OneDSCollectorEndpoints.RegionalPublicCloud.US,
-            apiKey,
-            production ? "powerappsclient" : "powerappsclientnonprod",
-            production ? "prod" : "test",
-            production ? "prod" : "test",
-            location);
     }
 
     internal static TelemetryLocation ResolveLocation(string? geography)
+        => TryResolveKnownLocation(geography, out var location) ? location : DefaultLocation;
+
+    private static bool TryResolveKnownLocation(string? geography, out TelemetryLocation location)
     {
+        location = DefaultLocation;
         if (string.IsNullOrWhiteSpace(geography))
         {
-            return TelemetryLocation.Europe;
+            return false;
         }
 
+        string normalized = NormalizeGeography(geography);
+        if (NonEuGeographies.Contains(normalized))
+        {
+            location = TelemetryLocation.Global;
+            return true;
+        }
+
+        if (!EuGeographies.Contains(normalized))
+            return false;
+        location = TelemetryLocation.Europe;
+        return true;
+    }
+
+    private static string DiagnosticGeography(string? geography)
+    {
+        if (string.IsNullOrWhiteSpace(geography)) return "missing";
+        string normalized = NormalizeGeography(geography);
+        return EuGeographies.Contains(normalized) || NonEuGeographies.Contains(normalized)
+            ? normalized : "unrecognized";
+    }
+
+    private static string NormalizeGeography(string geography)
+    {
         string normalized = new(
             geography
                 .Trim()
@@ -239,21 +302,15 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
             }
         }
 
-        if (NonEuGeographies.Contains(normalized))
-        {
-            return TelemetryLocation.Global;
-        }
-
-        // Known EU and every unknown value route to EU by policy.
-        return EuGeographies.Contains(normalized)
-            ? TelemetryLocation.Europe
-            : TelemetryLocation.Europe;
+        return normalized;
     }
 
     private async Task<TelemetryLocation> ResolveProductionLocationAsync(
         IReadOnlyList<ResolvedEnvironmentTarget> environments,
         CancellationToken cancellationToken)
     {
+        _diagnostics?.Write("lookup-start", FormattableString.Invariant(
+            $"budgetMs={(long)_metadataTimeout.TotalMilliseconds}"));
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken);
         budget.CancelAfter(_metadataTimeout);
@@ -263,14 +320,31 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
             {
                 using IDisposable? suppression =
                     _tenantObserver?.BeginSuppression();
+                int environmentIndex = 0;
                 foreach (ResolvedEnvironmentTarget environment in environments)
                 {
+                    budgetToken.ThrowIfCancellationRequested();
+                    _diagnostics?.Write("environment-lookup", FormattableString.Invariant(
+                        $"environmentIndex={++environmentIndex}"));
+                    if (_collectorCache is not null
+                        && await _collectorCache.ReadAsync(_target, environment, budgetToken).ConfigureAwait(false)
+                            is { } cached)
+                    {
+                        if (cached == TelemetryLocation.Europe)
+                            return TelemetryLocation.Europe;
+                        continue;
+                    }
                     string? geography = await _geographyClient!
                         .GetGeographyAsync(environment, budgetToken)
                         .ConfigureAwait(false);
-                    if (ResolveLocation(geography) != TelemetryLocation.Global)
+                    budgetToken.ThrowIfCancellationRequested();
+                    _diagnostics?.Write("geography-result", "geography=" + DiagnosticGeography(geography));
+                    if (TryResolveKnownLocation(geography, out var resolved))
                     {
-                        return TelemetryLocation.Europe;
+                        if (_collectorCache is not null)
+                            await _collectorCache.WriteAsync(_target, environment, resolved, budgetToken).ConfigureAwait(false);
+                        if (resolved == TelemetryLocation.Europe)
+                            return TelemetryLocation.Europe;
                     }
                 }
 
@@ -285,22 +359,25 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
         catch (OperationCanceledException)
             when (cancellationToken.IsCancellationRequested)
         {
+            _diagnostics?.Write("lookup-cancelled");
             ObserveLateLookup(lookup);
             throw;
         }
         catch (OperationCanceledException)
             when (budget.IsCancellationRequested)
         {
+            _diagnostics?.WriteDeadline();
             OptionalMeasurementDiagnostics.Report(
                 OptionalMeasurementFailureCategory.TelemetryGeographyDeadline);
             ObserveLateLookup(lookup);
-            return TelemetryLocation.Europe;
+            return DefaultLocation;
         }
         catch (Exception)
         {
+            _diagnostics?.Write("lookup-failed");
             OptionalMeasurementDiagnostics.Report(
                 OptionalMeasurementFailureCategory.TelemetryGeographyLookup);
-            return TelemetryLocation.Europe;
+            return DefaultLocation;
         }
     }
 

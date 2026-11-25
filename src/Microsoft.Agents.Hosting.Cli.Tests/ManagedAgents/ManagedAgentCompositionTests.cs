@@ -7,6 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
+using Microsoft.Agents.Hosting.Cli.Telemetry;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
@@ -24,6 +25,10 @@ public sealed class ManagedAgentCompositionTests
         var services = new ServiceCollection();
 
         services.AddSingleton<IClock>(new FixedClock(ManagedAgentFixtures.Now));
+        services.AddSingleton<CommandTelemetrySessionAccessor>();
+        services.AddSingleton<IAddressedAgentObserver, CommandTelemetryAgentObserver>();
+        services.AddSingleton<ICommandInvocationContext>(
+            sp => sp.GetRequiredService<CommandTelemetrySessionAccessor>());
         services.AddSingleton<ITokenProvider>(new RecordingTokenProvider());
         services.AddAgentHostCopilotStudio(TextWriter.Null, apiTarget);
 

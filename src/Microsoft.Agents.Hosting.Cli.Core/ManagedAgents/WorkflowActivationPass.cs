@@ -16,6 +16,12 @@ public int UnboundConnectionCount { get; init; }
 
 /// <summary>The workflows the service reports as running.</summary>
 public IReadOnlyList<string> Activated { get; init; } = [];
+
+/// <summary>Activation facts retained for telemetry even when recording them fails.</summary>
+internal IReadOnlyList<string> ConfirmedActivated { get; init; } = [];
+
+/// <summary>Whether activation encountered a service refusal or an operation failure.</summary>
+public bool Failed { get; init; }
 }
 
 /// <summary>
@@ -47,6 +53,7 @@ public sealed class WorkflowActivationPass
     {
         ArgumentNullException.ThrowIfNull(environment);
         environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string> confirmedActivated = [];
 
         try
         {
@@ -75,6 +82,7 @@ public sealed class WorkflowActivationPass
                     [.. eligible.Select(workflow => new CopilotWorkflowStateChange { WorkflowId = workflow.WorkflowId, Activate = true })],
                     cancellationToken).ConfigureAwait(false);
 
+            confirmedActivated = [.. activation.Activated];
             Record(environment, workspaceDirectory, snapshot.Workflows, activation);
             return new WorkflowActivationOutcome
             {
@@ -82,6 +90,8 @@ public sealed class WorkflowActivationPass
                 Reported = [.. snapshot.Workflows.Select(workflow => workflow.DisplayName)],
                 UnboundConnectionCount = ambiguous.Unresolved.Count,
                 Activated = activation.Activated,
+                ConfirmedActivated = confirmedActivated,
+                Failed = activation.Refused.Count > 0,
             };
         }
         catch (OperationCanceledException)
@@ -94,7 +104,7 @@ public sealed class WorkflowActivationPass
         {
             _workflowStates.Invalidate(workspaceDirectory, environment.EnvironmentId);
 
-            return new WorkflowActivationOutcome { Warnings = [$"The workflows could not be activated after the push: {failure.Message} Run `msagent deployment connection update` to retry."] };
+            return new WorkflowActivationOutcome { ConfirmedActivated = confirmedActivated, Failed = true, Warnings = [$"The workflows could not be activated after the push: {failure.Message} Run `msagent deployment connection update` to retry."] };
         }
     }
 

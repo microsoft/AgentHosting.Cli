@@ -7,7 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Test;
 
 /// <summary>Sends exactly one live query to a selected Copilot Studio runtime.</summary>
-[Command("ask", Description = "Send one live query to a Copilot Studio agent. Live actions can have real effects.", ParentGroup = typeof(TestGroup), SortPriority = 10)]
+[Command("ask", Description = "Send one live query to a Copilot Studio agent. Live actions can have real effects.", ParentGroup = typeof(TestGroup), SortPriority = 10, TargetsAgent = true)]
 [RequiredFeatureFlag(FeatureName.LiveTestFeatures)]
 public sealed class AskCommand : CommandBase<LiveTestRequest, ILiveTestStreamingResult>
 {

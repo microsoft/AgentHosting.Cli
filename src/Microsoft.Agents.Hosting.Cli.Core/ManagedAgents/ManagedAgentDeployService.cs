@@ -77,10 +77,16 @@ public sealed class ManagedAgentDeployService
     public async Task<ManagedAgentDeployResult> DeployAsync(ManagedAgentDeployRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        _resolver.ObserveDeployment(new()
+        {
+            PublishRequested = request.Publish,
+            PublishStatus = request.Publish ? DeploymentPublishStatus.NotReached : DeploymentPublishStatus.NotRequested,
+        });
 
         var projectDirectory = _resolver.ResolveProjectDirectory(request.Project);
         var (owner, deployment) = _resolver.ResolveAgentDeployment(projectDirectory, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName, requireExplicitDeployment: true);
         var agent = ManagedAgentResolver.RequireMcsAgent(owner, "msagent agent deploy");
+        _resolver.ObserveDeployment(new() { DeploymentType = deployment.DeploymentType });
         var target = await _environmentResolver.ResolveAsync(ManagedAgentResolver.TargetEnvironmentId(agent, deployment), cancellationToken).ConfigureAwait(false);
         target = await _principals.BindUserAsync(target, cancellationToken).ConfigureAwait(false);
         var deployedBy = await _principals.ResolveAsync(target, cancellationToken).ConfigureAwait(false);
@@ -97,6 +103,7 @@ public sealed class ManagedAgentDeployService
         }
 
         var schemaName = string.IsNullOrWhiteSpace(request.SchemaName) ? identity.SchemaName : request.SchemaName.Trim();
+        _resolver.ObserveMcsAgentSchemaName(schemaName);
         var workspace = await _workspaceLocator.FindAsync(workspaceDirectory, cancellationToken).ConfigureAwait(false);
         var action = ChooseAction(workspace, target.EnvironmentId);
 
@@ -120,6 +127,7 @@ public sealed class ManagedAgentDeployService
         {
             WorkspaceConnectionVerifier.RequireOriginMatches(workspace!, target);
             targetAgentId = workspace!.AgentId;
+            _resolver.ObserveMcsAgentTarget(targetAgentId, target.EnvironmentId);
         }
         else
         {
@@ -140,6 +148,11 @@ public sealed class ManagedAgentDeployService
                 },
                 cancellationToken).ConfigureAwait(false);
 
+            _resolver.ObserveMcsAgentTarget(attached.AgentId, target.EnvironmentId);
+            if (attached.AgentCreated)
+            {
+                _resolver.ObserveDeployment(new() { ResourceAction = DeploymentResourceAction.Created });
+            }
             if (attached.AgentCreated || !string.Equals(attached.AgentId, agent.McsAgentId, StringComparison.OrdinalIgnoreCase))
             {
                 agent = RecordDeployedAgent(projectDirectory, agent with { McsAgentId = attached.AgentId, McsSchemaName = attached.SchemaName }, target.EnvironmentId, deployment.DeploymentName, deployedSlot: null);
@@ -148,6 +161,7 @@ public sealed class ManagedAgentDeployService
             targetAgentId = attached.AgentId;
             targetAgentCreated = attached.AgentCreated;
             schemaName = attached.SchemaName;
+            _resolver.ObserveMcsAgentSchemaName(schemaName);
             componentWarnings.AddRange(attached.Warnings);
             notices.AddRange(attached.Notices);
 
@@ -159,6 +173,10 @@ public sealed class ManagedAgentDeployService
 
         _progress.Report("Pushing changes");
         var pushed = await PushAsync(projectDirectory, workspaceDirectory, deployment.DeploymentType, request.Overwrite || targetAgentCreated, request.Overwrite, target, schemaName, DescribeTarget(action, targetAgentCreated), cancellationToken).ConfigureAwait(false);
+        _resolver.ObserveDeployment(new()
+        {
+            ResourceAction = targetAgentCreated ? DeploymentResourceAction.Created : DeploymentResourceAction.Updated,
+        });
         var deployedOn = _clock.UtcNow;
 
         var activation = await _workflowActivation.RunAsync(target, workspaceDirectory, cancellationToken).ConfigureAwait(false);
@@ -193,9 +211,13 @@ public sealed class ManagedAgentDeployService
             return result;
         }
 
-        return blockers.Count == 0
-            ? await PublishAsync(result, target, targetAgentId, cancellationToken).ConfigureAwait(false)
-            : throw ManagedAgentException.PublishWithheldAfterIncompletePush(schemaName, target.EnvironmentId, deployment.DeploymentName, [.. blockers.Distinct(StringComparer.Ordinal)]);
+        if (blockers.Count > 0)
+        {
+            _resolver.ObserveDeployment(new() { PublishStatus = DeploymentPublishStatus.Blocked });
+            throw ManagedAgentException.PublishWithheldAfterIncompletePush(schemaName, target.EnvironmentId, deployment.DeploymentName, [.. blockers.Distinct(StringComparer.Ordinal)]);
+        }
+
+        return await PublishAsync(result, target, targetAgentId, cancellationToken).ConfigureAwait(false);
     }
 
     private static void RequireSchemaName(string? requestedSchemaName, string requiredSchemaName, string reason)
@@ -353,14 +375,17 @@ public sealed class ManagedAgentDeployService
 
         try
         {
+            _resolver.ObserveDeployment(new() { PublishStatus = DeploymentPublishStatus.Unknown });
             var published = await _catalogService.PublishAsync(
                 new CopilotPublishRequest { Bot = targetAgentId, Environment = target.EnvironmentId, Force = true },
                 cancellationToken).ConfigureAwait(false);
 
+            _resolver.ObserveDeployment(new() { PublishStatus = DeploymentPublishStatus.Succeeded });
             return result with { Published = true, PublishedOn = published.PublishedOn };
         }
         catch (Exception failure) when (failure is not OperationCanceledException)
         {
+            _resolver.ObserveDeployment(new() { PublishStatus = DeploymentPublishStatus.Failed });
             throw ManagedAgentException.PublishFailedAfterPush(result.SchemaName ?? result.DisplayName, target.EnvironmentId, result.DeploymentName, failure.Message);
         }
     }

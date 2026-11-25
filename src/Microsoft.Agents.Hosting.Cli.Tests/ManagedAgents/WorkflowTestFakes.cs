@@ -224,7 +224,7 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
         CloudDefinition[folder.WorkflowId] = File.ReadAllText(folder.DefinitionPath);
         LastSynced[folder.WorkflowId] = File.ReadAllText(folder.DefinitionPath);
 
-        return Task.FromResult(new WorkflowUpsertOutcome { Workflow = document, Created = created, CreatedConnectionReferences = DeclaredConnectionReferences, ActivationRequested = activationRequested, DraftedForConnections = DraftedForConnectionsOnPush, Warning = WarningOnPush, UnboundConnectionReferences = UnboundConnectionReferencesOnPush });
+        return Task.FromResult(new WorkflowUpsertOutcome { Workflow = document, Created = created, Replaced = ReplacedOnPush, CreatedConnectionReferences = DeclaredConnectionReferences, ActivationRequested = activationRequested, DraftedForConnections = DraftedForConnectionsOnPush, Warning = WarningOnPush, UnboundConnectionReferences = UnboundConnectionReferencesOnPush });
     }
 
     public HashSet<Guid> UnpulledChanges { get; } = [];
@@ -246,6 +246,8 @@ internal sealed class FakeWorkflowStorePort : IWorkflowStorePort
     public string? ObservedStateOnPush { get; set; }
 
     public bool DraftOnPush { get; set; }
+
+    public bool ReplacedOnPush { get; init; }
 
     public List<string> DeclaredConnectionReferences { get; } = [];
 

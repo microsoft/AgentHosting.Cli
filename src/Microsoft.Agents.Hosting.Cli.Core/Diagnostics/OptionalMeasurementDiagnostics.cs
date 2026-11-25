@@ -1,4 +1,5 @@
 using System.Diagnostics.Tracing;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Diagnostics;
 
@@ -21,6 +22,10 @@ public enum OptionalMeasurementFailureCategory
     TelemetryGeographyDeadline = 14,
     TelemetryProfileRead = 15,
     TelemetryProfileDeadline = 16,
+    TelemetryInvocationCorrelation = 17,
+    TelemetryAgentObservation = 18,
+    TelemetryGeographyDiagnostics = 19,
+    TelemetryCollectorCache = 20,
 }
 
 /// <summary>Opt-in local diagnostics for failures hidden by optional measurement isolation.</summary>
@@ -38,6 +43,20 @@ public static class OptionalMeasurementDiagnostics
         catch (Exception)
         {
             // Diagnostics must not alter authentication or command behavior.
+        }
+    }
+
+    /// <summary>Isolates an optional, data-free geography diagnostic observer.</summary>
+    public static void ReportGeography(IEnvironmentGeographyDiagnostics? diagnostics,
+        EnvironmentGeographyStage stage, int? httpStatusCode = null)
+    {
+        try
+        {
+            diagnostics?.Report(stage, httpStatusCode);
+        }
+        catch (Exception)
+        {
+            Report(OptionalMeasurementFailureCategory.TelemetryGeographyDiagnostics);
         }
     }
 

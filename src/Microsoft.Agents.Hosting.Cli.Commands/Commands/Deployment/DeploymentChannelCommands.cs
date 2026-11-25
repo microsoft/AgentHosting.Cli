@@ -7,7 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment.Channel;
 
-[Command("create", Description = "Create (enable) a channel on a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 10)]
+[Command("create", Description = "Create (enable) a channel on a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 10, TargetsAgent = true)]
 public sealed class DeploymentChannelCreateCommand : DeploymentChannelCommand<DeploymentChannelCreateRequest, DeploymentResult<DeploymentChannelRecord>>
 {
     public override IReadOnlyList<CommandSymbol> Symbols => MutationCommandSymbols;
@@ -32,7 +32,7 @@ public sealed class DeploymentChannelCreateCommand : DeploymentChannelCommand<De
     }
 }
 
-[Command("update", Description = "Update a channel on a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 20)]
+[Command("update", Description = "Update a channel on a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 20, TargetsAgent = true)]
 public sealed class DeploymentChannelUpdateCommand : DeploymentChannelCommand<DeploymentChannelUpdateRequest, DeploymentResult<DeploymentChannelRecord>>
 {
     public override IReadOnlyList<CommandSymbol> Symbols =>
@@ -78,7 +78,7 @@ public sealed class DeploymentChannelUpdateCommand : DeploymentChannelCommand<De
     }
 }
 
-[Command("delete", Description = "Delete a channel from a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 30)]
+[Command("delete", Description = "Delete a channel from a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 30, TargetsAgent = true)]
 public sealed class DeploymentChannelDeleteCommand : DeploymentChannelCommand<DeploymentChannelDeleteRequest, DeploymentResult<DeploymentChannelRecord>>
 {
     public override IReadOnlyList<CommandSymbol> Symbols => ChannelCommandSymbols;
@@ -101,7 +101,7 @@ public sealed class DeploymentChannelDeleteCommand : DeploymentChannelCommand<De
     }
 }
 
-[Command("show", Description = "Show details of a channel on a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 40)]
+[Command("show", Description = "Show details of a channel on a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 40, TargetsAgent = true)]
 public sealed class DeploymentChannelShowCommand : DeploymentChannelCommand<DeploymentChannelShowRequest, DeploymentResult<DeploymentChannelRecord>>
 {
     public override IReadOnlyList<CommandSymbol> Symbols => ChannelCommandSymbols;
@@ -124,7 +124,7 @@ public sealed class DeploymentChannelShowCommand : DeploymentChannelCommand<Depl
     }
 }
 
-[Command("list", Description = "List all channels on a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 50)]
+[Command("list", Description = "List all channels on a deployment. CodeAgent only", ParentGroup = typeof(DeploymentChannelGroup), SortPriority = 50, TargetsAgent = true)]
 public sealed class DeploymentChannelListCommand : DeploymentChannelCommand<DeploymentChannelListRequest, DeploymentResult<DeploymentChannelRecord[]>>
 {
     public override IReadOnlyList<CommandSymbol> Symbols => DeploymentAddressSymbols;

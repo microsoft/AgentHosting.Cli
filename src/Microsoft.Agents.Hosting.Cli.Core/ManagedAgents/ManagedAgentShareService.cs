@@ -269,7 +269,12 @@ public sealed class ManagedAgentShareService
     /// <summary>
     /// What this record can be looked up by inside an environment.
     /// </summary>
-    private string? SelectorFor(string projectDirectory, ManagedAgentRecord agent) => _projectIdentities.FindSelector(agent, _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent));
+    private string? SelectorFor(string projectDirectory, ManagedAgentRecord agent)
+    {
+        var selector = _projectIdentities.FindSelector(agent, _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent), out var schemaName);
+        _resolver.ObserveMcsAgentSchemaName(schemaName);
+        return selector;
+    }
 
     private static AgentDeploymentRecord? MostRecentlyDeployed(IReadOnlyList<AgentDeploymentRecord> deployments) => deployments.Where(deployment => deployment.LastDeployedTime is not null && !string.IsNullOrWhiteSpace(deployment.EnvironmentId)).MaxBy(deployment => deployment.LastDeployedTime);
 

@@ -6,7 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent init</c>.</summary>
-[Command("init", Description = "Register an MCS project or standalone workflow that already exists on disk. Creates no files and nothing in Copilot Studio.", ParentGroup = typeof(AgentGroup), SortPriority = 20)]
+[Command("init", Description = "Register an MCS project or standalone workflow that already exists on disk. Creates no files and nothing in Copilot Studio.", ParentGroup = typeof(AgentGroup), SortPriority = 20, TargetsAgent = true)]
 public sealed class AgentInitCommand : CommandBase<ManagedAgentInitRequest, ManagedAgentInitResult>
 {
     /// <inheritdoc />

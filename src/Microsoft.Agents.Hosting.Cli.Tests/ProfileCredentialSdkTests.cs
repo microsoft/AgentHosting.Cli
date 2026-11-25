@@ -441,9 +441,11 @@ public sealed class ProfileCredentialSdkTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task BrokerRenewalUsesOnlyTheExactProfileAccount(bool selectedAccountAvailable)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task BrokerRenewalUsesOnlyTheExactProfileAccount(bool selectedAccountAvailable, bool metadataOnly)
     {
         using var h = new Harness();
         const string selected = "selected@example.test";
@@ -463,7 +465,22 @@ public sealed class ProfileCredentialSdkTests
             Username = selected, TenantId = ProfileCredentialTests.Tenant,
         });
 
-        if (selectedAccountAvailable)
+        var observer = new Observer();
+        if (metadataOnly)
+        {
+            var diagnostics = new GeographyDiagnostics();
+            var result = await h.Provider(observer).TryAcquireSelectedTokenAsync(
+                profile, request.Scopes, ProfileCredentialTests.Tenant, diagnostics, default);
+            if (selectedAccountAvailable)
+                Assert.Equal(MsalTokenCacheSeed.AccessToken(selected), result!.AccessToken);
+            else
+            {
+                Assert.Null(result);
+                Assert.Contains(EnvironmentGeographyStage.TokenInteractionRequired, diagnostics.Stages);
+            }
+            Assert.Equal(0, observer.Checks);
+        }
+        else if (selectedAccountAvailable)
         {
             var result = await h.Provider().AcquireAsync(profile, request.Scopes, null, default);
             Assert.Equal(MsalTokenCacheSeed.AccessToken(selected), result.AccessToken);
@@ -480,15 +497,17 @@ public sealed class ProfileCredentialSdkTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task BrokerRenewalPreservesInteractionAndThrottlingFailures(bool throttled)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task BrokerRenewalPreservesInteractionAndThrottlingFailures(bool throttled, bool metadataOnly)
     {
         using var h = new Harness();
         var selected = throttled ? "throttled@example.test" : "consent@example.test";
         var request = Request(AuthCredentialMethod.Broker, creation: false,
             home: MsalTokenCacheSeed.HomeAccountId(selected, ProfileCredentialTests.Tenant), cloud: CloudInstance.Public,
-            scope: throttled ? "https://throttling.test//.default" : "https://consent.test//.default");
+            scope: $"https://{(metadataOnly ? "metadata-" : "")}{(throttled ? "throttling" : "consent")}.test//.default");
         var brokerClient = h.Msal.CreatePublic(request, broker: false);
         MsalTokenCacheSeed.Seed(brokerClient, ProfileCredentialTests.Tenant, "https://another-resource.test/.default", selected);
         _ = await brokerClient.GetAccountsAsync();
@@ -504,7 +523,26 @@ public sealed class ProfileCredentialSdkTests
             }), Encoding.UTF8, "application/json"),
         };
 
-        if (throttled)
+        if (metadataOnly)
+        {
+            var observer = new Observer();
+            var diagnostics = new GeographyDiagnostics();
+            var profile = UserProfile(request, new()
+            {
+                AccessToken = "unused", HomeAccountId = request.HomeAccountId,
+                Username = selected, TenantId = ProfileCredentialTests.Tenant,
+            });
+            if (throttled)
+                await Assert.ThrowsAsync<TokenThrottledException>(() => h.Provider(observer).TryAcquireSelectedTokenAsync(
+                    profile, request.Scopes, ProfileCredentialTests.Tenant, diagnostics, default));
+            else
+                Assert.Null(await h.Provider(observer).TryAcquireSelectedTokenAsync(
+                    profile, request.Scopes, ProfileCredentialTests.Tenant, diagnostics, default));
+            Assert.Equal(0, observer.Checks);
+            Assert.Contains(throttled ? EnvironmentGeographyStage.TokenAcquisitionFailed
+                : EnvironmentGeographyStage.TokenInteractionRequired, diagnostics.Stages);
+        }
+        else if (throttled)
             await Assert.ThrowsAsync<TokenThrottledException>(() => h.Adapter.AcquireAsync(request, default));
         else
             await Assert.ThrowsAsync<InteractionRequiredException>(() => h.Adapter.AcquireAsync(request, default));
@@ -784,6 +822,12 @@ public sealed class ProfileCredentialSdkTests
         internal int Checks;
         public bool IsObservationEnabled { get { Checks++; return true; } }
         public void Observe(AuthenticatedTenantContext context) => throw new InvalidOperationException("Metadata acquisition cannot attribute a tenant.");
+    }
+
+    private sealed class GeographyDiagnostics : IEnvironmentGeographyDiagnostics
+    {
+        internal List<EnvironmentGeographyStage> Stages { get; } = [];
+        public void Report(EnvironmentGeographyStage stage, int? httpStatusCode = null) => Stages.Add(stage);
     }
     private sealed class AssertionTransport : HttpMessageHandler
     {

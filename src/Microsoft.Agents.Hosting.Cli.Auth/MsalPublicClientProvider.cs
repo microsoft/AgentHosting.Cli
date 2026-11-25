@@ -10,15 +10,24 @@ public sealed class MsalPublicClientProvider
 {
     private readonly AgentHostAuthOptions _options;
     private readonly IPlatformInfo _platform;
+    private readonly Func<PublicClientConfiguration, IPublicClientApplication>? _createClient;
     private ILegacyMsalTokenCacheBackend? _legacyCache;
     private readonly MsalPublicClientConfigurator _configurator;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, IPublicClientApplication> _clients = new(StringComparer.Ordinal);
 
-    public MsalPublicClientProvider(AgentHostAuthOptions options, IPlatformInfo platform, ISecureTokenCacheProbe probe, ILegacyMsalTokenCacheBackend? legacyCache = null)
+    public MsalPublicClientProvider(AgentHostAuthOptions options, IPlatformInfo platform, ISecureTokenCacheProbe probe,
+        ILegacyMsalTokenCacheBackend? legacyCache = null)
+        : this(options, platform, probe, legacyCache, createClient: null)
+    {
+    }
+
+    internal MsalPublicClientProvider(AgentHostAuthOptions options, IPlatformInfo platform, ISecureTokenCacheProbe probe,
+        ILegacyMsalTokenCacheBackend? legacyCache, Func<PublicClientConfiguration, IPublicClientApplication>? createClient)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _platform = platform ?? throw new ArgumentNullException(nameof(platform));
+        _createClient = createClient;
         ArgumentNullException.ThrowIfNull(probe);
         _legacyCache = legacyCache;
         _configurator = new MsalPublicClientConfigurator(platform);
@@ -71,7 +80,7 @@ public sealed class MsalPublicClientProvider
                 return existing;
             }
 
-            var client = Build(configuration);
+            var client = _createClient is null ? Build(configuration) : _createClient(configuration);
             LegacyMsalTokenCache.Attach(client.UserTokenCache, GetLegacyCache);
             _clients[key] = client;
             return client;
@@ -88,7 +97,6 @@ public sealed class MsalPublicClientProvider
             .Create(configuration.ClientId.ToString())
             .WithRedirectUri(configuration.RedirectUri.OriginalString)
             .WithAuthority(configuration.AuthorityUrl, configuration.ValidateAuthority);
-
         if (configuration.RequiresParentWindow)
         {
             builder.WithParentActivityOrWindow(NativeMethods.GetConsoleOrTerminalWindow);

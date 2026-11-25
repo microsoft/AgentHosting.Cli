@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
+using Microsoft.Agents.Hosting.Cli.Core.Diagnostics;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Identity.Client;
@@ -220,46 +221,78 @@ public sealed class MsalSilentTokenProvider :
 
     /// <summary>Selected-cache-only acquisition for already captured authentication coordinates.</summary>
     public async Task<TokenAcquisitionResult?> TryAcquireForProfileAsync(
-        AuthProfile active, string resource, string targetTenantId, CancellationToken cancellationToken)
+        AuthProfile active, string resource, string targetTenantId, CancellationToken cancellationToken,
+        IEnvironmentGeographyDiagnostics? diagnostics = null)
     {
         ArgumentNullException.ThrowIfNull(active);
         ArgumentException.ThrowIfNullOrWhiteSpace(resource);
         ArgumentException.ThrowIfNullOrWhiteSpace(targetTenantId);
         cancellationToken.ThrowIfCancellationRequested();
-        if (active.PrincipalType != AuthPrincipalType.User || !ProfileCredentialValidation.IsPublicUser(active.CredentialMethod) ||
-            active.CredentialMethod == AuthCredentialMethod.Broker) return null;
-        if (active.CredentialReference is not null)
-            return _selectedCredentials is null ? null : await _selectedCredentials.TryAcquireSelectedTokenAsync(
-                active, [_scopeNormalizer.ToDefaultScope(resource)], targetTenantId, cancellationToken).ConfigureAwait(false);
-
-        // Metadata-only authentication deliberately uses the non-broker client. It may refresh the
-        // exact selected account from the application cache, but it never asks WAM for the operating
-        // system account, enumerates OS accounts, or substitutes another cached account.
-        IPublicClientApplication client = await _clientProvider
-            .GetClientAsync(
-                useBroker: false,
-                tenantId: null,
-                cancellationToken,
-                clientIdOverride: active.ClientId is null ? null : ProfileCredentialValidation.ParseGuid(active.ClientId, "profile client id"),
-                cloudOverride: active.Cloud)
-            .ConfigureAwait(false);
-        IAccount? account = FindExactAccount(
-            await client.GetAccountsAsync().ConfigureAwait(false),
-            active.AccountKey);
-        if (account is null)
+        if (active.PrincipalType != AuthPrincipalType.User || !ProfileCredentialValidation.IsPublicUser(active.CredentialMethod))
         {
+            OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenProfileUnsupported);
             return null;
         }
+        string[] scopes = [_scopeNormalizer.ToDefaultScope(resource)];
+        if (active.CredentialReference is not null)
+        {
+            if (_selectedCredentials is null)
+            {
+                OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenProviderUnavailable);
+                return null;
+            }
+            return await _selectedCredentials.TryAcquireSelectedTokenAsync(
+                active, scopes, targetTenantId, diagnostics, cancellationToken).ConfigureAwait(false);
+        }
 
+        return await TryAcquireLegacyForProfileAsync(
+            active, scopes, targetTenantId, diagnostics, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<TokenAcquisitionResult?> TryAcquireLegacyForProfileAsync(
+        AuthProfile active, IReadOnlyList<string> scopes, string targetTenantId,
+        IEnvironmentGeographyDiagnostics? diagnostics, CancellationToken cancellationToken)
+    {
+        bool useBroker = active.CredentialMethod == AuthCredentialMethod.Broker;
+        if (useBroker && (!_clientProvider.IsBrokerSupported
+            || active.ClientId is not null
+                && !_clientProvider.IsAgentHostClient(ProfileCredentialValidation.ParseGuid(active.ClientId, "profile client id"))))
+        {
+            OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenBrokerUnavailable);
+            return null;
+        }
+        var tenantRouting = SilentTokenTenantRouting.Resolve(useBroker, active.TenantId, targetTenantId);
         try
         {
-            AuthenticationResult result = await client
-                .AcquireTokenSilent(
-                    [_scopeNormalizer.ToDefaultScope(resource)],
-                    account)
-                .WithTenantId(targetTenantId)
-                .ExecuteAsync(cancellationToken)
+            IPublicClientApplication client = await _clientProvider
+                .GetClientAsync(
+                    useBroker,
+                    tenantRouting.ClientAuthorityTenantId,
+                    cancellationToken,
+                    clientIdOverride: active.ClientId is null ? null : ProfileCredentialValidation.ParseGuid(active.ClientId, "profile client id"),
+                    cloudOverride: active.Cloud)
                 .ConfigureAwait(false);
+            IAccount? account = FindExactAccount(
+                await client.GetAccountsAsync(cancellationToken).ConfigureAwait(false),
+                active.AccountKey);
+            if (account is null)
+            {
+                OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenAccountUnavailable);
+                return null;
+            }
+
+            // Even broker-backed metadata requests require this exact cached account:
+            // never substitute OperatingSystemAccount or start interactive acquisition.
+            var builder = client.AcquireTokenSilent(scopes, account);
+            if (tenantRouting.RequestTenantId is not null)
+                builder = builder.WithTenantId(tenantRouting.RequestTenantId);
+            AuthenticationResult result = await builder.ExecuteAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (!IsExactAccount(result.Account, active.AccountKey))
+            {
+                OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenAccountMismatch);
+                throw new ActiveAccountMismatchException();
+            }
 
             // This acquisition exists only to choose a collector. It must not create normal product
             // tenant attribution, so it intentionally does not call AuthenticationResultTenantObserver.
@@ -272,6 +305,12 @@ public sealed class MsalSilentTokenProvider :
         }
         catch (MsalUiRequiredException)
         {
+            OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenInteractionRequired);
+            return null;
+        }
+        catch (Exception failure) when (useBroker && failure is not MsalServiceException && BrokerFailure.IsBrokerFailure(failure))
+        {
+            OptionalMeasurementDiagnostics.ReportGeography(diagnostics, EnvironmentGeographyStage.TokenBrokerUnavailable);
             return null;
         }
     }

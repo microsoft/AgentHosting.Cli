@@ -91,41 +91,69 @@ internal sealed class CapturedProfileEnvironmentObserver(
 }
 
 internal sealed class CapturedProfileGeographyClient(
-    HttpClient http, CapturedProfileClients contexts, MsalSilentTokenProvider selectedTokens) : IEnvironmentGeographyClient
+    HttpClient http, CapturedProfileClients contexts, MsalSilentTokenProvider selectedTokens,
+    TelemetryRoutingDiagnostics? diagnostics = null) : IEnvironmentGeographyClient
 {
     public Task<string?> GetGeographyAsync(ResolvedEnvironmentTarget target, CancellationToken cancellationToken)
     {
         var context = contexts.For(target);
-        if (context is null) return Task.FromResult<string?>(null);
-        return new PowerPlatformApiEnvironmentGeographyClient(http, new CapturedSelectedTokens(selectedTokens, context.Profile),
-            context.Target, new()).GetGeographyAsync(target, cancellationToken);
+        if (context is null)
+        {
+            diagnostics?.Write("lookup-skipped", "reason=captured-geography-context-unavailable");
+            return Task.FromResult<string?>(null);
+        }
+        diagnostics?.Write("captured-geography-context-resolved");
+        return new PowerPlatformApiEnvironmentGeographyClient(http, new CapturedSelectedTokens(selectedTokens, context.Profile, diagnostics),
+            context.Target, new(), diagnostics: diagnostics).GetGeographyAsync(target, cancellationToken);
     }
 
-    private sealed class CapturedSelectedTokens(MsalSilentTokenProvider tokens, AuthProfile profile) : ISelectedAccountTokenProvider
+    private sealed class CapturedSelectedTokens(MsalSilentTokenProvider tokens, AuthProfile profile,
+        TelemetryRoutingDiagnostics? diagnostics) : ISelectedAccountTokenProvider
     {
         public Task<TokenAcquisitionResult?> TryAcquireTokenSilentAsync(string resource, string targetTenantId, CancellationToken cancellationToken) =>
-            tokens.TryAcquireForProfileAsync(profile, resource, targetTenantId, cancellationToken);
+            tokens.TryAcquireForProfileAsync(profile, resource, targetTenantId, cancellationToken, diagnostics);
     }
 }
 
 internal sealed class CapturedProfileTelemetryDestinationResolver(
     CapturedProfileClients contexts, IEnvironmentGeographyClient geography,
     PowerPlatformApiTargetConfig bootstrapTarget, bool targetKnown,
-    CommandTelemetryTenantObserver? tenantObserver) : ITelemetryDestinationResolver
+    CommandTelemetryTenantObserver? tenantObserver,
+    TelemetryRoutingDiagnostics? diagnostics = null,
+    FileTelemetryCollectorCache? collectorCache = null) : ITelemetryDestinationResolver
 {
     public bool ActivationAvailable => targetKnown &&
         new TelemetryDestinationResolver(contexts.Current?.Target ?? bootstrapTarget, geography).ActivationAvailable;
 
-    public ValueTask<TelemetryDestination?> ResolveAsync(TelemetryEnvironmentTarget target, CancellationToken cancellationToken)
+    public async ValueTask<TelemetryDestination?> ResolveAsync(TelemetryEnvironmentTarget target, CancellationToken cancellationToken)
     {
-        if (!targetKnown) return ValueTask.FromResult<TelemetryDestination?>(null);
-        var captured = target.Environments.Select(contexts.For).ToArray();
-        if (captured.Any(context => context is null)
-            || captured.Select(context => (context!.Profile.ProfileId, context.Profile.Revision, context.Target)).Distinct().Skip(1).Any())
-            return ValueTask.FromResult<TelemetryDestination?>(null);
-        var resourceTarget = captured.FirstOrDefault()?.Target ?? contexts.Current?.Target ?? bootstrapTarget;
-        return new TelemetryDestinationResolver(resourceTarget, geography,
-            TelemetryIngestionConfiguration.ProductionKey, TelemetryIngestionConfiguration.NonProductionKey, tenantObserver)
-            .ResolveAsync(target, cancellationToken);
+        try
+        {
+            if (!targetKnown)
+            {
+                diagnostics?.Write("routing-skipped", "reason=target-unclassified collector=none");
+                return null;
+            }
+            var captured = target.Environments.Select(contexts.For).ToArray();
+            if (captured.Any(context => context is null))
+            {
+                diagnostics?.Write("routing-skipped", "reason=captured-context-unavailable-or-ambiguous collector=none");
+                return null;
+            }
+            if (captured.Select(context => (context!.Profile.ProfileId, context.Profile.Revision, context.Target)).Distinct().Skip(1).Any())
+            {
+                diagnostics?.Write("routing-skipped", "reason=captured-context-conflict collector=none");
+                return null;
+            }
+            diagnostics?.Write("captured-context-resolved");
+            var resourceTarget = captured.FirstOrDefault()?.Target ?? contexts.Current?.Target ?? bootstrapTarget;
+            return await new TelemetryDestinationResolver(resourceTarget, geography,
+                TelemetryIngestionConfiguration.ProductionKey, TelemetryIngestionConfiguration.NonProductionKey, tenantObserver,
+                diagnostics: diagnostics, collectorCache: collectorCache).ResolveAsync(target, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            diagnostics?.Complete();
+        }
     }
 }

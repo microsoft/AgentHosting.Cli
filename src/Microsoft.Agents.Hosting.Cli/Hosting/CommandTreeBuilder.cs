@@ -334,7 +334,8 @@ public sealed class CommandTreeBuilder
         // Parsing has accepted this canonical leaf. Normal product resolution observes any target
         // later; an invocation with no observation keeps the conservative route.
         telemetry.RecordAttempt(
-            CommandTelemetryPath.FromMetadata(path.Split(' ')));
+            CommandTelemetryPath.FromMetadata(path.Split(' ')),
+            targetsAgent: metadata.TargetsAgent);
 
         try
         {

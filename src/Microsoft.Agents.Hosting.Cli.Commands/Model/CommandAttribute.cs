@@ -28,6 +28,9 @@ public sealed class CommandAttribute : Attribute
 
     /// <summary>Keeps the progress spinner hidden while the command runs.</summary>
     public bool SuppressProgress { get; init; }
+
+    /// <summary>Whether the command directly addresses an agent.</summary>
+    public bool TargetsAgent { get; init; }
 }
 
 /// <summary>Marks a class as a command group — a node that owns children rather than an action.</summary>

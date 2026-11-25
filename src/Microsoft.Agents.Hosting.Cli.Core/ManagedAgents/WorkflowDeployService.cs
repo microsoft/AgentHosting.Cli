@@ -45,6 +45,11 @@ public sealed class WorkflowDeployService
     public async Task<ManagedAgentDeployResult> DeployAsync(ManagedAgentDeployRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        _resolver.ObserveDeployment(new()
+        {
+            PublishRequested = request.Publish,
+            PublishStatus = request.Publish ? DeploymentPublishStatus.NotReached : DeploymentPublishStatus.NotRequested,
+        });
 
         if (!string.IsNullOrWhiteSpace(request.SchemaName))
         {
@@ -52,6 +57,7 @@ public sealed class WorkflowDeployService
         }
 
         var (target, deployment, environment) = await _resolver.ResolveDeploymentAsync(request.Project, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName, "msagent agent deploy", cancellationToken, requireExplicitDeployment: true).ConfigureAwait(false);
+        _resolver.ObserveDeployment(new() { DeploymentType = deployment.DeploymentType });
         environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
         var deployedBy = await _principals.ResolveAsync(environment, cancellationToken).ConfigureAwait(false);
 
@@ -63,13 +69,33 @@ public sealed class WorkflowDeployService
         _workflowStates.Invalidate(target.WorkspaceRoot, environment.EnvironmentId);
 
         var upserted = await _workflows.UpsertAsync(environment, target.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
+        _resolver.ObserveDeployment(new()
+        {
+            ResourceAction = upserted.Created ? DeploymentResourceAction.Created
+                : upserted.Replaced ? DeploymentResourceAction.Replaced : DeploymentResourceAction.Updated,
+            WorkflowState = TelemetryWorkflowState(upserted.Workflow.State),
+        });
         var activating = upserted.ActivationRequested || request.Publish;
+        if (activating)
+        {
+            _resolver.ObserveDeployment(new() { PublishStatus = DeploymentPublishStatus.Unknown });
+        }
         var activation = activating
             ? await _activation.RunAsync(environment, target.WorkspaceRoot, cancellationToken).ConfigureAwait(false)
             : new WorkflowActivationOutcome();
 
         var running = activating && activation.Activated.Contains(upserted.Workflow.Name, StringComparer.OrdinalIgnoreCase);
         var observedState = running ? WorkflowStateProjection.Activated : upserted.Workflow.State;
+        var confirmedRunning = activating && activation.ConfirmedActivated.Contains(upserted.Workflow.Name, StringComparer.OrdinalIgnoreCase);
+        _resolver.ObserveDeployment(new()
+        {
+            PublishStatus = !activating ? DeploymentPublishStatus.NotRequested
+                : confirmedRunning ? DeploymentPublishStatus.Succeeded
+                : activation.Failed ? DeploymentPublishStatus.Failed
+                : activation.Reported.Contains(upserted.Workflow.Name, StringComparer.OrdinalIgnoreCase) && activation.UnboundConnectionCount > 0
+                    ? DeploymentPublishStatus.Blocked : DeploymentPublishStatus.Unknown,
+            WorkflowState = TelemetryWorkflowState(confirmedRunning ? WorkflowStateProjection.Activated : observedState),
+        });
         var reportedByActivation = activation.Reported.Count > 0;
 
         var deployedOn = _clock.UtcNow;
@@ -106,6 +132,15 @@ public sealed class WorkflowDeployService
             Warnings = [.. DeclaredConnectionReferenceWarnings(upserted.CreatedConnectionReferences), .. PushWarnings(upserted, running), .. activation.Warnings, .. (reportedByActivation ? [] : UnboundConnectionReferenceWarnings(upserted))],
         };
     }
+
+    private static DeploymentWorkflowState? TelemetryWorkflowState(string? state) =>
+        WorkflowStateProjection.ToPortalLabel(state) switch
+        {
+            WorkflowStateProjection.Published => DeploymentWorkflowState.Published,
+            WorkflowStateProjection.Draft => DeploymentWorkflowState.Draft,
+            WorkflowStateProjection.Unknown => DeploymentWorkflowState.Unknown,
+            _ => null,
+        };
 
     private static IEnumerable<string> PushWarnings(WorkflowUpsertOutcome upserted, bool activatedByThisDeploy) =>
         upserted.Warning.Length == 0 || (upserted.DraftedForConnections && activatedByThisDeploy) ? [] : [upserted.Warning];

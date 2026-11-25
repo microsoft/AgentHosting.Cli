@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Agents.Hosting.Cli.Core.Errors;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Playground;
 
@@ -26,6 +27,19 @@ public sealed class PlaygroundLaunchException(
     Exception? innerException = null) : Exception(message, innerException)
 {
     public PlaygroundLaunchFailureKind Kind { get; } = kind;
+
+    /// <summary>The registered CLI error identifier for the launch failure.</summary>
+    public int ErrorCode => Kind switch
+    {
+        PlaygroundLaunchFailureKind.InvalidTool
+            or PlaygroundLaunchFailureKind.InvalidTarget
+            or PlaygroundLaunchFailureKind.InvalidClientId
+            or PlaygroundLaunchFailureKind.InvalidTenantId
+            or PlaygroundLaunchFailureKind.InvalidLaunchDirectory => ErrorCodes.Playground.InvalidLaunchConfiguration,
+        PlaygroundLaunchFailureKind.StartFailed => ErrorCodes.Playground.StartFailed,
+        PlaygroundLaunchFailureKind.CleanupFailed => ErrorCodes.Playground.CleanupFailed,
+        _ => throw new ArgumentOutOfRangeException(nameof(Kind)),
+    };
 
     public string Remediation { get; } = remediation;
 }

@@ -38,7 +38,8 @@ public sealed class TelemetryMetricContractTests
                     path,
                     CommandTelemetryOutcome.Success,
                     StartUtc.AddMinutes(1),
-                    TenantId)),
+                    TenantId,
+                    principalObjectId: PrincipalObjectId)),
             .. Serialize(
                 "00000000-0000-0000-0000-000000000003",
                 CommandTelemetryRecord.Attempt(
@@ -158,7 +159,7 @@ public sealed class TelemetryMetricContractTests
     }
 
     [Fact]
-    public void UnknownAndNonAttemptRowsOmitPrincipalFromBothLocations()
+    public void TenantOnlyAndUnknownRowsOmitPrincipalWhilePreservingKnownTenant()
     {
         CommandTelemetryPath path =
             CommandTelemetryPath.FromMetadata(["auth", "status"]);
@@ -180,6 +181,14 @@ public sealed class TelemetryMetricContractTests
         {
             Assert.False(Data(row).TryGetProperty("principalObjectId", out _));
             Assert.False(Dimensions(row).TryGetProperty("principalObjectId", out _));
+            if (Dimensions(row).TryGetProperty("tenantId", out JsonElement tenant))
+            {
+                Assert.Equal(tenant.GetString(), Data(row).GetProperty("tenantId").GetString());
+            }
+            else
+            {
+                Assert.False(Data(row).TryGetProperty("tenantId", out _));
+            }
         });
     }
 

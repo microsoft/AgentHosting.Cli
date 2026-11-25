@@ -56,7 +56,10 @@ public sealed class ManagedAgentDeleteService
         var workspaceDirectory = _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent);
         var resources = request.AllResources ? ListResources(workspaceDirectory, agent) : [];
         var workspace = workspaceDirectory is null ? null : await _workspaceLocator.FindAsync(workspaceDirectory, cancellationToken).ConfigureAwait(false);
-        var (environment, target) = await ResolveTargetAsync(agent, deployment, workspaceDirectory, workspace, _projectIdentities.FindSchemaName(agent, workspaceDirectory), cancellationToken).ConfigureAwait(false);
+        var schemaName = _projectIdentities.FindSchemaName(agent, workspaceDirectory);
+        _resolver.ObserveMcsAgentSchemaName(schemaName);
+        var (environment, target) = await ResolveTargetAsync(agent, deployment, workspaceDirectory, workspace, schemaName, cancellationToken).ConfigureAwait(false);
+        _resolver.ObserveMcsAgentTarget(target?.AgentId, environment?.EnvironmentId);
         var matchingDeployment = deployment ?? deployments.FirstOrDefault(candidate => string.Equals(ManagedAgentResolver.TargetEnvironmentId(agent, candidate), target?.EnvironmentId, StringComparison.OrdinalIgnoreCase));
         var existing = await FindResourcesAsync(resources, environment, cancellationToken).ConfigureAwait(false);
         var planned = new ManagedAgentDeleteResult

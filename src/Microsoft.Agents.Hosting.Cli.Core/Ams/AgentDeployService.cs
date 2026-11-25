@@ -3,6 +3,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 
@@ -16,12 +17,14 @@ public sealed class AgentDeployService
     private readonly EnvironmentSelectionService _environments;
     private readonly IAmsAgentReadTransport _agents;
     private readonly IAmsDeploymentTransport _deployments;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     public AgentDeployService(
         PowerPlatformApiTargetConfig target,
         EnvironmentSelectionService environments,
         IAmsAgentReadTransport agents,
-        IAmsDeploymentTransport deployments)
+        IAmsDeploymentTransport deployments,
+        IAddressedAgentObserver? agentObserver = null)
     {
         ArgumentNullException.ThrowIfNull(target);
         _controlPlaneEndpoint = PowerPlatformCloudMap.ForTarget(target)
@@ -29,6 +32,7 @@ public sealed class AgentDeployService
         _environments = environments ?? throw new ArgumentNullException(nameof(environments));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
+        _agentObserver = agentObserver;
     }
 
     public async Task<AgentDeployResult> DeployAsync(
@@ -74,6 +78,7 @@ public sealed class AgentDeployService
                 cancellationToken)
             .ConfigureAwait(false);
         AmsAgentResponseValidator.ValidateBoundCodeAgent(agent, homeEnvironment, agentId);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.CodeAgent);
 
         var deployment = await _deployments
             .CreateAsync(
@@ -159,6 +164,7 @@ public sealed class AgentDeployService
                     serviceRequestId: current.ServiceRequestId);
             }
 
+            AddressedAgentObservation.Observe(_agentObserver, AgentTypes.CodeAgent);
             cancellationToken.ThrowIfCancellationRequested();
             mutationAttempted = true;
             updated = await _deployments
