@@ -70,12 +70,14 @@ public sealed class BrokerPublicClientTests
     {
         using var directory = new TempDir();
         var debugOutput = new StringWriter();
-        using var provider = FakeClientProviders.Create(FakePlatformInfo.Linux(), directory.Path, debugOutput);
+        var cache = new EmptyLegacyCache();
+        using var provider = FakeClientProviders.Create(FakePlatformInfo.Linux(), directory.Path, debugOutput, legacyCache: cache);
         var first = await provider.GetClientAsync(useBroker: false, tenantId: null, CancellationToken.None);
         var second = await provider.GetClientAsync(useBroker: false, Guid.Parse("11111111-2222-3333-4444-555555555555"), CancellationToken.None);
 
         Assert.Empty(await first.GetAccountsAsync());
         Assert.Empty(await second.GetAccountsAsync());
+        Assert.Equal(2, cache.ReadCount);
 
         var text = debugOutput.ToString();
         Assert.Equal(1, text.Split("[MSAL] False MSAL ").Length - 1);
@@ -155,6 +157,32 @@ public sealed class BrokerPublicClientTests
         Assert.Same(
             await provider.GetClientAsync(useBroker: false, tenantId: null, CancellationToken.None),
             await provider.GetClientAsync(useBroker: false, tenantId: null, CancellationToken.None, listBrokerAccounts: true));
+    }
+
+    private sealed class EmptyLegacyCache : ILegacyMsalTokenCacheBackend
+    {
+        public int ReadCount { get; private set; }
+
+        public IDisposable AcquireLease(CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            return new Lease();
+        }
+
+        public Task<byte[]?> ReadAsync(CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            ReadCount++;
+            return Task.FromResult<byte[]?>(null);
+        }
+
+        public Task WriteAsync(ReadOnlyMemory<byte> value, CancellationToken ct) => throw new InvalidOperationException("Account listing must not write the cache.");
+        public Task ClearAsync(CancellationToken ct) => throw new InvalidOperationException("Account listing must not clear the cache.");
+
+        private sealed class Lease : IDisposable
+        {
+            public void Dispose() { }
+        }
     }
 
     private static Task<IPublicClientApplication> ClientAsync(string configDirectory, FakePlatformInfo platform, bool useBroker, TextWriter? debugOutput = null) =>
