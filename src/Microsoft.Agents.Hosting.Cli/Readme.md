@@ -310,8 +310,13 @@ first select that profile with `auth select`, then use `env select`.
 
 ## Telemetry
 
-The CLI sends usage telemetry (command names and outcomes, never argument values, paths,
-tokens, or other command content). To learn more, see the Privacy Statement below.
+The CLI sends usage telemetry, including command names, outcomes, and known tenant and
+eligible user-principal identifiers. Playground uses the same attribution rules.
+Allowlisted target metadata can include MCS agent schema names, MCS agent cloud IDs,
+standalone MCS workflow IDs, and environment IDs. These identifiers are not hashed;
+they may come from command arguments and can be recorded even when the command fails.
+Raw argument lists and other argument values, paths, tokens, prompts, and responses
+are not collected. To learn more, see the Privacy Statement below.
 
 To opt out, use either of the following:
 

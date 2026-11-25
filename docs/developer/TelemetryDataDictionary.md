@@ -65,6 +65,14 @@ outer payload. Names and capitalization are exact. The table and serialized keys
 are sorted alphabetically using ordinal comparison, including optional fields.
 There are 24 possible dimensions; not every event contains every dimension.
 
+MCS agent schema names, MCS agent cloud IDs, standalone MCS workflow IDs, and
+environment IDs are explicitly permitted target metadata. Their values are not
+hashed and may originate in command arguments. In particular, explicit
+live-test schema and environment values can be observed after format checks
+but before service confirmation, including on failed invocations. Character and
+length checks do not anonymize a value or prove the target exists. This does
+not permit collection of raw argument lists or unrelated argument values.
+
 | Dimension | JSON type | Presence | Meaning / values |
 |---|---|---|---|
 | `agentType` | string | Known agent-addressing attempts and outcomes | `MCSAgent`, `MCSWorkflow`, or `CodeAgent`, from normal selected records or validated typed operations |
@@ -72,7 +80,7 @@ There are 24 possible dimensions; not every event contains every dimension.
 | `cloud` | string | Always | `prod` / `test`; not Azure public/GCC/China or an environment business classification |
 | `deploymentType` | string | Resolved MCS deploy slot; outcome only | `dev`, `test`, `prod`; not environment business purpose |
 | `durationMs` | string | Outcomes with a successful duration measurement | Nonnegative elapsed milliseconds; ordinary outcomes use a monotonic clock, while playground uses its execution measurement |
-| `environmentId` | string | Attempts and outcomes addressing one normally resolved environment | Environment identifier, including environment-only and explicit/configured live targets; independent of tenant/principal presence |
+| `environmentId` | string | Attempts and outcomes addressing one environment | Normally resolved environment or format-validated explicit live target; independent of tenant/principal presence |
 | `errorCode` | string | Classified errors only | Numeric CLI error code formatted as a decimal string |
 | `exitClass` | string | Host records and non-cancelled outcomes | `success`, `usage`, `not-signed-in`, `failure` |
 | `hostCategory` | string | Host records only | `help`, `version`, `parser-rejection`, `group-usage` |
@@ -165,8 +173,10 @@ cross-product resource type.
 
 Existing Copilot schema naming rules bound and validate the identifier. No
 extra file, catalog, authentication, or network lookup is added. The raw schema
-is a permitted identifier, not authorization to send arbitrary agent IDs,
-display names, arguments, paths, prompts, responses, results, or free-form errors.
+is a permitted identifier, including when supplied as a format-validated explicit
+live-test argument. This is not authorization to send arbitrary agent IDs,
+display names, unrelated argument values, paths, prompts, responses, results,
+or free-form errors.
 
 ### MCS resource and environment IDs
 
@@ -184,7 +194,7 @@ emit source bot IDs in this target field.
 `mcsWorkflowId` identifies the addressed standalone workflow, including implicit
 project/deployment defaults and the source of a copy/clone. Parent-agent
 component workflows never populate it. `environmentId` reuses normal selected
-environment observations and explicitly resolved live targets; it is not
+environment observations and format-validated explicit live targets; it is not
 limited to agent-addressing commands. Generic enumeration is not selection.
 HostCase omits all three fields.
 

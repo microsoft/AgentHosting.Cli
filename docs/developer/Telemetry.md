@@ -61,9 +61,16 @@ Entra object ID or emitted identifier. Disabled, opted-out, policy-failed, and
 nested-suppressed invocations do not read profile attribution or inspect claims.
 
 Payloads never carry usernames, email addresses, home-account IDs, PUIDs, tokens,
-hardware IDs, persistent local-instance IDs, raw JWTs, arguments, paths, URLs,
-free-form errors, results, or account-cache data. There is no alternate identity
-mode or identity-selection environment variable.
+hardware IDs, persistent local-instance IDs, raw JWTs, paths, URLs, free-form
+errors, results, or account-cache data. Raw argument lists and arbitrary argument
+values are excluded, with explicit exceptions for the allowlisted MCS agent
+schema name, MCS agent cloud ID, standalone MCS workflow ID, and environment ID
+described in the [data dictionary](TelemetryDataDictionary.md#custom-dimensions).
+These identifiers are not hashed. Format-validated explicit live-test schema
+and environment arguments can be observed before service confirmation and remain
+on failed invocations; character and length checks do not anonymize the values
+or establish that the target exists. There is no alternate identity mode or
+identity-selection environment variable.
 
 The [identity field rules](TelemetryDataDictionary.md#identity) define when the
 validated tenant/principal pair appears on each event, including playground.

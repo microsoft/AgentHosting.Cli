@@ -174,12 +174,11 @@ command telemetry, not as a new human-output envelope; `--json` remains unsuppor
 Success and caller cancellation omit error codes, and npm/child exit statuses are not
 the five-digit CLI registry codes.
 
-Playground telemetry suppresses tenant and principal attribution. Its outcome details use
+When collection is enabled, playground attempts and outcomes use the same known-tenant
+and eligible user-principal attribution as other commands. Its outcome details use
 `playgroundInstallResult` (`not-needed`, `installed`, `declined`, or `failed`), validated
 `playgroundVersion` when available, and elapsed `durationMs`. Error-category dimensions
 are not emitted.
 
-The preview README recommends keeping the feature disabled or setting
-`AH_CLI_TELEMETRY_OPTOUT=1` until its identifier-minimization policy is reviewed.
 These command descriptions do not claim that live integration, accessibility, or cross-platform
 validation is complete.

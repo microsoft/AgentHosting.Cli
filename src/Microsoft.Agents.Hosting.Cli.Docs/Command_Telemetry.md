@@ -63,8 +63,16 @@ collection state. With `--json`, the ordinary success envelope includes:
 
 ## What command telemetry contains
 
-Normal leaf dispatch can record an attempt and an outcome. Telemetry includes command identity
-and bounded outcome metadata, not raw command arguments, queries, error messages, or stack traces.
+Normal leaf dispatch can record an attempt and an outcome. Telemetry includes command identity,
+bounded outcome metadata, and known tenant and eligible user-principal identifiers, including
+for playground commands.
+
+Allowlisted target metadata can include MCS agent schema names, MCS agent cloud IDs,
+standalone MCS workflow IDs, and environment IDs. These identifiers are not hashed and may
+come from command arguments. Format-validated explicit live-test schema and environment
+values can be recorded before a service confirms the target, including on failed commands.
+This exception does not include raw argument lists or unrelated argument values, queries,
+paths, tokens, prompts, responses, error messages, or stack traces.
 
 Failure events can include `customDimensions.errorCode` as a string representation of the
 numeric error code. `customDimensions.isFailure` is a JSON boolean: true for error outcomes,
