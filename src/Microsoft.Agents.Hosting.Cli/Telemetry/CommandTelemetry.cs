@@ -1258,12 +1258,12 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
             }
 
             var current = _deployment;
-            if ((observation.DeploymentType is { } stage
-                    && stage is not (DeploymentStages.Dev or DeploymentStages.Test or DeploymentStages.Prod))
+            string? stage = null;
+            if ((observation.DeploymentType is { } value && !DeploymentStages.TryParse(value, out stage))
                 || (observation.ResourceAction is { } action && !Enum.IsDefined(action))
                 || (observation.PublishStatus is { } status && !Enum.IsDefined(status))
                 || (observation.WorkflowState is { } state && !Enum.IsDefined(state))
-                || (current?.DeploymentType is { } oldStage && observation.DeploymentType is { } newStage && oldStage != newStage)
+                || (current?.DeploymentType is { } oldStage && stage is not null && oldStage != stage)
                 || (current?.PublishRequested is { } oldRequest && observation.PublishRequested is { } newRequest && oldRequest != newRequest)
                 || (current?.ResourceAction is { } oldAction && observation.ResourceAction is { } newAction && oldAction != newAction))
             {
@@ -1275,7 +1275,7 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
 
             _deployment = new()
             {
-                DeploymentType = observation.DeploymentType ?? current?.DeploymentType,
+                DeploymentType = stage ?? current?.DeploymentType,
                 PublishRequested = observation.PublishRequested ?? current?.PublishRequested,
                 ResourceAction = observation.ResourceAction ?? current?.ResourceAction,
                 PublishStatus = observation.PublishStatus ?? current?.PublishStatus,

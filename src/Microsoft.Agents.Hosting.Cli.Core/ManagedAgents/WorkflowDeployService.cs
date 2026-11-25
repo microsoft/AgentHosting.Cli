@@ -57,11 +57,12 @@ public sealed class WorkflowDeployService
         }
 
         var (target, deployment, environment) = await _resolver.ResolveDeploymentAsync(request.Project, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName, "msagent agent deploy", cancellationToken, requireExplicitDeployment: true).ConfigureAwait(false);
-        _resolver.ObserveDeployment(new() { DeploymentType = deployment.DeploymentType });
+        var stage = deployment.RequireStage();
+        _resolver.ObserveDeployment(new() { DeploymentType = stage });
         environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
         var deployedBy = await _principals.ResolveAsync(environment, cancellationToken).ConfigureAwait(false);
 
-        if (!request.Overwrite && deployment.DeploymentType == DeploymentStages.Dev)
+        if (!request.Overwrite && stage == DeploymentStages.Dev)
         {
             await _workflows.RequireNoUnpulledChangesAsync(environment, target.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
         }

@@ -267,6 +267,24 @@ public sealed class DeploymentTelemetryTests
         Assert.Equal(id.ToString(), dimensions.GetProperty("mcsWorkflowId").GetString());
     }
 
+    [Fact]
+    public async Task EquivalentStageObservationsPreserveDeployFactsAndEmitCanonicalStage()
+    {
+        var transport = new CapturingTransport();
+        await using var session = Session(transport);
+        session.RecordAttempt(CommandTelemetryPath.FromMetadata(["agent", "deploy"]), targetsAgent: true);
+        session.ObserveAgentType(AgentTypes.McsAgent);
+        session.ObserveDeployment(new() { DeploymentType = " Test ", PublishRequested = false });
+        session.ObserveDeployment(new() { DeploymentType = "TEST", ResourceAction = DeploymentResourceAction.Updated });
+        session.RecordOutcome(CommandTelemetryOutcome.Success);
+        await session.DisposeAsync();
+
+        var dimensions = Outcome(transport);
+        Assert.Equal("test", dimensions.GetProperty("deploymentType").GetString());
+        Assert.False(dimensions.GetProperty("publishRequested").GetBoolean());
+        Assert.Equal("updated", dimensions.GetProperty("resourceAction").GetString());
+    }
+
     [Theory]
     [InlineData("stage")]
     [InlineData("request")]

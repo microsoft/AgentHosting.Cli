@@ -86,7 +86,8 @@ public sealed class ManagedAgentDeployService
         var projectDirectory = _resolver.ResolveProjectDirectory(request.Project);
         var (owner, deployment) = _resolver.ResolveAgentDeployment(projectDirectory, request.AgentId, request.AgentName, request.DeploymentId, request.DeploymentName, requireExplicitDeployment: true);
         var agent = ManagedAgentResolver.RequireMcsAgent(owner, "msagent agent deploy");
-        _resolver.ObserveDeployment(new() { DeploymentType = deployment.DeploymentType });
+        var stage = deployment.RequireStage();
+        _resolver.ObserveDeployment(new() { DeploymentType = stage });
         var target = await _environmentResolver.ResolveAsync(ManagedAgentResolver.TargetEnvironmentId(agent, deployment), cancellationToken).ConfigureAwait(false);
         target = await _principals.BindUserAsync(target, cancellationToken).ConfigureAwait(false);
         var deployedBy = await _principals.ResolveAsync(target, cancellationToken).ConfigureAwait(false);
@@ -172,7 +173,7 @@ public sealed class ManagedAgentDeployService
         }
 
         _progress.Report("Pushing changes");
-        var pushed = await PushAsync(projectDirectory, workspaceDirectory, deployment.DeploymentType, request.Overwrite || targetAgentCreated, request.Overwrite, target, schemaName, DescribeTarget(action, targetAgentCreated), cancellationToken).ConfigureAwait(false);
+        var pushed = await PushAsync(projectDirectory, workspaceDirectory, stage, request.Overwrite || targetAgentCreated, request.Overwrite, target, schemaName, DescribeTarget(action, targetAgentCreated), cancellationToken).ConfigureAwait(false);
         _resolver.ObserveDeployment(new()
         {
             ResourceAction = targetAgentCreated ? DeploymentResourceAction.Created

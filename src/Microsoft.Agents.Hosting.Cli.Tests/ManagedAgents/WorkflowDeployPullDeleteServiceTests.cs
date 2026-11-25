@@ -349,10 +349,13 @@ public sealed class WorkflowDeployServiceTests : IDisposable
         Assert.Equal([$"unpulled:{workflowId}", $"upsert:{workflowId}"], _store.Calls);
     }
 
-    [Fact]
-    public async Task ADevDeployIsRefusedBeforeAnythingChangesWhenTheEnvironmentHoldsUnpulledChanges()
+    [Theory]
+    [InlineData(DeploymentStages.Dev)]
+    [InlineData(" Dev ")]
+    public async Task ADevDeployIsRefusedBeforeAnythingChangesWhenTheEnvironmentHoldsUnpulledChanges(string stage)
     {
-        var workflowId = Register();
+        var workflowId = Register(withDeployment: false);
+        _config.Add(_workspace.Root, WorkflowFixtures.Deployment(deploymentType: stage));
         _store.UnpulledChanges.Add(workflowId);
         States().Write(_workspace.Root, "env-1", new Dictionary<string, int> { ["cloud-only"] = WorkflowStateCache.Activated });
         var configuration = File.ReadAllBytes(_workspace.ConfigPath);
