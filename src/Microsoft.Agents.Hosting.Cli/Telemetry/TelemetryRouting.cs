@@ -134,6 +134,7 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
     private readonly TimeSpan _metadataTimeout;
     private readonly TelemetryRoutingDiagnostics? _diagnostics;
     private readonly FileTelemetryCollectorCache? _collectorCache;
+    private readonly TimeProvider _timeProvider;
 
     internal TelemetryDestinationResolver(
         PowerPlatformApiTargetConfig target,
@@ -166,7 +167,8 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
         CommandTelemetryTenantObserver? tenantObserver = null,
         TimeSpan? metadataTimeout = null,
         TelemetryRoutingDiagnostics? diagnostics = null,
-        FileTelemetryCollectorCache? collectorCache = null)
+        FileTelemetryCollectorCache? collectorCache = null,
+        TimeProvider? timeProvider = null)
     {
         _target = target ?? throw new ArgumentNullException(nameof(target));
         _geographyClient = geographyClient;
@@ -176,6 +178,7 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
         _metadataTimeout = metadataTimeout ?? DefaultMetadataTimeout;
         _diagnostics = diagnostics;
         _collectorCache = collectorCache;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         if (_metadataTimeout <= TimeSpan.Zero
             || _metadataTimeout > MaximumMetadataTimeout)
         {
@@ -310,9 +313,9 @@ internal sealed class TelemetryDestinationResolver : ITelemetryDestinationResolv
     {
         _diagnostics?.Write("lookup-start", FormattableString.Invariant(
             $"budgetMs={(long)_metadataTimeout.TotalMilliseconds}"));
+        using var deadline = new CancellationTokenSource(_metadataTimeout, _timeProvider);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken);
-        budget.CancelAfter(_metadataTimeout);
+            cancellationToken, deadline.Token);
         CancellationToken budgetToken = budget.Token;
         Task<TelemetryLocation> lookup = Task.Run(
             async () =>

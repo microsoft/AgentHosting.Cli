@@ -83,22 +83,29 @@ public sealed class TelemetryGeographyDiagnosticsTests
     [InlineData(EnvironmentGeographyStage.RequestStarted)]
     public async Task DeadlineReportsPendingStageAndLateDiagnosticsAreClosed(EnvironmentGeographyStage pendingStage)
     {
+        var stageReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var time = new ManualTimeProvider();
         var output = new StringWriter();
         var diagnostics = new TelemetryRoutingDiagnostics(output);
         var client = new GeographyClient(async _ =>
         {
             diagnostics.Report(pendingStage);
+            stageReached.SetResult();
             await release.Task;
             diagnostics.Report(EnvironmentGeographyStage.GeographyRead);
             delivered.SetResult();
             return "europe";
         });
-        var resolver = Resolver(client, diagnostics, TimeSpan.FromMilliseconds(40));
+        var resolver = Resolver(client, diagnostics, timeProvider: time);
         try
         {
-            var destination = await resolver.ResolveAsync(TelemetryEnvironmentTarget.Resolved([Target]), default);
+            var resolving = resolver.ResolveAsync(TelemetryEnvironmentTarget.Resolved([Target]), default).AsTask();
+            await stageReached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(resolving.IsCompleted);
+            time.Advance(TelemetryDestinationResolver.DefaultMetadataTimeout);
+            var destination = await resolving.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal(TelemetryLocation.Europe, destination!.Location);
             Assert.Contains("stage=lookup-deadline pendingStage=" + pendingStage, output.ToString());
             string completed = output.ToString();
@@ -214,9 +221,9 @@ public sealed class TelemetryGeographyDiagnosticsTests
     }
 
     private static TelemetryDestinationResolver Resolver(IEnvironmentGeographyClient client,
-        TelemetryRoutingDiagnostics diagnostics, TimeSpan? timeout = null) =>
+        TelemetryRoutingDiagnostics diagnostics, TimeProvider? timeProvider = null) =>
         new(PowerPlatformApiTargetConfig.Public, client, ApiKey, ApiKey,
-            metadataTimeout: timeout ?? TelemetryDestinationResolver.DefaultMetadataTimeout, diagnostics: diagnostics);
+            diagnostics: diagnostics, timeProvider: timeProvider);
 
     private static TokenAcquisitionResult Token(string? tenant = null) => new()
     {
