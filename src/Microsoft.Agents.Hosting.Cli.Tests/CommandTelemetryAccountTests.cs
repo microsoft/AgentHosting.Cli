@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Security.Claims;
 using System.Text.Json;
@@ -874,7 +873,7 @@ public sealed class CommandTelemetryAccountTests
     }
 
     [Fact]
-    public async Task DisabledSuppressedFailedAndSlowProfileReadsNeverBlockUsage()
+    public async Task DisabledSuppressedAndFailedProfileReadsPreserveUsage()
     {
         var disabledSource = new ThrowingProfileSource();
         await using (CommandTelemetrySession disabled =
@@ -914,29 +913,45 @@ public sealed class CommandTelemetryAccountTests
             Parse(Assert.IsType<string>(failedTransport.Payload))
                 .Select(item =>
                     Data(item).GetProperty("event_Name").GetString()));
+    }
 
+    [Fact]
+    public async Task SlowProfileReadDeadlinePreservesUsageWithoutWaitingForRead()
+    {
         using var slowSource = new SlowProfileSource();
         var slowTransport = new CapturingTransport();
-        var stopwatch = Stopwatch.StartNew();
-        CommandTelemetrySession slow = await Factory(
+        Task<CommandTelemetrySession> creation = Factory(
             slowSource,
             new CommandTelemetryTenantObserver(),
             slowTransport,
-            policyTimeout: TimeSpan.FromMilliseconds(50))
-            .CreateAsync(false, default);
-        stopwatch.Stop();
-        Assert.True(
-            stopwatch.Elapsed < TimeSpan.FromSeconds(1),
-            $"Profile read exceeded startup bound: {stopwatch.Elapsed}.");
-        slowSource.Release();
-        slow.RecordAttempt(Path());
-        slow.RecordOutcome(CommandTelemetryOutcome.Success);
-        await slow.DisposeAsync();
-        Assert.Equal(
-            ["CommandAttempt", "CommandOutcome"],
-            Parse(Assert.IsType<string>(slowTransport.Payload))
-                .Select(item =>
-                    Data(item).GetProperty("event_Name").GetString()));
+            policyTimeout: TimeSpan.FromSeconds(2))
+            .CreateAsync(false, default).AsTask();
+
+        try
+        {
+            await slowSource.Started.WaitAsync(TelemetryTestBudgets.Policy);
+            await using CommandTelemetrySession slow =
+                await creation.WaitAsync(TelemetryTestBudgets.Policy);
+            Assert.True(slowSource.Token.IsCancellationRequested);
+            Assert.False(slowSource.Returned.IsCompleted);
+            slow.RecordAttempt(Path());
+            slow.RecordOutcome(CommandTelemetryOutcome.Success);
+            await slow.DisposeAsync();
+            Assert.Equal(
+                ["CommandAttempt", "CommandOutcome"],
+                Parse(Assert.IsType<string>(slowTransport.Payload))
+                    .Select(item =>
+                        Data(item).GetProperty("event_Name").GetString()));
+        }
+        finally
+        {
+            slowSource.Release();
+            await creation.WaitAsync(TelemetryTestBudgets.Policy);
+            if (slowSource.Started.IsCompleted)
+            {
+                await slowSource.Returned.WaitAsync(TelemetryTestBudgets.Policy);
+            }
+        }
     }
 
     [Fact]
@@ -1186,12 +1201,31 @@ public sealed class CommandTelemetryAccountTests
         IDisposable
     {
         private readonly ManualResetEventSlim _release = new();
+        private readonly TaskCompletionSource _started =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _returned =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Started => _started.Task;
+
+        public Task Returned => _returned.Task;
+
+        public CancellationToken Token { get; private set; }
 
         public ValueTask<CommandTelemetryProfileContext?> GetSelectedAsync(
             CancellationToken cancellationToken)
         {
-            _release.Wait(CancellationToken.None);
-            return ValueTask.FromResult<CommandTelemetryProfileContext?>(null);
+            Token = cancellationToken;
+            _started.TrySetResult();
+            try
+            {
+                _release.Wait(CancellationToken.None);
+                return ValueTask.FromResult<CommandTelemetryProfileContext?>(null);
+            }
+            finally
+            {
+                _returned.TrySetResult();
+            }
         }
 
         public void Release() => _release.Set();
