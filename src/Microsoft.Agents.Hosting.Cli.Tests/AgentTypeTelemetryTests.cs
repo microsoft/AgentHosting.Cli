@@ -4,6 +4,7 @@ using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Copilot;
 using Microsoft.Agents.Hosting.Cli.Core.Evaluations;
+using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Agents.Hosting.Cli.Commands.Groups;
@@ -12,6 +13,7 @@ using Microsoft.Agents.Hosting.Cli.Hosting;
 using Microsoft.Agents.Hosting.Cli.Telemetry;
 using Microsoft.Agents.Hosting.Cli.Tests.Copilot;
 using Microsoft.Agents.Hosting.Cli.Tests.ManagedAgents;
+using Microsoft.Agents.Hosting.Cli.Tests.Ams;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -134,7 +136,75 @@ public sealed class AgentTypeTelemetryTests
     }
 
     [Theory]
+    [InlineData("show", "success")]
+    [InlineData("update", "success")]
+    [InlineData("delete", "success")]
+    [InlineData("show", "wrong-type")]
+    [InlineData("show", "wrong-tenant")]
+    [InlineData("show", "after-read-failure")]
+    [InlineData("list", "success")]
+    public async Task ExplicitAmsOperationsObserveOnlyValidatedAgentTargets(string verb, string mode)
+    {
+        var agent = AmsBotServiceFixtures.CodeAgent(agentType: mode == "wrong-type" ? "CopilotStudio" : AgentTypes.CodeAgent) with
+        {
+            TenantId = mode == "wrong-tenant" ? EnvironmentFixtures.FabrikamTenant : EnvironmentFixtures.ContosoTenant,
+        };
+        var agents = new FakeAmsAgentTransport { Agents = [agent] };
+        var deployments = new FakeAmsDeploymentTransport
+        {
+            ListFailure = mode == "after-read-failure" ? new HttpRequestException("Synthetic failure after validated read.") : null,
+        };
+        var accessor = new CommandTelemetrySessionAccessor();
+        var services = new ServiceCollection();
+        services.AddSingleton(accessor);
+        services.AddSingleton<IAddressedAgentObserver, CommandTelemetryAgentObserver>();
+        services.AddSingleton(AmsBotServiceFixtures.Resolver(agents, deployments));
+        services.AddSingleton<IAmsAgentReadTransport>(agents);
+        services.AddSingleton<IAmsAgentTransport>(agents);
+        services.AddSingleton<IConfirmationPrompt>(new ScriptedConfirmationPrompt());
+        services.AddSingleton<AmsAgentService>();
+        services.AddSingleton<ICommandHandler<AgentAmsShowRequest, AgentAmsShowResult>>(sp => sp.GetRequiredService<AmsAgentService>());
+        services.AddSingleton<ICommandHandler<AgentAmsUpdateRequest, AgentAmsUpdateResult>>(sp => sp.GetRequiredService<AmsAgentService>());
+        services.AddSingleton<ICommandHandler<AgentAmsDeleteRequest, AgentAmsDeleteResult>>(sp => sp.GetRequiredService<AmsAgentService>());
+        services.AddSingleton<ICommandHandler<AgentAmsListRequest, AgentAmsListResult>>(sp => sp.GetRequiredService<AmsAgentService>());
+        using var provider = services.BuildServiceProvider();
+        var transport = new CapturingTransport();
+        var cli = new AgentHostCli(new FakeOperations(), Factory(transport),
+            services: provider, featureFlags: TestFeatureFlags.Everything, telemetryAccessor: accessor);
+        string[] args =
+        [
+            "agent", verb, "--environment-id", AmsBotServiceFixtures.HomeEnvironment, "--json",
+            .. verb == "list" ? new[] { "--agent-type", AgentTypes.CodeAgent } : ["--agent-id", agent.AgentId],
+            .. verb == "update" ? new[] { "--new-name", "Private renamed agent" } : Array.Empty<string>(),
+        ];
+
+        int exitCode = await cli.InvokeAsync(args, TextWriter.Null, TextWriter.Null, color: false);
+
+        Assert.Equal(mode == "success", exitCode == 0);
+        Assert.Contains(verb == "list" ? "list" : "get", agents.Calls);
+        bool expectedType = verb != "list" && mode is not ("wrong-type" or "wrong-tenant");
+        string payload = Assert.IsType<string>(transport.Payload);
+        var events = Parse(payload);
+        Assert.Equal(2, events.Length);
+        Assert.All(events, item =>
+        {
+            var dimensions = Dimensions(item);
+            Assert.Equal(expectedType, dimensions.TryGetProperty("agentType", out var type));
+            if (expectedType)
+            {
+                Assert.Equal(AgentTypes.CodeAgent, type.GetString());
+            }
+            Assert.False(dimensions.TryGetProperty("mcsAgentSchemaName", out _));
+            Assert.False(dimensions.TryGetProperty("mcsAgentId", out _));
+            Assert.False(dimensions.TryGetProperty("mcsWorkflowId", out _));
+        });
+        Assert.DoesNotContain(agent.AgentId, payload, StringComparison.Ordinal);
+        Assert.DoesNotContain("Private renamed agent", payload, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("agent create", true)]
+    [InlineData("agent update", true)]
     [InlineData("agent pull", true)]
     [InlineData("agent deploy", true)]
     [InlineData("agent copy", true)]

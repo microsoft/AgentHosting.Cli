@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
@@ -16,14 +17,22 @@ public sealed class AmsAgentService :
     private readonly IAmsAgentReadTransport _agentReads;
     private readonly IAmsAgentTransport _agents;
     private readonly IConfirmationPrompt _confirmations;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the service over the AMS agent transports and the prompt that confirms an agent delete.</summary>
     public AmsAgentService(AmsAddressResolver addresses, IAmsAgentReadTransport agentReads, IAmsAgentTransport agents, IConfirmationPrompt confirmations)
+        : this(addresses, agentReads, agents, confirmations, agentObserver: null)
+    {
+    }
+
+    /// <summary>Creates the service with an optional observer for validated agent targets.</summary>
+    public AmsAgentService(AmsAddressResolver addresses, IAmsAgentReadTransport agentReads, IAmsAgentTransport agents, IConfirmationPrompt confirmations, IAddressedAgentObserver? agentObserver)
     {
         _addresses = addresses ?? throw new ArgumentNullException(nameof(addresses));
         _agentReads = agentReads ?? throw new ArgumentNullException(nameof(agentReads));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _confirmations = confirmations ?? throw new ArgumentNullException(nameof(confirmations));
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Lists the code agents of the home environment.</summary>
@@ -113,6 +122,7 @@ public sealed class AmsAgentService :
     {
         var definition = await _agentReads.GetAsync(agent.OnDataPlane, cancellationToken).ConfigureAwait(false);
         AmsAgentResponseValidator.ValidateCodeAgent(definition, agent.Home.Environment, agent.AgentId);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.CodeAgent);
         return definition;
     }
 

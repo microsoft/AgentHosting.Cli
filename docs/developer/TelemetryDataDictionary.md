@@ -137,6 +137,7 @@ dispatch fallback.
 | Situation | Emission |
 |---|---|
 | Explicit agent name/ID, schema, or clone target | Emit when the normal operation establishes the type |
+| AMS `agent show`, `agent update`, or `agent delete` | Emit `CodeAgent` after the normal agent read validates the selected identity and type |
 | Implicit project/deployment target | Emit when normal resolution selects the addressed agent |
 | Agent-scoped evaluations or deployment resources | Emit when the owning agent is known, including non-project evaluation catalog resolution |
 | `test ask` or `test playground` | Emit when the explicit or configured target type is established |
