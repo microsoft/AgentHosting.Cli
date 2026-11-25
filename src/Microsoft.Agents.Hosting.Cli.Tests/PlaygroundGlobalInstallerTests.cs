@@ -9,7 +9,7 @@ public sealed class PlaygroundGlobalInstallerTests
     public async Task InstallAsync_DetectsNpmFirst_UsesExactGlobalInstallArguments_AndReprobes()
     {
         var npm = Tool("10.9.2", "/usr/bin/npm");
-        var installed = Tool("0.2.29", "/usr/bin/agentsplayground");
+        var installed = Tool("0.2.30", "/usr/bin/agentsplayground");
         var locator = new RecordingLocator
         {
             NpmResult = Discovery(npm),
@@ -397,7 +397,7 @@ public sealed class PlaygroundGlobalInstallerTests
             Discovery(Tool("10.9.2", "/usr/bin/npm"));
 
         public PlaygroundToolDiscoveryResult LocateResult { get; init; } =
-            Discovery(Tool("0.2.29", "/usr/bin/agentsplayground"));
+            Discovery(Tool("0.2.30", "/usr/bin/agentsplayground"));
 
         public PlaygroundToolDiscoveryResult NodeResult { get; init; } =
             Discovery(Tool("22.17.1", "/usr/bin/node"));
