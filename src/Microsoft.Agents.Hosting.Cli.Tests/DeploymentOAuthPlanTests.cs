@@ -83,6 +83,8 @@ public sealed class DeploymentOAuthPlanTests
         var ex = Assert.Throws<UsageException>(() =>
             DeploymentOAuthPlan.ValidateCreate(Create(provider: "new-cloud-provider")));
         Assert.Contains("--provider-name", ex.Message);
+        Assert.Contains("'Aadv2'", ex.Message);
+        Assert.DoesNotContain("new-cloud-provider", ex.Message);
     }
 
     [Fact]
@@ -139,9 +141,10 @@ public sealed class DeploymentOAuthPlanTests
     {
         var ex = Assert.Throws<UsageException>(() =>
             DeploymentOAuthPlan.ValidateCreate(Create(
-                parameters: ["TenantId=one", "tenantid=two"])));
-        Assert.Contains("duplicate key at position 2", ex.Message);
-        Assert.DoesNotContain("TenantId", ex.Message);
+                parameters: ["TenantId=SYNTHETIC_FIRST_VALUE", "tenantid=SYNTHETIC_SECOND_VALUE"])));
+        Assert.Contains("duplicate key 'tenantid' at position 2", ex.Message);
+        Assert.DoesNotContain("SYNTHETIC_FIRST_VALUE", ex.Message);
+        Assert.DoesNotContain("SYNTHETIC_SECOND_VALUE", ex.Message);
     }
 
     [Fact]
@@ -192,6 +195,35 @@ public sealed class DeploymentOAuthPlanTests
 
         Assert.Equal(string.Empty, request.Request.Scopes);
         Assert.Equal(string.Empty, request.ParsedParameters["TokenExchangeUrl"]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Validate_CommonOAuthAssignment_ShowsUnquotedSyntaxWithoutValue(bool update)
+    {
+        const string value = "SYNTHETIC_SCOPE_VALUE";
+        var ex = Assert.Throws<UsageException>(() =>
+        {
+            if (update)
+            {
+                DeploymentOAuthPlan.ValidateUpdate(
+                    new DeploymentOAuthUpdateRequest
+                    {
+                        DeploymentId = DeploymentId,
+                        ConnectionName = "aad-conn",
+                        Parameters = [$"Scopes={value}"],
+                    });
+            }
+            else
+            {
+                DeploymentOAuthPlan.ValidateCreate(Create(parameters: [$"Scopes={value}"]));
+            }
+        });
+
+        Assert.Contains("Use '--scopes' instead of --parameters Scopes=...", ex.Message);
+        Assert.DoesNotContain("'Scopes'=", ex.Message);
+        Assert.DoesNotContain(value, ex.Message);
     }
 
     [Fact]

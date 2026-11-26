@@ -241,6 +241,7 @@ public class CommandHostTests
         Assert.Equal(ExitCodes.Success, exitCode);
         Assert.Contains("msagent auth login [options]", stdout);
         Assert.DoesNotContain("Microsoft.Agents.Hosting.Cli auth login", stdout);
+        Assert.DoesNotContain("Examples:", stdout);
         Assert.Empty(stderr);
     }
 

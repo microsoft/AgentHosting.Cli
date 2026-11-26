@@ -276,7 +276,7 @@ public static class DeploymentChannelCatalog
           new(DeploymentParameterType.String, "tenantId", "The tenant id associated with the channel site.", IsClearable: true),
           .. (isWebChat ? [] : new ChannelParameterDefinition[]
           {
-              new(DeploymentParameterType.Array, "trustedOrigins", "Comma-separated trusted origins or a JSON array of strings.", IsClearable: true),
+              new(DeploymentParameterType.Array, "trustedOrigins", "List of Trusted Origin URLs for this site.", IsClearable: true),
           }),
           ];
 

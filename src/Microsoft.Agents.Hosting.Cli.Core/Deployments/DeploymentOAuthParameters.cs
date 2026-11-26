@@ -75,6 +75,7 @@ internal static class DeploymentOAuthParameters
 
         return connection with
         {
+            ConnectionName = connection.ConnectionName[(connection.ConnectionName.LastIndexOf('/') + 1)..],
             Parameters = sanitized,
         };
     }

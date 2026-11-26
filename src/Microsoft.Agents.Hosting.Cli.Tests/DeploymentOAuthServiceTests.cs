@@ -127,8 +127,9 @@ public sealed class DeploymentOAuthServiceTests
         var port = new FakeOAuthPort { Providers = [] };
         var service = Service(store, port);
 
-        await Assert.ThrowsAsync<DeploymentException>(() =>
+        var error = await Assert.ThrowsAsync<DeploymentException>(() =>
             service.CreateAsync(CreateRequest(), CancellationToken.None));
+        Assert.Contains("'Aadv2'", error.Message);
     }
 
     [Fact]
@@ -219,7 +220,7 @@ public sealed class DeploymentOAuthServiceTests
         var ex = await Assert.ThrowsAsync<UsageException>(() =>
             service.CreateAsync(CreateRequest(clientId: null), CancellationToken.None));
 
-        Assert.Contains("--client-id", ex.Message);
+        Assert.Contains("'--client-id'", ex.Message);
         Assert.Empty(port.Upserts);
         Assert.Equal(0, port.GetCallCount);
     }
@@ -234,7 +235,10 @@ public sealed class DeploymentOAuthServiceTests
         var ex = await Assert.ThrowsAsync<UsageException>(() =>
             service.CreateAsync(CreateRequest(parameters: ["DoesNotExist=value"]), CancellationToken.None));
 
-        Assert.Contains("DoesNotExist", ex.Message);
+        Assert.Contains("--parameters DoesNotExist=...", ex.Message);
+        Assert.Contains("--provider-name Aadv2`", ex.Message);
+        Assert.DoesNotContain("--parameters 'DoesNotExist'", ex.Message);
+        Assert.DoesNotContain("--provider-name 'Aadv2'", ex.Message);
         Assert.Empty(port.Upserts);
         Assert.Equal(0, port.GetCallCount);
     }
@@ -254,7 +258,9 @@ public sealed class DeploymentOAuthServiceTests
                     parameters: ["UniqueIdentifier=uid-1"]),
                 CancellationToken.None));
 
-        Assert.Contains("--client-secret", ex.Message);
+        Assert.Contains("'--client-secret'", ex.Message);
+        Assert.Contains("--provider-name Aadv2WithFic`", ex.Message);
+        Assert.DoesNotContain("--provider-name 'Aadv2WithFic'", ex.Message);
         Assert.Empty(port.Upserts);
         Assert.Equal(0, port.GetCallCount);
     }
@@ -363,10 +369,11 @@ public sealed class DeploymentOAuthServiceTests
         var port = new FakeOAuthPort();
         var service = Service(store, port);
 
-        await Assert.ThrowsAsync<DeploymentException>(() =>
+        var error = await Assert.ThrowsAsync<DeploymentException>(() =>
             service.GetAsync(
                 new DeploymentOAuthShowRequest { DeploymentId = DeploymentId, ConnectionName = "aad-conn" },
                 CancellationToken.None));
+        Assert.Contains("'aad-conn'", error.Message);
     }
 
     [Fact]

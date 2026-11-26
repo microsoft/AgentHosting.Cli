@@ -293,7 +293,8 @@ in child environments only; recognized `AH_CLI_CONFIG_DIR` and
 
 Checks cover reflected auth help/aliases, removed switch/token/kind/url surfaces,
 shipped feature defaults, empty auth status/list/who JSON, telemetry opt-out,
-and early NI12007/exit 3 for disallowed interaction. Existing fake-host tests
+early NI12007/exit 3 for disallowed interaction, and JSON-file field validation
+without shell quoting dependencies. Existing fake-host tests
 prove those early gates precede native/cache/source acquisition; absence of
 native-cache artifacts is also checked in the installation's owned config.
 There is no real auth mutation or acquisition.

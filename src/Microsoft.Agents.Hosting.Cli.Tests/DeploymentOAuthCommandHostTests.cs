@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
+using Microsoft.Agents.Hosting.Cli.Commands.Common;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
@@ -47,11 +48,50 @@ public sealed class DeploymentOAuthCommandHostTests
     [InlineData("list-providers")]
     public void OAuthVerbHelp_IdentifiesCodeAgentOnlySurface(string verb)
     {
+        var operations = new FakeOperations();
         var (exitCode, stdout, _) =
-            Run(new FakeOperations(), "deployment", "oauth", verb, "--help");
+            Run(operations, "deployment", "oauth", verb, "--help");
 
         Assert.Equal(ExitCodes.Success, exitCode);
         Assert.Contains("CodeAgent only.", stdout);
+        Assert.Contains("Examples:", stdout);
+        Assert.Contains($"    msagent deployment oauth {verb}", stdout);
+        if (verb == "create")
+        {
+            Assert.Contains("--connection MyOAuth", stdout);
+            Assert.Contains("--client-id <app-id> --client-secret <secret>", stdout);
+        }
+        else if (verb is "update" or "show" or "delete")
+        {
+            Assert.Contains("--connection <connection-name>", stdout);
+            Assert.DoesNotContain("--connection MyOAuth", stdout);
+        }
+        Assert.Null(operations.LastCreateDeploymentOAuthRequest);
+        Assert.Null(operations.LastUpdateDeploymentOAuthRequest);
+        Assert.Null(operations.LastListDeploymentOAuthProvidersRequest);
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    public void OAuthMutationHelp_ShowsFileExamplesWithoutReadingInputOrEchoingCredentials(string verb)
+    {
+        var operations = new FakeOperations();
+        var (exitCode, stdout, stderr) = Run(operations,
+            "deployment", "oauth", verb, "--parameters", "@", "--client-secret", "SYNTHETIC_HELP_SECRET", "--help");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Contains("--parameters '@.\\parameters.json'", stdout);
+        if (verb == "update")
+        {
+            Assert.Contains("--parameters '@.\\parameters.json' TenantId=<tenant-id>", stdout);
+            Assert.DoesNotContain("TenantId=organizations", stdout);
+            Assert.DoesNotContain("TenantId=common", stdout);
+        }
+        Assert.DoesNotContain("SYNTHETIC_HELP_SECRET", stdout);
+        Assert.Null(operations.LastCreateDeploymentOAuthRequest);
+        Assert.Null(operations.LastUpdateDeploymentOAuthRequest);
     }
 
     [Fact]
@@ -100,6 +140,322 @@ public sealed class DeploymentOAuthCommandHostTests
         Assert.Equal(["TokenExchangeUrl=", "TenantId=organizations"], request.Parameters);
         Assert.Null(request.ClientId);
         Assert.Null(request.ClientSecret);
+    }
+
+    [Theory]
+    [InlineData("create", false)]
+    [InlineData("create", true)]
+    [InlineData("update", false)]
+    [InlineData("update", true)]
+    public void OAuthMutation_ExpandsParameterFilesAlongsideInlineAssignments(string verb, bool relativePath)
+    {
+        using var file = new ParameterFile("""{"TenantId":"common","Audience":"@literal?a=b & c=d"}""");
+        using var secondFile = new ParameterFile("""{"Resource":"api://resource"}""");
+        var path = relativePath ? Path.GetRelativePath(Environment.CurrentDirectory, file.Path) : file.Path;
+        var operations = new FakeOperations();
+        string[] createOptions = verb == "create" ? ["--provider-name", "Aadv2"] : [];
+        var (exitCode, _, stderr) = Run(operations,
+            ["deployment", "oauth", verb, "--deployment-id", "dep-1", "--connection", "aad-conn",
+                .. createOptions, "--parameters", $"@{path}", "TokenExchangeUrl=api://exchange",
+                "--parameters", $"@{secondFile.Path}"]);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        DeploymentOAuthUpdateRequest request = verb == "create"
+            ? Assert.IsType<DeploymentOAuthCreateRequest>(operations.LastCreateDeploymentOAuthRequest)
+            : Assert.IsType<DeploymentOAuthUpdateRequest>(operations.LastUpdateDeploymentOAuthRequest);
+        Assert.Equal(
+            ["TenantId=common", "Audience=@literal?a=b & c=d", "TokenExchangeUrl=api://exchange", "Resource=api://resource"],
+            request.Parameters);
+    }
+
+    [Theory]
+    [InlineData("-par")]
+    [InlineData("--parameters=")]
+    [InlineData("-par=")]
+    public void OAuthCreate_ParameterFileSupportsAliasAndAttachedValues(string option)
+    {
+        using var file = new ParameterFile("""{"TenantId":"common"}""");
+        var operations = new FakeOperations();
+        string[] parameterOptions = option.EndsWith('=')
+            ? [$"{option}@{file.Path}"]
+            : [option, $"@{file.Path}"];
+        var (exitCode, _, stderr) = Run(operations,
+            ["deployment", "oauth", "create", "--deployment-id", "dep-1", "--connection", "aad-conn",
+                "--provider-name", "Aadv2", .. parameterOptions]);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Equal(["TenantId=common"], operations.LastCreateDeploymentOAuthRequest!.Parameters);
+    }
+
+    [Fact]
+    public void OAuthParameterFiles_PreserveResponseFilesForOtherOptionsAndCommands()
+    {
+        using var parameters = new ParameterFile("""{"TenantId":"common"}""");
+        using var clientId = new ParameterFile("client-1");
+        var operations = new FakeOperations();
+        var (exitCode, _, stderr) = Run(operations,
+            "deployment", "oauth", "create", "--deployment-id", "dep-1", "--connection", "aad-conn",
+            "--provider-name", "Aadv2", "--client-id", $"@{clientId.Path}", "--parameters", $"@{parameters.Path}");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Equal("client-1", operations.LastCreateDeploymentOAuthRequest!.ClientId);
+        Assert.Equal(["TenantId=common"], operations.LastCreateDeploymentOAuthRequest.Parameters);
+
+        using var arguments = new ParameterFile("deployment oauth list --deployment-id dep-2");
+        (exitCode, _, stderr) = Run(operations, $"@{arguments.Path}");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Equal("dep-2", operations.LastListDeploymentOAuthRequest!.DeploymentId);
+    }
+
+    [Theory]
+    [InlineData("create", """{"TenantId":"SYNTHETIC_FILE_SECRET",}""")]
+    [InlineData("update", """{"TenantId":"SYNTHETIC_FILE_SECRET",}""")]
+    [InlineData("create", """["SYNTHETIC_FILE_SECRET"]""")]
+    [InlineData("create", """{"":"SYNTHETIC_FILE_SECRET"}""")]
+    [InlineData("create", """{"  ":"SYNTHETIC_FILE_SECRET"}""")]
+    [InlineData("create", """{"TenantId=injected":"SYNTHETIC_FILE_SECRET"}""")]
+    public void OAuthMutation_InvalidParameterFile_ReturnsSafeUsageErrorBeforeDispatch(string verb, string json)
+    {
+        using var file = new ParameterFile(json);
+        var operations = new FakeOperations();
+        string[] createOptions = verb == "create" ? ["--provider-name", "Aadv2"] : [];
+        var (exitCode, stdout, stderr) = Run(operations,
+            ["deployment", "oauth", verb, "--deployment-id", "dep-1", "--connection", "aad-conn",
+                .. createOptions, "--parameters", $"@{file.Path}", "--json", "--debug"]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Empty(stderr);
+        using var document = JsonDocument.Parse(stdout);
+        Assert.Equal(99002, document.RootElement.GetProperty("errorCode").GetInt32());
+        Assert.Contains("--parameters", document.RootElement.GetProperty("errorMessage").GetString());
+        Assert.DoesNotContain("SYNTHETIC_FILE_SECRET", stdout);
+        Assert.Null(operations.LastCreateDeploymentOAuthRequest);
+        Assert.Null(operations.LastUpdateDeploymentOAuthRequest);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("directory")]
+    [InlineData("empty")]
+    public void OAuthCreate_UnreadableParameterFile_ReturnsUsageError(string kind)
+    {
+        using var file = new ParameterFile("{}");
+        var reference = kind switch
+        {
+            "missing" => $"@{file.Path}.missing",
+            "directory" => $"@{Path.GetDirectoryName(file.Path)}",
+            _ => "@",
+        };
+        var operations = new FakeOperations();
+        var (exitCode, stdout, stderr) = Run(operations,
+            "deployment", "oauth", "create", "--deployment-id", "dep-1", "--connection", "aad-conn",
+            "--provider-name", "Aadv2", "--parameters", reference);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Empty(stdout);
+        Assert.Contains("--parameters", stderr);
+        Assert.Null(operations.LastCreateDeploymentOAuthRequest);
+    }
+
+    [Theory]
+    [InlineData("""{"TenantId":"common","tenantid":"organizations"}""", "Audience=value", false, "duplicate")]
+    [InlineData("""{"TenantId":"common"}""", "tenantid=organizations", false, "duplicate")]
+    [InlineData("""{"ClientId":"SYNTHETIC_FILE_SECRET"}""", "TenantId=common", false, "--client-id")]
+    [InlineData("""{"ClientSecret":"SYNTHETIC_FILE_SECRET"}""", "TenantId=common", false, "--client-secret")]
+    [InlineData("""{"Scopes":"openid"}""", "TenantId=common", false, "--scopes")]
+    [InlineData("""{"TenantId":""}""", "Audience=value", false, "Both Key and Value")]
+    [InlineData("""{"TenantId":null}""", "Audience=value", false, "Both Key and Value")]
+    [InlineData("{}", null, true, "At least one")]
+    public async Task OAuthParameterFiles_PreserveExistingValidation(
+        string json, string? inline, bool update, string expectedMessage)
+    {
+        using var file = new ParameterFile(json);
+        string[] inlineParameters = inline is null ? [] : [inline];
+        var parameters = await DeploymentParameterInput.ReadParametersAsync(
+            [$"@{file.Path}", .. inlineParameters], CancellationToken.None);
+        var request = new DeploymentOAuthCreateRequest
+        {
+            DeploymentId = "11111111-1111-1111-1111-111111111111",
+            ConnectionName = "aad-conn",
+            ServiceProviderName = "Aadv2",
+            Parameters = parameters,
+        };
+
+        var exception = Assert.Throws<UsageException>(() =>
+        {
+            if (update)
+            {
+                DeploymentOAuthPlan.ValidateUpdate(request);
+            }
+            else
+            {
+                DeploymentOAuthPlan.ValidateCreate(request);
+            }
+        });
+
+        Assert.Contains(expectedMessage, exception.Message);
+        Assert.DoesNotContain("SYNTHETIC_FILE_SECRET", exception.Message);
+    }
+
+    [Theory]
+    [InlineData("""{"TokenExchangeUrl":""}""")]
+    [InlineData("""{"TokenExchangeUrl":null}""")]
+    public async Task OAuthParameterFiles_UpdatePreservesEmptyStringsForClearing(string json)
+    {
+        using var file = new ParameterFile(json);
+        var parameters = await DeploymentParameterInput.ReadParametersAsync(
+            [$"@{file.Path}"], CancellationToken.None);
+        var plan = DeploymentOAuthPlan.ValidateUpdate(new DeploymentOAuthUpdateRequest
+        {
+            DeploymentId = "11111111-1111-1111-1111-111111111111",
+            ConnectionName = "aad-conn",
+            Parameters = parameters,
+        });
+
+        Assert.Equal(string.Empty, plan.ParsedParameters["TokenExchangeUrl"]);
+        var provider = new OAuthProviderDefinition
+        {
+            Id = "provider-id",
+            Name = "Aadv2",
+            DisplayName = "Test provider",
+            Parameters = [new() { Name = "TokenExchangeUrl", Type = "string", DisplayName = "Token exchange URL" }],
+        };
+        var existing = new DeploymentOAuthConnection
+        {
+            ResourceId = "/connections/test",
+            ConnectionName = "aad-conn",
+            ServiceProviderId = "provider-id",
+            ServiceProviderDisplayName = "Test provider",
+            Parameters = new Dictionary<string, string?> { ["TokenExchangeUrl"] = "previous" },
+        };
+        var payload = DeploymentOAuthPlan.BuildUpdate(provider, plan, existing, "/bots/test", null);
+        Assert.Equal(string.Empty, Assert.Single(payload.Parameters).Value);
+
+        var requiredProvider = provider with
+        {
+            Parameters = [provider.Parameters[0] with { IsRequired = true }],
+        };
+        Assert.Throws<UsageException>(() =>
+            DeploymentOAuthPlan.BuildUpdate(requiredProvider, plan, existing, "/bots/test", null));
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    public void OAuthParameterFiles_ConvertJsonValuesBeforeProviderValidation(string verb)
+    {
+        using var file = new ParameterFile("""
+            {"Enabled":true,"Count":12,"Items":[{"value":null}],"Settings":{"value":null},"Text":"null"}
+            """);
+        var operations = new FakeOperations();
+        string[] createOptions = verb == "create" ? ["--provider-name", "Aadv2"] : [];
+        var (exitCode, _, stderr) = Run(operations,
+            ["deployment", "oauth", verb, "--deployment-id", "11111111-1111-1111-1111-111111111111",
+                "--connection", "aad-conn", .. createOptions, "--parameters", $"@{file.Path}"]);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        DeploymentOAuthUpdateRequest request = verb == "create"
+            ? operations.LastCreateDeploymentOAuthRequest!
+            : operations.LastUpdateDeploymentOAuthRequest!;
+        Assert.Equal(
+            ["Enabled=true", "Count=12", """Items=[{"value":null}]""", """Settings={"value":null}""", "Text=null"],
+            request.Parameters);
+        var provider = new OAuthProviderDefinition
+        {
+            Id = "provider-id",
+            Name = "Aadv2",
+            DisplayName = "Test provider",
+            Parameters =
+            [
+                new() { Name = "Enabled", Type = "boolean", DisplayName = "Enabled" },
+                new() { Name = "Count", Type = "string", DisplayName = "Count" },
+                new() { Name = "Items", Type = "string", DisplayName = "Items" },
+                new() { Name = "Settings", Type = "string", DisplayName = "Settings" },
+                new() { Name = "Text", Type = "string", DisplayName = "Text" },
+            ],
+        };
+        var payload = verb == "create"
+            ? DeploymentOAuthPlan.BuildCreate(provider,
+                DeploymentOAuthPlan.ValidateCreate(Assert.IsType<DeploymentOAuthCreateRequest>(request)), "/bots/test", null)
+            : DeploymentOAuthPlan.BuildUpdate(provider,
+                DeploymentOAuthPlan.ValidateUpdate(request),
+                new DeploymentOAuthConnection
+                {
+                    ResourceId = "/connections/test",
+                    ConnectionName = "aad-conn",
+                    ServiceProviderId = "provider-id",
+                    ServiceProviderDisplayName = "Test provider",
+                }, "/bots/test", null);
+
+        Assert.Equal(request.Parameters,
+            payload.Parameters.Select(parameter => $"{parameter.Key}={parameter.Value}"));
+    }
+
+    [Fact]
+    public async Task OAuthParameterFiles_CancellationIsNotTranslatedToUsage()
+    {
+        using var file = new ParameterFile("{}");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            DeploymentParameterInput.ReadParametersAsync([$"@{file.Path}"], cancellation.Token));
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    public void OAuthMutation_HelpDoesNotReadParameterFiles(string verb)
+    {
+        var operations = new FakeOperations();
+        var (exitCode, stdout, stderr) = Run(operations,
+            "deployment", "oauth", verb, "--parameters", "@", "--help");
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Empty(stderr);
+        Assert.Contains("@path", stdout);
+        Assert.Null(operations.LastCreateDeploymentOAuthRequest);
+        Assert.Null(operations.LastUpdateDeploymentOAuthRequest);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OAuthParameterFiles_BootstrapDoesNotReadFileContents(bool nonInteractive)
+    {
+        using var file = new ParameterFile("""{"TenantId":"--non-interactive"}""");
+        string[] interactionOptions = nonInteractive ? ["--non-interactive"] : [];
+        string[] args =
+        [
+            "deployment", "oauth", "create", "--deployment-id", "dep-1", "--connection", "aad-conn",
+            "--provider-name", "Aadv2", "--parameters", $"@{file.Path}", .. interactionOptions,
+        ];
+
+        Assert.Equal(!nonInteractive, Hosting.AgentHostCli.ResolveInteractionAllowed(args));
+        Assert.True(Hosting.AgentHostCli.IsRingIndependent([.. args, "--help"]));
+        Assert.True(Hosting.AgentHostCli.IsRingIndependent(
+            ["deployment", "oauth", "create", "--parameters", "@", "--help"]));
+    }
+
+    private sealed class ParameterFile : IDisposable
+    {
+        private readonly string _directory = Directory.CreateTempSubdirectory("msagent-oauth-").FullName;
+
+        public ParameterFile(string json)
+        {
+            Path = System.IO.Path.Combine(_directory, "oauth parameters.json");
+            File.WriteAllText(Path, json);
+        }
+
+        public string Path { get; }
+
+        public void Dispose() => Directory.Delete(_directory, recursive: true);
     }
 
     [Fact]
@@ -457,6 +813,17 @@ public sealed class DeploymentOAuthCommandHostTests
         Assert.Contains("Scopes <String>", stdout);
         Assert.Contains("Requested scopes Default: openid.", stdout);
         Assert.DoesNotContain("Scopes <String> (REQUIRED)", stdout);
+        var lines = stdout.Replace("\r\n", "\n").Split('\n');
+        var clientId = Assert.Single(lines, line => line.TrimStart().StartsWith("ClientId <String>", StringComparison.Ordinal));
+        var json = Assert.Single(lines, line => line.Contains("--json", StringComparison.Ordinal));
+        var provider = Assert.Single(lines, line => line.Contains("--provider-name", StringComparison.Ordinal) &&
+            line.Contains("OAuth service provider", StringComparison.Ordinal));
+        Assert.Equal(clientId.IndexOf("Google application id.", StringComparison.Ordinal),
+            json.IndexOf("Emit machine-readable", StringComparison.Ordinal));
+        Assert.Equal(clientId.IndexOf("Google application id.", StringComparison.Ordinal),
+            provider.IndexOf("OAuth service provider", StringComparison.Ordinal));
+        Assert.True(stdout.IndexOf("Examples:", StringComparison.Ordinal) >
+            stdout.IndexOf("Parameters:", StringComparison.Ordinal));
         Assert.Equal(1, calls);
         var request = Assert.IsType<DeploymentOAuthProviderListRequest>(operations.LastListDeploymentOAuthProvidersRequest);
         Assert.Equal("google", request.ServiceProviderName);
@@ -496,6 +863,7 @@ public sealed class DeploymentOAuthCommandHostTests
         using var document = JsonDocument.Parse(stdout);
         Assert.False(document.RootElement.GetProperty("success").GetBoolean());
         Assert.DoesNotContain("Usage:", stdout);
+        Assert.DoesNotContain("Examples:", stdout);
         if (timeout)
         {
             Assert.Equal("transport-timeout", document.RootElement.GetProperty("errorKind").GetString());

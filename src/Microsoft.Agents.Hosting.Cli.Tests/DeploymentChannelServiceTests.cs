@@ -962,7 +962,7 @@ public sealed class DeploymentChannelServiceTests
             : UpdateRequest(channel) with
             {
                 AddSite = ["siteName=Primary", "appId=app-1", "tenantId=tenant-1", "isEnabled=false", "isBlockUserUploadEnabled=true",
-                    channel == "webchat" ? "isWebchatPreviewEnabled=false" : "trustedOrigins=https://new-site.example"],
+                    channel == "webchat" ? "isWebchatPreviewEnabled=false" : """trustedOrigins=["https://new-site.example"]"""],
             };
         var service = new DeploymentChannelService(store, channels);
 
@@ -1037,15 +1037,15 @@ public sealed class DeploymentChannelServiceTests
     }
 
     [Theory]
-    [InlineData("provider")]
-    [InlineData("cancelled")]
-    [InlineData("missing-id")]
-    [InlineData("missing-site")]
-    [InlineData("changed-id")]
-    [InlineData("unexpected-site")]
-    [InlineData("duplicate-name")]
-    [InlineData("duplicate-id")]
-    public async Task SiteUpdate_ConfigurationFailureReturnsSuccessWithWarningAndPersistsFirstResponse(string failure)
+    [InlineData("provider", null)]
+    [InlineData("cancelled", null)]
+    [InlineData("missing-id", "sites[].siteId")]
+    [InlineData("missing-site", "sites")]
+    [InlineData("changed-id", "sites[].siteId")]
+    [InlineData("unexpected-site", "sites[].siteName")]
+    [InlineData("duplicate-name", "sites[].siteName")]
+    [InlineData("duplicate-id", "sites[].siteId")]
+    public async Task SiteUpdate_ConfigurationFailureReturnsSuccessWithWarningAndPersistsFirstResponse(string failure, string? parameterName)
     {
         var store = new FakeStore(ProvisionedRecord());
         var channels = new RecordingChannelPort
@@ -1093,7 +1093,7 @@ public sealed class DeploymentChannelServiceTests
         Assert.Contains("no rollback", warning);
         if (failure is not ("provider" or "cancelled"))
         {
-            Assert.Contains("The channel response does not contain a usable configuration.", warning);
+            Assert.Contains($"The channel response does not contain a usable configuration for parameter '{parameterName}'.", warning);
         }
 
         Assert.Equal(failure is "provider" or "cancelled" ? ["get", "update", "update"] : ["get", "update"], channels.Operations);
@@ -1208,12 +1208,12 @@ public sealed class DeploymentChannelServiceTests
     }
 
     [Theory]
-    [InlineData("provider")]
-    [InlineData("cancelled")]
-    [InlineData("missing-id")]
-    [InlineData("missing-site")]
-    [InlineData("invalid-setting")]
-    public async Task SiteCreate_ConfigurationFailureReturnsCreatedWithWarningAndInitialResponse(string failure)
+    [InlineData("provider", null)]
+    [InlineData("cancelled", null)]
+    [InlineData("missing-id", "sites[].siteId")]
+    [InlineData("missing-site", "sites")]
+    [InlineData("invalid-setting", "sites[].isEnabled")]
+    public async Task SiteCreate_ConfigurationFailureReturnsCreatedWithWarningAndInitialResponse(string failure, string? parameterName)
     {
         var store = new FakeStore(ProvisionedRecord());
         var channels = new RecordingChannelPort();
@@ -1241,7 +1241,7 @@ public sealed class DeploymentChannelServiceTests
         Assert.Contains("service defaults", warning);
         if (failure is not ("provider" or "cancelled"))
         {
-            Assert.Contains("The channel response does not contain a usable configuration.", warning);
+            Assert.Contains($"The channel response does not contain a usable configuration for parameter '{parameterName}'.", warning);
         }
 
         Assert.Equal(failure is "provider" or "cancelled" ? ["get", "create", "update"] : ["get", "create"], channels.Operations);

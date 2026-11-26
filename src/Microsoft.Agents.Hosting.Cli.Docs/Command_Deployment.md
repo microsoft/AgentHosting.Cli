@@ -448,11 +448,6 @@ or in AMS. The result (`agent-deployment-read`) reports the target environment, 
 (the next `msagent agent deploy` without `--commit-id` puts it live, switching a package deployment to it),
 the Entra identity, and the Azure Bot Service instance, if any.
 
-## `msagent deployment channel` - CodeAgent-specific
-
-See [deployment channel commands](Command_Deployment_Channel.md) for supported channels,
-parameters, nested configuration, Slack authorization, and the AMS route (**Gated**).
-
 ## Selecting a deployment and project
 
 The [`connection`](Command_Deployment_Connection.md), [`channel`](Command_Deployment_Channel.md), and [`oauth`](Command_Deployment_OAuth.md) commands, like `show`, `update`, and `delete`, use

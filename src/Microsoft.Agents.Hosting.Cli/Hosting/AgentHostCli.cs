@@ -45,7 +45,7 @@ public sealed class AgentHostCli
             option.Aliases.Add(OptionCatalog.Alias("--version"));
         foreach (var group in CommandReflector.Discover(typeof(EnvGroup).Assembly, flags))
             root.Add(builder.Build(group));
-        var parsed = root.Parse(ExpandEmptyAssignments(root, [.. args]));
+        var parsed = ParseCommandLine(root, [.. args]);
         var command = parsed.CommandResult.Command;
         if (parsed.Errors.Count != 0) return false;
         return command == root && parsed.Errors.Count == 0
@@ -75,8 +75,58 @@ public sealed class AgentHostCli
         foreach (var group in CommandReflector.Discover(typeof(EnvGroup).Assembly, flags))
             root.Add(builder.Build(group));
 
-        var parsed = root.Parse(ExpandEmptyAssignments(root, args));
+        var parsed = ParseCommandLine(root, args);
         return parsed.Errors.Count == 0 && !parsed.GetValue(nonInteractive);
+    }
+
+    private static ParseResult ParseCommandLine(RootCommand root, string[] args)
+    {
+        var arguments = ExpandEmptyAssignments(root, args);
+        if (!arguments.Any(argument => argument.StartsWith('@')))
+        {
+            return root.Parse(arguments);
+        }
+
+        var configuration = new ParserConfiguration();
+        var replaceResponseFile = configuration.ResponseFileTokenReplacer;
+        configuration.ResponseFileTokenReplacer = null;
+        var unexpanded = root.Parse(arguments, configuration);
+        var command = unexpanded.CommandResult.Command;
+        var deployment = root.Subcommands.FirstOrDefault(group => group.Name == "deployment");
+        var parameterFileCommands = deployment?.Subcommands
+            .Where(group => group.Name is "oauth" or "channel")
+            .SelectMany(group => group.Subcommands)
+            .Where(candidate => candidate.Name is "create" or "update");
+        if (parameterFileCommands is null || !parameterFileCommands.Contains(command))
+        {
+            return root.Parse(arguments);
+        }
+
+        var files = command.Options
+            .Where(option => option.Name is "--parameters" or "--add-site" or "--set-site" or
+                "--add-page" or "--set-page" or "--add-registration" or "--set-registration")
+            .SelectMany(option => unexpanded.GetResult(option)?.Tokens ?? [])
+            .Where(token => token.Value.StartsWith('@'))
+            .Select(token => token.Value[1..])
+            .ToHashSet(StringComparer.Ordinal);
+        if (files.Count == 0)
+        {
+            return root.Parse(arguments);
+        }
+
+        configuration.ResponseFileTokenReplacer =
+            (string path, out IReadOnlyList<string>? tokens, out string? error) =>
+            {
+                if (files.Contains(path))
+                {
+                    tokens = null;
+                    error = null;
+                    return false;
+                }
+
+                return replaceResponseFile!(path, out tokens, out error);
+            };
+        return root.Parse(arguments, configuration);
     }
 
     private static Option<bool> CreateGlobalBooleanOption(string name, string description) =>
@@ -246,11 +296,13 @@ public sealed class AgentHostCli
         // in place so `--help` behavior is otherwise unchanged.
         var isSubgroup = treeBuilder.Groups.ToHashSet();
         var splitHelpSubtree = SubtreesHoldingASubgroup(root, isSubgroup);
-        SplitSubgroupHelp(root, splitHelpSubtree, isSubgroup, treeBuilder.UsageLines);
+        var tableLayout = new SubgroupHelpAction.TableLayout();
+        SplitSubgroupHelp(root, splitHelpSubtree, isSubgroup, treeBuilder.UsageLines, tableLayout);
 
-        var secretInputCommands = AddDeploymentChannelHelp(root).Concat(DeploymentOAuthWriteCommands(root)).ToHashSet();
+        var channelMutationCommands = AddDeploymentChannelHelp(root, tableLayout);
+        var secretInputCommands = channelMutationCommands.Concat(DeploymentOAuthWriteCommands(root)).ToHashSet();
 
-        var parseResult = root.Parse(ExpandEmptyAssignments(root, args));
+        var parseResult = ParseCommandLine(root, args);
         HelpOption[] helpOptions = [.. root.Options.OfType<HelpOption>()];
         VersionOption[] versionOptions = [.. root.Options.OfType<VersionOption>()];
         bool invokesHelp = helpOptions.Any(option =>
@@ -295,8 +347,14 @@ public sealed class AgentHostCli
             {
                 var providers = await GetOAuthProviderHelpAsync(
                     parseResult, json, parseResult.GetValue(nonInteractiveOption), cancellationToken);
+                var parameterRows = OAuthProviderParameterRows(providers);
+                tableLayout.PrepareParameters(parameterRows);
                 exitCode = await parseResult.InvokeAsync(invocationConfiguration, cancellationToken);
-                WriteOAuthProviderParameters(helpOutput, providers);
+                tableLayout.WriteParameters(helpOutput, parameterRows);
+                if (exitCode == ExitCodes.Success)
+                {
+                    WriteCommandExamples(helpOutput, treeBuilder.Examples(parseResult));
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -384,25 +442,28 @@ public sealed class AgentHostCli
             _inputFactory(parseResult, symbols, json, nonInteractive), _services, cancellationToken);
     }
 
-    private static void WriteOAuthProviderParameters(TextWriter output, IReadOnlyList<OAuthProviderDefinition> providers)
-    {
-        var rows = providers.SelectMany(provider => provider.Parameters).Select(parameter => new
-        {
-            Signature = $"{parameter.Name} <{parameter.Type}>" +
+    private static (string Signature, string Description)[] OAuthProviderParameterRows(
+        IReadOnlyList<OAuthProviderDefinition> providers) =>
+        providers.SelectMany(provider => provider.Parameters).Select(parameter => (
+            Signature: $"  {parameter.Name} <{parameter.Type}>" +
                 (parameter.IsRequired ? " (REQUIRED)" : string.Empty),
-            Description = (parameter.Description ?? parameter.DisplayName) +
-                (parameter.DefaultValue is null ? string.Empty : $" Default: {parameter.DefaultValue}."),
-        }).ToArray();
-        if (rows.Length == 0)
+            Description: (parameter.Description ?? parameter.DisplayName) +
+                (parameter.DefaultValue is null ? string.Empty : $" Default: {parameter.DefaultValue}.")
+        )).ToArray();
+
+    private static void WriteCommandExamples(TextWriter output, IReadOnlyList<CommandExample> examples)
+    {
+        if (examples.Count == 0)
         {
             return;
         }
 
-        output.WriteLine("Parameters:");
-        var signatureWidth = rows.Max(row => row.Signature.Length) + 2;
-        foreach (var row in rows)
+        output.WriteLine("Examples:");
+        foreach (var example in examples)
         {
-            output.WriteLine($"  {row.Signature.PadRight(signatureWidth)}{row.Description}");
+            output.WriteLine($"  {example.Description}");
+            output.WriteLine($"    {example.CommandLine}");
+            output.WriteLine();
         }
     }
 
@@ -421,14 +482,16 @@ public sealed class AgentHostCli
         RootCommand root,
         HashSet<Command> subtree,
         HashSet<Command> subgroups,
-        Func<Command, IReadOnlyList<string>> usageLines)
+        Func<Command, IReadOnlyList<string>> usageLines,
+        SubgroupHelpAction.TableLayout tableLayout)
     {
         foreach (var option in root.Options)
         {
             if (option is System.CommandLine.Help.HelpOption helpOption
                 && helpOption.Action is System.CommandLine.Invocation.SynchronousCommandLineAction defaultHelp)
             {
-                helpOption.Action = new SubgroupHelpAction(defaultHelp, subtree.Contains, subgroups.Contains, usageLines);
+                helpOption.Action = new SubgroupHelpAction(defaultHelp, subtree.Contains, subgroups.Contains, usageLines,
+                    root.Options.Select(global => global.Name).ToHashSet(StringComparer.Ordinal), tableLayout);
             }
         }
     }
@@ -467,7 +530,8 @@ public sealed class AgentHostCli
     private static IEnumerable<Command> DeploymentOAuthWriteCommands(RootCommand root) => root.Subcommands.FirstOrDefault(command => command.Name == "deployment")?.Subcommands.FirstOrDefault(command => command.Name == "oauth")?.Subcommands.Where(command => command.Name is "create" or "update") ?? [];
 
     /// <summary>Wraps channel help with operation availability and create/update parameter metadata.</summary>
-    private static HashSet<Command> AddDeploymentChannelHelp(RootCommand root)
+    private static HashSet<Command> AddDeploymentChannelHelp(
+        RootCommand root, SubgroupHelpAction.TableLayout tableLayout)
     {
         var deployment = root.Subcommands.FirstOrDefault(command => command.Name == "deployment");
         var channel = deployment?.Subcommands.FirstOrDefault(command => command.Name == "channel");
@@ -492,7 +556,7 @@ public sealed class AgentHostCli
             if (option is HelpOption helpOption &&
                 helpOption.Action is System.CommandLine.Invocation.SynchronousCommandLineAction currentHelp)
             {
-                helpOption.Action = new DeploymentChannelHelpAction(currentHelp, channelCommands);
+                helpOption.Action = new DeploymentChannelHelpAction(currentHelp, channelCommands, tableLayout);
             }
         }
 

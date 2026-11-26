@@ -7,6 +7,11 @@ namespace Microsoft.Agents.Hosting.Cli.Commands.Model;
 /// <param name="ResultType">The result the route produces.</param>
 public sealed record RouteMetadata(Type RequestType, Type ResultType);
 
+/// <summary>A usage example shown in command help.</summary>
+/// <param name="Description">Explains what the example does.</param>
+/// <param name="CommandLine">The command line to display.</param>
+public sealed record CommandExample(string Description, string CommandLine);
+
 /// <summary>The tree-builder's view of a command, independent of how it was declared.</summary>
 public interface ICommandImplementation
 {
@@ -18,6 +23,10 @@ public interface ICommandImplementation
 
     /// <summary>The required-option patterns help renders as usage lines; empty derives one from the required options.</summary>
     IReadOnlyList<UsageRoute> UsageRoutes => [];
+
+    /// <summary>The examples to display for the parsed command selection without executing it.</summary>
+    /// <param name="input">The parsed command line.</param>
+    IReadOnlyList<CommandExample> GetExamples(ICommandInput input) => [];
 
     /// <summary>Runs the command.</summary>
     /// <param name="input">The parsed command line.</param>
@@ -40,6 +49,9 @@ public abstract class CommandBase<TRequest, TResult> : ICommandImplementation
 
     /// <inheritdoc />
     public virtual IReadOnlyList<UsageRoute> UsageRoutes => [];
+
+    /// <inheritdoc />
+    public virtual IReadOnlyList<CommandExample> GetExamples(ICommandInput input) => [];
 
     /// <inheritdoc />
     public IReadOnlyList<Type> ResultTypes => Routes.Count == 0 ? [typeof(TResult)] : [.. Routes.Select(route => route.ResultType)];
