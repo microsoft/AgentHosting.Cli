@@ -1,3 +1,6 @@
+using System.CommandLine;
+using System.CommandLine.Help;
+using System.Text.RegularExpressions;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Groups;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
@@ -341,7 +344,7 @@ public sealed class UsageRouteTests
     [InlineData("deployment", "connection")]
     public void AGroupWithoutSubgroupsListsCommandsBeforeOptions(params string[] path)
     {
-        Assert.Equal(["Description:", "Usage:", "Commands:", "Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, path)));
+        Assert.Equal(["Description:", "Usage:", "Commands:", "Global Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, path)));
     }
 
     [Theory]
@@ -349,13 +352,13 @@ public sealed class UsageRouteTests
     [InlineData("deployment")]
     public void AGroupWithSubgroupsListsSubgroupsThenCommandsThenOptions(params string[] path)
     {
-        Assert.Equal(["Description:", "Usage:", "Subgroups:", "Commands:", "Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, path)));
+        Assert.Equal(["Description:", "Usage:", "Subgroups:", "Commands:", "Global Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, path)));
     }
 
     [Fact]
     public void ALeafCommandKeepsItsArgumentsBeforeItsOptions()
     {
-        Assert.Equal(["Description:", "Usage:", "Arguments:", "Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, "env", "select")));
+        Assert.Equal(["Description:", "Usage:", "Arguments:", "Global Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, "env", "select")));
     }
 
     [Fact]
@@ -369,6 +372,153 @@ public sealed class UsageRouteTests
 
             Assert.All(declared, row => Assert.Equal(declared[0].IndexOf("--", StringComparison.Ordinal), row.IndexOf("--", StringComparison.Ordinal)));
         }
+    }
+
+    [Fact]
+    public void CommandAndGlobalOptionsUseSeparateSectionsWithSharedColumns()
+    {
+        var help = Help(TestFeatureFlags.AllProductSurfaces, "deployment", "channel", "update");
+        var globalStart = help.IndexOf("Global Options:", StringComparison.Ordinal);
+        Assert.True(globalStart > help.IndexOf("Options:", StringComparison.Ordinal));
+        var commandSection = help[..globalStart];
+        var globalSection = help[globalStart..help.IndexOf("Examples:", StringComparison.Ordinal)];
+        Assert.Contains("--parameters", commandSection);
+        Assert.DoesNotContain("--json", commandSection);
+        Assert.Contains("--json", globalSection);
+        Assert.DoesNotContain("--parameters", globalSection);
+        Assert.DoesNotContain("--version", globalSection);
+        var rows = OptionRows(help);
+        var parameters = Assert.Single(rows, row => row.Contains("--parameters", StringComparison.Ordinal));
+        var json = Assert.Single(rows, row => row.Contains("--json", StringComparison.Ordinal));
+        Assert.Equal(parameters.IndexOf("--", StringComparison.Ordinal), json.IndexOf("--", StringComparison.Ordinal));
+        Assert.Equal(parameters.IndexOf("Channel-specific", StringComparison.Ordinal),
+            json.IndexOf("Emit machine-readable", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("directline", "create")]
+    [InlineData("directline", "update")]
+    [InlineData("webchat", "create")]
+    [InlineData("webchat", "update")]
+    [InlineData("facebook", "create")]
+    [InlineData("facebook", "update")]
+    [InlineData("line", "create")]
+    [InlineData("line", "update")]
+    [InlineData("msteams", "create")]
+    public void ParametersShareTheOptionsDescriptionColumnWithoutLosingNesting(string channel, string verb)
+    {
+        var help = Help(TestFeatureFlags.AllProductSurfaces, "deployment", "channel", verb, "--channel", channel);
+        var json = Assert.Single(OptionRows(help), row => row.Contains("--json", StringComparison.Ordinal));
+        var column = json.IndexOf("Emit machine-readable", StringComparison.Ordinal);
+        var start = help.IndexOf("Parameters:", StringComparison.Ordinal);
+        var end = help.IndexOf("Examples:", StringComparison.Ordinal);
+        var parameters = help[start..end].Split('\n')
+            .Select(line => Regex.Match(line, @"^\s+\S+ <[^>]+>(?: \(REQUIRED\))?\s+(?<description>\S)"))
+            .Where(match => match.Success).ToArray();
+
+        Assert.NotEmpty(parameters);
+        Assert.All(parameters, match => Assert.Equal(column, match.Groups["description"].Index));
+        if (channel != "msteams")
+        {
+            Assert.Contains(parameters, match => match.Value.StartsWith("      ", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void RootVersionAppearsOnlyInRootGlobalOptions()
+    {
+        var root = Help(TestFeatureFlags.AllProductSurfaces);
+        Assert.Contains("--version", root[root.IndexOf("Global Options:", StringComparison.Ordinal)..]);
+        Assert.DoesNotContain("--version", Help(TestFeatureFlags.AllProductSurfaces, "auth", "login"));
+    }
+
+    [Theory]
+    [InlineData()]
+    [InlineData("deployment")]
+    [InlineData("env", "select")]
+    [InlineData("deployment", "channel", "update")]
+    [InlineData("deployment", "channel", "update", "--channel", "facebook")]
+    [InlineData("deployment", "channel", "create", "--channel", "directline")]
+    [InlineData("deployment", "oauth", "create")]
+    public void HelpSectionsHaveExactlyOneBlankLineBetweenThem(params string[] path)
+    {
+        var lines = Help(TestFeatureFlags.AllProductSurfaces, path).Split('\n');
+        var headings = lines.Select((line, index) => (line, index))
+            .Where(entry => entry.line.Length > 0 && !char.IsWhiteSpace(entry.line[0]) && entry.line.EndsWith(':'))
+            .Skip(1);
+
+        foreach (var (_, index) in headings)
+        {
+            Assert.True(index >= 2);
+            Assert.Empty(lines[index - 1]);
+            Assert.False(string.IsNullOrWhiteSpace(lines[index - 2]));
+        }
+    }
+
+    [Fact]
+    public void ParameterDescriptionsWrapAtTheSharedColumn()
+    {
+        var layout = new SubgroupHelpAction.TableLayout { DescriptionColumn = 40, MaxWidth = 70 };
+        (string Signature, string Description)[] rows =
+        [
+            ("      siteName <String> (REQUIRED)",
+                "The existing site name used to select the site that should receive the requested changes."),
+        ];
+        layout.PrepareParameters(rows);
+        var output = new StringWriter();
+        layout.WriteParameters(output, rows);
+        var lines = output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+
+        Assert.True(lines.Length > 1);
+        Assert.StartsWith("      siteName <String> (REQUIRED)", lines[0]);
+        Assert.All(lines, line => Assert.True(line.Length <= 70));
+        Assert.All(lines.Skip(1), line => Assert.Equal(40, line.Length - line.TrimStart().Length));
+        Assert.Equal(rows[0].Description, string.Join(" ", lines.Select(line => line[40..])));
+    }
+
+    [Theory]
+    [InlineData("Arguments:", 50)]
+    [InlineData("Arguments:", 80)]
+    [InlineData("Subgroups:", 50)]
+    [InlineData("Subgroups:", 80)]
+    [InlineData("Commands:", 50)]
+    [InlineData("Commands:", 80)]
+    public async Task HelpTableDescriptionsWrapAtTheirExistingColumn(string section, int width)
+    {
+        const string description = "Select the configured target for this operation without changing the other stored targets or their settings.";
+        var root = new RootCommand();
+        if (section == "Arguments:")
+        {
+            root.Arguments.Add(new Argument<string>("target") { Description = description });
+        }
+        else
+        {
+            root.Subcommands.Add(new Command("target", description));
+        }
+
+        var help = root.Options.OfType<HelpOption>().Single();
+        var defaultAction = Assert.IsType<HelpAction>(help.Action);
+        defaultAction.MaxWidth = width;
+        help.Action = new SubgroupHelpAction(defaultAction, _ => section == "Subgroups:",
+            command => command.Name == "target");
+        var output = new StringWriter();
+        var error = new StringWriter();
+
+        var exitCode = await root.Parse("--help").InvokeAsync(new InvocationConfiguration { Output = output, Error = error });
+
+        Assert.Equal(0, exitCode);
+        Assert.Empty(error.ToString());
+        var lines = output.ToString().Replace("\r\n", "\n").Split('\n');
+        var heading = Array.IndexOf(lines, section);
+        Assert.True(heading >= 0);
+        var rows = lines.Skip(heading + 1).TakeWhile(line => !string.IsNullOrWhiteSpace(line)).ToArray();
+        var column = rows[0].IndexOf("Select", StringComparison.Ordinal);
+        Assert.True(column > 0);
+        Assert.True(rows.Length > 1);
+        Assert.All(rows, line => Assert.True(line.Length <= width));
+        Assert.All(rows.Skip(1), line => Assert.Equal(column, line.Length - line.TrimStart().Length));
+        Assert.Equal(description, string.Join(' ', rows.Select(line => line[column..])));
+        Assert.Empty(lines[heading + 1 + rows.Length]);
     }
 
     [Fact]
@@ -421,9 +571,13 @@ public sealed class UsageRouteTests
     private static IReadOnlyList<string> OptionRows(string help)
     {
         var lines = help.Split('\n').Select(line => line.TrimEnd()).ToArray();
-        var heading = Array.FindIndex(lines, line => line.Trim() == "Options:");
+        IEnumerable<string> Rows(string section)
+        {
+            var heading = Array.FindIndex(lines, line => line.Trim() == section);
+            return heading < 0 ? [] : lines.Skip(heading + 1).TakeWhile(line => line.Trim().Length > 0);
+        }
 
-        return [.. lines.Skip(heading + 1).TakeWhile(line => line.Trim().Length > 0)];
+        return [.. Rows("Options:").Concat(Rows("Global Options:"))];
     }
 
     [Fact]

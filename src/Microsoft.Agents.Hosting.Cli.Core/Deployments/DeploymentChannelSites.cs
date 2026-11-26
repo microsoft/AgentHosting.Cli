@@ -28,7 +28,7 @@ internal static class DeploymentChannelSites
 
         if (selectedOperation is not { } selected)
         {
-            throw new UsageException($"No site configuration was provided for '{channel.Name}' channel update.");
+            throw new UsageException($"Parameter 'sites' must be specified for '{channel.Name}' channel update.");
         }
 
         var parsedAssignments = DeploymentParameterValidator.ParseParameterAssignments(
@@ -44,9 +44,7 @@ internal static class DeploymentChannelSites
                     $"sites[].{parameter}", channel.Name, "must be true or false"));
             typedFields[field.Name] = string.IsNullOrEmpty(normalized) ? JsonSerializer.SerializeToElement<string?>(null) :
                 field.Type == DeploymentParameterType.Boolean ? JsonSerializer.SerializeToElement(bool.Parse(normalized)) :
-                field.Type == DeploymentParameterType.Array ? normalized.TrimStart().StartsWith('[')
-                    ? ParseJson(normalized, field.Name, channel.Name)
-                    : JsonSerializer.SerializeToElement(normalized.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)) :
+                field.Type == DeploymentParameterType.Array ? ParseJson(normalized, field.Name, channel.Name) :
                 JsonSerializer.SerializeToElement(normalized);
         }
 
@@ -59,7 +57,7 @@ internal static class DeploymentChannelSites
     {
         if (parameters.Count == 0)
         {
-            throw new UsageException($"No site configuration was provided for '{channel.Name}' channel create.");
+            throw new UsageException($"Parameter 'sites' must be specified for '{channel.Name}' channel create.");
         }
 
         var operationName = isCreate ? "create" : "update";
@@ -121,10 +119,13 @@ internal static class DeploymentChannelSites
         var siteIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var site in sites)
         {
-            if (!siteNames.Add(DeploymentChannelPlan.ReadSelector(site, "siteName").Trim()) ||
-                !siteIds.Add(DeploymentChannelPlan.ReadSelector(site, "siteId")))
+            if (!siteNames.Add(DeploymentChannelPlan.ReadSelector(site, "sites", "siteName").Trim()))
             {
-                throw DeploymentException.ChannelConfigurationUnavailable();
+                throw DeploymentException.ChannelConfigurationUnavailable("sites[].siteName");
+            }
+            if (!siteIds.Add(DeploymentChannelPlan.ReadSelector(site, "sites", "siteId")))
+            {
+                throw DeploymentException.ChannelConfigurationUnavailable("sites[].siteId");
             }
         }
 
@@ -152,7 +153,7 @@ internal static class DeploymentChannelSites
             var item = mutation.Items.Single();
             if (siteNames.Contains(item.GetProperty("siteName").GetString()!))
             {
-                throw DeploymentException.ChannelItemAlreadyExists(channel.Name, "siteName");
+                throw DeploymentException.ChannelItemAlreadyExists(channel.Name, "sites[].siteName");
             }
 
             result.Add(ToDictionary(item));
@@ -163,7 +164,7 @@ internal static class DeploymentChannelSites
             var siteIndex = FindSiteIndex(sites, SiteSelector(item, fields));
             if (siteIndex < 0)
             {
-                throw DeploymentException.ChannelItemNotFound(channel.Name, "siteName");
+                throw DeploymentException.ChannelItemNotFound(channel.Name, "sites[].siteName");
             }
 
             if (mutation.Operation == ChannelCollectionOperation.Remove)
@@ -205,19 +206,22 @@ internal static class DeploymentChannelSites
         var array = DeploymentChannelPlan.ReadCollection(response, "sites");
         if (array.GetArrayLength() != expectedSites.Count)
         {
-            throw DeploymentException.ChannelConfigurationUnavailable();
+            throw DeploymentException.ChannelConfigurationUnavailable("sites");
         }
 
         var items = new List<JsonElement>();
         foreach (var site in array.EnumerateArray())
         {
-            var siteName = DeploymentChannelPlan.ReadSelector(site, "siteName");
-            var siteId = DeploymentChannelPlan.ReadSelector(site, "siteId");
-            if (!expectedSites.Remove(siteName, out var expectedSite) ||
-                expectedSite.TryGetProperty("siteId", out var priorId) &&
+            var siteName = DeploymentChannelPlan.ReadSelector(site, "sites", "siteName");
+            var siteId = DeploymentChannelPlan.ReadSelector(site, "sites", "siteId");
+            if (!expectedSites.Remove(siteName, out var expectedSite))
+            {
+                throw DeploymentException.ChannelConfigurationUnavailable("sites[].siteName");
+            }
+            if (expectedSite.TryGetProperty("siteId", out var priorId) &&
                 !string.Equals(siteId, priorId.GetString(), StringComparison.OrdinalIgnoreCase))
             {
-                throw DeploymentException.ChannelConfigurationUnavailable();
+                throw DeploymentException.ChannelConfigurationUnavailable("sites[].siteId");
             }
 
             var item = new Dictionary<string, JsonElement>
@@ -248,7 +252,7 @@ internal static class DeploymentChannelSites
     {
         if (item.ValueKind != JsonValueKind.Object)
         {
-            throw new UsageException("Each site must be a JSON object.");
+            throw new UsageException("Parameter 'sites' must be an array of JSON objects.");
         }
 
         var result = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
@@ -270,7 +274,7 @@ internal static class DeploymentChannelSites
             {
                 if (!result.ContainsKey(field.Name))
                 {
-                    throw new UsageException($"Parameter '{field.Name}' is required when adding a site.");
+                    throw new UsageException($"Parameter 'sites[].{field.Name}' is required for each new site.");
                 }
             }
         }
@@ -279,7 +283,7 @@ internal static class DeploymentChannelSites
             _ = SiteSelector(normalized, fields);
             if (operation == ChannelCollectionOperation.Set && requireChanges)
             {
-                DeploymentChannelPlan.ValidateSelectorOperation(operation, normalized, "--set-site", "siteName");
+                DeploymentChannelPlan.ValidateSelectorOperation(operation, normalized, "--set-site", "sites", "siteName");
             }
         }
 
@@ -300,7 +304,7 @@ internal static class DeploymentChannelSites
             _ => !field.IsReadOnly,
         }))
         {
-            throw DeploymentException.InvalidChannelParameter(name, channelName, operationName);
+            throw DeploymentException.InvalidChannelParameter($"sites[].{name}", channelName, operationName);
         }
 
         return field;
@@ -371,7 +375,8 @@ internal static class DeploymentChannelSites
         {
             if (site.TryGetProperty(field.Name, out var value))
             {
-                _ = NormalizeValue(value, field, creating: false, DeploymentException.ChannelConfigurationUnavailable, isUserInput: false);
+                _ = NormalizeValue(value, field, creating: false,
+                    () => DeploymentException.ChannelConfigurationUnavailable($"sites[].{field.Name}"), isUserInput: false);
                 result[field.Name] = value.Clone();
             }
         }
@@ -396,7 +401,7 @@ internal static class DeploymentChannelSites
         if (site.TryGetValue("isDetailedLoggingEnabled", out var detailedLogging) && detailedLogging.ValueKind == JsonValueKind.True &&
             site.TryGetValue("isNoStorageEnabled", out var noStorage) && noStorage.ValueKind == JsonValueKind.True)
         {
-            throw new UsageException("isDetailedLoggingEnabled=true cannot be combined with isNoStorageEnabled=true.");
+            throw new UsageException("Parameters 'sites[].isDetailedLoggingEnabled' and 'sites[].isNoStorageEnabled' cannot both be enabled.");
         }
     }
 
@@ -406,7 +411,7 @@ internal static class DeploymentChannelSites
             fields.Any(field => field.IsSelector && field.Name == property.Name)).ToArray();
         if (selectors.Length != 1)
         {
-            throw new UsageException("Specify siteName to identify a site.");
+            throw new UsageException("Parameter 'sites[].siteName' must be specified to identify a site.");
         }
 
         return selectors[0];

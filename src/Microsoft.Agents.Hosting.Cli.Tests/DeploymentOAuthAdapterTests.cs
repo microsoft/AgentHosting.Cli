@@ -131,11 +131,13 @@ public sealed class DeploymentOAuthAdapterTests
         Assert.Equal(ProvisioningErrorKind.InvalidResponse, ex.Kind);
     }
 
-    [Fact]
-    public async Task UpsertConnection_PutsExpectedBody_WithSecret()
+    [Theory]
+    [InlineData("aad-conn")]
+    [InlineData("dev1/aad-conn")]
+    public async Task UpsertConnection_PutsExpectedBody_WithSecret(string responseName)
     {
         var handler = new StubHttpMessageHandler(_ => Json(HttpStatusCode.OK,
-            """{"name":"aad-conn","properties":{"serviceProviderId":"provider-id","serviceProviderDisplayName":"Azure Active Directory v2","clientId":"client-1","provisioningState":"Succeeded"}}"""));
+            $$$"""{"name":"{{{responseName}}}","properties":{"serviceProviderId":"provider-id","serviceProviderDisplayName":"Azure Active Directory v2","clientId":"client-1","provisioningState":"Succeeded"}}"""));
 
         var upsert = new BotServiceOAuthUpsertRequest
         {
@@ -221,14 +223,16 @@ public sealed class DeploymentOAuthAdapterTests
             properties.GetProperty("parameters")[0].GetProperty("value").GetString());
     }
 
-    [Fact]
-    public async Task GetConnection_Found_ReturnsMappedRedactedConnection()
+    [Theory]
+    [InlineData("aad-conn")]
+    [InlineData("dev1/aad-conn")]
+    public async Task GetConnection_Found_ReturnsMappedRedactedConnection(string responseName)
     {
         var handler = new StubHttpMessageHandler(_ => Json(HttpStatusCode.OK,
-            """
+            $$"""
             {
               "id":"/connections/aad-conn",
-              "name":"aad-conn",
+              "name":"{{responseName}}",
               "properties":{
                 "clientId":"client-1",
                 "clientSecret":"secret-1",
@@ -476,11 +480,13 @@ public sealed class DeploymentOAuthAdapterTests
         Assert.Null(connection);
     }
 
-    [Fact]
-    public async Task ListConnections_GetsCollectionUrl_AndParses()
+    [Theory]
+    [InlineData("")]
+    [InlineData("dev1/")]
+    public async Task ListConnections_GetsCollectionUrl_AndParses(string prefix)
     {
         var handler = new StubHttpMessageHandler(_ => Json(HttpStatusCode.OK,
-            """{"value":[{"name":"a","properties":{"serviceProviderId":"provider-a","serviceProviderDisplayName":"Provider A","clientId":"c-a"}},{"name":"b","properties":{"serviceProviderId":"provider-b","serviceProviderDisplayName":"Provider B","clientId":"c-b"}}]}"""));
+            $$$"""{"value":[{"name":"{{{prefix}}}a","properties":{"serviceProviderId":"provider-a","serviceProviderDisplayName":"Provider A","clientId":"c-a"}},{"name":"{{{prefix}}}b","properties":{"serviceProviderId":"provider-b","serviceProviderDisplayName":"Provider B","clientId":"c-b"}}]}"""));
 
         var connections = await Adapter(handler).ListOAuthConnectionsAsync(
             BotResourceId,
@@ -488,6 +494,8 @@ public sealed class DeploymentOAuthAdapterTests
             default);
 
         Assert.Equal(2, connections.Count);
+        Assert.Equal("a", connections[0].ConnectionName);
+        Assert.Equal("b", connections[1].ConnectionName);
         Assert.Equal("provider-a", connections[0].ServiceProviderId);
         Assert.Equal("Provider A", connections[0].ServiceProviderDisplayName);
         Assert.Equal("c-a", connections[0].ClientId);

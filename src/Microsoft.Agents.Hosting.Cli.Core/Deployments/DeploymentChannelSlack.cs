@@ -31,7 +31,7 @@ internal static class DeploymentChannelSlack
     {
         if (isCreate && !parameters.ContainsKey("signingSecret") && !parameters.ContainsKey("verificationToken"))
         {
-            throw new UsageException("Creating the 'slack' channel requires at least one of signingSecret or verificationToken.");
+            throw new UsageException("At least one of parameters 'signingSecret' or 'verificationToken' is required for 'slack' channel create.");
         }
     }
 

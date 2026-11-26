@@ -16,6 +16,16 @@ public sealed class DeploymentOAuthCreateCommand :
 
     public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--connection", "--provider-name");
 
+    public override IReadOnlyList<CommandExample> GetExamples(ICommandInput input) =>
+    [
+        new("Inspect the provider's parameters.",
+            "msagent deployment oauth list-providers --provider-name Aadv2"),
+        new("Create a Microsoft Entra ID v2 connection with inline provider parameters.",
+            "msagent deployment oauth create --deployment-id <deployment-id> --connection MyOAuth --provider-name Aadv2 --client-id <app-id> --client-secret <secret> --scopes \"User.Read\" --parameters TenantId=<tenant-id>"),
+        new("Load provider-specific parameters from a JSON object file.",
+            "msagent deployment oauth create --deployment-id <deployment-id> --connection MyOAuth --provider-name Aadv2 --client-id <app-id> --client-secret <secret> --scopes \"User.Read\" --parameters '@.\\parameters.json'"),
+    ];
+
     protected override DeploymentOAuthCreateRequest Bind(ICommandInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
@@ -37,6 +47,12 @@ public sealed class DeploymentOAuthCreateCommand :
         };
     }
 
+    protected override Task<DeploymentOAuthCreateRequest> PrepareRequestAsync(
+        DeploymentOAuthCreateRequest request,
+        CancellationToken cancellationToken)
+    {
+        return DispatchParametersAsync(request, cancellationToken);
+    }
 }
 
 [Command("update", Description = "Update an OAuth connection setting on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup))]
@@ -46,6 +62,16 @@ public sealed class DeploymentOAuthUpdateCommand :
     public override IReadOnlyList<CommandSymbol> Symbols => UpdateCommandSymbols;
 
     public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--connection");
+
+    public override IReadOnlyList<CommandExample> GetExamples(ICommandInput input) =>
+    [
+        new("Update Microsoft Graph scopes.",
+            "msagent deployment oauth update --deployment-id <deployment-id> --connection <connection-name> --scopes \"User.Read Mail.Read\""),
+        new("Combine a JSON parameter file with an inline assignment.",
+            "msagent deployment oauth update --deployment-id <deployment-id> --connection <connection-name> --parameters '@.\\parameters.json' TenantId=<tenant-id>"),
+        new("Clear an optional provider parameter.",
+            "msagent deployment oauth update --deployment-id <deployment-id> --connection <connection-name> --parameters TokenExchangeUrl="),
+    ];
 
     protected override DeploymentOAuthUpdateRequest Bind(ICommandInput input)
     {
@@ -67,6 +93,12 @@ public sealed class DeploymentOAuthUpdateCommand :
         };
     }
 
+    protected override Task<DeploymentOAuthUpdateRequest> PrepareRequestAsync(
+        DeploymentOAuthUpdateRequest request,
+        CancellationToken cancellationToken)
+    {
+        return DispatchParametersAsync(request, cancellationToken);
+    }
 }
 
 [Command("delete", Description = "Delete an OAuth connection setting on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup))]
@@ -76,6 +108,12 @@ public sealed class DeploymentOAuthDeleteCommand :
     public override IReadOnlyList<CommandSymbol> Symbols => ConnectionCommandSymbols;
 
     public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--connection");
+
+    public override IReadOnlyList<CommandExample> GetExamples(ICommandInput input) =>
+    [
+        new("Delete an OAuth connection from a deployment.",
+            "msagent deployment oauth delete --deployment-id <deployment-id> --connection <connection-name>"),
+    ];
 
     protected override DeploymentOAuthDeleteRequest Bind(ICommandInput input)
     {
@@ -101,6 +139,12 @@ public sealed class DeploymentOAuthShowCommand :
 
     public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage("--connection");
 
+    public override IReadOnlyList<CommandExample> GetExamples(ICommandInput input) =>
+    [
+        new("Show an OAuth connection as JSON.",
+            "msagent deployment oauth show --deployment-id <deployment-id> --connection <connection-name> --json"),
+    ];
+
     protected override DeploymentOAuthShowRequest Bind(ICommandInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
@@ -125,6 +169,12 @@ public sealed class DeploymentOAuthListCommand :
 
     public override IReadOnlyList<UsageRoute> UsageRoutes => RoutedUsage();
 
+    public override IReadOnlyList<CommandExample> GetExamples(ICommandInput input) =>
+    [
+        new("List OAuth connections on a deployment.",
+            "msagent deployment oauth list --deployment-id <deployment-id>"),
+    ];
+
     protected override DeploymentOAuthListRequest Bind(ICommandInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
@@ -144,6 +194,14 @@ public sealed class DeploymentOAuthListCommand :
 public sealed class DeploymentOAuthProviderListCommand :
     CommandBase<DeploymentOAuthProviderListRequest, OAuthProviderDefinition[]>
 {
+    public override IReadOnlyList<CommandExample> GetExamples(ICommandInput input) =>
+    [
+        new("List the available OAuth providers.",
+            "msagent deployment oauth list-providers"),
+        new("Inspect a provider's schema in an explicit subscription and tenant.",
+            "msagent deployment oauth list-providers --provider-name Aadv2 --subscription <subscription-id> --tenant <tenant-id>"),
+    ];
+
     public override IReadOnlyList<CommandSymbol> Symbols =>
     [
         ProviderFilter,
@@ -214,6 +272,18 @@ public abstract class DeploymentOAuthCommand<TRequest, TResponse> : AmsRoutedDep
         .. RoutedAddressSymbols("AMS agent home environment, which selects the AMS route. Defaults to the active environment."),
     ];
 
+    protected async Task<TMutationRequest> DispatchParametersAsync<TMutationRequest>(
+        TMutationRequest request,
+        CancellationToken cancellationToken)
+        where TMutationRequest : DeploymentOAuthUpdateRequest
+    {
+        request = request with
+        {
+            Parameters = await DeploymentParameterInput.ReadParametersAsync(request.Parameters, cancellationToken).ConfigureAwait(false),
+        };
+        return request;
+    }
+
     /// <summary>The options accepted when creating an OAuth connection.</summary>
     protected static IReadOnlyList<CommandSymbol> CreateCommandSymbols =>
     [
@@ -279,7 +349,7 @@ public abstract class DeploymentOAuthCommand<TRequest, TResponse> : AmsRoutedDep
     private static CommandOption Parameters =>
         OptionCatalog.Strings(
             "--parameters",
-            "Provider-specific Key=Value assignments. " +
+            "Provider-specific Key=Value assignments or @path to a JSON object file (null becomes Key=). " +
             "Use `msagent deployment oauth list-providers --provider-name <name>` for the live schema.") with
         {
             AllowMultipleArgumentsPerToken = true,

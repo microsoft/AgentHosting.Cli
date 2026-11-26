@@ -23,12 +23,12 @@ internal static class DeploymentChannelRegistrations
         var selector = fields.Single(field => field.IsSelector);
         if (selected.Operation != ChannelCollectionOperation.Add && !assignments.ContainsKey(selector.Name))
         {
-            throw new UsageException($"{selected.OptionName} requires the generatedId selector of an existing LINE registration.");
+            throw new UsageException($"Parameter 'lineRegistrations[].{selector.Name}' is required for {selected.OptionName}.");
         }
 
         var item = NormalizeItem(JsonSerializer.SerializeToElement(assignments), fields, "update",
             allowExistingSelector: selected.Operation != ChannelCollectionOperation.Add);
-        DeploymentChannelPlan.ValidateSelectorOperation(selected.Operation, item, selected.OptionName, selector.Name);
+        DeploymentChannelPlan.ValidateSelectorOperation(selected.Operation, item, selected.OptionName, "lineRegistrations", selector.Name);
 
         return new(selected.Operation, item);
     }
@@ -74,7 +74,7 @@ internal static class DeploymentChannelRegistrations
             {
                 if (!registrations.Any(existingRegistration => RegistrationId(existingRegistration) == RegistrationId(item)))
                 {
-                    throw DeploymentException.ChannelItemNotFound("line", "generatedId");
+                    throw DeploymentException.ChannelItemNotFound("line", "lineRegistrations[].generatedId");
                 }
             }
 
@@ -93,7 +93,7 @@ internal static class DeploymentChannelRegistrations
                 var registrationIndex = Array.FindIndex(registrations, registration => RegistrationId(registration) == RegistrationId(change.Item));
                 if (registrationIndex < 0)
                 {
-                    throw DeploymentException.ChannelItemNotFound("line", "generatedId");
+                    throw DeploymentException.ChannelItemNotFound("line", "lineRegistrations[].generatedId");
                 }
 
                 if (change.Operation == ChannelCollectionOperation.Remove)
@@ -126,7 +126,7 @@ internal static class DeploymentChannelRegistrations
             {
                 if (!result.ContainsKey(field.Name))
                 {
-                    throw new UsageException($"New LINE registrations require '{field.Name}'.");
+                    throw new UsageException($"Parameter 'lineRegistrations[].{field.Name}' is required for each new registration.");
                 }
             }
         }
@@ -141,13 +141,13 @@ internal static class DeploymentChannelRegistrations
         var registrations = new List<JsonElement>();
         foreach (var registration in array.EnumerateArray())
         {
-            var registrationId = DeploymentChannelPlan.ReadSelector(registration, "generatedId").Trim();
+            var registrationId = DeploymentChannelPlan.ReadSelector(registration, "lineRegistrations", "generatedId").Trim();
             registrations.Add(JsonSerializer.SerializeToElement(new { generatedId = registrationId }));
         }
 
         if (registrations.Select(RegistrationId).Distinct(StringComparer.Ordinal).Count() != registrations.Count)
         {
-            throw DeploymentException.ChannelConfigurationUnavailable();
+            throw DeploymentException.ChannelConfigurationUnavailable("lineRegistrations[].generatedId");
         }
 
         return registrations.ToArray();

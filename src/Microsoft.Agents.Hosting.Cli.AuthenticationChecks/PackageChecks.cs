@@ -16,7 +16,8 @@ public static class PackageChecks
     {
         if (!RuntimeIdentifiers.Contains(rid, StringComparer.Ordinal)) throw new InvalidOperationException("Unknown tool RID.");
         var prefix = $"tools/net10.0/{rid}/";
-        RequireEntry(package, prefix + PackageId + (rid.StartsWith("win-", StringComparison.Ordinal) ? ".exe" : ""));
+        var isWindows = rid.StartsWith("win-", StringComparison.Ordinal);
+        RequireEntry(package, prefix + PackageId + (isWindows ? ".exe" : ""));
         if (BrokerLibrary(rid) is { } library) RequireEntry(package, prefix + library);
         var shims = RuntimeIdentifiers.Select(shim =>
             prefix + $"shims/{shim}/msagent{(shim.StartsWith("win-", StringComparison.Ordinal) ? ".exe" : "")}").ToArray();
@@ -38,16 +39,21 @@ public static class PackageChecks
         using var flags = ReadJson(package, prefix + "featureflags.json");
         var expected = new Dictionary<string, string>
         {
-            ["amsFeatures"] = "off", ["azureBotServiceFeatures"] = "off", ["identityFeatures"] = "off",
-            ["liveTestFeatures"] = "on", ["evaluationFeatures"] = "on", ["legacyAuth"] = "off",
+            ["amsFeatures"] = "off",
+            ["azureBotServiceFeatures"] = "off",
+            ["identityFeatures"] = "off",
+            ["liveTestFeatures"] = "on",
+            ["evaluationFeatures"] = "on",
+            ["legacyAuth"] = "off",
             ["appusersupport"] = "off",
         };
         if (flags.RootElement.EnumerateObject().Count() != expected.Count ||
             expected.Any(f => !flags.RootElement.TryGetProperty(f.Key, out var value) || value.GetString() != f.Value))
             throw new InvalidOperationException("Packaged feature defaults changed.");
         var command = ReadXml(package, prefix + "DotnetToolSettings.xml").Descendants("Command").Single();
-        if (command.Attribute("Name")?.Value != "msagent" || command.Attribute("Runner")?.Value != "executable" ||
-            command.Attribute("EntryPoint")?.Value != PackageId + (rid.StartsWith("win-", StringComparison.Ordinal) ? ".exe" : ""))
+        if (command.Attribute("Name")?.Value != "msagent" ||
+            command.Attribute("Runner")?.Value != "executable" ||
+            command.Attribute("EntryPoint")?.Value != PackageId + (isWindows ? ".exe" : ""))
             throw new InvalidOperationException("Installed tool entry point changed.");
         using var deps = ReadJson(package, prefix + PackageId + ".deps.json");
         (string Name, string MinimumVersion)[] baselines =

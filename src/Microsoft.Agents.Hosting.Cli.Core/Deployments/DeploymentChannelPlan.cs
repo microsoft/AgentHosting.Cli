@@ -190,7 +190,7 @@ public static class DeploymentChannelPlan
             existingChannel.Parameters.TryGetValue("acceptedTerms", out var existingTerms) &&
             existingTerms.ValueKind == JsonValueKind.True)
         {
-            throw new UsageException("Microsoft Teams terms acceptance cannot be revoked.");
+            throw new UsageException("Parameter 'acceptedTerms' for 'msteams' cannot be revoked once accepted.");
         }
 
         var parameters = plan.SiteMutation is { } mutation
@@ -248,7 +248,7 @@ public static class DeploymentChannelPlan
         if (!isCreateRequest && request.Parameters.Count == 0)
         {
             throw new UsageException(
-                $"At least one --parameters Key=Value assignment is required to update the {channelDefinition.Name} channel.");
+                $"At least one --parameters Key=Value assignment is required to update the '{channelDefinition.Name}' channel.");
         }
 
         if (isCreateRequest)
@@ -451,7 +451,7 @@ public static class DeploymentChannelPlan
         }
         catch (JsonException)
         {
-            throw InvalidArray(parameterName, itemName);
+            throw new UsageException($"Parameter '{parameterName}' contains invalid JSON.");
         }
     }
 
@@ -473,7 +473,7 @@ public static class DeploymentChannelPlan
     {
         if (item.ValueKind != JsonValueKind.Object)
         {
-            throw new UsageException($"Each '{collectionName}' item must be a JSON object.");
+            throw new UsageException($"Parameter '{collectionName}' must be an array of JSON objects.");
         }
 
         var normalizedFields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -484,7 +484,7 @@ public static class DeploymentChannelPlan
                 (!field.IsReadOnly || allowReadOnlySelector && field.IsSelector));
             if (field is null)
             {
-                throw DeploymentException.InvalidChannelParameter(property.Name, channelName, operation);
+                throw DeploymentException.InvalidChannelParameter($"{collectionName}[].{property.Name}", channelName, operation);
             }
 
             var parameterName = $"{collectionName}[].{field.Name}";
@@ -512,17 +512,21 @@ public static class DeploymentChannelPlan
 
     /// <summary>Rejects extra fields on remove or selector-only set operations after item normalization.</summary>
     internal static void ValidateSelectorOperation(
-        ChannelCollectionOperation operation, JsonElement item, string optionName, string selectorName)
+        ChannelCollectionOperation operation, JsonElement item, string optionName, string collectionName, string selectorName)
     {
-        var fieldCount = item.EnumerateObject().Count();
-        if (operation == ChannelCollectionOperation.Remove && fieldCount != 1)
+        var selectorPath = $"{collectionName}[].{selectorName}";
+        var fieldNames = item.EnumerateObject().Select(property => property.Name).ToArray();
+        if (operation == ChannelCollectionOperation.Remove && fieldNames.Length != 1)
         {
-            throw new UsageException($"{optionName} accepts only the {selectorName} selector.");
+            var unexpected = fieldNames.Where(name => name != selectorName).ToArray();
+            throw new UsageException($"{optionName} accepts only parameter '{selectorPath}'." +
+                (unexpected.Length == 0 ? string.Empty :
+                    $" Unexpected parameters: {string.Join(", ", unexpected.Select(name => $"'{collectionName}[].{name}'"))}."));
         }
 
-        if (operation == ChannelCollectionOperation.Set && fieldCount == 1)
+        if (operation == ChannelCollectionOperation.Set && fieldNames.Length == 1)
         {
-            throw new UsageException($"{optionName} requires at least one writable change in addition to its {selectorName} selector.");
+            throw new UsageException($"{optionName} requires at least one writable parameter in addition to parameter '{selectorPath}'.");
         }
     }
 
@@ -539,22 +543,22 @@ public static class DeploymentChannelPlan
         var seen = new HashSet<string>(comparer);
         if (selectors.Any(selector => !seen.Add(selector)))
         {
-            throw new UsageException($"Values for '{parameterName}' must be unique.");
+            throw new UsageException($"Parameter '{parameterName}' must have unique values.");
         }
     }
 
     internal static JsonElement ReadCollection(DeploymentChannelRecord channel, string parameterName) =>
         channel.Parameters.TryGetValue(parameterName, out var array) && array.ValueKind == JsonValueKind.Array
-            ? array : throw DeploymentException.ChannelConfigurationUnavailable();
+            ? array : throw DeploymentException.ChannelConfigurationUnavailable(parameterName);
 
     /// <summary>Reads reusable identities without echoing their values or changing the original service text.</summary>
-    internal static string ReadSelector(JsonElement item, string selectorName)
+    internal static string ReadSelector(JsonElement item, string collectionName, string selectorName)
     {
         if (item.ValueKind != JsonValueKind.Object ||
             !item.TryGetProperty(selectorName, out var selector) || selector.ValueKind != JsonValueKind.String ||
             string.IsNullOrWhiteSpace(selector.GetString()))
         {
-            throw DeploymentException.ChannelConfigurationUnavailable();
+            throw DeploymentException.ChannelConfigurationUnavailable($"{collectionName}[].{selectorName}");
         }
 
         return selector.GetString()!;

@@ -31,6 +31,7 @@ public sealed class CommandTreeBuilder
     private readonly HashSet<Command> _telemetrySuppressedCommands = [];
     private readonly HashSet<Command> _groups = [];
     private readonly Dictionary<Command, IReadOnlyList<string>> _usageLines = [];
+    private readonly Dictionary<Command, Func<ParseResult, IReadOnlyList<CommandExample>>> _examples = [];
     private readonly HashSet<Command> _sensitiveCommands = [];
     private readonly HashSet<string> _sensitiveOptions = new(StringComparer.Ordinal);
 
@@ -118,6 +119,9 @@ public sealed class CommandTreeBuilder
 
     internal IReadOnlyList<string> UsageLines(Command command) =>
         command is not null && _usageLines.TryGetValue(command, out var lines) ? lines : [];
+
+    internal IReadOnlyList<CommandExample> Examples(ParseResult parseResult) =>
+        _examples.TryGetValue(parseResult.CommandResult.Command, out var examples) ? examples(parseResult) : [];
 
     internal string SafeParserDiagnostic(
         ParseResult result,
@@ -258,6 +262,9 @@ public sealed class CommandTreeBuilder
         var parentOnly = inherited.Keys.Where(name => !declaredNames.Contains(name) && !inheritable.Contains(name)).ToArray();
         var path = $"{parentPath} {metadata.Name}";
         RecordUsageLines(command, metadata, declaredSymbols, path);
+        _examples[command] = parseResult => metadata.Implementation.GetExamples(
+            CreateSystemCommandLineInput(
+                parseResult, symbols, parseResult.GetValue(_json), parseResult.GetValue(_nonInteractive)));
         command.SetAction((parseResult, cancellationToken) => ExecuteAsync(
             metadata,
             symbols,

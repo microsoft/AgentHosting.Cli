@@ -414,7 +414,7 @@ public static class DeploymentOAuthPlan
             if (parameters.ContainsKey(parameter.Name))
             {
                 throw new UsageException(
-                    $"Use {parameter.Option} instead of --parameters {parameter.Name}=... .");
+                    $"Use '{parameter.Option}' instead of --parameters {parameter.Name}=... .");
             }
         }
     }

@@ -196,7 +196,7 @@ public static class DeploymentRequestValidator
         return allowedValues.FirstOrDefault(allowed =>
                    string.Equals(allowed, normalized, StringComparison.OrdinalIgnoreCase))
                ?? throw new UsageException(
-                   $"{option} is not supported. Supported values are: {string.Join(", ", allowedValues)}." +
+                   $"{option} is not supported. Supported values are: {string.Join(", ", allowedValues.Select(value => $"'{value}'"))}." +
                    (invalidValueRemediation is null ? string.Empty : $" {invalidValueRemediation}"));
     }
 
@@ -213,7 +213,7 @@ public static class DeploymentRequestValidator
         return allowedValues.FirstOrDefault(allowed =>
                    string.Equals(allowed, normalized, StringComparison.OrdinalIgnoreCase))
                ?? throw new UsageException(
-                   $"{option} is not supported. Supported values are: {string.Join(", ", allowedValues)}." +
+                   $"{option} is not supported. Supported values are: {string.Join(", ", allowedValues.Select(value => $"'{value}'"))}." +
                    (invalidValueRemediation is null ? string.Empty : $" {invalidValueRemediation}"));
     }
 

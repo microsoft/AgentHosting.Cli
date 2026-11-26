@@ -1,8 +1,10 @@
-using Microsoft.Agents.Hosting.Cli.Core.Http;
+using System.Net;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
+using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -187,10 +189,11 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
     }
 
     [Theory]
-    [InlineData("must-not-persist")]
-    [InlineData("*****")]
-    [InlineData(null)]
-    public void OAuthConnectionsRoundTripThroughTheProjectStore(string? clientSecret)
+    [InlineData("must-not-persist", "graph")]
+    [InlineData("*****", "graph")]
+    [InlineData(null, "graph")]
+    [InlineData("must-not-persist", "dev1/graph")]
+    public void OAuthConnectionsRoundTripThroughTheProjectStore(string? clientSecret, string connectionName)
     {
         var deployment = Record() with
         {
@@ -198,7 +201,7 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
             [
                 new DeploymentOAuthConnection
                 {
-                    ConnectionName = "graph",
+                    ConnectionName = connectionName,
                     ServiceProviderId = "provider-id",
                     ServiceProviderDisplayName = "Azure Active Directory v2",
                     ClientId = "client-id",
@@ -246,6 +249,64 @@ public sealed class ProjectDeploymentStoreTests : IDisposable
         Assert.DoesNotContain("ProviderPrivateValue", json);
         Assert.DoesNotContain("refreshToken", json);
         Assert.DoesNotContain(SecretRedaction.Mask, json);
+        Assert.Equal("graph", Assert.Single(Registry().List(_root).Single().OAuthConnections!).ConnectionName);
+    }
+
+    [Fact]
+    public async Task LegacyOAuthNamesRefreshWithoutDuplicatesAndReturnedNameCanBeDeleted()
+    {
+        const string deploymentId = "11111111-1111-1111-1111-111111111111";
+        var resourceId = $"{Record().Bot.ResourceId}/connections/graph";
+        var legacy = ProjectDeploymentStore.ToAgentDeploymentRecord(Record(deploymentId), "etag") with
+        {
+            OAuthConnections =
+            [
+                new DeploymentOAuthConnection
+                {
+                    ConnectionName = "dev1/graph",
+                    ResourceId = resourceId,
+                    ServiceProviderId = "provider-id",
+                    ServiceProviderDisplayName = "Provider",
+                },
+            ],
+        };
+        Registry().Add(_root, legacy);
+        Assert.Equal("graph", Assert.Single(Assert.Single(_store.List(_root)).OAuthConnections).ConnectionName);
+
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            if (request.Method == HttpMethod.Delete)
+            {
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            }
+
+            var body = request.Method == HttpMethod.Post
+                ? """{"value":[]}"""
+                : $$$"""{"id":"{{{resourceId}}}","name":"dev1/graph","properties":{"serviceProviderId":"provider-id","serviceProviderDisplayName":"Provider"}}""";
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body),
+            };
+        });
+        var adapter = new DeploymentOAuthAdapter(new HttpClient(handler), new StubTokenProvider { AccessToken = "arm-token" });
+        var service = new DeploymentOAuthService(_store, adapter, new CompositeDeploymentTransport(), new FakeStandardInput());
+        var result = await service.GetAsync(
+            new DeploymentOAuthShowRequest { Project = _root, DeploymentId = deploymentId, ConnectionName = "graph" },
+            CancellationToken.None);
+
+        var connection = Assert.IsType<DeploymentOAuthConnection>(result.Payload);
+        Assert.Equal("graph", connection.ConnectionName);
+        var saved = Assert.Single(Registry().List(_root).Single().OAuthConnections!);
+        Assert.Equal("graph", saved.ConnectionName);
+        Assert.Equal(resourceId, saved.ResourceId);
+
+        await service.DeleteAsync(
+            new DeploymentOAuthDeleteRequest { Project = _root, DeploymentId = deploymentId, ConnectionName = connection.ConnectionName },
+            CancellationToken.None);
+
+        Assert.Empty(Assert.Single(_store.List(_root)).OAuthConnections);
+        var deletion = Assert.Single(handler.Requests, request => request.Method == HttpMethod.Delete);
+        Assert.Contains("/botServices/dev1/connections/graph?", deletion.Uri.AbsoluteUri);
     }
 
     [Fact]

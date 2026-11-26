@@ -113,6 +113,28 @@ public static class InstalledToolChecks
                 Require(who.RootElement.GetProperty("status").GetString() == "signed-out", "isolated-who");
             using (var telemetry = await Json(["telemetry", "status", "--json"], 0))
                 Require(!telemetry.RootElement.GetProperty("effectiveCollectionEnabled").GetBoolean(), "telemetry-optout");
+            var sitesFile = Path.Combine(root, "sites.json");
+            await File.WriteAllTextAsync(sitesFile, """[{"isEnabled":"true"}]""");
+            using (var failure = await Json(
+                ["deployment", "channel", "update", "--deployment-id", "11111111-1111-1111-1111-111111111111",
+                    "--channel", "directline", "--parameters", $"sites=@{sitesFile}",
+                    "--non-interactive", "--json"], 2, features: "AzureBotServiceFeatures"))
+            {
+                var message = failure.RootElement.GetProperty("errorMessage").GetString();
+                Require(failure.RootElement.GetProperty("errorCode").GetInt32() == 99002 &&
+                    message is not null && message.Contains("'sites[].isEnabled'", StringComparison.Ordinal) &&
+                    message.Contains("Boolean", StringComparison.Ordinal), "file-json-field-validation");
+            }
+            using (var failure = await Json(
+                ["deployment", "channel", "update", "--deployment-id", "11111111-1111-1111-1111-111111111111",
+                    "--channel", "directline", "--parameters", """sites=[{"isEnabled":"SYNTHETIC_SECRET"}""",
+                    "--non-interactive", "--json"], 2, features: "AzureBotServiceFeatures"))
+            {
+                var message = failure.RootElement.GetProperty("errorMessage").GetString();
+                Require(failure.RootElement.GetProperty("errorCode").GetInt32() == 99002 &&
+                    message is not null && message.Contains("'sites'", StringComparison.Ordinal) &&
+                    !message.Contains("SYNTHETIC_SECRET", StringComparison.Ordinal), "invalid-inline-json-privacy");
+            }
             // Accepted fake-host tests prove these gates precede cache/native/source construction.
             using (var failure = await Json(["auth", "create", "-dc", "--non-interactive", "--json"], 3))
                 Require(failure.RootElement.GetProperty("errorCode").GetInt32() == 12007, "early-interaction-gate");

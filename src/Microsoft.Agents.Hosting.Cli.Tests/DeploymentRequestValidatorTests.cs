@@ -112,7 +112,7 @@ public sealed class DeploymentRequestValidatorTests
     {
         var ex = Assert.Throws<UsageException>(() => DeploymentRequestValidator.ValidateCreate(
             new DeploymentCreateRequest { AgentId = AgentId, DeploymentName = "dev1", EntraId = EntraId, EntraIdType = "Blueprint", DeploymentType = "Dev" }));
-        Assert.Contains("--entra-id-type is not supported. Supported values are: AppReg.", ex.Message);
+        Assert.Contains("--entra-id-type is not supported. Supported values are: 'AppReg'.", ex.Message);
     }
 
     [Theory]
