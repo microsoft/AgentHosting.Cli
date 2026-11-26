@@ -4,9 +4,9 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { spawn, spawnSync, execFileSync } = require("node:child_process");
-const { EventEmitter, once } = require("node:events");
+const { EventEmitter } = require("node:events");
+const { createInterface } = require("node:readline");
 const { PassThrough } = require("node:stream");
-const net = require("node:net");
 const vm = require("node:vm");
 const yaml = require("js-yaml");
 const { resolvePluginPaths } = require("../src/plugin-paths");
@@ -581,9 +581,8 @@ test("failed Windows tree cleanup retains a durable lock after the hook and shel
 });
 
 test("native install timeout stops a real descendant holding the stderr pipe open", { timeout: 10000 }, async (t) => {
-  const ready = Promise.withResolvers();
   let installer;
-  let descendant;
+  let descendantPid;
   let deadline;
   let terminated = false;
   t.after(() => {
@@ -596,52 +595,37 @@ test("native install timeout stops a real descendant holding the stderr pipe ope
         process.kill(-installer.pid, "SIGKILL");
       }
     }
-    if (descendant) {
-      try { process.kill(descendant.pid, "SIGKILL"); }
+    if (descendantPid) {
+      try { process.kill(descendantPid, "SIGKILL"); }
       catch (error) { if (error.code !== "ESRCH") throw error; }
     }
   });
-  const descendantCode = 'const server=require("node:net").createServer(socket=>socket.end());' +
-    'server.listen(0,"127.0.0.1",()=>console.error(JSON.stringify({pid:process.pid,port:server.address().port})));';
+  const descendantCode = 'console.log(process.pid);setInterval(()=>{},60000);';
   const installerCode = 'require("node:child_process").spawn(process.execPath,["-e",' +
-    JSON.stringify(descendantCode) + '],{stdio:["ignore","ignore","inherit"]});';
-  let output = "";
+    JSON.stringify(descendantCode) + '],{stdio:["ignore","inherit","inherit"]});';
   const result = runHook({
     childProcess: {
       spawn(command, options) {
         assert.match(command, /^npm ci /);
-        installer = spawn(process.execPath, ["-e", installerCode], { ...options, shell: false });
-        installer.once("error", ready.reject);
+        // The hook destroys stderr on timeout. An independent pipe stays open until both writers exit.
+        installer = spawn(process.execPath, ["-e", installerCode], {
+          ...options, shell: false, stdio: [options.stdio[0], "pipe", options.stdio[2]],
+        });
         return installer;
       },
       execFileSync,
     },
     schedule(callback) { deadline = callback; return 1; },
-    stderr(chunk) {
-      output += chunk;
-      if (output.includes("\n")) {
-        try { ready.resolve(JSON.parse(output.trim())); }
-        catch (error) { ready.reject(error); }
-      }
-    },
   });
-  descendant = await ready.promise;
-  const closed = once(installer, "close");
+  const lines = createInterface({ input: installer.stdout })[Symbol.asyncIterator]();
+  const ready = await lines.next();
+  assert.match(ready.value ?? "", /^[1-9]\d*$/, "Expected the descendant to report its PID before EOF");
+  descendantPid = Number(ready.value);
   deadline();
   await result.completion;
-  await closed;
-  for (;;) {
-    const socket = net.connect(descendant.port, "127.0.0.1");
-    try {
-      await once(socket, "connect", { signal: t.signal });
-    } catch (error) {
-      assert.match(error.code, /^(ECONNREFUSED|ECONNRESET)$/);
-      break;
-    } finally {
-      socket.destroy();
-    }
-  }
+  assert.ok((await lines.next()).done, "Expected EOF after the installer tree stopped");
   assert.match(result.errors[0], /in-memory tokens: npm ci timed out/);
+  assert.ok(!result.writes.has(path.join(root, "native-deps.install.lock")));
   assert.ok(!result.writes.has(path.join(root, "native-deps.installed.json")));
   terminated = true;
 });
