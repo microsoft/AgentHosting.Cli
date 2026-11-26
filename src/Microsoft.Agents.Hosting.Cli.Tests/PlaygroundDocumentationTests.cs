@@ -26,7 +26,7 @@ public sealed class PlaygroundDocumentationTests
         Assert.Contains("Live runs require explicit approval", readme, StringComparison.Ordinal);
         Assert.Contains("`LiveTestFeatures`", section, StringComparison.Ordinal);
         Assert.Contains("`@microsoft/m365agentsplayground`", section, StringComparison.Ordinal);
-        Assert.Contains("0.2.29", section, StringComparison.Ordinal);
+        Assert.Contains("0.2.30", section, StringComparison.Ordinal);
         Assert.Contains("`npm install -g @microsoft/m365agentsplayground@latest`", section, StringComparison.Ordinal);
         Assert.Contains("lifecycle scripts", section, StringComparison.Ordinal);
         Assert.Contains("Node.js 22", section, StringComparison.Ordinal);

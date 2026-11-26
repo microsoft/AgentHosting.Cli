@@ -69,14 +69,14 @@ public sealed class PlaygroundToolLocatorTests
 
             return request.ExecutablePath == Path.Combine(second, "agentsplayground")
                 ? new PlaygroundProcessResult(0, "0.2.28", string.Empty)
-                : new PlaygroundProcessResult(0, "0.2.29", string.Empty);
+                : new PlaygroundProcessResult(0, "0.2.30", string.Empty);
         });
 
         var result = await CreateLocator(environment, runner).LocateAsync(CancellationToken.None);
 
         Assert.NotNull(result.Tool);
         Assert.Equal(Path.Combine(third, "agentsplayground"), result.Tool.SelectedPath);
-        Assert.Equal("0.2.29", result.Tool.Version.ToString());
+        Assert.Equal("0.2.30", result.Tool.Version.ToString());
         Assert.Equal(
             [
                 Path.Combine(first, "agentsplayground"),
@@ -101,6 +101,7 @@ public sealed class PlaygroundToolLocatorTests
 
     [Theory]
     [InlineData("0.2.28", PlaygroundFailureKind.BelowMinimum)]
+    [InlineData("0.2.29", PlaygroundFailureKind.BelowMinimum)]
     [InlineData("0.2.29-beta.1", PlaygroundFailureKind.BelowMinimum)]
     public async Task Locate_EnforcesMinimumReleaseVersion(string output, PlaygroundFailureKind expectedKind)
     {
@@ -173,7 +174,7 @@ public sealed class PlaygroundToolLocatorTests
             isWindows: false,
             pathValue: string.Join(Path.PathSeparator, Path.GetDirectoryName(playgroundPath)!, Path.GetDirectoryName(nodePath)!),
             existingPaths: [playgroundPath, nodePath, npmPath]);
-        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "0.2.29", string.Empty));
+        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "0.2.30", string.Empty));
 
         var result = await CreateLocator(environment, runner).LocateAsync(CancellationToken.None);
 
@@ -198,7 +199,7 @@ public sealed class PlaygroundToolLocatorTests
             isWindows: true,
             pathValue: shimDirectory,
             existingPaths: [shimPath, adjacentNode, entryPoint]);
-        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "0.2.29", string.Empty));
+        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "0.2.30", string.Empty));
 
         var result = await CreateLocator(environment, runner).LocateAsync(CancellationToken.None);
 
@@ -232,7 +233,7 @@ public sealed class PlaygroundToolLocatorTests
             isWindows: true,
             pathValue: JoinPathEntries(isWindows: true, shimDirectory, nodeDirectory),
             existingPaths: [shimPath, unsafePowerShellPath, arbitraryShimPath, entryPoint, nodeOnPath]);
-        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "0.2.29", string.Empty));
+        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "0.2.30", string.Empty));
 
         var result = await CreateLocator(environment, runner).LocateAsync(CancellationToken.None);
 
@@ -260,7 +261,7 @@ public sealed class PlaygroundToolLocatorTests
             0, request.ExecutablePath == node ? "v20.0.0" : "v24.0.0", string.Empty));
         var playground = new PlaygroundTool(
             node, ["playground-cli.js"], Path.Combine(directory, "agentsplayground.cmd"),
-            PlaygroundVersion.Parse("0.2.29"));
+            PlaygroundVersion.Parse("0.2.30"));
 
         var result = await CreateLocator(environment, runner).DetectNodeAsync(playground, CancellationToken.None);
 
@@ -291,7 +292,7 @@ public sealed class PlaygroundToolLocatorTests
         var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, version, string.Empty));
         var playground = new PlaygroundTool(
             Path.Combine(directory, "agentsplayground"), [], "agentsplayground",
-            PlaygroundVersion.Parse("0.2.29"));
+            PlaygroundVersion.Parse("0.2.30"));
 
         var result = await CreateLocator(environment, runner).DetectNodeAsync(playground, CancellationToken.None);
 
@@ -314,7 +315,7 @@ public sealed class PlaygroundToolLocatorTests
         var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "v22.17.1", string.Empty));
         var playground = new PlaygroundTool(
             Path.Combine(otherDirectory, "agentsplayground"), [], "agentsplayground",
-            PlaygroundVersion.Parse("0.2.29"));
+            PlaygroundVersion.Parse("0.2.30"));
 
         var result = await CreateLocator(environment, runner).DetectNodeAsync(playground, CancellationToken.None);
 
@@ -415,7 +416,7 @@ public sealed class PlaygroundToolLocatorTests
         var playgroundResult = await CreateLocator(
             playgroundEnvironment,
             new RecordingProcessRunner(_ =>
-                new PlaygroundProcessResult(0, "v0.2.29", string.Empty)))
+                new PlaygroundProcessResult(0, "v0.2.30", string.Empty)))
             .LocateAsync(CancellationToken.None);
 
         var nodeDirectory = Path.Combine(Path.GetTempPath(), "strict-node");
@@ -703,7 +704,7 @@ public sealed class PlaygroundToolLocatorTests
             isWindows: true,
             pathValue: $"\"{directory}\"",
             existingPaths: [selectedPath]);
-        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "0.2.29", string.Empty));
+        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "0.2.30", string.Empty));
 
         var result = await CreateLocator(environment, runner).LocateAsync(CancellationToken.None);
 
@@ -725,7 +726,7 @@ public sealed class PlaygroundToolLocatorTests
         var runner = new RecordingProcessRunner(request =>
             request.ExecutablePath == firstPath
                 ? throw new InvalidOperationException("first candidate is broken")
-                : new PlaygroundProcessResult(0, "0.2.29", string.Empty));
+                : new PlaygroundProcessResult(0, "0.2.30", string.Empty));
 
         var result = await CreateLocator(environment, runner).LocateAsync(CancellationToken.None);
 
@@ -743,7 +744,7 @@ public sealed class PlaygroundToolLocatorTests
             isWindows: true,
             pathValue: JoinPathEntries(isWindows: true, malformedPath, goodDirectory),
             existingPaths: [goodPath]);
-        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "0.2.29", string.Empty));
+        var runner = new RecordingProcessRunner(_ => new PlaygroundProcessResult(0, "0.2.30", string.Empty));
 
         var result = await CreateLocator(environment, runner).LocateAsync(CancellationToken.None);
 
