@@ -152,7 +152,7 @@ public sealed class CommandTelemetryTests
         Assert.Equal("powerappsclient", data.GetProperty("app_Name").GetString());
         Assert.Equal("AgentHostingCLI", data.GetProperty("clientType").GetString());
         Assert.Equal("prod", data.GetProperty("clusterCategory").GetString());
-        Assert.Equal("browser", data.GetProperty("device_Id").GetString());
+        Assert.Equal("CLI", data.GetProperty("device_Id").GetString());
         Assert.Equal("HostCase", data.GetProperty("event_Name").GetString());
         Assert.Equal(1, data.GetProperty("sequenceNumber").GetInt32());
         Assert.True(Guid.TryParse(data.GetProperty("session_Id").GetString(), out _));
@@ -162,12 +162,10 @@ public sealed class CommandTelemetryTests
         Assert.Equal(
             "AgentHostingCLI.Host",
             dimensions.RootElement.GetProperty("operationName").GetString());
-        Assert.Equal("false", dimensions.RootElement.GetProperty("isOnePlayer").GetString());
-        Assert.Equal(
-            "AgentHosting_CLI_Authoring",
-            dimensions.RootElement.GetProperty("webPlayerScenario").GetString());
+        Assert.False(dimensions.RootElement.TryGetProperty("isOnePlayer", out _));
+        Assert.False(dimensions.RootElement.TryGetProperty("webPlayerScenario", out _));
         Assert.Equal("prod", dimensions.RootElement.GetProperty("cloud").GetString());
-        Assert.Equal("Unknown", dimensions.RootElement.GetProperty("station").GetString());
+        Assert.False(dimensions.RootElement.TryGetProperty("station", out _));
         Assert.Equal("eu", data.GetProperty("telemetryLocation").GetString());
         Assert.Equal(
             "eu",
@@ -365,12 +363,37 @@ public sealed class CommandTelemetryTests
             ["CommandAttempt", "CommandOutcome"],
             events.Select(item =>
                 item.GetProperty("data").GetProperty("event_Name").GetString()));
+        Assert.All(events, item =>
+            Assert.Equal("CLI", item.GetProperty("data").GetProperty("device_Id").GetString()));
         Assert.All(events, item => Assert.Equal(
             "AgentHostingCLI." + expectedPath.Replace(' ', '.'),
             item.GetProperty("data").GetProperty("operation_Name").GetString()));
         Assert.Equal(
             "success",
             Dimensions(events[1]).GetProperty("outcomeCategory").GetString());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CustomDimensionsAreSerializedInAlphabeticalOrder(bool hostCase)
+    {
+        var transport = new CapturingTransport();
+        await InvokeAsync(
+            hostCase ? ["--help"] : ["agent", "deploy", "--deployment-name", "dev"],
+            Factory(
+                new FixedDestinationResolver(
+                    Destination(new Uri("http://127.0.0.1:1/OneCollector/1.0/"))),
+                transport: transport),
+            McsOperations());
+
+        JsonElement[] events = Parse(Assert.IsType<string>(transport.Payload));
+        Assert.Equal(hostCase ? 1 : 2, events.Length);
+        Assert.All(events, item =>
+        {
+            string[] keys = Dimensions(item).EnumerateObject().Select(property => property.Name).ToArray();
+            Assert.Equal(keys.Order(StringComparer.Ordinal), keys);
+        });
     }
 
     public static TheoryData<string, string[]> OptionLookingArgumentCases => new()

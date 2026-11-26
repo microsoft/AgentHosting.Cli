@@ -7,7 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent deploy</c>, routed to an agent of the local MCS project or to an AMS code agent.</summary>
-[Command("deploy", Description = "Deploy an agent to a named deployment.", ParentGroup = typeof(AgentGroup), SortPriority = 70, ProgressLabel = "Deploying agent")]
+[Command("deploy", Description = "Deploy an agent to a named deployment.", ParentGroup = typeof(AgentGroup), SortPriority = 70, ProgressLabel = "Deploying agent", TargetsAgent = true)]
 public sealed class AgentDeployCommand : CommandBase<ManagedAgentDeployRequest, ManagedAgentDeployResult>
 {
     private const string MovedToDeploymentCreate = "this option moved to `msagent deployment create`.";

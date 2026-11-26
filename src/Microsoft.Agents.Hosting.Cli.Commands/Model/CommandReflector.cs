@@ -58,6 +58,9 @@ public sealed class CommandMetadata
     /// <summary>Whether the progress spinner stays hidden while the command runs.</summary>
     public bool SuppressProgress { get; init; }
 
+    /// <summary>Whether normal resolution addresses an agent rather than inventory.</summary>
+    public bool TargetsAgent { get; init; }
+
     /// <summary>The declaring type.</summary>
     public required Type DeclaringType { get; init; }
 
@@ -154,6 +157,7 @@ public static class CommandReflector
                 SortPriority = ExplicitPriority(attribute.SortPriority),
                 ProgressLabel = attribute.ProgressLabel,
                 SuppressProgress = attribute.SuppressProgress,
+                TargetsAgent = attribute.TargetsAgent,
                 DeclaringType = type,
                 RequiredFeatures = RequiredFeatures(type),
                 Implementation = Instantiate(type),
@@ -312,6 +316,7 @@ public static class CommandReflector
             SortPriority = source.SortPriority,
             ProgressLabel = source.ProgressLabel,
             SuppressProgress = source.SuppressProgress,
+            TargetsAgent = source.TargetsAgent,
             DeclaringType = source.DeclaringType,
             RequiredFeatures = source.RequiredFeatures,
             Implementation = source.Implementation,

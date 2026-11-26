@@ -22,7 +22,8 @@ not changing the CLI implementation.
 | Topic | Reference |
 |---|---|
 | Architecture, contribution rules, build, and offline tests | [CONTRIBUTING.md](../../CONTRIBUTING.md) |
-| Telemetry schema, identity/privacy, routing, and counting | [Telemetry details](../../docs/developer/Telemetry.md) |
+| Telemetry collection, identity/privacy, routing, delivery, and counting | [Telemetry details](../../docs/developer/Telemetry.md) |
+| Telemetry fields, attribution, and deploy milestones | [Telemetry data dictionary](../../docs/developer/TelemetryDataDictionary.md) |
 | Scoped TypeScript comparison and fixture contracts | [Comparison](../../docs/developer/Comparison.md) |
 | Live testing, Playground behavior, and validation records | [Manual testing and records](../../docs/developer/ManualTesting.md) |
 | Live executable E2E harness | [E2E setup](../Microsoft.Agents.Hosting.Cli.E2E/README.md) |
@@ -53,6 +54,23 @@ values or injected readers; it does not read process environment variables.
 The CLI supports TLS 1.3 and TLS 1.2. Production HTTP clients use the shared
 transport defaults; telemetry's SDK transport has its own integration boundary
 described in the [telemetry reference](../../docs/developer/Telemetry.md#delivery-and-diagnostics).
+
+`--debug` also enables local `[telemetry-routing]` stderr diagnostics on the real
+collector-geography lookup: token availability, HTTP status, parsed known geography,
+deadline/skip reason and collector choice. These lines exclude identifiers, tokens,
+URLs and raw responses; they add no service calls or 1DS fields. Collection must
+otherwise be enabled and eligible. See the telemetry reference for the trace
+contract and the manual-testing guide for live capture.
+Geography authentication supports exact-account silent broker/WAM renewal without
+interactive or default-OS-account fallback; fixed reason stages explain an
+unsupported profile, unavailable account/broker, or required interaction.
+Confirmed per-environment collector decisions are cached for 24 hours in
+`<config directory>/telemetry/collector-cache.json`, scoped by cloud/ring/tenant/
+environment using hashed keys. Hits skip telemetry authentication and cluster
+HTTP; unknown/error/timeout fallbacks are never cached. The bounded, versioned
+file uses best-effort atomic replacement; it cannot bypass collection or
+captured-context gates. Fixed `cache-*` stages report reuse, expiry and failures
+under `--debug`. See the telemetry reference for cache validation and invalidation.
 
 ### Automatic version notices
 

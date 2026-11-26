@@ -2,6 +2,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 
@@ -14,15 +15,18 @@ public sealed class AgentCreateService
     private readonly AmsTargets _targets;
     private readonly EnvironmentSelectionService _environments;
     private readonly IAmsAgentCreationTransport _transport;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     public AgentCreateService(
         AmsTargets targets,
         EnvironmentSelectionService environments,
-        IAmsAgentCreationTransport transport)
+        IAmsAgentCreationTransport transport,
+        IAddressedAgentObserver? agentObserver = null)
     {
         _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _environments = environments ?? throw new ArgumentNullException(nameof(environments));
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        _agentObserver = agentObserver;
     }
 
     public async Task<AgentCreateResult> CreateAsync(
@@ -36,6 +40,7 @@ public sealed class AgentCreateService
         var languageVersion = Required(request.LanguageVersion, "--language-version");
         var generatedIdempotencyKey = request.IdempotencyKey is null;
         var idempotencyKey = ResolveIdempotencyKey(request.IdempotencyKey);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.CodeAgent);
 
         var environment = await _environments
             .ResolveForCommandAsync(request.EnvironmentId, cancellationToken)

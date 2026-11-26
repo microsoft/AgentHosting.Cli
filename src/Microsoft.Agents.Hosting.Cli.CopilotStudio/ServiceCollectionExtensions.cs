@@ -66,7 +66,9 @@ public static class ServiceCollectionExtensions
             provider.GetRequiredService<ITokenProvider>(), provider.GetService<IProfileCredentialProvider>(), apiTarget));
         services.AddSingleton<ISyncProgress>(_ => new StandardErrorSyncProgress(standardError, verboseProgress, color: diagnosticColor));
         services.AddSingleton(provider => new AgentHostDataverseHttpClientAccessor(
-            provider.GetRequiredService<ISyncAuthProvider>(), AgentHostDataverseHttpClientAccessor.CreateRedirectRejectingHandler, diagnostics));
+            provider.GetRequiredService<ISyncAuthProvider>(),
+            AgentHostDataverseHttpClientAccessor.CreateRedirectRejectingHandler,
+            provider.GetService<ICommandInvocationContext>(), diagnostics));
         services.AddSingleton<IDataverseHttpClientAccessor>(provider => provider.GetRequiredService<AgentHostDataverseHttpClientAccessor>());
 
         services.AddSyncServices(userAgent: DataverseUserAgent(), isIslandPreauthorized: false);

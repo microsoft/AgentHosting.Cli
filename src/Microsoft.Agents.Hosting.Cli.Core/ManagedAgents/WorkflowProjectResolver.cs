@@ -39,6 +39,9 @@ public sealed class WorkflowProjectResolver
     /// <returns>The absolute project directory.</returns>
     public string ResolveProjectDirectory(string? project) => _resolver.ResolveProjectDirectory(project);
 
+    internal void ObserveDeployment(DeploymentTelemetryObservation observation) =>
+        _resolver.ObserveDeployment(observation);
+
     /// <summary>Resolves a workflow record and the files it names.</summary>
     /// <param name="project">The project directory, or <see langword="null"/> for the enclosing project.</param>
     /// <param name="agentId">The record to resolve. Wins over the name.</param>
@@ -70,6 +73,7 @@ public sealed class WorkflowProjectResolver
         var (owner, deployment) = _resolver.ResolveAgentDeployment(projectDirectory, agentId, agentName, deploymentId, deploymentName, requireExplicitDeployment);
         var agent = ManagedAgentResolver.RequireMcsWorkflow(owner, verb);
         var environment = await _environments.ResolveAsync(ManagedAgentResolver.TargetEnvironmentId(agent, deployment), cancellationToken).ConfigureAwait(false);
+        _resolver.ObserveMcsWorkflowTarget(ManagedAgentResolver.RequireWorkflowId(agent).ToString(), environment.EnvironmentId);
 
         return (Target(projectDirectory, agent, requireLocalFiles), deployment, environment);
     }

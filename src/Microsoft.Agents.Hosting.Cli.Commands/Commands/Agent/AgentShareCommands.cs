@@ -36,7 +36,7 @@ public static class AgentShareSelector
 }
 
 /// <summary><c>msagent agent share</c>.</summary>
-[Command("share", Description = "Share an MCS agent with a user.", ParentGroup = typeof(AgentGroup), SortPriority = 80, ProgressLabel = "Sharing agent")]
+[Command("share", Description = "Share an MCS agent with a user.", ParentGroup = typeof(AgentGroup), SortPriority = 80, ProgressLabel = "Sharing agent", TargetsAgent = true)]
 public sealed class AgentShareCommand : CommandBase<ManagedAgentShareRequest, ManagedAgentShareResult>
 {
     /// <inheritdoc />
@@ -81,7 +81,7 @@ public sealed class AgentShareCommand : CommandBase<ManagedAgentShareRequest, Ma
 }
 
 /// <summary><c>msagent agent share show</c>.</summary>
-[Command("show", Description = "Show who has access to an MCS agent, and whether everyone in the organization can use it. MCS only.", ParentCommand = typeof(AgentShareCommand), SortPriority = 10)]
+[Command("show", Description = "Show who has access to an MCS agent, and whether everyone in the organization can use it. MCS only.", ParentCommand = typeof(AgentShareCommand), SortPriority = 10, TargetsAgent = true)]
 public sealed class AgentShareShowCommand : CommandBase<ManagedAgentShareShowRequest, ManagedAgentShareShowResult>
 {
     /// <inheritdoc />
@@ -108,7 +108,7 @@ public sealed class AgentShareShowCommand : CommandBase<ManagedAgentShareShowReq
 }
 
 /// <summary><c>msagent agent unshare</c>.</summary>
-[Command("unshare", Description = "Remove a user's access to an MCS agent. MCS only.", ParentGroup = typeof(AgentGroup), SortPriority = 90, ProgressLabel = "Unsharing agent")]
+[Command("unshare", Description = "Remove a user's access to an MCS agent. MCS only.", ParentGroup = typeof(AgentGroup), SortPriority = 90, ProgressLabel = "Unsharing agent", TargetsAgent = true)]
 public sealed class AgentUnshareCommand : CommandBase<ManagedAgentUnshareRequest, ManagedAgentUnshareResult>
 {
     /// <inheritdoc />

@@ -20,7 +20,7 @@ public sealed class TelemetryGeographyRoutingTests
     [InlineData("europe", "Europe")]
     [InlineData("atlantis", "Europe")]
     [InlineData(null, "Europe")]
-    public async Task ProductionRoutingUsesAuthoritativeGeographyAndFailsClosed(
+    public async Task ProductionRoutingUsesKnownGeographyAndDefaultsToEurope(
         string? geography,
         string expected)
     {
@@ -34,6 +34,11 @@ public sealed class TelemetryGeographyRoutingTests
                     CancellationToken.None));
 
         Assert.Equal(expected, destination.Location.ToString());
+        Assert.Equal(
+            expected == "Europe"
+                ? OneDSCollectorEndpoints.RegionalPublicCloud.EU
+                : OneDSCollectorEndpoints.RegionalPublicCloud.US,
+            destination.Endpoint);
         Assert.Single(geographyClient.Targets);
     }
 
@@ -51,13 +56,37 @@ public sealed class TelemetryGeographyRoutingTests
         Assert.Equal(TelemetryLocation.Europe, destination.Location);
     }
 
+    [Fact]
+    public async Task CompleteTargetWithoutGeographyClientDefaultsToEurope()
+    {
+        var resolver = new TelemetryDestinationResolver(
+            PowerPlatformApiTargetConfig.Public,
+            geographyClient: null,
+            productionKey: SyntheticApiKey());
+
+        TelemetryDestination destination =
+            Assert.IsType<TelemetryDestination>(
+                await resolver.ResolveAsync(
+                    ResolvedTarget("environment-one"),
+                    CancellationToken.None));
+
+        Assert.Equal(TelemetryLocation.Europe, destination.Location);
+        Assert.Equal(
+            OneDSCollectorEndpoints.RegionalPublicCloud.EU,
+            destination.Endpoint);
+    }
+
     [Theory]
     [InlineData("unitedstates", "canada", "Global")]
     [InlineData("unitedstates", "europe", "Europe")]
     [InlineData("unitedstates", "atlantis", "Europe")]
-    public async Task MultipleTargetsRouteGlobalOnlyWhenEveryTargetIsKnownNonEu(
-        string first,
-        string second,
+    [InlineData("atlantis", "unitedstates", "Europe")]
+    [InlineData("unitedstates", null, "Europe")]
+    [InlineData("atlantis", "europe", "Europe")]
+    [InlineData("europe", "atlantis", "Europe")]
+    public async Task MultipleTargetsRouteToEuropeUnlessAllTargetsAreKnownNonEu(
+        string? first,
+        string? second,
         string expected)
     {
         var geography = new PerTargetGeographyClient(

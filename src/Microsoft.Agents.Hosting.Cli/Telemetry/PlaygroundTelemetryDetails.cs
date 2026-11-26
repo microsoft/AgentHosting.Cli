@@ -8,19 +8,6 @@ internal enum PlaygroundInstallResult
     Failed,
 }
 
-internal enum PlaygroundErrorCategory
-{
-    None,
-    Unsupported,
-    ToolNotFound,
-    VersionTooOld,
-    InstallDeclined,
-    InstallFailed,
-    LaunchFailed,
-    Timeout,
-    Cancellation,
-}
-
 /// <summary>Privacy-safe metadata for the existing test playground outcome.</summary>
 /// <remarks>
 /// Only numeric three-component release versions are retained. SemVer prerelease and other
@@ -33,8 +20,7 @@ internal sealed record PlaygroundTelemetryDetails
     internal PlaygroundTelemetryDetails(
         long durationMs,
         string? playgroundVersion,
-        PlaygroundInstallResult installResult,
-        PlaygroundErrorCategory errorCategory)
+        PlaygroundInstallResult installResult)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(durationMs);
         if (!Enum.IsDefined(installResult))
@@ -42,15 +28,9 @@ internal sealed record PlaygroundTelemetryDetails
             throw new ArgumentOutOfRangeException(nameof(installResult));
         }
 
-        if (!Enum.IsDefined(errorCategory))
-        {
-            throw new ArgumentOutOfRangeException(nameof(errorCategory));
-        }
-
         DurationMs = durationMs;
         PlaygroundVersion = NormalizeReleaseVersion(playgroundVersion);
         InstallResult = installResult;
-        ErrorCategory = errorCategory;
     }
 
     internal long DurationMs { get; }
@@ -58,8 +38,6 @@ internal sealed record PlaygroundTelemetryDetails
     internal string? PlaygroundVersion { get; }
 
     internal PlaygroundInstallResult InstallResult { get; }
-
-    internal PlaygroundErrorCategory ErrorCategory { get; }
 
     private static string? NormalizeReleaseVersion(string? version)
     {

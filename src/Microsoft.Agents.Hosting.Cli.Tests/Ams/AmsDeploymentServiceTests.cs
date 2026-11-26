@@ -15,11 +15,13 @@ public sealed class AmsDeploymentServiceTests
     [Fact]
     public async Task Create_WritesARecordOnlyWithTheAgentsLanguage()
     {
+        var observer = new RecordingAmsAgentObserver();
         var agents = new FakeAmsAgentTransport { Agents = [CodeAgent()] };
         var deployments = new FakeAmsDeploymentTransport { OnCreate = Created };
 
-        var result = await Service(agents, deployments).CreateAsync(CreateRequest(), default);
+        var result = await Service(agents, deployments, observer: observer).CreateAsync(CreateRequest(), default);
 
+        Assert.Equal(["CodeAgent"], observer.Types);
         Assert.Equal(["get"], agents.Calls);
         Assert.Equal(["create"], deployments.Calls);
         var sent = Assert.IsType<AmsDeploymentCreateTransportRequest>(Assert.Single(deployments.Requests));
@@ -86,10 +88,12 @@ public sealed class AmsDeploymentServiceTests
     [Fact]
     public async Task Create_ForAnAgentThatIsNotBound_IsRefusedBeforeTheCreate()
     {
+        var observer = new RecordingAmsAgentObserver();
         var deployments = new FakeAmsDeploymentTransport { OnCreate = Created };
 
-        var exception = await Assert.ThrowsAsync<AgentDeployException>(() => Service(new FakeAmsAgentTransport { Agents = [CodeAgent() with { RepositoryBindingStatus = "Provisioning" }] }, deployments).CreateAsync(CreateRequest(), default));
+        var exception = await Assert.ThrowsAsync<AgentDeployException>(() => Service(new FakeAmsAgentTransport { Agents = [CodeAgent() with { RepositoryBindingStatus = "Provisioning" }] }, deployments, observer: observer).CreateAsync(CreateRequest(), default));
 
+        Assert.Empty(observer.Types);
         Assert.Equal("agent-not-deployable", exception.ErrorKind);
         Assert.Empty(deployments.Calls);
     }
@@ -227,10 +231,12 @@ public sealed class AmsDeploymentServiceTests
     [InlineData("Prod")]
     public async Task Update_RenamesTheRecordWithTheEntityTagOfTheRead(string deploymentType)
     {
+        var observer = new RecordingAmsAgentObserver();
         var deployments = new FakeAmsDeploymentTransport { Deployments = [DeploymentRecord(deploymentType: deploymentType)] };
 
-        var result = await Service(new FakeAmsAgentTransport(), deployments).UpdateAsync(new AgentDeploymentAmsUpdateRequest { AgentId = Agent, DeploymentId = Deployment, NewName = " dev-renamed " }, default);
+        var result = await Service(new FakeAmsAgentTransport(), deployments, observer: observer).UpdateAsync(new AgentDeploymentAmsUpdateRequest { AgentId = Agent, DeploymentId = Deployment, NewName = " dev-renamed " }, default);
 
+        Assert.Equal(["CodeAgent"], observer.Types);
         Assert.Equal(["read", "update"], deployments.Calls);
         var sent = Assert.IsType<AmsDeploymentUpdateTransportRequest>(deployments.Requests[1]);
         AssertDeployment(sent);
@@ -417,5 +423,7 @@ public sealed class AmsDeploymentServiceTests
 
     private static AmsDeploymentResult Created(AmsDeploymentCreateTransportRequest request) => DeploymentRecord(state: AmsDeploymentResult.NotDeployedState, deploymentName: request.DeploymentName, deploymentType: request.DeploymentType) with { TargetEnvironmentId = request.TargetEnvironmentId, EntraId = request.EntraId, EntraIdType = request.EntraIdType };
 
-    private static AmsDeploymentService Service(FakeAmsAgentTransport agents, FakeAmsDeploymentTransport deployments, IConfirmationPrompt? prompt = null) => new(Resolver(agents, deployments), agents, deployments, prompt ?? new ScriptedConfirmationPrompt());
+    private static AmsDeploymentService Service(FakeAmsAgentTransport agents, FakeAmsDeploymentTransport deployments,
+        IConfirmationPrompt? prompt = null, IAddressedAgentObserver? observer = null) =>
+        new(Resolver(agents, deployments), agents, deployments, prompt ?? new ScriptedConfirmationPrompt(), observer);
 }

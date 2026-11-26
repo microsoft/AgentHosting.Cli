@@ -7,7 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent update</c>, which renames an AMS code agent or changes its description.</summary>
-[Command("update", Description = "Rename an AMS code agent or change its description. Changes only the agent record.", ParentGroup = typeof(AgentGroup), SortPriority = 45, ProgressLabel = "Updating agent")]
+[Command("update", Description = "Rename an AMS code agent or change its description. Changes only the agent record.", ParentGroup = typeof(AgentGroup), SortPriority = 45, ProgressLabel = "Updating agent", TargetsAgent = true)]
 [RequiredFeatureFlag(FeatureName.AmsFeatures)]
 public sealed class AgentUpdateCommand : CommandBase<AgentAmsUpdateRequest, AgentAmsUpdateResult>
 {

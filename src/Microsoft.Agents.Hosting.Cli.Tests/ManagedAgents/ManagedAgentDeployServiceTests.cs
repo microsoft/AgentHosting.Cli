@@ -929,10 +929,12 @@ public sealed class ManagedAgentDeployServiceTests
         Assert.Equal(1, workspaces.PushCalls);
     }
 
-    [Fact]
-    public async Task Deploy_ADevelopmentSlot_RefusesOnConflict()
+    [Theory]
+    [InlineData(DeploymentStages.Dev)]
+    [InlineData("DEV")]
+    public async Task Deploy_ADevelopmentSlot_RefusesOnConflict(string stage)
     {
-        var (workspace, store) = Registered();
+        var (workspace, store) = Registered(stage);
         using var _ = workspace;
         using var scope = new CurrentDirectoryScope(workspace.Root);
         var workspaces = new FakeCopilotWorkspacePort();

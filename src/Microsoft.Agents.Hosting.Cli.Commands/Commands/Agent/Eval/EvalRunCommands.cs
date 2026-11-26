@@ -47,7 +47,7 @@ public static class EvaluationSelectorSymbols
 }
 
 /// <summary><c>msagent agent eval run</c>.</summary>
-[Command("run", Description = "Run a Copilot Studio evaluation. Uses Copilot Credits, and the cost is reported when the run finishes.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 10, ProgressLabel = "Running evaluation")]
+[Command("run", Description = "Run a Copilot Studio evaluation. Uses Copilot Credits, and the cost is reported when the run finishes.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 10, ProgressLabel = "Running evaluation", TargetsAgent = true)]
 public sealed class EvalRunCommand : CommandBase<EvaluationRunRequest, EvaluationRunResult>
 {
     /// <inheritdoc />
@@ -98,7 +98,7 @@ public sealed class EvalRunCommand : CommandBase<EvaluationRunRequest, Evaluatio
 }
 
 /// <summary><c>msagent agent eval list</c>.</summary>
-[Command("list", Description = "List an agent's evaluation runs, newest first.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 20)]
+[Command("list", Description = "List an agent's evaluation runs, newest first.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 20, TargetsAgent = true)]
 public sealed class EvalListCommand : CommandBase<EvaluationListRequest, EvaluationListResult>
 {
     /// <inheritdoc />
@@ -125,7 +125,7 @@ public sealed class EvalListCommand : CommandBase<EvaluationListRequest, Evaluat
 }
 
 /// <summary><c>msagent agent eval show</c>.</summary>
-[Command("show", Description = "Show one evaluation run and its per-conversation results.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 30)]
+[Command("show", Description = "Show one evaluation run and its per-conversation results.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 30, TargetsAgent = true)]
 public sealed class EvalShowCommand : CommandBase<EvaluationShowRequest, EvaluationRunResult>
 {
     /// <inheritdoc />
@@ -147,7 +147,7 @@ public sealed class EvalShowCommand : CommandBase<EvaluationShowRequest, Evaluat
 }
 
 /// <summary><c>msagent agent eval cancel</c>.</summary>
-[Command("cancel", Description = "Stop an evaluation run that is still queued or in progress.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 40)]
+[Command("cancel", Description = "Stop an evaluation run that is still queued or in progress.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 40, TargetsAgent = true)]
 public sealed class EvalCancelCommand : CommandBase<EvaluationCancelRequest, EvaluationRunResult>
 {
     /// <inheritdoc />
@@ -158,7 +158,7 @@ public sealed class EvalCancelCommand : CommandBase<EvaluationCancelRequest, Eva
 }
 
 /// <summary><c>msagent agent eval delete</c>.</summary>
-[Command("delete", Description = "Delete a finished evaluation run. The test set it used is left alone.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 50)]
+[Command("delete", Description = "Delete a finished evaluation run. The test set it used is left alone.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 50, TargetsAgent = true)]
 public sealed class EvalDeleteCommand : CommandBase<EvaluationDeleteRequest, EvaluationRunResult>
 {
     /// <inheritdoc />
@@ -169,7 +169,7 @@ public sealed class EvalDeleteCommand : CommandBase<EvaluationDeleteRequest, Eva
 }
 
 /// <summary><c>msagent agent eval generate</c>.</summary>
-[Command("generate", Description = "Generate evaluation conversations from the agent's description. Creates no test set. Use --output to keep them.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 60, ProgressLabel = "Generating conversations")]
+[Command("generate", Description = "Generate evaluation conversations from the agent's description. Creates no test set. Use --output to keep them.", ParentGroup = typeof(AgentEvalGroup), SortPriority = 60, ProgressLabel = "Generating conversations", TargetsAgent = true)]
 public sealed class EvalGenerateCommand : CommandBase<EvaluationGenerateRequest, EvaluationGenerateResult>
 {
     /// <inheritdoc />

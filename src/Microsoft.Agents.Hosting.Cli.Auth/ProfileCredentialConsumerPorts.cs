@@ -5,6 +5,10 @@ namespace Microsoft.Agents.Hosting.Cli.Auth;
 public interface IProfileSelectedAccountTokenAcquisition
 {
     Task<TokenAcquisitionResult?> TryAcquireSelectedTokenAsync(AuthProfile profile, IReadOnlyList<string> scopes, string targetTenantId, CancellationToken ct);
+
+    Task<TokenAcquisitionResult?> TryAcquireSelectedTokenAsync(AuthProfile profile, IReadOnlyList<string> scopes,
+        string targetTenantId, IEnvironmentGeographyDiagnostics? diagnostics, CancellationToken ct) =>
+        TryAcquireSelectedTokenAsync(profile, scopes, targetTenantId, ct);
 }
 
 public interface IProfileConsentTokenAcquisition

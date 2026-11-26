@@ -1,5 +1,7 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
 
@@ -19,13 +21,16 @@ public sealed class DeploymentService
 {
     private readonly IDeploymentStore _store;
     private readonly IDeploymentTransport _deploymentTransport;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     public DeploymentService(
         IDeploymentStore store,
-        IDeploymentTransport deploymentTransport)
+        IDeploymentTransport deploymentTransport,
+        IAddressedAgentObserver? agentObserver = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _deploymentTransport = deploymentTransport ?? throw new ArgumentNullException(nameof(deploymentTransport));
+        _agentObserver = agentObserver;
     }
 
     public async Task<DeploymentResult<CodeAgentDeployment>> GetAsync(
@@ -38,6 +43,7 @@ public sealed class DeploymentService
         var (deploymentId, botResourceId, tenantId) = await ResolveBotTargetAsync(deployments, request, cancellationToken).ConfigureAwait(false);
         var existingDeployment = deployments.FirstOrDefault(deployment =>
             string.Equals(deployment.DeploymentId, deploymentId, StringComparison.OrdinalIgnoreCase));
+        ObserveAgentTarget(request.AgentId, existingDeployment);
 
         try
         {
@@ -68,6 +74,7 @@ public sealed class DeploymentService
         CancellationToken cancellationToken)
     {
         request = DeploymentRequestValidator.ValidateCreate(request);
+        ObserveAgentTarget(request.AgentId, null);
 
         var agentId = request.AgentId;
         var deploymentName = request.DeploymentName;
@@ -201,6 +208,7 @@ public sealed class DeploymentService
                 throw DeploymentException.NotFound(deploymentId);
             }
 
+            ObserveAgentTarget(request.AgentId, existingDeployment);
             deployment = existingDeployment.WithMetadata(request.IsDefault, deploymentType);
         }
         else
@@ -208,6 +216,7 @@ public sealed class DeploymentService
             (deploymentId, botResourceId, tenantId) = await ResolveBotTargetAsync(deployments, request, cancellationToken).ConfigureAwait(false);
             existingDeployment = deployments.FirstOrDefault(candidate =>
                 string.Equals(candidate.DeploymentId, deploymentId, StringComparison.OrdinalIgnoreCase));
+            ObserveAgentTarget(request.AgentId, existingDeployment);
             var botResource = BotServiceResourceId.Parse(botResourceId, deploymentId);
 
             request = request with
@@ -274,6 +283,7 @@ public sealed class DeploymentService
 
         var deployment = deployments.FirstOrDefault(candidate =>
             string.Equals(candidate.DeploymentId, deploymentId, StringComparison.OrdinalIgnoreCase));
+        ObserveAgentTarget(request.AgentId, deployment);
 
         await _deploymentTransport
             .DeleteBotAsync(botResourceId, tenantId, cancellationToken)
@@ -284,6 +294,14 @@ public sealed class DeploymentService
         return ToDeploymentResult(
             DeploymentOperationStatus.Deleted,
             targetInstanceName: deployment?.DeploymentName);
+    }
+
+    private void ObserveAgentTarget(string? agentId, CodeAgentDeployment? deployment)
+    {
+        if (!string.IsNullOrWhiteSpace(agentId) || !string.IsNullOrWhiteSpace(deployment?.AgentId))
+        {
+            AddressedAgentObservation.Observe(_agentObserver, AgentTypes.CodeAgent);
+        }
     }
 
     private static DeploymentResult<CodeAgentDeployment> ToDeploymentResult(

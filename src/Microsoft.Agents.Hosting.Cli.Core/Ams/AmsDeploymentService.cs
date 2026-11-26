@@ -1,6 +1,7 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 
@@ -16,14 +17,17 @@ public sealed class AmsDeploymentService :
     private readonly IAmsAgentReadTransport _agents;
     private readonly IAmsDeploymentTransport _deployments;
     private readonly IConfirmationPrompt _confirmations;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the service over the AMS agent and deployment transports and the prompt that confirms deleting a live deployment's record.</summary>
-    public AmsDeploymentService(AmsAddressResolver addresses, IAmsAgentReadTransport agents, IAmsDeploymentTransport deployments, IConfirmationPrompt confirmations)
+    public AmsDeploymentService(AmsAddressResolver addresses, IAmsAgentReadTransport agents, IAmsDeploymentTransport deployments,
+        IConfirmationPrompt confirmations, IAddressedAgentObserver? agentObserver = null)
     {
         _addresses = addresses ?? throw new ArgumentNullException(nameof(addresses));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
         _confirmations = confirmations ?? throw new ArgumentNullException(nameof(confirmations));
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Writes a deployment record with the agent's language, and no package, deployed endpoint or bot.</summary>
@@ -41,6 +45,7 @@ public sealed class AmsDeploymentService :
         var agent = await _addresses.ResolveAgentAsync(request, "deployment create", cancellationToken).ConfigureAwait(false);
         var definition = await _agents.GetAsync(agent.OnDataPlane, cancellationToken).ConfigureAwait(false);
         AmsAgentResponseValidator.ValidateBoundCodeAgent(definition, agent.Home.Environment, agent.AgentId);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.CodeAgent);
         var target = await _addresses.ResolveTargetEnvironmentAsync(agent.Home, targetEnvironmentId, cancellationToken).ConfigureAwait(false);
         var created = await _deployments.CreateAsync(new AmsDeploymentCreateTransportRequest { ServiceTarget = agent.Home.ControlPlane, TargetEnvironmentId = target.EnvironmentId, AgentId = agent.AgentId, DeploymentName = deploymentName, DeploymentType = deploymentType, EntraId = entraId, EntraIdType = entraIdType, Language = definition.Language!, LanguageVersion = definition.LanguageVersion!, RequestedEndpoint = requestedEndpoint }, cancellationToken).ConfigureAwait(false);
         if (FirstCreateMismatch(created, agent, target.EnvironmentId, deploymentType, entraId, entraIdType) is { } field)
@@ -86,6 +91,7 @@ public sealed class AmsDeploymentService :
         var current = await _addresses.ReadDeploymentAsync(address, cancellationToken).ConfigureAwait(false);
         AmsDeploymentView.RequireNotDeleting(current);
         RequireDevEndpointStage(requestedEndpoint, current.DeploymentType);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.CodeAgent);
         var updated = await _deployments.UpdateAsync(new AmsDeploymentUpdateTransportRequest { ServiceTarget = address.Reference.ServiceTarget, AgentId = address.Reference.AgentId, DeploymentId = address.Reference.DeploymentId, ETag = current.ETag, DeploymentName = newName, RequestedEndpoint = requestedEndpoint }, cancellationToken).ConfigureAwait(false);
         return Result(AgentDeploymentAmsResult.UpdatedStatus, AmsDeploymentView.RequireAddressed(address.Reference, updated, "Deployment update"));
     }

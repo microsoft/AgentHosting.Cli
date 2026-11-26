@@ -23,6 +23,9 @@ jobs:
             architecture: arm64
             rid: osx-arm64
     runs-on: ${{ matrix.runner }}
+    env:
+      # The nbgv step exports versions once; parallel MSBuild projects must not append to GITHUB_ENV.
+      NBGV_SetCloudBuildVersionVars: 'false'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,6 +52,7 @@ jobs:
         with:
           path: src
           setAllVars: true
+          setCommonVars: true
       - name: Restore
         run: dotnet restore Microsoft.Agents.Hosting.Cli.proj
       - name: Build Debug

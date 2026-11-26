@@ -11,6 +11,7 @@ public sealed class MsalPublicClientProvider : IDisposable
 {
     private readonly AgentHostAuthOptions _options;
     private readonly IPlatformInfo _platform;
+    private readonly Func<PublicClientConfiguration, IPublicClientApplication>? _createClient;
     private ILegacyMsalTokenCacheBackend? _legacyCache;
     private readonly MsalPublicClientConfigurator _configurator;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -19,9 +20,17 @@ public sealed class MsalPublicClientProvider : IDisposable
 
     public MsalPublicClientProvider(AgentHostAuthOptions options, IPlatformInfo platform, ISecureTokenCacheProbe probe,
         ILegacyMsalTokenCacheBackend? legacyCache = null, HttpDiagnostics? httpDiagnostics = null)
+        : this(options, platform, probe, legacyCache, createClient: null, httpDiagnostics: httpDiagnostics)
+    {
+    }
+
+    internal MsalPublicClientProvider(AgentHostAuthOptions options, IPlatformInfo platform, ISecureTokenCacheProbe probe,
+        ILegacyMsalTokenCacheBackend? legacyCache, Func<PublicClientConfiguration, IPublicClientApplication>? createClient,
+        HttpDiagnostics? httpDiagnostics = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _platform = platform ?? throw new ArgumentNullException(nameof(platform));
+        _createClient = createClient;
         ArgumentNullException.ThrowIfNull(probe);
         _legacyCache = legacyCache;
         _configurator = new MsalPublicClientConfigurator(platform);
@@ -84,7 +93,7 @@ public sealed class MsalPublicClientProvider : IDisposable
                 return existing;
             }
 
-            var client = Build(configuration);
+            var client = _createClient is null ? Build(configuration) : _createClient(configuration);
             LegacyMsalTokenCache.Attach(client.UserTokenCache, GetLegacyCache);
             _clients[key] = client;
             return client;
@@ -101,7 +110,6 @@ public sealed class MsalPublicClientProvider : IDisposable
             .Create(configuration.ClientId.ToString())
             .WithRedirectUri(configuration.RedirectUri.OriginalString)
             .WithAuthority(configuration.AuthorityUrl, configuration.ValidateAuthority);
-
         if (configuration.RequiresParentWindow)
         {
             builder.WithParentActivityOrWindow(NativeMethods.GetConsoleOrTerminalWindow);

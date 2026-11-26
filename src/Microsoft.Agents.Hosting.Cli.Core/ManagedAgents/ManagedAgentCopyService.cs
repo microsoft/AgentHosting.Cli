@@ -37,6 +37,7 @@ public sealed class ManagedAgentCopyService
     private readonly IWorkflowWorkspacePort _workflowWorkspace;
     private readonly IWorkflowScaffoldPort _workflowScaffold;
     private readonly ManagedAgentRegistration _registration;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the service.</summary>
     /// <param name="resolver">Resolves a local source's record and workspace.</param>
@@ -55,7 +56,8 @@ public sealed class ManagedAgentCopyService
     /// <param name="workflows">Reads a local workflow source, and downloads a cloud one into the copy's staging.</param>
     /// <param name="workflowWorkspace">Names the folder a workflow copy's workspace occupies, finds the flow it holds, and names the folders a workflow project owns.</param>
     /// <param name="workflowScaffold">Refuses a workflow name Dataverse would refuse.</param>
-    public ManagedAgentCopyService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, AgentConfigLocator locator, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, ManagedAgentCloneMaterialiser materialiser, CopilotWorkspaceLocator workspaceLocator, CopilotProjectIdentityReader projectIdentities, CopilotSchemaName schemaNames, CopilotAgentName agentNames, ICopilotCopyPort copies, ManagedAgentPrincipalResolver principals, ICopilotWorkspacePort workspaces, IWorkflowStorePort workflows, IWorkflowWorkspacePort workflowWorkspace, IWorkflowScaffoldPort workflowScaffold)
+    /// <param name="agentObserver">Optionally observes the addressed agent type.</param>
+    public ManagedAgentCopyService(ManagedAgentResolver resolver, IManagedAgentRegistry agents, AgentConfigLocator locator, CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, ManagedAgentCloneMaterialiser materialiser, CopilotWorkspaceLocator workspaceLocator, CopilotProjectIdentityReader projectIdentities, CopilotSchemaName schemaNames, CopilotAgentName agentNames, ICopilotCopyPort copies, ManagedAgentPrincipalResolver principals, ICopilotWorkspacePort workspaces, IWorkflowStorePort workflows, IWorkflowWorkspacePort workflowWorkspace, IWorkflowScaffoldPort workflowScaffold, IAddressedAgentObserver? agentObserver = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
@@ -74,6 +76,7 @@ public sealed class ManagedAgentCopyService
         _workflowWorkspace = workflowWorkspace ?? throw new ArgumentNullException(nameof(workflowWorkspace));
         _workflowScaffold = workflowScaffold ?? throw new ArgumentNullException(nameof(workflowScaffold));
         _registration = new ManagedAgentRegistration(_agents, locator);
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Prepares a copy and registers it.</summary>
@@ -109,6 +112,7 @@ public sealed class ManagedAgentCopyService
             (null, false) => ResolveCloudSourceAsync(request, cancellationToken),
         }).ConfigureAwait(false);
 
+        AddressedAgentObservation.Observe(_agentObserver, source.IsWorkflow ? AgentTypes.McsWorkflow : AgentTypes.McsAgent, source.SchemaName);
         if (!source.IsWorkflow)
         {
             RequireNewAgentNames(newName, explicitSchemaName, source);
@@ -266,6 +270,7 @@ public sealed class ManagedAgentCopyService
         var record = ManagedAgentResolver.RequireMcsAgent(located, Verb);
         var workspace = _resolver.ResolveAgentWorkspaceDirectory(sourceProject, record);
         var identity = _projectIdentities.Require(workspace, record.AgentId);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsAgent, identity.SchemaName);
         var binding = await _workspaceLocator.FindAsync(workspace, cancellationToken).ConfigureAwait(false);
         var environment = await _environmentResolver.ResolveAsync(LocalSourceEnvironmentId(request.EnvironmentId, record, binding), cancellationToken).ConfigureAwait(false);
 
@@ -276,6 +281,7 @@ public sealed class ManagedAgentCopyService
     {
         var workspace = _resolver.ResolveWorkspaceDirectory(sourceProject, ManagedAgentResolver.RequireMcsWorkflow(located, Verb));
         var workflowId = ManagedAgentResolver.RequireWorkflowId(located);
+        AddressedAgentObservation.ObserveResources(_agentObserver, AgentTypes.McsWorkflow, mcsWorkflowId: workflowId.ToString());
         var workflow = await _workflows.ReadLocalAsync(workspace, cancellationToken).ConfigureAwait(false);
 
         return new CopySource(await _environmentResolver.ResolveAsync(LocalSourceEnvironmentId(request.EnvironmentId, located, null), cancellationToken).ConfigureAwait(false), null, workflow.Name, null, located.Description ?? workflow.Description, null, workspace, sourceProject, false, workflowId);
@@ -314,6 +320,7 @@ public sealed class ManagedAgentCopyService
         var workflowId = WorkflowRegistrationGuard.ParseCloneWorkflowId(request.CloneWorkflowId!);
 
         RequireNotManagedRecord(AgentTypes.McsWorkflow, workflowId.ToString(), request.Project);
+        AddressedAgentObservation.ObserveResources(_agentObserver, AgentTypes.McsWorkflow, mcsWorkflowId: workflowId.ToString());
 
         return new CopySource(await _environmentResolver.ResolveAsync(request.EnvironmentId, cancellationToken).ConfigureAwait(false), null, null, null, null, null, null, null, true, workflowId);
     }

@@ -18,6 +18,7 @@ public sealed class WorkflowCreateService
     private readonly ManagedAgentPrincipalResolver _principals;
     private readonly IWorkflowWorkspacePort _workspace;
     private readonly ManagedAgentRegistration _registration;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the service.</summary>
     /// <param name="environmentResolver">Resolves the environments the record and clone source belong to.</param>
@@ -28,7 +29,8 @@ public sealed class WorkflowCreateService
     /// <param name="locator">Resolves project and configuration directories.</param>
     /// <param name="principals">Resolves the signed-in operator recorded as owner and creator.</param>
     /// <param name="workspace">Names the workflow's folder and finds the workflows a workspace holds.</param>
-    public WorkflowCreateService(CopilotEnvironmentResolver environmentResolver, IManagedAgentRegistry agents, HomeDeploymentRegistrar homeDeployments, IWorkflowStorePort workflows, IWorkflowScaffoldPort scaffold, AgentConfigLocator locator, ManagedAgentPrincipalResolver principals, IWorkflowWorkspacePort workspace)
+    /// <param name="agentObserver">Optionally observes the addressed agent type.</param>
+    public WorkflowCreateService(CopilotEnvironmentResolver environmentResolver, IManagedAgentRegistry agents, HomeDeploymentRegistrar homeDeployments, IWorkflowStorePort workflows, IWorkflowScaffoldPort scaffold, AgentConfigLocator locator, ManagedAgentPrincipalResolver principals, IWorkflowWorkspacePort workspace, IAddressedAgentObserver? agentObserver = null)
     {
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
@@ -39,6 +41,7 @@ public sealed class WorkflowCreateService
         _principals = principals ?? throw new ArgumentNullException(nameof(principals));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _registration = new ManagedAgentRegistration(_agents, _locator);
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Creates a workflow record, scaffolding the files or cloning them from an environment.</summary>
@@ -69,6 +72,7 @@ public sealed class WorkflowCreateService
         var displayName = request.Name.Trim();
 
         WorkflowRegistrationGuard.RequireValidName(_scaffold, displayName);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsWorkflow);
 
         var environment = await _environmentResolver.ResolveAsync(request.EnvironmentId, cancellationToken).ConfigureAwait(false);
         environment = await _principals.BindUserAsync(environment, cancellationToken).ConfigureAwait(false);
@@ -76,6 +80,8 @@ public sealed class WorkflowCreateService
         var folderName = _workspace.ProjectFolderName(displayName);
         var workspaceRoot = PrepareWorkspaceRoot(projectDirectory, displayName, folderName);
         var workflowId = Guid.NewGuid();
+        AddressedAgentObservation.ObserveResources(_agentObserver, AgentTypes.McsWorkflow,
+            mcsWorkflowId: workflowId.ToString(), environmentId: environment.EnvironmentId);
 
         var createdFiles = ProjectRelative(folderName, _scaffold.Scaffold(workspaceRoot, displayName, workflowId));
         _workflows.WriteConnectionReferenceDeclaration(workspaceRoot);
@@ -102,6 +108,8 @@ public sealed class WorkflowCreateService
     private async Task<ManagedAgentCreateResult> CloneAsync(ManagedAgentCreateRequest request, CancellationToken cancellationToken)
     {
         var workflowId = WorkflowRegistrationGuard.ParseCloneWorkflowId(request.CloneWorkflowId!);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsWorkflow);
+        AddressedAgentObservation.ObserveResources(_agentObserver, AgentTypes.McsWorkflow, mcsWorkflowId: workflowId.ToString());
         var source = await _environmentResolver.ResolveAsync(request.CloneEnvironmentId ?? request.EnvironmentId, cancellationToken).ConfigureAwait(false);
         var target = string.IsNullOrWhiteSpace(request.EnvironmentId) ? source : await _environmentResolver.ResolveForContextAsync(source.Context!, request.EnvironmentId, cancellationToken).ConfigureAwait(false);
         target = await _principals.BindUserAsync(target, cancellationToken).ConfigureAwait(false);

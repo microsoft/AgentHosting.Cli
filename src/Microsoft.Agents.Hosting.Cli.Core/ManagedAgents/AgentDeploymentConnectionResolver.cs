@@ -76,6 +76,7 @@ public sealed class AgentDeploymentConnectionResolver
         var schemaName = string.IsNullOrWhiteSpace(request.SchemaName)
             ? _projectIdentities.Require(workspace.WorkspaceDirectory, workspace.Agent.AgentId).SchemaName
             : request.SchemaName.Trim();
+        _resolver.ObserveMcsAgentSchemaName(schemaName);
         var targetAgentId = await _catalog.ResolveAgentIdAsync(workspace.Environment, schemaName, cancellationToken).ConfigureAwait(false)
             ?? throw NoTargetAgent(workspace.Agent, workspace.Deployment, schemaName, workspace.Environment.EnvironmentId);
 

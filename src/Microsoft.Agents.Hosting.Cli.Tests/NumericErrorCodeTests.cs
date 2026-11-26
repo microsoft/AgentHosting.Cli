@@ -252,6 +252,7 @@ public sealed class NumericErrorCodeTests
     [InlineData(typeof(ErrorCodes.Provisioning), 16)]
     [InlineData(typeof(ErrorCodes.CopilotStudio), 17)]
     [InlineData(typeof(ErrorCodes.Evaluation), 18)]
+    [InlineData(typeof(ErrorCodes.Playground), 19)]
     [InlineData(typeof(ErrorCodes.General), 99)]
     public void Catalog_AssignsUniqueCodesWithinTheDocumentedArea(Type area, int prefix)
     {

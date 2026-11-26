@@ -7,7 +7,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent copy</c>.</summary>
-[Command("copy", Description = "Create a new agent or standalone workflow from an existing one. Prepares and registers local content only; the first deploy creates the new agent or workflow in the cloud.", ParentGroup = typeof(AgentGroup), SortPriority = 15, ProgressLabel = "Copying agent")]
+[Command("copy", Description = "Create a new agent or standalone workflow from an existing one. Prepares and registers local content only; the first deploy creates the new agent or workflow in the cloud.", ParentGroup = typeof(AgentGroup), SortPriority = 15, ProgressLabel = "Copying agent", TargetsAgent = true)]
 public sealed class AgentCopyCommand : CommandBase<ManagedAgentCopyRequest, ManagedAgentCopyResult>
 {
     /// <inheritdoc />

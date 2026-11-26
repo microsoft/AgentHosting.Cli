@@ -1,6 +1,7 @@
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 
@@ -9,12 +10,15 @@ public sealed class AgentDeployService
 {
     private readonly AmsAddressResolver _addresses;
     private readonly IAmsDeploymentTransport _deployments;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the service over the AMS deployment transport.</summary>
-    public AgentDeployService(AmsAddressResolver addresses, IAmsDeploymentTransport deployments)
+    public AgentDeployService(AmsAddressResolver addresses, IAmsDeploymentTransport deployments,
+        IAddressedAgentObserver? agentObserver = null)
     {
         _addresses = addresses ?? throw new ArgumentNullException(nameof(addresses));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Reads the deployment, checks the stage rule, and deploys it with the entity tag of that read.</summary>
@@ -27,6 +31,7 @@ public sealed class AgentDeployService
         var current = await _addresses.ReadDeploymentAsync(address, cancellationToken).ConfigureAwait(false);
         AmsDeploymentView.RequireNotDeleting(current);
         RequireCommitStage(commitId, current.DeploymentType);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.CodeAgent);
         var deployed = AmsDeploymentView.RequireAddressed(address.Reference, await _deployments.DeployAsync(new AmsDeploymentDeployTransportRequest { ServiceTarget = address.Reference.ServiceTarget, AgentId = address.Reference.AgentId, DeploymentId = address.Reference.DeploymentId, ETag = current.ETag, CommitId = commitId }, cancellationToken).ConfigureAwait(false), "Deployment deploy");
         return new AgentDeployResult
         {

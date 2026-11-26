@@ -9,7 +9,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent create</c>, routed on <c>--agent-type</c>.</summary>
-[Command("create", Description = "Create an agent project.", ParentGroup = typeof(AgentGroup), SortPriority = 10, ProgressLabel = "Creating agent")]
+[Command("create", Description = "Create an agent project.", ParentGroup = typeof(AgentGroup), SortPriority = 10, ProgressLabel = "Creating agent", TargetsAgent = true)]
 public sealed class AgentCreateCommand : CommandBase<ManagedAgentCreateRequest, ManagedAgentCreateResult>
 {
     private static readonly string[] McsOnlyOptions =

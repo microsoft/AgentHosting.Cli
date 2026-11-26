@@ -261,6 +261,27 @@ public sealed class AgentDeployServiceTests
         Assert.Throws<ArgumentNullException>(() => new AgentDeployService(Resolver(), null!));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Deploy_ObservesTheAgentOnlyAfterAValidatedReadAndRetainsItOnDeployFailure(bool invalidRead)
+    {
+        var observer = new RecordingAmsAgentObserver();
+        var agents = new FakeAmsAgentTransport();
+        var deployments = new FakeAmsDeploymentTransport
+        {
+            Deployments = [DeploymentRecord() with { AgentId = invalidRead ? OtherAgent : Agent }],
+            OnDeploy = _ => throw AgentDeployException.ServiceRejected("Synthetic deploy failure.", ExitCodes.Failure, "deploy-failed", "Try again."),
+        };
+        var service = new AgentDeployService(Resolver(agents, deployments), deployments, observer);
+
+        await Assert.ThrowsAsync<AgentDeployException>(() => service.DeployAsync(ById(), default));
+
+        Assert.Equal(invalidRead ? Array.Empty<string>() : ["CodeAgent"], observer.Types);
+        string[] expectedCalls = invalidRead ? ["read"] : ["read", "deploy"];
+        Assert.Equal(expectedCalls, deployments.Calls);
+    }
+
     private static AgentDeployRequest ById() => new() { AgentId = Agent, DeploymentId = Deployment };
 
     private static AgentDeployService Service(FakeAmsAgentTransport agents, FakeAmsDeploymentTransport deployments) => new(Resolver(agents, deployments), deployments);

@@ -6,7 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
 /// <summary><c>msagent deployment connection add</c>.</summary>
-[Command("add", Description = "Declare a connection reference for a connector and bind it, creating the connection when none can be. MCS only.", ParentGroup = typeof(DeploymentConnectionGroup), SortPriority = 20)]
+[Command("add", Description = "Declare a connection reference for a connector and bind it, creating the connection when none can be. MCS only.", ParentGroup = typeof(DeploymentConnectionGroup), SortPriority = 20, TargetsAgent = true)]
 public sealed class DeploymentConnectionAddCommand : CommandBase<AgentDeploymentConnectionReferenceCreateRequest, AgentDeploymentConnectionReferenceCreateResult>
 {
     /// <inheritdoc />

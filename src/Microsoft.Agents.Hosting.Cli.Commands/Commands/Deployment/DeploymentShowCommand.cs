@@ -8,7 +8,7 @@ using DeploymentModel = Microsoft.Agents.Hosting.Cli.Core.Deployments.CodeAgentD
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
 /// <summary><c>msagent deployment show</c>, routed to a deployment of the local project or to AMS.</summary>
-[Command("show", Description = "Get an existing deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 30)]
+[Command("show", Description = "Get an existing deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 30, TargetsAgent = true)]
 public sealed class DeploymentShowCommand : CommandBase<AgentDeploymentShowRequest, AgentDeploymentShowResult>
 {
     /// <inheritdoc />

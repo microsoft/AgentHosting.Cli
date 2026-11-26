@@ -33,6 +33,7 @@ public sealed class PlaygroundExecutionTests
         var exitCode = await RenderAsync(execution);
 
         Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Equal(19001, ((IStreamingFailureResult)execution).ErrorCode);
         Assert.Contains("not yet supported for playground", doubles.Error.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, doubles.ResolveCalls);
         Assert.Equal(0, doubles.ClientConfigurationCalls);
@@ -81,6 +82,136 @@ public sealed class PlaygroundExecutionTests
         Assert.Equal(expectedErrorCode, result.ErrorCode);
     }
 
+    [Theory]
+    [InlineData(PlaygroundInstallFailureKind.Prerequisite, 19013)]
+    [InlineData(PlaygroundInstallFailureKind.NodeNotFound, 19004)]
+    [InlineData(PlaygroundInstallFailureKind.NodeInvalidVersion, 19005)]
+    [InlineData(PlaygroundInstallFailureKind.NodeBelowMinimum, 19006)]
+    [InlineData(PlaygroundInstallFailureKind.NodeProbeTimedOut, 19008)]
+    [InlineData(PlaygroundInstallFailureKind.NodeProbeFailed, 19007)]
+    [InlineData(PlaygroundInstallFailureKind.NpmNotFound, 19009)]
+    [InlineData(PlaygroundInstallFailureKind.NpmInvalidVersion, 19010)]
+    [InlineData(PlaygroundInstallFailureKind.NpmProbeTimedOut, 19012)]
+    [InlineData(PlaygroundInstallFailureKind.NpmProbeFailed, 19011)]
+    [InlineData(PlaygroundInstallFailureKind.Permission, 19015)]
+    [InlineData(PlaygroundInstallFailureKind.Network, 19016)]
+    [InlineData(PlaygroundInstallFailureKind.Timeout, 19017)]
+    [InlineData(PlaygroundInstallFailureKind.GenericInstall, 19018)]
+    [InlineData(PlaygroundInstallFailureKind.PostVerification, 19019)]
+    public async Task InstallerFailuresUseRegisteredCodes(PlaygroundInstallFailureKind kind, int expectedCode)
+    {
+        var doubles = new Doubles
+        {
+            Tool = null,
+            IsInputRedirected = true,
+            InstallException = new PlaygroundInstallException(kind, "safe failure", "safe remediation", 37),
+        };
+        var execution = CreateExecution(Request() with { InstallPlayground = true }, doubles);
+
+        Assert.Equal(ExitCodes.Failure, await RenderAsync(execution));
+        Assert.Equal(expectedCode, ((IStreamingFailureResult)execution).ErrorCode);
+        Assert.Equal(37, doubles.InstallException.ExitCode);
+    }
+
+    [Theory]
+    [InlineData(PlaygroundLaunchFailureKind.InvalidTool, 19020)]
+    [InlineData(PlaygroundLaunchFailureKind.InvalidTarget, 19020)]
+    [InlineData(PlaygroundLaunchFailureKind.InvalidClientId, 19020)]
+    [InlineData(PlaygroundLaunchFailureKind.InvalidTenantId, 19020)]
+    [InlineData(PlaygroundLaunchFailureKind.InvalidLaunchDirectory, 19020)]
+    [InlineData(PlaygroundLaunchFailureKind.StartFailed, 19021)]
+    [InlineData(PlaygroundLaunchFailureKind.CleanupFailed, 19023)]
+    public async Task LauncherFailuresUseRegisteredCodes(PlaygroundLaunchFailureKind kind, int expectedCode)
+    {
+        var doubles = new Doubles
+        {
+            LaunchException = new PlaygroundLaunchException(kind, "safe failure", "safe remediation"),
+        };
+        var execution = CreateExecution(Request(), doubles);
+
+        Assert.Equal(ExitCodes.Failure, await RenderAsync(execution));
+        Assert.Equal(expectedCode, ((IStreamingFailureResult)execution).ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(PlaygroundFailureKind.NodeNotFound, 19004)]
+    [InlineData(PlaygroundFailureKind.NodeInvalidVersion, 19005)]
+    [InlineData(PlaygroundFailureKind.NodeBelowMinimum, 19006)]
+    [InlineData(PlaygroundFailureKind.NodeProbeFailed, 19007)]
+    [InlineData(PlaygroundFailureKind.NodeProbeTimedOut, 19008)]
+    [InlineData(PlaygroundFailureKind.NpmNotFound, 19009)]
+    [InlineData(PlaygroundFailureKind.NpmInvalidVersion, 19010)]
+    [InlineData(PlaygroundFailureKind.NpmProbeFailed, 19011)]
+    [InlineData(PlaygroundFailureKind.NpmProbeTimedOut, 19012)]
+    public async Task PrerequisiteRejectionsUseRegisteredCodes(PlaygroundFailureKind kind, int expectedCode)
+    {
+        var doubles = new Doubles { Tool = null };
+        doubles.DetectNpm = _ => Task.FromResult(new PlaygroundToolDiscoveryResult(null,
+        [
+            new PlaygroundToolRejection("prerequisite", new PlaygroundFailure { Kind = kind, Message = "safe failure" }),
+        ]));
+        var execution = CreateExecution(Request(), doubles);
+
+        Assert.Equal(ExitCodes.Failure, await RenderAsync(execution));
+        Assert.Equal(expectedCode, ((IStreamingFailureResult)execution).ErrorCode);
+    }
+
+    [Theory]
+    [InlineData("resolve", 19025)]
+    [InlineData("client", 19020)]
+    [InlineData("locate", 19002)]
+    [InlineData("locate-timeout", 19003)]
+    [InlineData("prerequisite", 19013)]
+    [InlineData("prerequisite-timeout", 19008)]
+    [InlineData("discover", 19024)]
+    [InlineData("launch", 19021)]
+    [InlineData("prompt", 19027)]
+    [InlineData("declined", 19014)]
+    public async Task UntypedFailuresUseStageSpecificCodes(string stage, int expectedCode)
+    {
+        var doubles = new Doubles();
+        switch (stage)
+        {
+            case "resolve":
+                doubles.Resolve = _ => throw new InvalidOperationException("CANARY");
+                break;
+            case "client":
+                doubles.ClientConfiguration = () => throw new InvalidOperationException("CANARY");
+                break;
+            case "locate":
+                doubles.LocateException = new InvalidOperationException("CANARY");
+                break;
+            case "locate-timeout":
+                doubles.LocateException = new TimeoutException("CANARY");
+                break;
+            case "prerequisite":
+                doubles.DetectNode = (_, _) => throw new InvalidOperationException("CANARY");
+                break;
+            case "prerequisite-timeout":
+                doubles.DetectNode = (_, _) => throw new TimeoutException("CANARY");
+                break;
+            case "discover":
+                doubles.Discover = (_, _, _) => throw new InvalidOperationException("CANARY");
+                break;
+            case "launch":
+                doubles.LaunchException = new InvalidOperationException("CANARY");
+                break;
+            case "prompt":
+                doubles.Tool = null;
+                doubles.Confirm = (_, _, _) => throw new InvalidOperationException("CANARY");
+                break;
+            case "declined":
+                doubles.Tool = null;
+                doubles.PromptOutcome = ConfirmationOutcome.Declined;
+                break;
+        }
+        var execution = CreateExecution(Request(), doubles);
+
+        Assert.Equal(stage == "resolve" ? ExitCodes.Usage : ExitCodes.Failure, await RenderAsync(execution));
+        Assert.Equal(expectedCode, ((IStreamingFailureResult)execution).ErrorCode);
+        Assert.DoesNotContain("CANARY", doubles.Error.ToString(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task TargetIsResolvedBeforeToolDiscovery()
     {
@@ -105,9 +236,11 @@ public sealed class PlaygroundExecutionTests
             return 0;
         };
 
-        var exitCode = await RenderAsync(CreateExecution(Request(), doubles));
+        var execution = CreateExecution(Request(), doubles);
+        var exitCode = await RenderAsync(execution);
 
         Assert.Equal(0, exitCode);
+        Assert.Null(((IStreamingFailureResult)execution).ErrorCode);
         Assert.Equal(["resolve", "locate", "launch"], doubles.Events);
     }
 
@@ -179,8 +312,7 @@ public sealed class PlaygroundExecutionTests
 
         Assert.Equal(ExitCodes.Failure, await RenderAsync(execution));
         Assert.Equal(PlaygroundSemanticOutcome.Timeout, execution.SemanticOutcome);
-        Assert.Equal(PlaygroundErrorCategory.Timeout,
-            Assert.IsType<PlaygroundTelemetryDetails>(Assert.Single(doubles.Telemetry)).ErrorCategory);
+        Assert.Equal(ErrorCodes.Playground.NodeProbeTimedOut, ((IStreamingFailureResult)execution).ErrorCode);
         Assert.Equal(0, doubles.PromptCalls);
         Assert.Equal(0, doubles.DiscoverCalls);
         Assert.Equal(0, doubles.LaunchCalls);
@@ -247,6 +379,7 @@ public sealed class PlaygroundExecutionTests
 
         Assert.Equal(130, await RenderAsync(execution, cancellation.Token));
         Assert.Equal(PlaygroundSemanticOutcome.Cancellation, execution.SemanticOutcome);
+        Assert.Null(((IStreamingFailureResult)execution).ErrorCode);
         Assert.Equal(0, doubles.PromptCalls);
         Assert.Equal(0, doubles.LaunchCalls);
     }
@@ -348,7 +481,7 @@ public sealed class PlaygroundExecutionTests
 
         Assert.Equal(0, exitCode);
         var details = Assert.IsType<PlaygroundTelemetryDetails>(Assert.Single(doubles.Telemetry));
-        Assert.Equal(PlaygroundErrorCategory.None, details.ErrorCategory);
+        Assert.Null(((IStreamingFailureResult)execution).ErrorCode);
         Assert.Equal(PlaygroundInstallResult.Installed, details.InstallResult);
     }
 
@@ -435,8 +568,7 @@ public sealed class PlaygroundExecutionTests
         var exitCode = await RenderAsync(execution);
 
         Assert.Equal(ExitCodes.Failure, exitCode);
-        var details = Assert.IsType<PlaygroundTelemetryDetails>(Assert.Single(doubles.Telemetry));
-        Assert.Equal(PlaygroundErrorCategory.Timeout, details.ErrorCategory);
+        Assert.Equal(ErrorCodes.Playground.InstallTimedOut, ((IStreamingFailureResult)execution).ErrorCode);
         Assert.Equal(
             CommandTelemetryOutcome.Timeout,
             CommandTreeBuilder.StreamingOutcome(execution, exitCode));
@@ -616,8 +748,7 @@ public sealed class PlaygroundExecutionTests
         Assert.Contains("masked terminal prompt", doubles.Output.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("device code", doubles.Output.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(!plain, doubles.Output.ToString().Contains("process started", StringComparison.OrdinalIgnoreCase));
-        var details = Assert.IsType<PlaygroundTelemetryDetails>(Assert.Single(doubles.Telemetry));
-        Assert.Equal(PlaygroundErrorCategory.None, details.ErrorCategory);
+        Assert.Single(doubles.Telemetry);
     }
 
     public static TheoryData<PlaygroundRequest> InvalidRequests => new()
@@ -656,8 +787,7 @@ public sealed class PlaygroundExecutionTests
         Assert.Empty(doubles.Output.ToString());
         Assert.DoesNotContain("private", doubles.Error.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(CommandTelemetryOutcome.Usage, CommandTreeBuilder.StreamingOutcome(execution, exitCode));
-        var details = Assert.IsType<PlaygroundTelemetryDetails>(Assert.Single(doubles.Telemetry));
-        Assert.Equal(PlaygroundErrorCategory.Unsupported, details.ErrorCategory);
+        Assert.Equal(ErrorCodes.Playground.UnsupportedInvocation, ((IStreamingFailureResult)execution).ErrorCode);
     }
 
     [Theory]
@@ -698,8 +828,8 @@ public sealed class PlaygroundExecutionTests
         var execution = CreateExecution(new PlaygroundRequest { Target = "directline" }, doubles);
 
         Assert.Equal(childExitCode, await RenderAsync(execution));
-        Assert.Equal(PlaygroundErrorCategory.LaunchFailed,
-            Assert.IsType<PlaygroundTelemetryDetails>(Assert.Single(doubles.Telemetry)).ErrorCategory);
+        Assert.Equal(19022, ((IStreamingFailureResult)execution).ErrorCode);
+        Assert.Single(doubles.Telemetry);
     }
 
     [Fact]

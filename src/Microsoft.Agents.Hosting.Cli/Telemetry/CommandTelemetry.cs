@@ -7,6 +7,8 @@ using Microsoft.Agents.Hosting.Cli.Core.Diagnostics;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.PowerPlatform.Tooling.OneDS;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
+using Microsoft.Agents.Hosting.Cli.CopilotStudio;
 
 namespace Microsoft.Agents.Hosting.Cli.Telemetry;
 
@@ -52,6 +54,9 @@ internal sealed record CommandTelemetryPath
     internal bool IsPlayground =>
         string.Equals(Value, "test playground", StringComparison.Ordinal);
 
+    internal bool IsAgentDeploy =>
+        string.Equals(Value, "agent deploy", StringComparison.Ordinal);
+
     internal string OperationName =>
         "AgentHostingCLI." + Value.Replace(' ', '.');
 
@@ -86,13 +91,20 @@ internal sealed record CommandTelemetryRecord
         Guid? tenantId,
         Guid? principalObjectId,
         PlaygroundTelemetryDetails? playgroundDetails,
-        int? errorCode = null)
+        int? errorCode = null,
+        long? durationMs = null)
     {
         Kind = kind;
         Path = path;
         HostCategory = hostCategory;
         Outcome = outcome;
         ErrorCode = errorCode;
+        if (durationMs is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(durationMs));
+        }
+
+        DurationMs = durationMs;
         Timestamp = timestamp;
         PlaygroundDetails = ValidatePlaygroundDetails(path, playgroundDetails);
         TenantId = ValidateTenantId(tenantId);
@@ -114,6 +126,8 @@ internal sealed record CommandTelemetryRecord
     public DateTimeOffset Timestamp { get; }
 
     internal PlaygroundTelemetryDetails? PlaygroundDetails { get; }
+
+    internal long? DurationMs { get; }
 
     public Guid? TenantId { get; }
 
@@ -167,7 +181,9 @@ internal sealed record CommandTelemetryRecord
         DateTimeOffset timestamp,
         Guid? tenantId,
         PlaygroundTelemetryDetails? playgroundDetails = null,
-        int? errorCode = null)
+        int? errorCode = null,
+        long? durationMs = null,
+        Guid? principalObjectId = null)
     {
         ArgumentNullException.ThrowIfNull(path);
         if (!Enum.IsDefined(outcome))
@@ -190,9 +206,10 @@ internal sealed record CommandTelemetryRecord
             outcome,
             timestamp,
             tenantId,
-            principalObjectId: null,
+            principalObjectId,
             playgroundDetails,
-            errorCode);
+            errorCode,
+            durationMs);
     }
 
     internal CommandTelemetryRecord WithAttribution(
@@ -205,11 +222,12 @@ internal sealed record CommandTelemetryRecord
             Outcome,
             Timestamp,
             tenantId,
-            Kind == CommandTelemetryRecordKind.CommandAttempt
+            Kind is CommandTelemetryRecordKind.CommandAttempt or CommandTelemetryRecordKind.CommandOutcome
                 ? principalObjectId
                 : null,
             PlaygroundDetails,
-            ErrorCode);
+            ErrorCode,
+            DurationMs);
 
     private static PlaygroundTelemetryDetails? ValidatePlaygroundDetails(
         CommandTelemetryPath? path,
@@ -255,18 +273,23 @@ internal sealed record CommandTelemetryRecord
     }
 }
 
+internal sealed record CommandTelemetryResourceIds(string? McsAgentId, string? McsWorkflowId, string? EnvironmentId);
+
 internal sealed class CommandTelemetryEvent : IOneDSTelemetry
 {
     internal const string EnvelopeName = "event";
     internal const string ClientType = "AgentHostingCLI";
-    internal const string Scenario = "AgentHosting_CLI_Authoring";
 
     internal CommandTelemetryEvent(
         CommandTelemetryRecord record,
         TelemetryDestination destination,
         string cliVersion,
         string sessionId,
-        int sequenceNumber)
+        int sequenceNumber,
+        string? agentType = null,
+        string? mcsAgentSchemaName = null,
+        CommandTelemetryResourceIds? resourceIds = null,
+        DeploymentTelemetryObservation? deployment = null)
     {
         ArgumentNullException.ThrowIfNull(record);
         ArgumentNullException.ThrowIfNull(destination);
@@ -295,7 +318,11 @@ internal sealed class CommandTelemetryEvent : IOneDSTelemetry
             destination,
             cliVersion,
             sessionId,
-            sequenceNumber);
+            sequenceNumber,
+            agentType,
+            mcsAgentSchemaName,
+            resourceIds,
+            deployment);
     }
 
     public string TelemetryName { get; }
@@ -313,6 +340,13 @@ internal sealed class CommandTelemetryEvent : IOneDSTelemetry
 
 internal sealed class CommandTelemetryData
 {
+    private static readonly SyncNamingRulesAdapter SchemaNamingRules = new();
+
+    internal static bool IsValidMcsAgentSchemaName(string schemaName) =>
+        !string.IsNullOrWhiteSpace(schemaName)
+        && schemaName.Length <= SchemaNamingRules.MaximumSchemaNameLength
+        && SchemaNamingRules.IsValidSchemaName(schemaName);
+
     private CommandTelemetryData()
     {
     }
@@ -327,7 +361,7 @@ internal sealed class CommandTelemetryData
     public required string ClusterCategory { get; init; }
 
     [JsonPropertyName("device_Id")]
-    public string DeviceId { get; init; } = "browser";
+    public string DeviceId { get; init; } = "CLI";
 
     [JsonPropertyName("event_Name")]
     public required string EventName { get; init; }
@@ -366,40 +400,111 @@ internal sealed class CommandTelemetryData
         TelemetryDestination destination,
         string cliVersion,
         string sessionId,
-        int sequenceNumber)
+        int sequenceNumber,
+        string? agentType = null,
+        string? mcsAgentSchemaName = null,
+        CommandTelemetryResourceIds? resourceIds = null,
+        DeploymentTelemetryObservation? deployment = null)
     {
+        if (agentType is not null && !IsKnownAgentType(agentType))
+        {
+            throw new ArgumentException("Unsupported agent type.", nameof(agentType));
+        }
+
         string operationName =
             record.Path?.OperationName ?? "AgentHostingCLI.Host";
         string telemetryLocation =
             destination.Location == Telemetry.TelemetryLocation.Europe ? "eu" : "global";
-        var dimensions = new Dictionary<string, object>(StringComparer.Ordinal)
+        Guid? tenantId = record.TenantId;
+        Guid? principalObjectId =
+            record.Kind is CommandTelemetryRecordKind.CommandAttempt or CommandTelemetryRecordKind.CommandOutcome
+                ? record.PrincipalObjectId
+                : null;
+        var dimensions = new SortedDictionary<string, object>(StringComparer.Ordinal)
         {
-            ["IsFailure"] = record.Outcome is not (null
+            ["cliVersion"] = cliVersion,
+            ["cloud"] = destination.Cloud,
+            ["isFailure"] = record.Outcome is not (null
                 or CommandTelemetryOutcome.Success
                 or CommandTelemetryOutcome.Cancellation)
                 || record.HostCategory is CommandTelemetryHostCategory.ParserRejection
                     or CommandTelemetryHostCategory.GroupUsage,
             ["operationName"] = operationName,
             ["telemetryLocation"] = telemetryLocation,
-            ["isOnePlayer"] = "false",
-            ["webPlayerScenario"] = CommandTelemetryEvent.Scenario,
-            ["cloud"] = destination.Cloud,
-            ["station"] = "Unknown",
-            ["cliVersion"] = cliVersion,
         };
-        if (record.TenantId is { } tenantId)
+        if (tenantId is { } tenant)
         {
-            if (record.Path?.IsPlayground != true)
+            dimensions["tenantId"] = tenant.ToString("D");
+        }
+
+        if (principalObjectId is { } principal)
+        {
+            dimensions["principalObjectId"] = principal.ToString("D");
+        }
+
+        if (agentType is not null
+            && record.Kind is CommandTelemetryRecordKind.CommandAttempt or CommandTelemetryRecordKind.CommandOutcome)
+        {
+            dimensions["agentType"] = agentType;
+            if (agentType == AgentTypes.McsAgent
+                && mcsAgentSchemaName is not null
+                && IsValidMcsAgentSchemaName(mcsAgentSchemaName))
             {
-                dimensions["tenantId"] = tenantId.ToString("D");
+                dimensions["mcsAgentSchemaName"] = mcsAgentSchemaName;
             }
         }
 
-        if (record.Kind == CommandTelemetryRecordKind.CommandAttempt
-            && record.Path?.IsPlayground != true
-            && record.PrincipalObjectId is { } principalObjectId)
+        if (record.Kind is CommandTelemetryRecordKind.CommandAttempt or CommandTelemetryRecordKind.CommandOutcome
+            && resourceIds is not null)
         {
-            dimensions["principalObjectId"] = principalObjectId.ToString("D");
+            if (agentType == AgentTypes.McsAgent && resourceIds.McsAgentId is { } mcsAgentId)
+            {
+                dimensions["mcsAgentId"] = mcsAgentId;
+            }
+
+            if (agentType == AgentTypes.McsWorkflow && resourceIds.McsWorkflowId is { } mcsWorkflowId)
+            {
+                dimensions["mcsWorkflowId"] = mcsWorkflowId;
+            }
+
+            if (resourceIds.EnvironmentId is { } environmentId)
+            {
+                dimensions["environmentId"] = environmentId;
+            }
+        }
+
+        if (record.Kind == CommandTelemetryRecordKind.CommandOutcome
+            && record.Path?.IsAgentDeploy == true
+            && agentType is AgentTypes.McsAgent or AgentTypes.McsWorkflow
+            && deployment is not null)
+        {
+            if (deployment.DeploymentType is { } deploymentType)
+            {
+                dimensions["deploymentType"] = deploymentType;
+            }
+            if (deployment.PublishRequested is { } publishRequested)
+            {
+                dimensions["publishRequested"] = publishRequested;
+            }
+            if (deployment.ResourceAction is { } resourceAction)
+            {
+                dimensions["resourceAction"] = resourceAction == DeploymentResourceAction.UpdatedNoChange
+                    ? "updated-nochange"
+                    : resourceAction.ToString().ToLowerInvariant();
+            }
+            if (deployment.PublishStatus is { } publishStatus)
+            {
+                dimensions["publishStatus"] = publishStatus switch
+                {
+                    DeploymentPublishStatus.NotRequested => "not-requested",
+                    DeploymentPublishStatus.NotReached => "not-reached",
+                    _ => publishStatus.ToString().ToLowerInvariant(),
+                };
+            }
+            if (agentType == AgentTypes.McsWorkflow && deployment.WorkflowState is { } workflowState)
+            {
+                dimensions["workflowState"] = workflowState.ToString().ToLowerInvariant();
+            }
         }
 
         if (record.HostCategory is { } hostCategory)
@@ -426,20 +531,22 @@ internal sealed class CommandTelemetryData
                 errorCode.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
-        if (record.PlaygroundDetails is { } playgroundDetails)
+        if ((record.PlaygroundDetails?.DurationMs ?? record.DurationMs) is { } durationMs)
         {
             dimensions["durationMs"] =
-                playgroundDetails.DurationMs.ToString(
+                durationMs.ToString(
                     System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        if (record.PlaygroundDetails is { } playgroundDetails)
+        {
             if (playgroundDetails.PlaygroundVersion is { } playgroundVersion)
             {
                 dimensions["playgroundVersion"] = playgroundVersion;
             }
 
-            dimensions["installResult"] =
+            dimensions["playgroundInstallResult"] =
                 InstallResultToken(playgroundDetails.InstallResult);
-            dimensions["errorCategory"] =
-                ErrorCategoryToken(playgroundDetails.ErrorCategory);
         }
 
         return new CommandTelemetryData
@@ -459,19 +566,13 @@ internal sealed class CommandTelemetryData
             OperationName = operationName,
             CustomDimensions = JsonSerializer.Serialize(dimensions),
             TelemetryLocation = telemetryLocation,
-            TenantId =
-                record.Kind == CommandTelemetryRecordKind.CommandAttempt
-                    && record.Path?.IsPlayground != true
-                    && record.PrincipalObjectId is not null
-                    ? record.TenantId?.ToString("D")
-                    : null,
-            PrincipalObjectId =
-                record.Kind == CommandTelemetryRecordKind.CommandAttempt
-                    && record.Path?.IsPlayground != true
-                    ? record.PrincipalObjectId?.ToString("D")
-                    : null,
+            TenantId = tenantId?.ToString("D"),
+            PrincipalObjectId = principalObjectId?.ToString("D"),
         };
     }
+
+    internal static bool IsKnownAgentType(string agentType) =>
+        AgentTypes.All.Contains(agentType, StringComparer.Ordinal);
 
     private static string HostCategoryToken(CommandTelemetryHostCategory category) => category switch
     {
@@ -501,21 +602,6 @@ internal sealed class CommandTelemetryData
         PlaygroundInstallResult.Failed => "failed",
         _ => throw new ArgumentOutOfRangeException(nameof(result)),
     };
-
-    private static string ErrorCategoryToken(PlaygroundErrorCategory category) =>
-        category switch
-        {
-            PlaygroundErrorCategory.None => "none",
-            PlaygroundErrorCategory.Unsupported => "unsupported",
-            PlaygroundErrorCategory.ToolNotFound => "tool-not-found",
-            PlaygroundErrorCategory.VersionTooOld => "version-too-old",
-            PlaygroundErrorCategory.InstallDeclined => "install-declined",
-            PlaygroundErrorCategory.InstallFailed => "install-failed",
-            PlaygroundErrorCategory.LaunchFailed => "launch-failed",
-            PlaygroundErrorCategory.Timeout => "timeout",
-            PlaygroundErrorCategory.Cancellation => "cancellation",
-            _ => throw new ArgumentOutOfRangeException(nameof(category)),
-        };
 
     private static string ExitClass(CommandTelemetryOutcome outcome) => outcome switch
     {
@@ -556,7 +642,7 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
     private const int MaximumDiagnosticCount = 4;
     private const int MaximumRecordCount = 2;
     private const int MaximumEnvironmentTargetCount = 4;
-    private static readonly TimeSpan DefaultFlushTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan DefaultFlushTimeout = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan MaximumFlushTimeout = TimeSpan.FromMinutes(1);
 
     private readonly ITelemetryDestinationResolver? _destinationResolver;
@@ -564,6 +650,7 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
     private readonly string? _cliVersion;
     private readonly TimeSpan _flushTimeout;
     private readonly TimeProvider _timeProvider = TimeProvider.System;
+    private readonly Guid _sessionId;
     private readonly ICommandTelemetryTransport? _transport;
     private readonly CommandTelemetryTenantObserver? _tenantObserver;
     private readonly CommandTelemetryEnvironmentObserver? _environmentObserver;
@@ -572,8 +659,22 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
     private readonly Dictionary<string, string> _environmentTargets =
         new(StringComparer.OrdinalIgnoreCase);
     private CommandTelemetryPath? _path;
+    private bool _targetsAgent;
+    private string? _agentType;
+    private bool _agentTypeConflict;
+    private DeploymentTelemetryObservation? _deployment;
+    private bool _deploymentConflict;
+    private string? _mcsAgentSchemaName;
+    private bool _mcsAgentSchemaConflict;
+    private string? _mcsAgentId;
+    private bool _mcsAgentIdConflict;
+    private string? _mcsWorkflowId;
+    private bool _mcsWorkflowIdConflict;
+    private string? _environmentId;
+    private bool _environmentIdConflict;
     private bool _environmentTargetConflict;
     private PlaygroundTelemetryDetails? _playgroundDetails;
+    private long? _attemptStarted;
     private Guid? _tenantId;
     private Guid? _principalObjectId;
     private bool _principalConflict;
@@ -621,6 +722,7 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
 
         _transport = transport ?? OneDsCommandTelemetryTransport.Instance;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _sessionId = Guid.NewGuid();
         _tenantObserver = tenantObserver;
         _environmentObserver = environmentObserver;
         ApplySelectedProfile(selectedProfile);
@@ -651,6 +753,17 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
             lock (_gate)
             {
                 return _invalidTransitionCount;
+            }
+        }
+    }
+
+    internal Guid? CorrelationId
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return !_completed && _state == SessionState.Attempt ? _sessionId : null;
             }
         }
     }
@@ -733,7 +846,7 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
         }
     }
 
-    internal void RecordAttempt(CommandTelemetryPath path)
+    internal void RecordAttempt(CommandTelemetryPath path, bool targetsAgent = false)
     {
         if (_destinationResolver is null)
         {
@@ -767,6 +880,15 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
             }
 
             _path = path;
+            _targetsAgent = targetsAgent;
+            try
+            {
+                _attemptStarted = _timeProvider.GetTimestamp();
+            }
+            catch (Exception)
+            {
+                ObserveClockFailure();
+            }
             _state = SessionState.Attempt;
         }
     }
@@ -805,7 +927,9 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
                     timestamp,
                     _tenantId,
                     _playgroundDetails,
-                    errorCode);
+                    errorCode,
+                    _playgroundDetails?.DurationMs ?? MeasureDuration(),
+                    principalObjectId: _principalObjectId);
             if (!TryAddRecord(record))
             {
                 return;
@@ -849,6 +973,7 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
 
         lock (_gate)
         {
+            ObserveEnvironmentId(environmentTarget.EnvironmentId);
             if (_completed || _environmentTargetConflict)
             {
                 return;
@@ -1029,10 +1154,191 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
         }
     }
 
+    internal bool IsAgentTypeObservationEnabled
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _destinationResolver is not null && !_completed && _targetsAgent && _path is not null;
+            }
+        }
+    }
+
+    internal void ObserveAgentType(string agentType, string? mcsAgentSchemaName = null)
+    {
+        lock (_gate)
+        {
+            if (!IsAgentTypeObservationEnabled || _agentTypeConflict)
+            {
+                return;
+            }
+
+            if (!CommandTelemetryData.IsKnownAgentType(agentType))
+            {
+                _agentType = null;
+                _agentTypeConflict = true;
+                OptionalMeasurementDiagnostics.Report(OptionalMeasurementFailureCategory.TelemetryAgentObservation);
+                return;
+            }
+
+            if (_agentType is not null && _agentType != agentType)
+            {
+                _agentType = null;
+                _agentTypeConflict = true;
+                return;
+            }
+
+            _agentType = agentType;
+            if (agentType != AgentTypes.McsAgent
+                || mcsAgentSchemaName is null
+                || _mcsAgentSchemaConflict)
+            {
+                return;
+            }
+
+            if (!CommandTelemetryData.IsValidMcsAgentSchemaName(mcsAgentSchemaName))
+            {
+                _mcsAgentSchemaName = null;
+                _mcsAgentSchemaConflict = true;
+                OptionalMeasurementDiagnostics.Report(OptionalMeasurementFailureCategory.TelemetryAgentObservation);
+                return;
+            }
+
+            if (_mcsAgentSchemaName is not null
+                && !string.Equals(_mcsAgentSchemaName, mcsAgentSchemaName, StringComparison.OrdinalIgnoreCase))
+            {
+                _mcsAgentSchemaName = null;
+                _mcsAgentSchemaConflict = true;
+                return;
+            }
+
+            _mcsAgentSchemaName ??= mcsAgentSchemaName;
+        }
+    }
+
+    internal void ObserveResources(
+        string agentType,
+        string? mcsAgentId = null,
+        string? mcsWorkflowId = null,
+        string? environmentId = null)
+    {
+        lock (_gate)
+        {
+            if (!IsAgentTypeObservationEnabled)
+            {
+                return;
+            }
+
+            ObserveAgentType(agentType);
+            ObserveEnvironmentId(environmentId);
+            if (_agentTypeConflict)
+            {
+                return;
+            }
+
+            if (agentType == AgentTypes.McsAgent)
+            {
+                ObserveIdentifier(ref _mcsAgentId, ref _mcsAgentIdConflict, mcsAgentId, isGuid: true);
+            }
+            else if (agentType == AgentTypes.McsWorkflow)
+            {
+                ObserveIdentifier(ref _mcsWorkflowId, ref _mcsWorkflowIdConflict, mcsWorkflowId, isGuid: true);
+            }
+        }
+    }
+
+    internal void ObserveDeployment(DeploymentTelemetryObservation observation)
+    {
+        lock (_gate)
+        {
+            if (!IsAgentTypeObservationEnabled || _path?.IsAgentDeploy != true || _deploymentConflict)
+            {
+                return;
+            }
+
+            var current = _deployment;
+            string? stage = null;
+            if ((observation.DeploymentType is { } value && !DeploymentStages.TryParse(value, out stage))
+                || (observation.ResourceAction is { } action && !Enum.IsDefined(action))
+                || (observation.PublishStatus is { } status && !Enum.IsDefined(status))
+                || (observation.WorkflowState is { } state && !Enum.IsDefined(state))
+                || (current?.DeploymentType is { } oldStage && stage is not null && oldStage != stage)
+                || (current?.PublishRequested is { } oldRequest && observation.PublishRequested is { } newRequest && oldRequest != newRequest)
+                || (current?.ResourceAction is { } oldAction && observation.ResourceAction is { } newAction && oldAction != newAction))
+            {
+                _deployment = null;
+                _deploymentConflict = true;
+                OptionalMeasurementDiagnostics.Report(OptionalMeasurementFailureCategory.TelemetryAgentObservation);
+                return;
+            }
+
+            _deployment = new()
+            {
+                DeploymentType = stage ?? current?.DeploymentType,
+                PublishRequested = observation.PublishRequested ?? current?.PublishRequested,
+                ResourceAction = observation.ResourceAction ?? current?.ResourceAction,
+                PublishStatus = observation.PublishStatus ?? current?.PublishStatus,
+                WorkflowState = observation.WorkflowState ?? current?.WorkflowState,
+            };
+        }
+    }
+
+    private void ObserveEnvironmentId(string? environmentId)
+    {
+        if (_destinationResolver is not null && !_completed && _path is not null)
+        {
+            ObserveIdentifier(ref _environmentId, ref _environmentIdConflict, environmentId, isGuid: false);
+        }
+    }
+
+    private static void ObserveIdentifier(ref string? current, ref bool conflict, string? candidate, bool isGuid)
+    {
+        if (candidate is null || conflict)
+        {
+            return;
+        }
+
+        string? normalized = null;
+        if (isGuid)
+        {
+            if (Guid.TryParse(candidate, out var guid) && guid != Guid.Empty)
+            {
+                normalized = guid.ToString("D");
+            }
+        }
+        else if (candidate.Length is > 0 and <= 128
+            && candidate.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_'))
+        {
+            normalized = candidate;
+        }
+
+        if (normalized is null)
+        {
+            current = null;
+            conflict = true;
+            OptionalMeasurementDiagnostics.Report(OptionalMeasurementFailureCategory.TelemetryAgentObservation);
+            return;
+        }
+
+        if (current is not null && !string.Equals(current, normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            current = null;
+            conflict = true;
+            return;
+        }
+
+        current ??= normalized;
+    }
+
     public async ValueTask DisposeAsync()
     {
         CommandTelemetryRecord[] records;
         TelemetryEnvironmentTarget target;
+        string? agentType;
+        string? mcsAgentSchemaName;
+        CommandTelemetryResourceIds resourceIds;
+        DeploymentTelemetryObservation? deployment;
         lock (_gate)
         {
             if (_completed)
@@ -1041,6 +1347,10 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
             }
 
             _completed = true;
+            agentType = _agentType;
+            mcsAgentSchemaName = _mcsAgentSchemaName;
+            resourceIds = new(_mcsAgentId, _mcsWorkflowId, _environmentId);
+            deployment = _deployment;
             records = [.. _records];
             target = _environmentTargetConflict || _environmentTargets.Count == 0
                 ? TelemetryEnvironmentTarget.Unknown
@@ -1064,6 +1374,10 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
                 () => FlushAsync(
                     records,
                     target,
+                    agentType,
+                    mcsAgentSchemaName,
+                    resourceIds,
+                    deployment,
                     budget.Token),
                 CancellationToken.None);
         }
@@ -1104,6 +1418,10 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
     private async Task FlushAsync(
         CommandTelemetryRecord[] records,
         TelemetryEnvironmentTarget target,
+        string? agentType,
+        string? mcsAgentSchemaName,
+        CommandTelemetryResourceIds resourceIds,
+        DeploymentTelemetryObservation? deployment,
         CancellationToken cancellationToken)
     {
         OptionalMeasurementFailureCategory failureCategory =
@@ -1116,7 +1434,7 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
             if (destination is not null)
             {
                 failureCategory = OptionalMeasurementFailureCategory.TelemetrySerialization;
-                string sessionId = Guid.NewGuid().ToString("D");
+                string sessionId = _sessionId.ToString("D");
                 IOneDSTelemetry[] events = records
                     .Select((record, index) =>
                     {
@@ -1125,7 +1443,11 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
                             destination,
                             _cliVersion!,
                             sessionId,
-                            index + 1);
+                            index + 1,
+                            agentType,
+                            mcsAgentSchemaName,
+                            resourceIds,
+                            deployment);
                         var endpoint =
                             new OneDSEndpointConfiguration(
                                 destination.Endpoint,
@@ -1199,11 +1521,36 @@ internal sealed class CommandTelemetrySession : IAsyncDisposable
         }
         catch (Exception)
         {
-            _failedOperationCount = Increment(_failedOperationCount);
-            _lastDiagnosticStatus = CommandTelemetryDiagnosticStatus.ClockFailure;
+            ObserveClockFailure();
             timestamp = default;
             return false;
         }
+    }
+
+    private long? MeasureDuration()
+    {
+        if (_attemptStarted is not { } started)
+        {
+            return null;
+        }
+
+        try
+        {
+            var elapsed = _timeProvider.GetElapsedTime(started);
+            ArgumentOutOfRangeException.ThrowIfLessThan(elapsed, TimeSpan.Zero);
+            return (long)elapsed.TotalMilliseconds;
+        }
+        catch (Exception)
+        {
+            ObserveClockFailure();
+            return null;
+        }
+    }
+
+    private void ObserveClockFailure()
+    {
+        _failedOperationCount = Increment(_failedOperationCount);
+        _lastDiagnosticStatus = CommandTelemetryDiagnosticStatus.ClockFailure;
     }
 
     private void ObserveInvalidTransition()
@@ -1597,9 +1944,15 @@ internal sealed class CommandTelemetrySessionFactory
     }
 }
 
-internal sealed class CommandTelemetrySessionAccessor
+internal sealed class CommandTelemetrySessionAccessor : ICommandInvocationContext
 {
     private readonly AsyncLocal<Scope?> _current = new();
+    private readonly AsyncLocal<Scope?> _observation = new();
+
+    internal CommandTelemetrySession? ObservationSession =>
+        _observation.Value is { IsActive: true } scope ? scope.Session : null;
+
+    public Guid? SessionId => Current.CorrelationId;
 
     internal CommandTelemetrySession Current
     {
@@ -1620,6 +1973,7 @@ internal sealed class CommandTelemetrySessionAccessor
         ArgumentNullException.ThrowIfNull(session);
         var scope = new Scope(this, session, Scope.FirstActive(_current.Value));
         _current.Value = scope;
+        _observation.Value = scope;
         return scope;
     }
 
@@ -1646,6 +2000,11 @@ internal sealed class CommandTelemetrySessionAccessor
             if (ReferenceEquals(owner._current.Value, this))
             {
                 owner._current.Value = FirstActive(Previous);
+            }
+
+            if (ReferenceEquals(owner._observation.Value, this))
+            {
+                owner._observation.Value = FirstActive(Previous);
             }
         }
 

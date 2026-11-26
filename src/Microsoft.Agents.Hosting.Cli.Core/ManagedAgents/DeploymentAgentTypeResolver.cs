@@ -11,16 +11,19 @@ public sealed class DeploymentAgentTypeResolver
     private readonly AgentConfigLocator _locator;
     private readonly IAgentDeploymentRegistry _deployments;
     private readonly IManagedAgentRegistry _agents;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the resolver.</summary>
     /// <param name="locator">Resolves the project directory holding the configuration.</param>
     /// <param name="deployments">The deployment table.</param>
     /// <param name="agents">The managed-agent table.</param>
-    public DeploymentAgentTypeResolver(AgentConfigLocator locator, IAgentDeploymentRegistry deployments, IManagedAgentRegistry agents)
+    /// <param name="agentObserver">Optionally observes the addressed agent type.</param>
+    public DeploymentAgentTypeResolver(AgentConfigLocator locator, IAgentDeploymentRegistry deployments, IManagedAgentRegistry agents, IAddressedAgentObserver? agentObserver = null)
     {
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Resolves the agent type a verb acts on.</summary>
@@ -39,11 +42,14 @@ public sealed class DeploymentAgentTypeResolver
 
             if (MatchDeployment(projectDirectory, query, owner) is { } deployment)
             {
+                AddressedAgentObservation.Observe(_agentObserver, deployment.AgentType);
                 return new DeploymentAgentTypeResult { AgentType = deployment.AgentType, Source = DeploymentAgentTypeSource.DeploymentRecord };
             }
 
             if (MatchAgent(projectDirectory, query, owner) is { } agent)
             {
+                AddressedAgentObservation.Observe(_agentObserver, agent.AgentType, agent.McsSchemaName);
+                AddressedAgentObservation.ObserveResources(_agentObserver, agent.AgentType, mcsWorkflowId: agent.McsWorkflowId);
                 return new DeploymentAgentTypeResult { AgentType = agent.AgentType, Source = DeploymentAgentTypeSource.AgentRecord };
             }
         }

@@ -31,7 +31,8 @@ These references are for changing the CLI itself, not authoring agent projects:
 
 - [Contributing](../CONTRIBUTING.md): authoritative architecture, build, test, safety, and documentation requirements.
 - [Developer reference](../src/Microsoft.Agents.Hosting.Cli/agent.md): host configuration and feature controls.
-- [Telemetry details](developer/Telemetry.md): schema, privacy, routing, and counting.
+- [Telemetry details](developer/Telemetry.md): collection, privacy, routing, caching, delivery, diagnostics, and counting.
+- [Telemetry data dictionary](developer/TelemetryDataDictionary.md): emitted fields, types, presence rules, attribution, and deploy milestones.
 - [Comparison](developer/Comparison.md): scoped offline conformance and pinned TypeScript input.
 - [Manual testing and records](developer/ManualTesting.md): live checks, approval boundaries, and evidence.
 

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
+using Microsoft.Agents.Hosting.Cli.Core.Errors;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 
@@ -219,6 +220,10 @@ public sealed record AgentDeploymentRecord
 
     /// <summary>The slot's stage, one of <see cref="DeploymentStages"/>.</summary>
     public required string DeploymentType { get; init; }
+
+    internal string RequireStage() => DeploymentStages.TryParse(DeploymentType, out var stage)
+        ? stage
+        : throw new UsageException($"Deployment '{DeploymentId}' must have one of these stages: {string.Join(", ", DeploymentStages.All)}.");
 
     /// <summary>The slot's name, unique within the agent.</summary>
     public required string DeploymentName { get; init; }

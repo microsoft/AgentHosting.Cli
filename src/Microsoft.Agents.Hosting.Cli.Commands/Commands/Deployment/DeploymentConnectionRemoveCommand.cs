@@ -6,7 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
 /// <summary><c>msagent deployment connection remove</c>.</summary>
-[Command("remove", Description = "Remove a connection reference from the workspace, delete a connection from the environment, or both. MCS only.", ParentGroup = typeof(DeploymentConnectionGroup), SortPriority = 40)]
+[Command("remove", Description = "Remove a connection reference from the workspace, delete a connection from the environment, or both. MCS only.", ParentGroup = typeof(DeploymentConnectionGroup), SortPriority = 40, TargetsAgent = true)]
 public sealed class DeploymentConnectionRemoveCommand : CommandBase<AgentDeploymentConnectionRemoveRequest, AgentDeploymentConnectionRemoveResult>
 {
     /// <inheritdoc />

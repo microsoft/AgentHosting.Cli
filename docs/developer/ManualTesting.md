@@ -21,6 +21,76 @@ PR package requires review and approval; a downloadable artifact alone is not
 authorization to run it. Do not install helpers, open authentication prompts,
 or enable shipped-off features without the relevant approval.
 
+## Telemetry geography diagnostic capture
+
+After approval for the intended existing account/profile, public production
+cloud, tenant and environment, use a read-only, environment-scoped command.
+Verify the selected profile with `auth status` first. Do not select a different
+profile or sign in implicitly to make the check pass. Telemetry must already be
+enabled and eligible; do not override an opt-out as part of this procedure.
+
+From the repository root, against a freshly built Debug binary:
+
+```powershell
+dotnet run --project src\Microsoft.Agents.Hosting.Cli --no-build --no-restore -c Debug -- agent list --environment-id "<approved-environment-id>" --limit 1 --non-interactive --json --debug 2> "<local-capture-path>"
+```
+
+Replace both placeholders before running. This lists at most one cloud agent
+and performs normal read-only resolution/listing plus the existing telemetry
+metadata lookup (or cached collector reuse) and best-effort batch send; it does
+not deploy or query an agent.
+Keep stdout separate from stderr. Other existing `--debug` output may share the
+capture; the bounded geography trace is identified by `[telemetry-routing]`.
+
+| Trace | Interpretation |
+|---|---|
+| `captured-context-resolved`, `routing-start`, `lookup-start budgetMs=5000` | The invocation reached eligible production geography routing. |
+| `cache-miss` or `cache-expired` | No reusable decision exists for the selected cloud/ring/tenant/environment; the live lookup follows. |
+| `cache-hit collector=EU` or `Global` | A confirmed decision less than 24 hours old was reused; no telemetry token acquisition or cluster request is needed for this environment. |
+| `cache-written collector=EU` or `Global` | The recognized live geography result was persisted for later invocations. |
+| `cache-invalid`, `cache-read-failed`, `cache-write-failed` or `cache-cleanup-failed` | Cache validation or I/O failed; details, identifiers and paths are withheld. |
+| `TokenAcquisitionStarted`, then `TokenUnavailable` | Exact-profile silent acquisition returned no token; no cluster HTTP request follows. |
+| `TokenProfileUnsupported` | A workload/Azure credential profile is excluded from optional selected-user acquisition. |
+| `TokenProviderUnavailable` | The owned-profile selected-token adapter is not registered. |
+| `TokenAccountUnavailable` | Legacy silent acquisition could not find the exact selected cached account; another account is not substituted. |
+| `TokenInteractionRequired` | Silent renewal needs explicit sign-in/consent, or an owned profile's exact cached account is absent. No UI is opened. |
+| `TokenBrokerUnavailable` | The broker could not be used; there is no device-code, non-broker or default-account fallback. |
+| `TokenAccountMismatch` or `TokenAcquisitionFailed` | Existing identity validation or acquisition failed; no alternate identity is attempted. |
+| `TokenAvailable`, then `TokenRejected` | A token was returned but failed the existing claim validation; no HTTP request follows. |
+| `RequestStarted`, `ResponseReceived httpStatus=200`, `GeographyRead` | The real cluster endpoint returned a successfully parsed nonempty `geoLongName`. |
+| `geography-result geography=<recognized-value>` | The returned value matched the existing routing allowlists after normalization. |
+| `geography=unrecognized` | A nonempty string was returned but was not in the routing allowlists; its raw value is intentionally withheld. |
+| `GeographyMissing` or `ResponseInvalid` | A response arrived but lacked a usable property or was not valid JSON. |
+| `ResponseReceived httpStatus=403`, then `lookup-failed` | The server rejected the request; status is recorded without the response body. |
+| `lookup-deadline pendingStage=TokenAcquisitionStarted` | The metadata budget expired while silent token acquisition was pending. |
+| `lookup-deadline pendingStage=RequestStarted` | The metadata budget expired while the cluster HTTP request was pending. |
+| `lookup-skipped` or `routing-skipped` | The fixed reason identifies incomplete targeting, context mismatch or another routing gate. |
+| `destination collector=EU` or `Global` | This is the chosen batch destination, not evidence that the collector accepted the batch. |
+
+Elapsed milliseconds are measured from the first trace line, not command start.
+Broker/WAM profiles now use their exact-account silent renewal path rather than
+being rejected before acquisition. A broker call can still exceed the unchanged
+five-second budget; support does not guarantee a token or a timely response.
+The enclosing flush deadline is six seconds, including resolution and sending.
+For a cache check, repeat the same approved read-only command: after a
+`cache-written` result, the next run should show `cache-hit` with the same collector
+and no telemetry `TokenAcquisitionStarted`/`RequestStarted` for that environment.
+To explicitly test the live lookup again before expiry, remove only
+`<resolved config directory>/telemetry/collector-cache.json`; do not remove the
+configuration directory, consent file or authentication state. This invalidates
+all cached environment decisions but does not change collection preference.
+If there is no routing trace, check collection preference, command suppression,
+activation eligibility and whether the command reached telemetry flush. `env list`
+enumerates inventory without selecting a telemetry target, and `agent show` reads
+only local records, so neither demonstrates the environment-geography request.
+Do not increase the budget, retry a mutation, or run a different probe to infer
+that the existing path worked.
+
+Record revision/build, selected cloud/ring, command and approved scope, observed
+stage/status/geography/collector, cache hit/miss/expiry, and whether a deadline or fallback occurred.
+Keep identity-bearing normal output and local captures out of source control.
+Offline tests do not establish live service access, routing or 1DS ingestion.
+
 ## Live agent checks
 
 | Command | Purpose |

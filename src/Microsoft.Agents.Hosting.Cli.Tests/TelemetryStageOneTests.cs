@@ -85,6 +85,7 @@ public sealed class TelemetryStageOneTests
     [Theory]
     [InlineData(null, "Europe")]
     [InlineData("", "Europe")]
+    [InlineData(" \t ", "Europe")]
     [InlineData("Europe", "Europe")]
     [InlineData("United Kingdom FirstRelease", "Europe")]
     [InlineData("United States", "Global")]
@@ -95,7 +96,7 @@ public sealed class TelemetryStageOneTests
     [InlineData("South America", "Global")]
     [InlineData("United Arab Emirates", "Global")]
     [InlineData("unrecognized-geography", "Europe")]
-    public void GeographyPolicyUsesTargetEnvironmentAndFailsClosedToEurope(
+    public void GeographyPolicyUsesKnownGeographyAndDefaultsToEurope(
         string? geography,
         string expected)
     {
@@ -265,16 +266,13 @@ public sealed class TelemetryStageOneTests
             data.GetProperty("operation_Name").GetString());
         Assert.Equal(
             [
-                "IsFailure",
                 "cliVersion",
                 "cloud",
                 "exitClass",
-                "isOnePlayer",
+                "isFailure",
                 "operationName",
                 "outcomeCategory",
-                "station",
                 "telemetryLocation",
-                "webPlayerScenario",
             ],
             JsonDocument.Parse(data.GetProperty("customDimensions").GetString()!)
                 .RootElement
@@ -336,6 +334,7 @@ public sealed class TelemetryStageOneTests
             Assert.Equal("event", document.RootElement.GetProperty("name").GetString());
             JsonElement data = document.RootElement.GetProperty("data");
             Assert.Equal("AgentHostingCLI", data.GetProperty("clientType").GetString());
+            Assert.Equal("eu", data.GetProperty("telemetryLocation").GetString());
             Assert.Equal(
                 "AgentHostingCLI.env.list",
                 data.GetProperty("operation_Name").GetString());

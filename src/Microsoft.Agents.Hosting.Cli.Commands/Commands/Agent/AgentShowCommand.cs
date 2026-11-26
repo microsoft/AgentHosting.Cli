@@ -6,7 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent show</c>, routed to the local project or to an AMS code agent.</summary>
-[Command("show", Description = "Show the managed-agent records this project holds, read locally, or an AMS code agent with its deployments.", ParentGroup = typeof(AgentGroup), SortPriority = 40)]
+[Command("show", Description = "Show the managed-agent records this project holds, read locally, or an AMS code agent with its deployments.", ParentGroup = typeof(AgentGroup), SortPriority = 40, TargetsAgent = true)]
 public sealed class AgentShowCommand : CommandBase<ManagedAgentShowRequest, ManagedAgentShowResult>
 {
     private static readonly AmsRouteRules AmsRules = new("agent show") { LocalOptions = ["--project"] };

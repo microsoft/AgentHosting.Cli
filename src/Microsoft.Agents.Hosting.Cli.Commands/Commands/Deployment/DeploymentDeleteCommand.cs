@@ -8,7 +8,7 @@ using DeploymentModel = Microsoft.Agents.Hosting.Cli.Core.Deployments.CodeAgentD
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
 /// <summary><c>msagent deployment delete</c>, routed to a deployment of the local project or to AMS.</summary>
-[Command("delete", Description = "Delete a deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 50, ProgressLabel = "Deleting deployment")]
+[Command("delete", Description = "Delete a deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 50, ProgressLabel = "Deleting deployment", TargetsAgent = true)]
 public sealed class DeploymentDeleteCommand : CommandBase<AgentDeploymentDeleteRequest, AgentDeploymentDeleteResult>
 {
     /// <inheritdoc />

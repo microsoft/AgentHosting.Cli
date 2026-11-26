@@ -2,6 +2,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Copilot;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
@@ -33,6 +34,7 @@ public sealed class EvaluationTargetResolver : IEvaluationTargetResolver
     private readonly ManagedAgentResolver _resolver;
     private readonly AgentConfigLocator _locator;
     private readonly CopilotProjectIdentityReader _projectIdentities;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the resolver.</summary>
     /// <param name="environmentResolver">Resolves the environment to act in.</param>
@@ -40,13 +42,15 @@ public sealed class EvaluationTargetResolver : IEvaluationTargetResolver
     /// <param name="resolver">Resolves records from project selectors.</param>
     /// <param name="locator">Detects whether a project configuration exists.</param>
     /// <param name="projectIdentities">Reads the schema name a workspace declares.</param>
-    public EvaluationTargetResolver(CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, ManagedAgentResolver resolver, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities)
+    /// <param name="agentObserver">Optionally observes the addressed agent type.</param>
+    public EvaluationTargetResolver(CopilotEnvironmentResolver environmentResolver, ICopilotCatalogPort catalog, ManagedAgentResolver resolver, AgentConfigLocator locator, CopilotProjectIdentityReader projectIdentities, IAddressedAgentObserver? agentObserver = null)
     {
         _environmentResolver = environmentResolver ?? throw new ArgumentNullException(nameof(environmentResolver));
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _projectIdentities = projectIdentities ?? throw new ArgumentNullException(nameof(projectIdentities));
+        _agentObserver = agentObserver;
     }
 
     /// <inheritdoc />
@@ -64,7 +68,7 @@ public sealed class EvaluationTargetResolver : IEvaluationTargetResolver
 
             if (await _catalog.ResolveAgentIdAsync(environment, agentId, cancellationToken).ConfigureAwait(false) is { } directId)
             {
-                return new EvaluationTarget(environment, directId, agentId);
+                return Observed(environment, directId, agentId);
             }
 
             if (ProjectSelector(selector, verb) is not { } fromProject)
@@ -93,7 +97,7 @@ public sealed class EvaluationTargetResolver : IEvaluationTargetResolver
 
     private async Task<EvaluationTarget> RequireAgentAsync(CopilotEnvironmentContext environment, ProjectAgent project, CancellationToken cancellationToken) =>
         project.Selector is { } named && await _catalog.ResolveAgentIdAsync(environment, named, cancellationToken).ConfigureAwait(false) is { } agentId
-            ? new EvaluationTarget(environment, agentId, project.DisplayName)
+            ? Observed(environment, agentId, project.DisplayName)
             : throw CopilotStudioException.AgentNotFound(project.Selector ?? project.DisplayName, environment.EnvironmentId);
 
     private async Task<CopilotEnvironmentContext> RequireGatewayAsync(CopilotEnvironmentContext environment, CancellationToken cancellationToken)
@@ -127,7 +131,9 @@ public sealed class EvaluationTargetResolver : IEvaluationTargetResolver
 
         var agent = ManagedAgentResolver.RequireMcsAgent(_resolver.ResolveAgent(projectDirectory, selector.AgentId, selector.AgentName), verb);
 
-        return new ProjectAgent(_projectIdentities.FindSelector(agent, _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent)), agent.DisplayName);
+        var targetSelector = _projectIdentities.FindSelector(agent, _resolver.FindAgentWorkspaceDirectory(projectDirectory, agent), out var schemaName);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsAgent, schemaName);
+        return new ProjectAgent(targetSelector, agent.DisplayName);
     }
 
     /// <summary>The agent a project names, and the identity the service is addressed by when it has one.</summary>
@@ -149,11 +155,17 @@ public sealed class EvaluationTargetResolver : IEvaluationTargetResolver
 
         if (matches.Count == 1)
         {
-            return new EvaluationTarget(environment, matches[0].AgentId, matches[0].DisplayName);
+            return Observed(environment, matches[0].AgentId, matches[0].DisplayName, matches[0].SchemaName);
         }
 
         throw matches.Count == 0
             ? CopilotStudioException.AgentNotFound(named ?? verb)
             : new UsageException($"Several agents in environment '{environment.EnvironmentId}' match. Pass --agent-id to choose one.");
+    }
+
+    private EvaluationTarget Observed(CopilotEnvironmentContext environment, string agentId, string displayName, string? schemaName = null)
+    {
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsAgent, schemaName);
+        return new EvaluationTarget(environment, agentId, displayName);
     }
 }

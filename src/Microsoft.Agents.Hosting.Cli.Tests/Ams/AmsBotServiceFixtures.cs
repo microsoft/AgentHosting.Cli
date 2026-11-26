@@ -125,6 +125,13 @@ internal sealed class FakeAmsAgentTransport : IAmsAgentReadTransport, IAmsAgentT
     }
 }
 
+internal sealed class RecordingAmsAgentObserver : IAddressedAgentObserver
+{
+    public List<string> Types { get; } = [];
+    public bool IsObservationEnabled => true;
+    public void Observe(string agentType) => Types.Add(agentType);
+}
+
 internal sealed class FakeAmsDeploymentTransport : IAmsDeploymentTransport
 {
     public List<AmsDeploymentResult> Deployments { get; init; } = [];

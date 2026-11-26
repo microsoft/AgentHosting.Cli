@@ -64,6 +64,10 @@ public sealed class AgentDeploymentCreateService
         var target = await _environmentResolver.ResolveAsync(targetEnvironmentId, cancellationToken).ConfigureAwait(false);
         target = await _principals.BindUserAsync(target, cancellationToken).ConfigureAwait(false);
         var schemaName = ResolveSchemaName(projectDirectory, agent);
+        if (agent.AgentType == AgentTypes.McsAgent)
+        {
+            _resolver.ObserveMcsAgentSchemaName(schemaName);
+        }
 
         var stored = _deployments.Add(projectDirectory, new AgentDeploymentRecord
         {

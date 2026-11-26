@@ -31,7 +31,7 @@ public sealed class CommandTelemetryAccountTests
         "33333333-3333-3333-3333-333333333333";
 
     [Fact]
-    public async Task SelectedProfileEnrichesOnlyAttemptWithPairedFieldsAndDimensions()
+    public async Task SelectedProfileEnrichesAttemptAndOutcomeWithPairedFieldsAndDimensions()
     {
         var source = new RecordingProfileSource(
             new("home-user-a.home-tenant", TenantA, UserA));
@@ -53,11 +53,9 @@ public sealed class CommandTelemetryAccountTests
         Assert.Equal(
             UserA.ToString("D"),
             Dimensions(attempt).GetProperty("principalObjectId").GetString());
-        Assert.False(Data(outcome).TryGetProperty("tenantId", out _));
-        Assert.False(
-            Data(outcome).TryGetProperty("principalObjectId", out _));
-        Assert.False(
-            Dimensions(outcome).TryGetProperty("principalObjectId", out _));
+        Assert.Equal(TenantA.ToString("D"), Data(outcome).GetProperty("tenantId").GetString());
+        Assert.Equal(UserA.ToString("D"), Data(outcome).GetProperty("principalObjectId").GetString());
+        Assert.Equal(UserA.ToString("D"), Dimensions(outcome).GetProperty("principalObjectId").GetString());
         Assert.All(events, item => Assert.Equal(
             TenantA.ToString("D"),
             Dimensions(item).GetProperty("tenantId").GetString()));
@@ -87,6 +85,99 @@ public sealed class CommandTelemetryAccountTests
             "identityMode",
             payload,
             StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData((int)CommandTelemetryOutcome.Success)]
+    [InlineData((int)CommandTelemetryOutcome.Usage)]
+    [InlineData((int)CommandTelemetryOutcome.NotSignedIn)]
+    [InlineData((int)CommandTelemetryOutcome.Failure)]
+    [InlineData((int)CommandTelemetryOutcome.Timeout)]
+    [InlineData((int)CommandTelemetryOutcome.Cancellation)]
+    public async Task EveryOutcomeCategoryRetainsTheInvocationSubject(int outcome)
+    {
+        var transport = new CapturingTransport();
+        await using var session = await Factory(
+            new RecordingProfileSource(new("account-a", TenantA, UserA)),
+            new CommandTelemetryTenantObserver(),
+            transport).CreateAsync(false, default);
+        session.RecordAttempt(Path());
+        session.RecordOutcome((CommandTelemetryOutcome)outcome);
+        await session.DisposeAsync();
+
+        Assert.Equal((TenantA, UserA), Subject(Assert.IsType<string>(transport.Payload)));
+    }
+
+    [Fact]
+    public async Task LateAuthenticationUpdatesBothBufferedSubjectsAndPreservesOutcomeDetails()
+    {
+        var transport = new CapturingTransport();
+        await using var session = await Factory(
+            new RecordingProfileSource(new("account-a", TenantA, UserA)),
+            new CommandTelemetryTenantObserver(),
+            transport).CreateAsync(false, default);
+        session.RecordAttempt(Path());
+        session.RecordOutcome(CommandTelemetryOutcome.Failure, 12003);
+        session.ObserveAuthenticatedAccount(new(TenantB, UserB, "account-b", ClientId));
+        await session.DisposeAsync();
+
+        var payload = Assert.IsType<string>(transport.Payload);
+        Assert.Equal((TenantB, UserB), Subject(payload));
+        var dimensions = Dimensions(Event(Parse(payload), "CommandOutcome"));
+        Assert.Equal("12003", dimensions.GetProperty("errorCode").GetString());
+        Assert.True(dimensions.TryGetProperty("durationMs", out _));
+    }
+
+    [Fact]
+    public async Task HostCaseNeverCarriesPrincipalEvenAfterAuthenticationEnrichment()
+    {
+        var transport = new CapturingTransport();
+        await using var session = await Factory(
+            new RecordingProfileSource(new("account-a", TenantA, UserA)),
+            new CommandTelemetryTenantObserver(),
+            transport).CreateAsync(false, default);
+        session.RecordHost(CommandTelemetryHostCategory.Help);
+        session.ObserveAuthenticatedAccount(new(TenantB, UserB, "account-b", ClientId));
+        await session.DisposeAsync();
+
+        var host = Assert.Single(Parse(Assert.IsType<string>(transport.Payload)));
+        Assert.Equal(TenantB.ToString("D"), Data(host).GetProperty("tenantId").GetString());
+        Assert.False(Data(host).TryGetProperty("principalObjectId", out _));
+        Assert.False(Dimensions(host).TryGetProperty("principalObjectId", out _));
+        Assert.Equal(TenantB.ToString("D"), Dimensions(host).GetProperty("tenantId").GetString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TenantOnlyAttributionReachesBothPayloadLocations(bool lateAuthentication)
+    {
+        var transport = new CapturingTransport();
+        var source = new RecordingProfileSource(
+            lateAuthentication ? null : new("account-a", TenantA, null));
+        await using var session = await Factory(
+            source,
+            new CommandTelemetryTenantObserver(),
+            transport).CreateAsync(false, default);
+        session.RecordAttempt(Path());
+        session.RecordOutcome(CommandTelemetryOutcome.Failure, errorCode: 12003);
+        if (lateAuthentication)
+        {
+            session.ObserveAuthenticatedAccount(new(TenantA, null, "account-a", ClientId));
+        }
+
+        await session.DisposeAsync();
+
+        JsonElement[] events = Parse(Assert.IsType<string>(transport.Payload));
+        Assert.Equal(2, events.Length);
+        Assert.All(events, item =>
+        {
+            Assert.Equal(TenantA.ToString("D"), Data(item).GetProperty("tenantId").GetString());
+            Assert.Equal(TenantA.ToString("D"), Dimensions(item).GetProperty("tenantId").GetString());
+            Assert.False(Data(item).TryGetProperty("principalObjectId", out _));
+            Assert.False(Dimensions(item).TryGetProperty("principalObjectId", out _));
+        });
+        Assert.Equal("12003", Dimensions(Event(events, "CommandOutcome")).GetProperty("errorCode").GetString());
     }
 
     [Fact]
@@ -186,13 +277,13 @@ public sealed class CommandTelemetryAccountTests
 
         JsonElement[] events = Parse(payload);
         Assert.Equal(2, events.Length);
-        JsonElement attempt = Event(events, "CommandAttempt");
-        Assert.False(Data(attempt).TryGetProperty("tenantId", out _));
-        Assert.False(
-            Data(attempt).TryGetProperty("principalObjectId", out _));
-        Assert.Equal(
-            TenantA.ToString("D"),
-            Dimensions(attempt).GetProperty("tenantId").GetString());
+        Assert.All(events, item =>
+        {
+            Assert.Equal(TenantA.ToString("D"), Data(item).GetProperty("tenantId").GetString());
+            Assert.False(Data(item).TryGetProperty("principalObjectId", out _));
+            Assert.False(Dimensions(item).TryGetProperty("principalObjectId", out _));
+            Assert.Equal(TenantA.ToString("D"), Dimensions(item).GetProperty("tenantId").GetString());
+        });
     }
 
     [Fact]
@@ -267,13 +358,13 @@ public sealed class CommandTelemetryAccountTests
 
         string payload = await InvokeAsync(source, observer, operations);
 
-        JsonElement attempt = Event(Parse(payload), "CommandAttempt");
-        Assert.False(Data(attempt).TryGetProperty("tenantId", out _));
-        Assert.False(
-            Data(attempt).TryGetProperty("principalObjectId", out _));
-        Assert.Equal(
-            TenantB.ToString("D"),
-            Dimensions(attempt).GetProperty("tenantId").GetString());
+        Assert.All(Parse(payload), item =>
+        {
+            Assert.Equal(TenantB.ToString("D"), Data(item).GetProperty("tenantId").GetString());
+            Assert.False(Data(item).TryGetProperty("principalObjectId", out _));
+            Assert.False(Dimensions(item).TryGetProperty("principalObjectId", out _));
+            Assert.Equal(TenantB.ToString("D"), Dimensions(item).GetProperty("tenantId").GetString());
+        });
     }
 
     [Fact]
@@ -727,13 +818,13 @@ public sealed class CommandTelemetryAccountTests
         JsonElement[] events = Parse(
             Assert.IsType<string>(transport.Payload));
         Assert.Equal(2, events.Length);
-        Assert.All(events, item => Assert.Equal(
-            TenantA.ToString("D"),
-            Dimensions(item).GetProperty("tenantId").GetString()));
-        JsonElement attempt = Event(events, "CommandAttempt");
-        Assert.False(Data(attempt).TryGetProperty("tenantId", out _));
-        Assert.False(
-            Data(attempt).TryGetProperty("principalObjectId", out _));
+        Assert.All(events, item =>
+        {
+            Assert.Equal(TenantA.ToString("D"), Data(item).GetProperty("tenantId").GetString());
+            Assert.Equal(TenantA.ToString("D"), Dimensions(item).GetProperty("tenantId").GetString());
+            Assert.False(Data(item).TryGetProperty("principalObjectId", out _));
+            Assert.False(Dimensions(item).TryGetProperty("principalObjectId", out _));
+        });
     }
 
     [Fact]
@@ -1111,15 +1202,17 @@ public sealed class CommandTelemetryAccountTests
     private static (Guid TenantId, Guid PrincipalObjectId) Subject(
         string payload)
     {
-        JsonElement attempt = Event(Parse(payload), "CommandAttempt");
+        JsonElement[] events = Parse(payload);
+        JsonElement attempt = Event(events, "CommandAttempt");
         JsonElement data = Data(attempt);
         JsonElement dimensions = Dimensions(attempt);
-        Assert.Equal(
-            data.GetProperty("tenantId").GetString(),
-            dimensions.GetProperty("tenantId").GetString());
-        Assert.Equal(
-            data.GetProperty("principalObjectId").GetString(),
-            dimensions.GetProperty("principalObjectId").GetString());
+        Assert.All(events, item =>
+        {
+            Assert.Equal(data.GetProperty("tenantId").GetString(), Data(item).GetProperty("tenantId").GetString());
+            Assert.Equal(data.GetProperty("principalObjectId").GetString(), Data(item).GetProperty("principalObjectId").GetString());
+            Assert.Equal(Data(item).GetProperty("tenantId").GetString(), Dimensions(item).GetProperty("tenantId").GetString());
+            Assert.Equal(Data(item).GetProperty("principalObjectId").GetString(), Dimensions(item).GetProperty("principalObjectId").GetString());
+        });
         return (
             Guid.Parse(dimensions.GetProperty("tenantId").GetString()!),
             Guid.Parse(dimensions.GetProperty("principalObjectId").GetString()!));

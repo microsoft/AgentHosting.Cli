@@ -6,7 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent;
 
 /// <summary><c>msagent agent delete</c>, routed to an agent of the local MCS project or to an AMS code agent.</summary>
-[Command("delete", Description = "Delete an MCS agent's cloud resources and every record for it, or an AMS code agent with its deployments and bots. Local files are never touched.", ParentGroup = typeof(AgentGroup), SortPriority = 60, ProgressLabel = "Deleting agent")]
+[Command("delete", Description = "Delete an MCS agent's cloud resources and every record for it, or an AMS code agent with its deployments and bots. Local files are never touched.", ParentGroup = typeof(AgentGroup), SortPriority = 60, ProgressLabel = "Deleting agent", TargetsAgent = true)]
 public sealed class AgentDeleteCommand : CommandBase<ManagedAgentDeleteRequest, ManagedAgentDeleteResult>
 {
     private static readonly AmsRouteRules AmsRules = new("agent delete") { LocalOptions = ["--project", "--deployment-id", "--deployment-name", "--all-resources"] };

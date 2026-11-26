@@ -283,6 +283,38 @@ public static class ErrorCodes
         public const int ReplacementInterrupted = 18015;
     }
 
+    /// <summary>Error identifiers for the Playground area (prefix 19).</summary>
+    public static class Playground
+    {
+        public const int UnsupportedInvocation = 19001;
+        public const int ToolCheckFailed = 19002;
+        public const int ToolCheckTimedOut = 19003;
+        public const int NodeNotFound = 19004;
+        public const int NodeInvalidVersion = 19005;
+        public const int NodeBelowMinimum = 19006;
+        public const int NodeProbeFailed = 19007;
+        public const int NodeProbeTimedOut = 19008;
+        public const int NpmNotFound = 19009;
+        public const int NpmInvalidVersion = 19010;
+        public const int NpmProbeFailed = 19011;
+        public const int NpmProbeTimedOut = 19012;
+        public const int PrerequisiteUnavailable = 19013;
+        public const int InstallNotAuthorized = 19014;
+        public const int InstallPermissionDenied = 19015;
+        public const int InstallNetworkFailed = 19016;
+        public const int InstallTimedOut = 19017;
+        public const int InstallFailed = 19018;
+        public const int PostVerificationFailed = 19019;
+        public const int InvalidLaunchConfiguration = 19020;
+        public const int StartFailed = 19021;
+        public const int ChildExited = 19022;
+        public const int CleanupFailed = 19023;
+        public const int EndpointDiscoveryFailed = 19024;
+        public const int TargetResolutionFailed = 19025;
+        public const int InvocationFailed = 19026;
+        public const int InstallPromptFailed = 19027;
+    }
+
     /// <summary>Error identifiers for the General area (prefix 99).</summary>
     public static class General
     {

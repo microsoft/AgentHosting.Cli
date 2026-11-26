@@ -8,7 +8,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment.OAuth;
 
-[Command("create", Description = "Create (enable) an OAuth connection setting on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup))]
+[Command("create", Description = "Create (enable) an OAuth connection setting on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup), TargetsAgent = true)]
 public sealed class DeploymentOAuthCreateCommand :
     DeploymentOAuthCommand<DeploymentOAuthCreateRequest, DeploymentResult<DeploymentOAuthConnection>>
 {
@@ -55,7 +55,7 @@ public sealed class DeploymentOAuthCreateCommand :
     }
 }
 
-[Command("update", Description = "Update an OAuth connection setting on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup))]
+[Command("update", Description = "Update an OAuth connection setting on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup), TargetsAgent = true)]
 public sealed class DeploymentOAuthUpdateCommand :
     DeploymentOAuthCommand<DeploymentOAuthUpdateRequest, DeploymentResult<DeploymentOAuthConnection>>
 {
@@ -101,7 +101,7 @@ public sealed class DeploymentOAuthUpdateCommand :
     }
 }
 
-[Command("delete", Description = "Delete an OAuth connection setting on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup))]
+[Command("delete", Description = "Delete an OAuth connection setting on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup), TargetsAgent = true)]
 public sealed class DeploymentOAuthDeleteCommand :
     DeploymentOAuthCommand<DeploymentOAuthDeleteRequest, DeploymentResult<DeploymentOAuthConnection>>
 {
@@ -131,7 +131,7 @@ public sealed class DeploymentOAuthDeleteCommand :
     }
 }
 
-[Command("show", Description = "Show details of an OAuth connection setting on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup))]
+[Command("show", Description = "Show details of an OAuth connection setting on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup), TargetsAgent = true)]
 public sealed class DeploymentOAuthShowCommand :
     DeploymentOAuthCommand<DeploymentOAuthShowRequest, DeploymentResult<DeploymentOAuthConnection>>
 {
@@ -161,7 +161,7 @@ public sealed class DeploymentOAuthShowCommand :
     }
 }
 
-[Command("list", Description = "List all OAuth connection settings on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup))]
+[Command("list", Description = "List all OAuth connection settings on a deployment. CodeAgent only.", ParentGroup = typeof(DeploymentOAuthGroup), TargetsAgent = true)]
 public sealed class DeploymentOAuthListCommand :
     DeploymentOAuthCommand<DeploymentOAuthListRequest, DeploymentResult<DeploymentOAuthConnection[]>>
 {

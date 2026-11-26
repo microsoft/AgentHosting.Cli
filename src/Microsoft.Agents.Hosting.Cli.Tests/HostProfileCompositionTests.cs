@@ -458,6 +458,131 @@ public sealed class HostProfileCompositionTests : IDisposable
         Assert.Null(await provider.GetRequiredService<IEnvironmentGeographyClient>().GetGeographyAsync(new("env", "tenant"), default));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GeographyCompositionUsesOnlyTheOptInDiagnosticSink(bool debug)
+    {
+        var output = new StringWriter();
+        var services = Configure(false);
+        if (debug) services.AddSingleton(new TelemetryRoutingDiagnostics(output));
+        services.AddSingleton<ISelectedAccountTokenProvider>(new ForbiddenSelectedTokens());
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Null(await provider.GetRequiredService<IEnvironmentGeographyClient>()
+            .GetGeographyAsync(new("private-environment", "private-tenant"), default));
+
+        if (debug)
+            Assert.Contains("captured-geography-context-unavailable", output.ToString());
+        else
+            Assert.Empty(output.ToString());
+        Assert.DoesNotContain("private-environment", output.ToString());
+        Assert.DoesNotContain("private-tenant", output.ToString());
+    }
+
+    [Fact]
+    public async Task CapturedBrokerGeographyReachesClusterWithTheExactProfilesToken()
+    {
+        var target = PowerPlatformApiTargetConfig.Public;
+        var profile = new AuthProfile
+        {
+            ProfileId = "selected-broker", AccountKey = "selected-account", Username = "selected@example.test",
+            CredentialMethod = AuthCredentialMethod.Broker,
+            CredentialReference = OwnedProfileReferences.New(false).Value,
+            TenantId = EnvironmentFixtures.ContosoTenant, ClientId = PowerPlatformApiPermissions.AgentHostCliApplicationId,
+        };
+        var credentials = new SelectedProfileTokens();
+        var output = new StringWriter();
+        var diagnostics = new TelemetryRoutingDiagnostics(output);
+        var services = Configure(false);
+        services.AddSingleton(diagnostics);
+        services.AddSingleton<IProfileSelectedAccountTokenAcquisition>(credentials);
+        services.AddSingleton<ISelectedAccountTokenProvider>(new ForbiddenSelectedTokens());
+        var handler = new StubHttpMessageHandler(_ => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"geoLongName":"europe"}"""),
+        });
+        services.AddKeyedSingleton<HttpClient>("profile-geography", new HttpClient(handler));
+        using var provider = services.BuildServiceProvider();
+        var contexts = provider.GetRequiredService<Hosting.CapturedProfileClients>();
+        ResolvedEnvironmentTarget environment = new("11111111-2222-3333-4444-555555555555", profile.TenantId);
+        contexts.Capture(environment, new(profile, target));
+        var resolver = new Hosting.CapturedProfileTelemetryDestinationResolver(contexts,
+            provider.GetRequiredService<IEnvironmentGeographyClient>(), target, true, null, diagnostics,
+            new FileTelemetryCollectorCache(_directory, TimeProvider.System, diagnostics));
+
+        var destination = await resolver.ResolveAsync(TelemetryEnvironmentTarget.Resolved([environment]), default);
+
+        Assert.Equal(TelemetryLocation.Europe, destination!.Location);
+        Assert.Same(profile, credentials.Profile);
+        Assert.Equal(profile.TenantId, credentials.Tenant);
+        Assert.StartsWith("Bearer ", Assert.Single(handler.Requests).Authorization);
+        Assert.Contains("TokenAvailable", output.ToString());
+        Assert.Contains("ResponseReceived httpStatus=200", output.ToString());
+        Assert.Contains("geography=europe", output.ToString());
+        Assert.DoesNotContain(profile.AccountKey, output.ToString());
+        Assert.DoesNotContain(profile.TenantId, output.ToString());
+
+        var cachedOutput = new StringWriter();
+        var cachedDiagnostics = new TelemetryRoutingDiagnostics(cachedOutput);
+        var cachedResolver = new Hosting.CapturedProfileTelemetryDestinationResolver(contexts,
+            provider.GetRequiredService<IEnvironmentGeographyClient>(), target, true, null, cachedDiagnostics,
+            new FileTelemetryCollectorCache(_directory, TimeProvider.System, cachedDiagnostics));
+
+        Assert.Equal(TelemetryLocation.Europe, (await cachedResolver.ResolveAsync(
+            TelemetryEnvironmentTarget.Resolved([environment]), default))!.Location);
+        Assert.Single(handler.Requests);
+        Assert.Equal(1, credentials.Calls);
+        Assert.Contains("cache-hit collector=EU", cachedOutput.ToString());
+        Assert.DoesNotContain("TokenAcquisitionStarted", cachedOutput.ToString());
+    }
+
+    private sealed class SelectedProfileTokens : IProfileSelectedAccountTokenAcquisition
+    {
+        internal int Calls { get; private set; }
+        internal AuthProfile? Profile { get; private set; }
+        internal string? Tenant { get; private set; }
+        public Task<TokenAcquisitionResult?> TryAcquireSelectedTokenAsync(AuthProfile profile,
+            IReadOnlyList<string> scopes, string targetTenantId, CancellationToken ct)
+        {
+            Calls++;
+            Profile = profile;
+            Tenant = targetTenantId;
+            return Task.FromResult<TokenAcquisitionResult?>(new()
+            {
+                AccessToken = FakeJwt.Create(tenantId: targetTenantId),
+                TenantId = targetTenantId, ExpiresOn = DateTimeOffset.UtcNow.AddHours(1),
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData(false, "target-unclassified")]
+    [InlineData(true, "captured-context-unavailable-or-ambiguous")]
+    public async Task CapturedDestinationExplainsEarlyNoSend(bool targetKnown, string reason)
+    {
+        var output = new StringWriter();
+        using var provider = Configure(false).BuildServiceProvider();
+        var geography = new CountingGeography();
+        var cache = new FileTelemetryCollectorCache(_directory, TimeProvider.System, new(output));
+        ResolvedEnvironmentTarget environment = new("private-environment", "private-tenant");
+        await cache.WriteAsync(PowerPlatformApiTargetConfig.Public, environment, TelemetryLocation.Europe, default);
+        output.GetStringBuilder().Clear();
+        var resolver = new Hosting.CapturedProfileTelemetryDestinationResolver(
+            provider.GetRequiredService<Hosting.CapturedProfileClients>(), geography,
+            PowerPlatformApiTargetConfig.Public, targetKnown, null, new(output), cache);
+
+        Assert.Null(await resolver.ResolveAsync(TelemetryEnvironmentTarget.Resolved(
+            [environment]), default));
+
+        Assert.Equal(0, geography.Calls);
+        Assert.Contains(reason, output.ToString());
+        Assert.Contains("collector=none", output.ToString());
+        Assert.DoesNotContain("stage=cache-", output.ToString());
+        Assert.DoesNotContain("private-environment", output.ToString());
+        Assert.DoesNotContain("private-tenant", output.ToString());
+    }
+
     [Fact]
     public async Task GeographySkipsCapturedWorkloadWithoutConstructingAnySource()
     {
@@ -652,11 +777,20 @@ public sealed class HostProfileCompositionTests : IDisposable
         clients.Capture(first, new(profile, target));
         clients.Capture(second, new(profile with { Revision = 2 }, target));
         var geography = new CountingGeography();
+        var output = new StringWriter();
+        var cache = new FileTelemetryCollectorCache(_directory, TimeProvider.System, new(output));
+        await cache.WriteAsync(target, first, TelemetryLocation.Europe, default);
+        await cache.WriteAsync(target, second, TelemetryLocation.Europe, default);
+        output.GetStringBuilder().Clear();
         var resolver = new Hosting.CapturedProfileTelemetryDestinationResolver(
-            clients, geography, target, true, null);
+            clients, geography, target, true, null, new(output), cache);
 
         Assert.Null(await resolver.ResolveAsync(TelemetryEnvironmentTarget.Resolved([first, second]), default));
         Assert.Equal(0, geography.Calls);
+        Assert.Contains("captured-context-conflict", output.ToString());
+        Assert.DoesNotContain("stage=cache-", output.ToString());
+        Assert.DoesNotContain(profile.ProfileId, output.ToString());
+        Assert.DoesNotContain(profile.Username, output.ToString());
     }
 
     private sealed class CountingGeography : IEnvironmentGeographyClient

@@ -501,7 +501,7 @@ public sealed class SyncHttpBoundaryTests
         services.AddSingleton<IHttpClientFactory>(hostFactory);
         services.AddAgentHostCopilotStudio(TextWriter.Null, apiTarget ?? PowerPlatformApiTargetConfig.Public, httpDiagnostics: diagnostics);
         services.AddSingleton<AgentHostDataverseHttpClientAccessor>(provider =>
-            new(provider.GetRequiredService<ISyncAuthProvider>(), () => transport, diagnostics));
+            new(provider.GetRequiredService<ISyncAuthProvider>(), () => transport, httpDiagnostics: diagnostics));
         return services.BuildServiceProvider();
     }
 

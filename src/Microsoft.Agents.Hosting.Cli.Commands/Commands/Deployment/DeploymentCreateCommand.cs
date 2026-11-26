@@ -8,7 +8,7 @@ using DeploymentModel = Microsoft.Agents.Hosting.Cli.Core.Deployments.CodeAgentD
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
 /// <summary><c>msagent deployment create</c>, routed on the resolved agent type, or to AMS by <c>--target-environment-id</c>.</summary>
-[Command("create", Description = "Create a deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 10, ProgressLabel = "Creating deployment")]
+[Command("create", Description = "Create a deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 10, ProgressLabel = "Creating deployment", TargetsAgent = true)]
 public sealed class DeploymentCreateCommand : CommandBase<AgentDeploymentCreateRequest, AgentDeploymentCreateResult>
 {
     private static readonly AmsRouteRules AmsRules = new("deployment create") { SelectingOptions = ["--target-environment-id"], LocalOptions = ["--project", "--sku", "--location", "--resource-group", "--subscription", "--tenant", "--display-name", "--description", "--default"] };

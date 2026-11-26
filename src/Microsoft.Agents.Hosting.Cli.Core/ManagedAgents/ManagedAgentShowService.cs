@@ -14,16 +14,19 @@ public sealed class ManagedAgentShowService
     private readonly IManagedAgentRegistry _agents;
     private readonly IAgentDeploymentRegistry _deployments;
     private readonly AgentConfigLocator _locator;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the service.</summary>
     /// <param name="agents">The managed-agent table.</param>
     /// <param name="deployments">The deployment table.</param>
     /// <param name="locator">Resolves the project and configuration directories.</param>
-    public ManagedAgentShowService(IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, AgentConfigLocator locator)
+    /// <param name="agentObserver">Optionally observes the addressed agent type.</param>
+    public ManagedAgentShowService(IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, AgentConfigLocator locator, IAddressedAgentObserver? agentObserver = null)
     {
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Shows the registered agents and their deployments, or the one a selector names.</summary>
@@ -43,6 +46,11 @@ public sealed class ManagedAgentShowService
         }
 
         var agents = Select(_agents.List(projectDirectory), request);
+        if (agents.Count == 1)
+        {
+            AddressedAgentObservation.Observe(_agentObserver, agents[0].AgentType, agents[0].McsSchemaName);
+            AddressedAgentObservation.ObserveResources(_agentObserver, agents[0].AgentType, mcsWorkflowId: agents[0].McsWorkflowId);
+        }
 
         return Task.FromResult(new ManagedAgentShowResult
         {

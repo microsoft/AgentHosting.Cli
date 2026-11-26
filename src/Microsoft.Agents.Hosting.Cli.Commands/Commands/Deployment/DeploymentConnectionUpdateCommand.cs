@@ -6,7 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
 /// <summary><c>msagent deployment connection update</c>.</summary>
-[Command("update", Description = "Bind the agent's connection references, resolving one connector at a time. MCS only.", ParentGroup = typeof(DeploymentConnectionGroup), SortPriority = 20)]
+[Command("update", Description = "Bind the agent's connection references, resolving one connector at a time. MCS only.", ParentGroup = typeof(DeploymentConnectionGroup), SortPriority = 20, TargetsAgent = true)]
 public sealed class DeploymentConnectionUpdateCommand : CommandBase<AgentDeploymentConnectionRequest, AgentDeploymentConnectionResult>
 {
     /// <inheritdoc />

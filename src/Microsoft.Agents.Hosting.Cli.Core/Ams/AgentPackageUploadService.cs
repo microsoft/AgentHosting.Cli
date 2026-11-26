@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents.Storage;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 
@@ -17,13 +18,19 @@ public sealed class AgentPackageUploadService
     private readonly AmsAddressResolver _addresses;
     private readonly IAmsAgentReadTransport _agents;
     private readonly IAmsPackagePublicationTransport _packages;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the service over the AMS agent read and package upload transports.</summary>
-    public AgentPackageUploadService(AmsAddressResolver addresses, IAmsAgentReadTransport agents, IAmsPackagePublicationTransport packages)
+    public AgentPackageUploadService(
+        AmsAddressResolver addresses,
+        IAmsAgentReadTransport agents,
+        IAmsPackagePublicationTransport packages,
+        IAddressedAgentObserver? agentObserver = null)
     {
         _addresses = addresses ?? throw new ArgumentNullException(nameof(addresses));
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
+        _agentObserver = agentObserver;
     }
 
     public async Task<AgentPackageUploadResult> UploadAsync(
@@ -53,6 +60,7 @@ public sealed class AgentPackageUploadService
             .ConfigureAwait(false);
         var agent = await _agents.GetAsync(address.OnDataPlane, cancellationToken).ConfigureAwait(false);
         AmsAgentResponseValidator.ValidateBoundCodeAgent(agent, environment, agentId);
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.CodeAgent);
 
         var uploaded = await _packages
             .PublishAsync(

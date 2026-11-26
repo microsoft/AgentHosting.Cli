@@ -8,7 +8,7 @@ using DeploymentModel = Microsoft.Agents.Hosting.Cli.Core.Deployments.CodeAgentD
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
 /// <summary><c>msagent deployment update</c>, routed to a deployment of the local project or to AMS.</summary>
-[Command("update", Description = "Update an existing deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 40, ProgressLabel = "Updating deployment")]
+[Command("update", Description = "Update an existing deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 40, ProgressLabel = "Updating deployment", TargetsAgent = true)]
 public sealed class DeploymentUpdateCommand : CommandBase<AgentDeploymentUpdateRequest, AgentDeploymentUpdateResult>
 {
     private static readonly AmsRouteRules AmsRules = new("deployment update")

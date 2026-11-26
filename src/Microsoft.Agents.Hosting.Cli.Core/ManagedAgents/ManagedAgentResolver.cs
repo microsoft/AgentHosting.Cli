@@ -12,16 +12,19 @@ public sealed class ManagedAgentResolver
     private readonly IManagedAgentRegistry _agents;
     private readonly IAgentDeploymentRegistry _deployments;
     private readonly AgentConfigLocator _locator;
+    private readonly IAddressedAgentObserver? _agentObserver;
 
     /// <summary>Creates the resolver.</summary>
     /// <param name="agents">The managed-agent table.</param>
     /// <param name="deployments">The deployment table.</param>
     /// <param name="locator">Resolves project directories.</param>
-    public ManagedAgentResolver(IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, AgentConfigLocator locator)
+    /// <param name="agentObserver">Optionally observes the addressed agent type.</param>
+    public ManagedAgentResolver(IManagedAgentRegistry agents, IAgentDeploymentRegistry deployments, AgentConfigLocator locator, IAddressedAgentObserver? agentObserver = null)
     {
         _agents = agents ?? throw new ArgumentNullException(nameof(agents));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
+        _agentObserver = agentObserver;
     }
 
     /// <summary>Resolves the project directory a command acts on.</summary>
@@ -91,17 +94,17 @@ public sealed class ManagedAgentResolver
 
         if (!string.IsNullOrWhiteSpace(agentId))
         {
-            return (matches.Count > 0 ? matches[0] : null)
+            return Observed((matches.Count > 0 ? matches[0] : null)
                 ?? throw (agents.Count == 1
                     ? ManagedAgentException.AgentIdConflictsWithProject(agentId.Trim(), agents[0].AgentId, agents[0].DisplayName)
-                    : ManagedAgentException.AgentNotFound(agentId.Trim()));
+                    : ManagedAgentException.AgentNotFound(agentId.Trim())));
         }
 
         if (!string.IsNullOrWhiteSpace(agentName))
         {
             return matches.Count switch
             {
-                1 => matches[0],
+                1 => Observed(matches[0]),
                 0 => throw ManagedAgentException.AgentNotFound(agentName.Trim()),
                 _ => throw ManagedAgentException.AgentAmbiguous(matches.Select(agent => $"{agent.DisplayName} ({agent.AgentId})")),
             };
@@ -109,7 +112,7 @@ public sealed class ManagedAgentResolver
 
         return agents.Count switch
         {
-            1 => agents[0],
+            1 => Observed(agents[0]),
             0 => throw ManagedAgentException.AgentNotFound("(none supplied)"),
             _ => throw ManagedAgentException.AgentAmbiguous(agents.Select(agent => $"{agent.DisplayName} ({agent.AgentId})")),
         };
@@ -122,7 +125,7 @@ public sealed class ManagedAgentResolver
     /// <returns>The single matching record, or <see langword="null"/> when none or several match.</returns>
     public ManagedAgentRecord? FindAgent(string projectDirectory, string? agentId, string? agentName) =>
         _locator.ConfigExists(projectDirectory) && Matching(_agents.List(projectDirectory), agentId, agentName) is [var single]
-            ? single
+            ? Observed(single)
             : null;
 
     /// <summary>Resolves the record a location selects: the agent or workflow whose folder holds it, else its project's only MCS agent, else, when the project holds no MCS agent, its only standalone workflow.</summary>
@@ -143,12 +146,12 @@ public sealed class ManagedAgentResolver
         var fallbackCandidates = mcsAgents.Length > 0 ? mcsAgents : [.. candidates.Where(candidate => candidate.Agent.AgentType == AgentTypes.McsWorkflow)];
         var physicalStart = AgentConfigLocator.PhysicalPath(start);
 
-        return (projectDirectory, candidates.Select(candidate => (candidate.Agent, PhysicalFolder: candidate.Folder is { } folder ? AgentConfigLocator.PhysicalPath(folder) : null)).Where(candidate => candidate.PhysicalFolder is { } physicalFolder && AgentConfigLocator.IsContainedIn(physicalStart, physicalFolder)).OrderByDescending(candidate => candidate.PhysicalFolder!.Length).Select(candidate => candidate.Agent).FirstOrDefault() ?? fallbackCandidates switch
+        return (projectDirectory, Observed(candidates.Select(candidate => (candidate.Agent, PhysicalFolder: candidate.Folder is { } folder ? AgentConfigLocator.PhysicalPath(folder) : null)).Where(candidate => candidate.PhysicalFolder is { } physicalFolder && AgentConfigLocator.IsContainedIn(physicalStart, physicalFolder)).OrderByDescending(candidate => candidate.PhysicalFolder!.Length).Select(candidate => candidate.Agent).FirstOrDefault() ?? fallbackCandidates switch
         {
             [var only] => only.Agent,
             [] => throw ManagedAgentException.AgentNotFound("(none supplied)"),
             _ => throw ManagedAgentException.AgentAmbiguousAt(projectDirectory, fallbackCandidates.Select(candidate => $"{candidate.Agent.DisplayName} ({candidate.Folder ?? candidate.Agent.AgentLocation})")),
-        });
+        }));
     }
 
     private static IReadOnlyList<ManagedAgentRecord> Matching(IReadOnlyList<ManagedAgentRecord> agents, string? agentId, string? agentName) =>
@@ -203,8 +206,29 @@ public sealed class ManagedAgentResolver
         var owner = string.IsNullOrWhiteSpace(agentId) && string.IsNullOrWhiteSpace(agentName) ? null : ResolveAgent(projectDirectory, agentId, agentName);
         var deployment = ResolveDeploymentAcross(projectDirectory, owner, deploymentId, deploymentName, requireExplicitDeployment);
 
-        return (owner ?? OwnerOf(projectDirectory, deployment), deployment);
+        return (Observed(owner ?? OwnerOf(projectDirectory, deployment)), deployment);
     }
+
+    private ManagedAgentRecord Observed(ManagedAgentRecord agent)
+    {
+        AddressedAgentObservation.Observe(_agentObserver, agent.AgentType, agent.McsSchemaName);
+        AddressedAgentObservation.ObserveResources(_agentObserver, agent.AgentType, mcsWorkflowId: agent.McsWorkflowId);
+        return agent;
+    }
+
+    internal void ObserveDeployment(DeploymentTelemetryObservation observation) =>
+        AddressedAgentObservation.ObserveDeployment(_agentObserver, observation);
+
+    internal void ObserveMcsAgentSchemaName(string? schemaName) =>
+        AddressedAgentObservation.Observe(_agentObserver, AgentTypes.McsAgent, schemaName);
+
+    internal void ObserveMcsAgentTarget(string? agentId, string? environmentId) =>
+        AddressedAgentObservation.ObserveResources(_agentObserver, AgentTypes.McsAgent,
+            mcsAgentId: agentId, environmentId: environmentId);
+
+    internal void ObserveMcsWorkflowTarget(string workflowId, string? environmentId = null) =>
+        AddressedAgentObservation.ObserveResources(_agentObserver, AgentTypes.McsWorkflow,
+            mcsWorkflowId: workflowId, environmentId: environmentId);
 
     private AgentDeploymentRecord ResolveDeploymentAcross(string projectDirectory, ManagedAgentRecord? owner, string? deploymentId, string? deploymentName, bool requireExplicitDeployment = false)
     {

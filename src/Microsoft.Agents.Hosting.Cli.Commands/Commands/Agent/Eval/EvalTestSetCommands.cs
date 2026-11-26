@@ -6,7 +6,7 @@ using Microsoft.Agents.Hosting.Cli.Core.Operations;
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Agent.Eval;
 
 /// <summary><c>msagent agent eval testset list</c>.</summary>
-[Command("list", Description = "List the evaluation test sets an agent holds.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 10)]
+[Command("list", Description = "List the evaluation test sets an agent holds.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 10, TargetsAgent = true)]
 public sealed class EvalTestSetListCommand : CommandBase<EvaluationTestSetListRequest, EvaluationTestSetListResult>
 {
     /// <inheritdoc />
@@ -28,7 +28,7 @@ public sealed class EvalTestSetListCommand : CommandBase<EvaluationTestSetListRe
 }
 
 /// <summary><c>msagent agent eval testset show</c>.</summary>
-[Command("show", Description = "Show one evaluation test set and the conversations it holds.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 20)]
+[Command("show", Description = "Show one evaluation test set and the conversations it holds.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 20, TargetsAgent = true)]
 public sealed class EvalTestSetShowCommand : CommandBase<EvaluationTestSetShowRequest, EvaluationTestSetResult>
 {
     /// <inheritdoc />
@@ -55,7 +55,7 @@ public sealed class EvalTestSetShowCommand : CommandBase<EvaluationTestSetShowRe
 }
 
 /// <summary><c>msagent agent eval testset create</c>.</summary>
-[Command("create", Description = "Create an evaluation test set from a CSV or from generated conversations.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 30, ProgressLabel = "Creating test set")]
+[Command("create", Description = "Create an evaluation test set from a CSV or from generated conversations.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 30, ProgressLabel = "Creating test set", TargetsAgent = true)]
 public sealed class EvalTestSetCreateCommand : CommandBase<EvaluationTestSetCreateRequest, EvaluationTestSetResult>
 {
     /// <inheritdoc />
@@ -86,7 +86,7 @@ public sealed class EvalTestSetCreateCommand : CommandBase<EvaluationTestSetCrea
 }
 
 /// <summary><c>msagent agent eval testset update</c>.</summary>
-[Command("update", Description = "Add conversations to an evaluation test set, or replace the ones it holds.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 40, ProgressLabel = "Updating test set")]
+[Command("update", Description = "Add conversations to an evaluation test set, or replace the ones it holds.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 40, ProgressLabel = "Updating test set", TargetsAgent = true)]
 public sealed class EvalTestSetUpdateCommand : CommandBase<EvaluationTestSetUpdateRequest, EvaluationTestSetResult>
 {
     /// <inheritdoc />
@@ -119,7 +119,7 @@ public sealed class EvalTestSetUpdateCommand : CommandBase<EvaluationTestSetUpda
 }
 
 /// <summary><c>msagent agent eval testset export</c>.</summary>
-[Command("export", Description = "Write an evaluation test set's conversations out as CSV.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 50)]
+[Command("export", Description = "Write an evaluation test set's conversations out as CSV.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 50, TargetsAgent = true)]
 public sealed class EvalTestSetExportCommand : CommandBase<EvaluationTestSetExportRequest, EvaluationTestSetResult>
 {
     /// <inheritdoc />
@@ -148,7 +148,7 @@ public sealed class EvalTestSetExportCommand : CommandBase<EvaluationTestSetExpo
 }
 
 /// <summary><c>msagent agent eval testset delete</c>.</summary>
-[Command("delete", Description = "Delete an evaluation test set and the conversations it holds. Runs that used it are unaffected.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 60)]
+[Command("delete", Description = "Delete an evaluation test set and the conversations it holds. Runs that used it are unaffected.", ParentGroup = typeof(AgentEvalTestSetGroup), SortPriority = 60, TargetsAgent = true)]
 public sealed class EvalTestSetDeleteCommand : CommandBase<EvaluationTestSetDeleteRequest, EvaluationTestSetDeleteResult>
 {
     /// <inheritdoc />
