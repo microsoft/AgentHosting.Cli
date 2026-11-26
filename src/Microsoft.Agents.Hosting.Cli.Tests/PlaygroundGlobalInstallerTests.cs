@@ -339,7 +339,7 @@ public sealed class PlaygroundGlobalInstallerTests
     [Fact]
     public async Task InstallAsync_AcceptsSuccessfulVerificationAfterAnEarlierCandidateTimesOut()
     {
-        var installed = Tool("0.2.29", "/usr/bin/agentsplayground");
+        var installed = Tool("0.2.30", "/usr/bin/agentsplayground");
         var locator = new RecordingLocator
         {
             LocateResult = Discovery(installed, new PlaygroundToolRejection("earlier candidate", new PlaygroundFailure
