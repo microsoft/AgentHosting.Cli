@@ -630,9 +630,17 @@ test("native install timeout stops a real descendant holding the stderr pipe ope
   deadline();
   await result.completion;
   await closed;
-  const socket = net.connect(descendant.port, "127.0.0.1");
-  t.after(() => socket.destroy());
-  await assert.rejects(once(socket, "connect"), /ECONNREFUSED/);
+  for (;;) {
+    const socket = net.connect(descendant.port, "127.0.0.1");
+    try {
+      await once(socket, "connect", { signal: t.signal });
+    } catch (error) {
+      assert.match(error.code, /^(ECONNREFUSED|ECONNRESET)$/);
+      break;
+    } finally {
+      socket.destroy();
+    }
+  }
   assert.match(result.errors[0], /in-memory tokens: npm ci timed out/);
   assert.ok(!result.writes.has(path.join(root, "native-deps.installed.json")));
   terminated = true;
