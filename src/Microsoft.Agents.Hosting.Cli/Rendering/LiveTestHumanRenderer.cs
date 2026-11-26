@@ -119,10 +119,10 @@ public sealed class LiveTestHumanRenderer
     public void Finish() => Finish(sdkCompleted: true);
 
     /// <summary>
-    /// Finishes the human rendering path. A false value reports that the SDK stream did not complete
-    /// normally; it does not claim anything about remote work. Preflight failures omit SDK status.
+    /// Finishes the human rendering path, adding a completion status only on success.
+    /// The caller is responsible for reporting any failure.
     /// </summary>
-    public void Finish(bool sdkCompleted, bool sdkStarted = true)
+    public void Finish(bool sdkCompleted)
     {
         if (_finished)
         {
@@ -139,11 +139,9 @@ public sealed class LiveTestHumanRenderer
             }
         }
 
-        if (sdkStarted)
+        if (sdkCompleted)
         {
-            WriteCliLine(
-                sdkCompleted ? CompletedStatus : "SDK response did not complete",
-                _output);
+            WriteCliLine(CompletedStatus, _output);
         }
         _output.Flush();
         _finished = true;

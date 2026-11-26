@@ -20,6 +20,8 @@ public enum ResourceKind
     McsCopy,
     McsCopyRow,
     McsCopyWorkflow,
+    AmsAgent,
+    AmsRuntimeCopy,
 }
 
 /// <summary>Where a resource stands: created and still present, removed, left behind, or deliberately kept because nothing can delete it.</summary>
@@ -67,6 +69,23 @@ public sealed record CleanupPlan
     public string? ConnectorId { get; init; }
 
     public string? WorkspaceDirectory { get; init; }
+
+    /// <summary>Where an Agent Management Service resource lives, and the sign-in cleanup must find before it deletes anything.</summary>
+    public AmsCleanupContext? Ams { get; init; }
+}
+
+/// <summary>The endpoints, sign-in and home environment an Agent Management Service resource was created under.</summary>
+public sealed record AmsCleanupContext
+{
+    public string? ControlPlaneEndpoint { get; init; }
+
+    public string? DataPlaneEndpoint { get; init; }
+
+    public string? Cloud { get; init; }
+
+    public string? TenantId { get; init; }
+
+    public string? HomeEnvironmentId { get; init; }
 }
 
 /// <summary>One resource the run created or changed, recorded before the call that creates it.</summary>
@@ -156,7 +175,7 @@ public sealed class Ledger
     /// Whether an entry's id is one the service assigned rather than the intent it was recorded under.
     /// </summary>
     private static bool IsServiceAssigned(LedgerEntry entry) =>
-        entry.Kind is not (ResourceKind.EvaluationRun or ResourceKind.McsAgent)
+        entry.Kind is not (ResourceKind.EvaluationRun or ResourceKind.McsAgent or ResourceKind.AmsAgent or ResourceKind.EntraApp)
         || !string.Equals(entry.Id, entry.DisplayName, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Records a Copilot Studio agent by its service-assigned id.</summary>
@@ -218,22 +237,7 @@ public sealed class Ledger
     /// <summary>Names the agent the service assigned to an intent recorded before the deploy.</summary>
     /// <param name="schemaName">The schema name the intent was recorded under.</param>
     /// <param name="agentId">The service-assigned agent id.</param>
-    public void ResolveMcsAgent(string schemaName, string agentId)
-    {
-        lock (_gate)
-        {
-            if (_entries.FirstOrDefault(candidate =>
-                    candidate.Kind is ResourceKind.McsAgent or ResourceKind.McsCopy
-                    && string.Equals(candidate.Id, schemaName, StringComparison.OrdinalIgnoreCase)) is not { } intent)
-            {
-                return;
-            }
-
-            intent.Id = agentId;
-            intent.Resolved = true;
-            FlushLocked();
-        }
-    }
+    public void ResolveMcsAgent(string schemaName, string agentId) => ResolveIntent(candidate => candidate.Kind is ResourceKind.McsAgent or ResourceKind.McsCopy && string.Equals(candidate.Id, schemaName, StringComparison.OrdinalIgnoreCase), agentId);
 
     /// <summary>Records a standalone workflow by its Dataverse identifier.</summary>
     /// <param name="workflowId">The Dataverse workflow the record addresses.</param>
@@ -324,21 +328,32 @@ public sealed class Ledger
     /// <summary>Names the run the service assigned to an intent recorded before it was started.</summary>
     /// <param name="intent">The name the intent was recorded under.</param>
     /// <param name="runId">The service-assigned run id.</param>
-    public void ResolveEvaluationRun(string intent, string runId)
-    {
-        lock (_gate)
-        {
-            if (_entries.FirstOrDefault(candidate =>
-                    candidate.Kind == ResourceKind.EvaluationRun
-                    && string.Equals(candidate.Id, intent, StringComparison.OrdinalIgnoreCase)) is not { } recorded)
-            {
-                return;
-            }
+    public void ResolveEvaluationRun(string intent, string runId) => ResolveIntent(candidate => candidate.Kind == ResourceKind.EvaluationRun && string.Equals(candidate.Id, intent, StringComparison.OrdinalIgnoreCase), runId);
 
-            recorded.Id = runId;
-            recorded.Resolved = true;
-            FlushLocked();
-        }
+    /// <summary>Records the code agent a create is about to make, by its run-unique name, before the call that creates it.</summary>
+    public LedgerEntry RecordIntendedAmsAgent(string agentName, AmsCleanupContext context, string scenarioId) =>
+        Record(ResourceKind.AmsAgent, agentName, agentName, scenarioId, AmsAgentCleanup(agentName, context), resolved: false);
+
+    /// <summary>Names the code agent the service assigned to an intent recorded under its name.</summary>
+    public void ResolveAmsAgent(string agentName, string agentId) => ResolveIntent(candidate => candidate.Kind == ResourceKind.AmsAgent && string.Equals(candidate.Id, agentName, StringComparison.OrdinalIgnoreCase), agentId);
+
+    /// <summary>Records a code agent the service already named, for a create the scenario expected to be refused.</summary>
+    public LedgerEntry RecordAmsAgent(string agentName, string agentId, AmsCleanupContext context, string scenarioId) =>
+        Record(ResourceKind.AmsAgent, agentId, agentName, scenarioId, AmsAgentCleanup(agentName, context));
+
+    /// <summary>Records an App Registration by its run-unique display name before the call that creates it.</summary>
+    public LedgerEntry RecordIntendedEntraApp(string displayName, string tenantId, string scenarioId) =>
+        Record(ResourceKind.EntraApp, displayName, displayName, scenarioId, new CleanupPlan { Via = "az ad app delete", Correlation = displayName, Ams = new AmsCleanupContext { TenantId = tenantId } }, resolved: false);
+
+    /// <summary>Names the application id of an App Registration recorded under its display name.</summary>
+    public void ResolveEntraApp(string displayName, string applicationId) => ResolveIntent(candidate => candidate.Kind == ResourceKind.EntraApp && !candidate.Resolved && string.Equals(candidate.Id, displayName, StringComparison.OrdinalIgnoreCase), applicationId);
+
+    /// <summary>Records the hosted runtime copy of a deployment, which the Agent Management Service keeps after the agent is deleted.</summary>
+    public void RecordRetainedAmsRuntimeCopy(string agentId, string agentName, string deploymentName, string targetEnvironmentId, string scenarioId)
+    {
+        var identity = $"{agentId}@{targetEnvironmentId}";
+        Record(ResourceKind.AmsRuntimeCopy, identity, $"hosted copy of {agentName}", scenarioId, new CleanupPlan { Via = "none: the Agent Management Service keeps the hosted runtime copy of a deleted deployment", EnvironmentId = targetEnvironmentId, AgentId = agentId, DeploymentName = deploymentName });
+        SetState(identity, ResourceState.Retained, "the Agent Management Service keeps a deployment's hosted runtime copy after the deployment or its agent is deleted");
     }
 
     /// <summary>Records a reversible change together with the value cleanup restores.</summary>
@@ -403,6 +418,8 @@ public sealed class Ledger
         }
     }
 
+    private static CleanupPlan AmsAgentCleanup(string agentName, AmsCleanupContext context) => new() { Via = "agent delete", EnvironmentId = context.HomeEnvironmentId, Correlation = agentName, Ams = context };
+
     private LedgerEntry Record(ResourceKind kind, string id, string? displayName, string scenarioId, CleanupPlan cleanup, bool resolved = true)
     {
         if (string.IsNullOrWhiteSpace(id))
@@ -432,6 +449,21 @@ public sealed class Ledger
             _entries.Add(entry);
             FlushLocked();
             return entry;
+        }
+    }
+
+    private void ResolveIntent(Func<LedgerEntry, bool> isIntent, string id)
+    {
+        lock (_gate)
+        {
+            if (_entries.FirstOrDefault(isIntent) is not { } intent)
+            {
+                return;
+            }
+
+            intent.Id = id;
+            intent.Resolved = true;
+            FlushLocked();
         }
     }
 

@@ -18,7 +18,7 @@ All docs live in the [AgentHosting.Cli repo](https://github.com/microsoft/AgentH
 
 - Agent instructions for GitHub Copilot or Claude: [agent.md](agent.md). Attach it explicitly, or copy it to the instruction-file location supported by your assistant, such as `AGENTS.md`, `CLAUDE.md`, or `.github/copilot-instructions.md`.
 - Local testing: use the maintained [terminal and Playground guide](Testing%20your%20Agent%20from%20your%20local%20machine.md). No separately supplied test client is required.
-- Optional skills: see [coding-agent setup](Using%20msagents%20CLI%20with%20GitHub%20Copilot.md#setting-up-your-coding-agent-skills-and-agentmd).
+- Optional `msagent-assistant` plugin: see [coding-assistant setup](Using%20msagents%20CLI%20with%20GitHub%20Copilot.md#msagent-assistant-plugin) for installation, local-checkout loading, and an example task prompt.
 
 ## Command reference
 

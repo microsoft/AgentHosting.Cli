@@ -6,8 +6,20 @@ The CLI tool itself has a help menu and is well understood by agents such as Git
 
 You can provide optional compatible skills and an agent.md file to assist your coding agent with the CLI.
 
-- Start with [agent.md](agent.md). If your organization supplies compatible
-  skills, review and install only those needed for the task; skills are optional.
+- Start with [agent.md](agent.md). For guided workflows, see the optional
+  [msagent-assistant plugin setup](#msagent-assistant-plugin).
+
+## In-app chat canvas
+
+The `msagent-assistant` plugin includes an optional
+[Copilot Studio chat canvas](../.github/plugins/msagent-assistant/extensions/copilot-studio-chat/README.md)
+for GitHub Copilot app hosts supporting extension canvases. It runs `test ask`
+in the background and keeps chat inside the app, with progressive reply updates
+and safe Markdown formatting. Update granularity depends on activities emitted
+by the agent and SDK. It reuses the CLI account from `msagent auth create` and
+never signs in itself; no chat browser or terminal is used. See the extension
+guide for exact target selection, setup and limitations. Live conversation
+starts and sends may consume credits or affect real data.
 
 ## Using natural language
 
@@ -149,6 +161,53 @@ msagent deployment delete  — deletes just one deployment slot; add  --delete-d
 
 # Setting up your coding agent: skills and agent.md
 
+## msagent-assistant plugin
+
+The optional [msagent-assistant plugin](../.github/plugins/msagent-assistant/README.md)
+provides guided Copilot Studio workflows for creation, editing, deployment, and
+testing. It extends your coding assistant, not the deployed agent's runtime, and
+is not included in the MSAGENT NuGet package.
+
+For a published installation, follow the plugin README's
+[installation instructions](../.github/plugins/msagent-assistant/README.md#installation).
+That README is the canonical source for installation and prerequisites; see
+[host compatibility](../.github/plugins/msagent-assistant/COMPATIBILITY.md) for
+host-specific packaging and verification status. Install MSAGENT separately
+using the [CLI setup instructions](agent.md#start-here).
+
+To use this checkout, including uncommitted plugin changes, start GitHub Copilot
+CLI from the AgentHosting.Cli repository root with:
+
+```powershell
+$pluginRoot = (Resolve-Path ".github\plugins\msagent-assistant").Path
+copilot --plugin-dir "$pluginRoot"
+```
+
+This loads the local plugin for that session instead of installing the published
+copy. Other hosts have their own loading mechanisms; follow the plugin's host
+documentation rather than assuming this Copilot CLI option applies everywhere.
+Load the plugin before starting the task.
+
+Attach [agent.md](agent.md), then give your assistant a prompt such as:
+
+```text
+Read the supplied agent.md and use the msagent-assistant plugin for this task.
+Invoke the matching skill and follow its required references. If native skill
+invocation is unavailable, follow the plugin's adapters/README.md fallback.
+If prerequisites or capabilities are missing, report them; do not install,
+upgrade, sign in, or switch accounts implicitly.
+
+Create a helpdesk agent that answers questions from our support documentation.
+Use environment <environment-id> and project folder <absolute-project-path>.
+Follow the create-agent workflow to deploy a development draft. Do not publish.
+```
+
+Replace the placeholders with your intended target. For other tasks, state the
+desired outcome and exact project or deployment. If the plugin is unavailable,
+the assistant can still use `agent.md` and the installed CLI's help.
+
+## Other compatible skills
+
 Skills give a coding assistant repeatable instructions for msagent workflows;
 they do not add CLI commands or change the deployed runtime. Each skill is a
 folder containing a `SKILL.md` file and optional scripts or resources. For GitHub
@@ -176,6 +235,8 @@ Use a reviewed skill source supplied by your organization and the installation
 method supported by your coding assistant. Do not execute a placeholder
 installation command or assume every assistant reads the same skill directory.
 The [agent.md](agent.md) file can be attached directly without installing skills.
+These locations describe other compatible skills; do not copy this plugin's
+skills or agents into the CLI repository's auto-discovered directories.
 
 ## Error recovery
 

@@ -68,6 +68,31 @@ public sealed class EnvironmentSelectionServiceTests
     }
 
     [Fact]
+    public async Task TestRingCanResolveSelectAndReuseAnEnvironmentWithATestDataverseOrganization()
+    {
+        const string organization = "https://contoso.crmtest.dynamics.com/";
+        var target = PowerPlatformApiTargetConfig.Test;
+        var profiles = InMemoryAuthProfileStore.SignedOut();
+        var profile = await profiles.CreateAsync(EnvironmentFixtures.Account(ring: PowerPlatformApiRing.Test), default);
+        var environment = EnvironmentFixtures.Environment(
+            "env-1", endpoint: target.GlobalEndpoint.ToString(), instanceUrl: organization) with
+        {
+            ApiAudience = target.Audience,
+        };
+        var service = EnvironmentFixtures.Service(
+            new FakeEnvironmentClient(environment), new InMemoryEnvironmentSelectionStore(), profiles, apiTarget: target);
+
+        var resolved = await service.ResolveForProfileAsync(profile, "env-1", default);
+        Assert.Equal(organization, resolved.InstanceUrl);
+
+        await service.SelectAsync(organization, default);
+        var selected = await service.ResolveForCommandAsync(null, default);
+        Assert.Equal("env-1", selected.EnvironmentId);
+        Assert.Equal(organization, selected.InstanceUrl);
+        Assert.Equal(PowerPlatformApiDiscovery.GetEnvironmentEndpoint(target, "env-1"), selected.ApiEndpoint);
+    }
+
+    [Fact]
     public async Task Select_PersistsTheSelection_SoItSurvivesAcrossCommands()
     {
         var client = new FakeEnvironmentClient(EnvironmentFixtures.Environment("env-1", "Contoso Dev"));
@@ -282,6 +307,24 @@ public sealed class EnvironmentSelectionServiceTests
 
         Assert.Equal(0, selection.WriteCalls);
         Assert.Null(selection.Active);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task ResolveForCommand_WithBlankEnvironment_RefusesBeforeAnyLookup(string environmentId)
+    {
+        var client = new FakeEnvironmentClient(EnvironmentFixtures.Environment("env-1"));
+        var service = EnvironmentFixtures.Service(
+            client,
+            new InMemoryEnvironmentSelectionStore(),
+            InMemoryAuthProfileStore.SignedIn("op@contoso.com", EnvironmentFixtures.ContosoTenant));
+
+        var exception = await Assert.ThrowsAsync<UsageException>(() =>
+            service.ResolveForCommandAsync(environmentId, CancellationToken.None));
+
+        Assert.Equal("--environment-id requires a non-empty environment id.", exception.Message);
+        Assert.Equal(0, client.ListCalls);
     }
 
     [Fact]
@@ -870,6 +913,35 @@ public sealed class PowerPlatformCloudMapTests
     [InlineData("https://contoso.crm.dynamics.com./")]
     public void IsTrustedDataverseOrganization_AcceptsACommercialOrganization(string organization) =>
         Assert.True(Map.IsTrustedDataverseOrganization(new Uri(organization)));
+
+    [Theory]
+    [InlineData("https://contoso.crmtest.dynamics.com/")]
+    [InlineData("https://CONTOSO.CRMTEST.DYNAMICS.COM./")]
+    [InlineData("https://contoso.crm.dynamics.com/")]
+    [InlineData("https://contoso.crm16.dynamics.com/")]
+    public void IsTrustedDataverseOrganization_TestRingAcceptsTestAndCommercialOrganizations(string organization) =>
+        Assert.True(PowerPlatformCloudMap.ForTarget(PowerPlatformApiTargetConfig.Test)
+            .IsTrustedDataverseOrganization(new Uri(organization)));
+
+    [Theory]
+    [InlineData("https://crmtest.dynamics.com/")]
+    [InlineData("https://contoso.crmtest.dynamics.com.attacker.example/")]
+    [InlineData("https://contoso.notcrmtest.dynamics.com/")]
+    [InlineData("https://extra.contoso.crmtest.dynamics.com/")]
+    [InlineData("http://contoso.crmtest.dynamics.com/")]
+    [InlineData("https://contoso.crmtest.dynamics.com:8443/")]
+    [InlineData("https://user@contoso.crmtest.dynamics.com/")]
+    public void IsTrustedDataverseOrganization_TestRingRejectsUntrustedTestOrganizationUrls(string organization) =>
+        Assert.False(PowerPlatformCloudMap.ForTarget(PowerPlatformApiTargetConfig.Test)
+            .IsTrustedDataverseOrganization(new Uri(organization)));
+
+    [Theory]
+    [InlineData(PowerPlatformApiRing.Production)]
+    [InlineData(PowerPlatformApiRing.Preprod)]
+    public void IsTrustedDataverseOrganization_OtherRingsRejectTestOrganizations(PowerPlatformApiRing ring) =>
+        Assert.False(PowerPlatformCloudMap.ForTarget(
+            PowerPlatformApiTargetSelection.TargetFor(CloudInstance.Public, ring))
+            .IsTrustedDataverseOrganization(new Uri("https://contoso.crmtest.dynamics.com/")));
 
     [Theory]
     [InlineData("https://evil.example.com/")]

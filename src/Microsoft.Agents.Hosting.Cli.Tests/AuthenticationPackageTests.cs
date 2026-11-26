@@ -33,6 +33,7 @@ public sealed class AuthenticationPackageTests
     }
 
     [Theory]
+    [InlineData("DotnetToolSettings.xml")]
     [InlineData("shims/win-x86/msagent.exe")]
     [InlineData("featureflags.json")]
     [InlineData("Microsoft.Agents.Hosting.Cli.Auth.dll")]
@@ -64,12 +65,19 @@ public sealed class AuthenticationPackageTests
         Assert.Throws<InvalidOperationException>(() => PackageChecks.CheckImplementation(zip, "win-x64"));
     }
 
-    [Fact]
-    public void CompleteFrameworkDependentToolImplementationIsAccepted()
+    [Theory]
+    [InlineData("win-x86")]
+    [InlineData("win-x64")]
+    [InlineData("win-arm64")]
+    [InlineData("osx-x64")]
+    [InlineData("osx-arm64")]
+    [InlineData("linux-x64")]
+    [InlineData("linux-arm64")]
+    public void CompleteFrameworkDependentToolImplementationIsAccepted(string rid)
     {
-        using var bytes = Fixture();
+        using var bytes = Fixture(rid: rid);
         using var zip = new ZipArchive(bytes, ZipArchiveMode.Read);
-        PackageChecks.CheckImplementation(zip, "win-x64");
+        PackageChecks.CheckImplementation(zip, rid);
     }
 
     [Fact]
@@ -126,25 +134,29 @@ public sealed class AuthenticationPackageTests
     }
 
     private static MemoryStream Fixture(string? missing = null, string? mutation = null, string? featuresJson = null,
-        string? dependenciesJson = null, (string Name, string? Version)? dependency = null)
+        string? dependenciesJson = null, (string Name, string? Version)? dependency = null, string rid = "win-x64")
     {
         var result = new MemoryStream();
         using (var zip = new ZipArchive(result, ZipArchiveMode.Create, leaveOpen: true))
         {
-            foreach (var rid in PackageChecks.RuntimeIdentifiers)
-                Add($"shims/{rid}/msagent{(rid.StartsWith("win-", StringComparison.Ordinal) ? ".exe" : "")}", "shim");
+            var isWindows = rid.StartsWith("win-", StringComparison.Ordinal);
+            foreach (var shimRid in PackageChecks.RuntimeIdentifiers)
+                Add($"shims/{shimRid}/msagent{(shimRid.StartsWith("win-", StringComparison.Ordinal) ? ".exe" : "")}", "shim");
             if (mutation == "extra-shim") Add("shims/linux-musl-x64/msagent", "extra-shim");
             foreach (var assembly in new[] { "Microsoft.Agents.Hosting.Cli", "Microsoft.Agents.Hosting.Cli.Auth",
                 "Microsoft.Agents.Hosting.Cli.Core", "Microsoft.Agents.Hosting.Cli.Commands", "Microsoft.Agents.Hosting.Cli.CopilotStudio" })
                 Add(assembly + ".dll", "assembly");
-            Add("Microsoft.Agents.Hosting.Cli.exe", "apphost");
-            Add("msalruntime.dll", "native-library");
-            Add("DotnetToolSettings.xml", $"<DotNetCliTool><Commands><Command Name=\"{(mutation == "command-renamed" ? "other" : "msagent")}\" EntryPoint=\"Microsoft.Agents.Hosting.Cli.exe\" Runner=\"executable\" /></Commands></DotNetCliTool>");
+            Add("Microsoft.Agents.Hosting.Cli" + (isWindows ? ".exe" : ""), "apphost");
+            if (PackageChecks.BrokerLibrary(rid) is { } library) Add(library, "native-library");
+            var entryPoint = "Microsoft.Agents.Hosting.Cli" + (isWindows ? ".exe" : "");
+            Add("DotnetToolSettings.xml", $"<DotNetCliTool><Commands><Command Name=\"{(mutation == "command-renamed" ? "other" : "msagent")}\" EntryPoint=\"{entryPoint}\" Runner=\"executable\" /></Commands></DotNetCliTool>");
             var features = new Dictionary<string, string>
             {
                 ["amsFeatures"] = mutation == "feature-enabled" ? "on" : "off",
-                ["azureBotServiceFeatures"] = "off", ["identityFeatures"] = "off",
-                ["liveTestFeatures"] = mutation == "live-test-disabled" ? "off" : "on", ["evaluationFeatures"] = "on",
+                ["azureBotServiceFeatures"] = "off",
+                ["identityFeatures"] = "off",
+                ["liveTestFeatures"] = mutation == "live-test-disabled" ? "off" : "on",
+                ["evaluationFeatures"] = "on",
             };
             if (mutation != "legacy-auth-missing")
                 features["legacyAuth"] = mutation == "legacy-auth-enabled" ? "on" : "off";
@@ -173,7 +185,7 @@ public sealed class AuthenticationPackageTests
             void Add(string name, string text)
             {
                 if (name == missing) return;
-                using var writer = new StreamWriter(zip.CreateEntry("tools/net10.0/win-x64/" + name).Open());
+                using var writer = new StreamWriter(zip.CreateEntry($"tools/net10.0/{rid}/" + name).Open());
                 writer.Write(text);
             }
         }

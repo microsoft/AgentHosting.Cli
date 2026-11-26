@@ -14,6 +14,8 @@
     <PackageReference Include="Microsoft.Agents.Core" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="System.Collections.Immutable" />
+    <PackageReference Include="System.Text.Json" />
   </ItemGroup>
 
   <ItemGroup>

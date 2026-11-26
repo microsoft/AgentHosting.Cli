@@ -34,7 +34,8 @@ internal sealed class FakePlatformInfo : IPlatformInfo
 
 internal static class FakeClientProviders
 {
-    public static MsalPublicClientProvider Create(FakePlatformInfo platform, string? configDirectory = null, TextWriter? debugOutput = null) =>
+    public static MsalPublicClientProvider Create(FakePlatformInfo platform, string? configDirectory = null, TextWriter? debugOutput = null,
+        ILegacyMsalTokenCacheBackend? legacyCache = null) =>
         new(
             new AgentHostAuthOptions
             {
@@ -44,7 +45,8 @@ internal static class FakeClientProviders
                 DebugOutput = debugOutput,
             },
             platform,
-            new FakeSecureTokenCacheProbe(protectedAvailable: false));
+            new FakeSecureTokenCacheProbe(protectedAvailable: false),
+            legacyCache: legacyCache);
 }
 
 /// <summary>

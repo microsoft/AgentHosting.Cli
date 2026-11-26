@@ -22,6 +22,14 @@ namespace Microsoft.Agents.Hosting.Cli.Rendering;
 [JsonSerializable(typeof(EnvironmentSelectionResult))]
 [JsonSerializable(typeof(AgentCreateResult))]
 [JsonSerializable(typeof(AgentDeployResult))]
+[JsonSerializable(typeof(AgentDeploymentAmsDeleteResult))]
+[JsonSerializable(typeof(AgentDeploymentAmsResult))]
+[JsonSerializable(typeof(AgentDeploymentAmsListResult))]
+[JsonSerializable(typeof(AgentAmsListResult))]
+[JsonSerializable(typeof(AgentAmsShowResult))]
+[JsonSerializable(typeof(AgentAmsUpdateResult))]
+[JsonSerializable(typeof(AgentAmsDeleteResult))]
+[JsonSerializable(typeof(AgentCommitListResult))]
 [JsonSerializable(typeof(AgentPackageUploadResult))]
 [JsonSerializable(typeof(AgentPackageUploadPartialResult))]
 [JsonSerializable(typeof(AbsProvisioningReport))]
@@ -69,6 +77,12 @@ namespace Microsoft.Agents.Hosting.Cli.Rendering;
 [JsonSerializable(typeof(EvaluationGenerateResult))]
 [JsonSerializable(typeof(DeploymentChannelRecord))]
 [JsonSerializable(typeof(DeploymentChannelRecord[]))]
+[JsonSerializable(typeof(DeploymentResult<DeploymentChannelType[]>))]
+[JsonSerializable(typeof(DeploymentChannelType[]))]
+[JsonSerializable(typeof(DeploymentResult<DeploymentChannelToken>))]
+[JsonSerializable(typeof(DeploymentChannelToken))]
+[JsonSerializable(typeof(DeploymentResult<DeploymentChannelWebhook>))]
+[JsonSerializable(typeof(DeploymentChannelWebhook))]
 internal sealed partial class CliJsonContext : JsonSerializerContext
 {
 }

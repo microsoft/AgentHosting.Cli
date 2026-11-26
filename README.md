@@ -31,7 +31,17 @@ dotnet tool update microsoft.agents.hosting.cli --prerelease -g
 ```
 ### Note:
 - The CLI checks NuGet for newer versions when you run it interactively and displays an update command when one is available. To disable these notifications, set `AH_CLI_SKIP_UPDATE_CHECK=true`. If you installed the CLI locally or with `--tool-path`, use the same installation scope when updating.
-- If you're using AI, provide [agent.md](docs/agent.md) and any compatible skills supplied by your organization to ground your coding assistant in the CLI's workflows. An editor or coding assistant is optional.
+
+## Using a coding assistant
+
+The optional [msagent-assistant plugin](.github/plugins/msagent-assistant/README.md)
+provides guided workflows for creating, editing, deploying, and testing Copilot
+Studio agents with a coding assistant. See the [coding-assistant setup guide](docs/Using%20msagents%20CLI%20with%20GitHub%20Copilot.md#msagent-assistant-plugin)
+for installation, local-checkout loading, and an example task prompt.
+
+Provide [agent.md](docs/agent.md) to ground your assistant in the CLI's workflows.
+The plugin is installed separately and is not included in the CLI's NuGet package;
+an editor or coding assistant is optional.
 
 # Get started: Create your first agent
 
@@ -60,6 +70,10 @@ msagent agent create --agent-type MCSAgent -n "Hello World" -d "A friendly greet
 Your agent files are ready to edit locally. Follow the [quickstart](docs/Quickstart.md) to deploy, evaluate, and publish your agent in Copilot Studio.
 
 If you're using Claude or GitHub Copilot, try the [Copilot Studio CLI Plugin](.github/plugins/msagent-assistant/README.md) for workflows that help your coding assistant work with `msagent`. The plugin is maintained separately and isn't included in the CLI's NuGet package.
+
+## Documentation
+
+- [See the msagent CLI documentation](https://learn.microsoft.com/en-us/microsoft-365/copilot-managed-runtime/developer/agents/cli/?view=o365-worldwide).
 
 ## Cost Management
 

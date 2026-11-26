@@ -120,7 +120,6 @@ public sealed class MsalAuthenticationSessionTests
         var listingBrokerClient = await ListingBrokerClientHoldingAsync(BrokerClientProvider(directory.Path), "alice@contoso.com");
         using var cancellation = new CancellationTokenSource();
         await cancellation.CancelAsync();
-
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => MsalAuthenticationSession.AcquireSilentTokenAsync(listingBrokerClient, [DefaultScope], "bob@contoso.com", cancellation.Token));
     }
 

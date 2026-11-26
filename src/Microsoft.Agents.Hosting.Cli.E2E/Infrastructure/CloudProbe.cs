@@ -127,6 +127,10 @@ public sealed class AzureCli
 /// <summary>Reads cloud state directly, for assertions a command's own output cannot settle.</summary>
 public sealed class CloudProbe
 {
+    private const int ServicePrincipalAttempts = 7;
+
+    private static readonly TimeSpan ServicePrincipalRetryDelay = TimeSpan.FromSeconds(10);
+
     private readonly MsagentCli _msagent;
     private readonly AzureCli _azure;
 
@@ -328,6 +332,31 @@ public sealed class CloudProbe
         return result.ExitCode == 0 && result.StdOut.Trim() is { Length: > 0 } applicationId
             ? applicationId
             : throw new E2EException($"Could not create the app registration {displayName}: {result.StdErr.Trim()}");
+    }
+
+    /// <summary>Creates the service principal of an App Registration in its own tenant, trying again while Entra does not yet see a new App Registration.</summary>
+    public async Task CreateServicePrincipalAsync(string applicationId, CancellationToken cancellationToken = default)
+    {
+        var (result, _) = await MsagentCli.RetriedAsync(() => _azure.RunAsync(["ad", "sp", "create", "--id", applicationId, "--query", "id", "-o", "tsv"], cancellationToken), created => Task.FromResult(!IsAppRegistrationNotYetVisible(created)), ServicePrincipalAttempts, ServicePrincipalRetryDelay, cancellationToken).ConfigureAwait(false);
+
+        if (result.ExitCode != 0)
+        {
+            throw new E2EException($"Could not create the service principal of {applicationId}: {result.StdErr.Trim()}");
+        }
+    }
+
+    /// <summary>Whether az refused a service principal because Entra does not yet see its new App Registration, a refusal that creates nothing.</summary>
+    public static bool IsAppRegistrationNotYetVisible(MsagentResult result) => result.ExitCode != 0 && (result.Output.Contains("does not exist", StringComparison.OrdinalIgnoreCase) || result.Output.Contains("must in the local tenant", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The az arguments that list the application ids of the App Registrations named exactly the display name, which <c>--display-name</c> alone only matches as a prefix.</summary>
+    public static string[] AppRegistrationListArguments(string displayName) => ["ad", "app", "list", "--display-name", displayName, "--query", $"[?displayName=='{displayName}'].appId", "-o", "tsv"];
+
+    /// <summary>The application ids of every App Registration named exactly the display name, with the reason when az could not list them.</summary>
+    public async Task<(IReadOnlyList<string> ApplicationIds, string? Failure)> AppRegistrationIdsAsync(string displayName, CancellationToken cancellationToken = default)
+    {
+        var result = await _azure.RunAsync(AppRegistrationListArguments(displayName), cancellationToken).ConfigureAwait(false);
+
+        return result.ExitCode == 0 ? (result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), null) : ([], $"az ad app list --display-name {displayName} exited {result.ExitCode}: {result.StdErr.Trim()}");
     }
 
     private static bool MentionsId(string json, string agentId) => Mentions(json, "mcsAgentId", agentId);

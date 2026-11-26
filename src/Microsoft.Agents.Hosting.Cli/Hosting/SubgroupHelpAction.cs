@@ -11,9 +11,8 @@ namespace Microsoft.Agents.Hosting.Cli.Hosting;
 /// themselves groups (a <c>[CommandGroup]</c> container) are listed under a <c>Subgroups:</c> heading,
 /// and leaf verbs under <c>Commands:</c>. Group membership is supplied by the <c>isSubgroup</c>
 /// predicate so a leaf verb that merely nests a subcommand (for example <c>deployment create
-/// connection</c>) stays under Commands. It only reshapes the help for commands the supplied
-/// <c>shouldCustomize</c> predicate opts in; every other command is delegated to the captured default
-/// help action unchanged.
+/// connection</c>) stays under Commands. The supplied <c>shouldCustomize</c> predicate controls
+/// subgroup splitting. Command and global options use separate sections.
 ///
 /// System.CommandLine 2.0's layout customization (<c>HelpBuilder.CustomizeLayout</c> / <c>HelpContext</c>)
 /// is internal, so this reuses the public <see cref="HelpBuilder.Write(Command, TextWriter)"/> to
@@ -30,17 +29,23 @@ internal sealed partial class SubgroupHelpAction : SynchronousCommandLineAction
     private readonly Func<Command, bool> _shouldCustomize;
     private readonly Func<Command, bool> _isSubgroup;
     private readonly Func<Command, IReadOnlyList<string>> _usageLines;
+    private readonly IReadOnlySet<string> _globalOptions;
+    private readonly TableLayout _tableLayout;
 
     public SubgroupHelpAction(
         SynchronousCommandLineAction defaultAction,
         Func<Command, bool> shouldCustomize,
         Func<Command, bool> isSubgroup,
-        Func<Command, IReadOnlyList<string>>? usageLines = null)
+        Func<Command, IReadOnlyList<string>>? usageLines = null,
+        IReadOnlySet<string>? globalOptions = null,
+        TableLayout? tableLayout = null)
     {
         _defaultAction = defaultAction ?? throw new ArgumentNullException(nameof(defaultAction));
         _shouldCustomize = shouldCustomize ?? throw new ArgumentNullException(nameof(shouldCustomize));
         _isSubgroup = isSubgroup ?? throw new ArgumentNullException(nameof(isSubgroup));
         _usageLines = usageLines ?? (_ => []);
+        _globalOptions = globalOptions ?? new HashSet<string>(StringComparer.Ordinal);
+        _tableLayout = tableLayout ?? new TableLayout();
     }
 
     public override int Invoke(ParseResult parseResult)
@@ -69,10 +74,10 @@ internal sealed partial class SubgroupHelpAction : SynchronousCommandLineAction
         }
         finally
         {
-             if (helpAction is not null && originalWidth is not null)
-             {
-                 helpAction.MaxWidth = originalWidth.Value;
-             }
+            if (helpAction is not null && originalWidth is not null)
+            {
+                helpAction.MaxWidth = originalWidth.Value;
+            }
             configuration.Output = finalOutput;
         }
 
@@ -112,19 +117,21 @@ internal sealed partial class SubgroupHelpAction : SynchronousCommandLineAction
     {
         var lines = defaultHelp.Replace("\r\n", "\n").Split('\n');
 
+        var argumentsHeadingIndex = Array.FindIndex(lines, line => line.Trim() == "Arguments:");
         var commandsHeadingIndex = Array.FindIndex(lines, line => line.Trim() == "Commands:");
         var optionsHeadingIndex = Array.FindIndex(lines, line => line.Trim() == "Options:");
 
-        if (commandsHeadingIndex < 0 && optionsHeadingIndex < 0)
+        if (argumentsHeadingIndex < 0 && commandsHeadingIndex < 0 && optionsHeadingIndex < 0)
         {
             return defaultHelp;
         }
 
-        var headLength = commandsHeadingIndex < 0 ? optionsHeadingIndex
-            : optionsHeadingIndex < 0 ? commandsHeadingIndex
-            : Math.Min(optionsHeadingIndex, commandsHeadingIndex);
+        var headLength = new[] { argumentsHeadingIndex, commandsHeadingIndex, optionsHeadingIndex }
+            .Where(index => index >= 0).Min();
         var head = lines.Take(headLength);
-        var optionRows = optionsHeadingIndex >= 0 ? WithoutValuePlaceholders(Section(lines, optionsHeadingIndex), width) : [];
+        var arguments = argumentsHeadingIndex >= 0 ? Section(lines, argumentsHeadingIndex) : [];
+        var (commandOptions, globalOptions) = FormatOptions(
+            optionsHeadingIndex >= 0 ? Section(lines, optionsHeadingIndex) : [], width);
         var rows = commandsHeadingIndex >= 0 ? Section(lines, commandsHeadingIndex) : [];
 
         var subgroupNames = splitSubgroups
@@ -141,20 +148,34 @@ internal sealed partial class SubgroupHelpAction : SynchronousCommandLineAction
             result.Append(hasSubgroups ? AddSubgroupToUsage(line) : line).Append('\n');
         }
 
-        Append(result, "Subgroups:", subgroupRows);
-        Append(result, "Commands:", commandRows);
-        Append(result, "Options:", optionRows);
+        Append(result, "Arguments:", FormatRows(arguments, width));
+        Append(result, "Subgroups:", FormatRows(subgroupRows, width));
+        Append(result, "Commands:", FormatRows(commandRows, width));
+        Append(result, "Options:", commandOptions);
+        Append(result, "Global Options:", globalOptions);
 
         return result.ToString();
     }
 
-    private static List<string> WithoutValuePlaceholders(List<string> rows, int width)
+    private static List<string> FormatRows(List<string> rows, int width) =>
+    [
+        .. rows.SelectMany(row =>
+        {
+            var column = DescriptionColumn(row);
+            return column == 0
+                ? [row.TrimEnd()]
+                : Wrap(row[..column], row[column..].TrimEnd(), column, width);
+        }),
+    ];
+
+    private (List<string> CommandOptions, List<string> GlobalOptions) FormatOptions(List<string> rows, int width)
     {
+        _tableLayout.MaxWidth = width;
         var column = rows.Select(DescriptionColumn).Where(index => index > 0).DefaultIfEmpty(0).Min();
 
         if (column == 0)
         {
-            return rows;
+            return (rows, []);
         }
 
         var split = rows
@@ -171,16 +192,50 @@ internal sealed partial class SubgroupHelpAction : SynchronousCommandLineAction
         var aliasWidth = split.Max(entry => entry.Aliases.Length);
         var optionWidth = split.Max(entry => entry.Option.Length);
         var gap = aliasWidth == 0 ? string.Empty : "  ";
+        optionWidth = Math.Max(optionWidth, _tableLayout.ParameterWidth - 2 - aliasWidth - gap.Length - 2);
         var indent = 2 + aliasWidth + gap.Length + optionWidth + 2;
+        _tableLayout.DescriptionColumn = indent;
 
-        return
+        List<string> Format(bool global) =>
         [
-            .. split.SelectMany(entry => Wrap(
+            .. split.Where(entry => _globalOptions.Contains(FirstToken(entry.Option)) == global)
+                .SelectMany(entry => Wrap(
                 "  " + entry.Aliases.PadRight(aliasWidth) + gap + entry.Option.PadRight(optionWidth) + "  ",
                 entry.Description,
                 indent,
                 width)),
         ];
+
+        return (Format(false), Format(true));
+    }
+
+    internal sealed class TableLayout
+    {
+        internal int ParameterWidth { get; private set; }
+        internal int DescriptionColumn { get; set; }
+        internal int MaxWidth { get; set; } = WideWidth;
+
+        internal void PrepareParameters(IReadOnlyList<(string Signature, string Description)> rows) =>
+            ParameterWidth = rows.Count == 0 ? 0 : rows.Max(row => row.Signature.Length) + 2;
+
+        internal void WriteParameters(TextWriter output, IReadOnlyList<(string Signature, string Description)> rows)
+        {
+            if (rows.Count == 0)
+            {
+                return;
+            }
+
+            output.WriteLine("Parameters:");
+            var column = Math.Max(DescriptionColumn, ParameterWidth);
+            foreach (var row in rows)
+            {
+                foreach (var line in Wrap(row.Signature.PadRight(column), row.Description, column, MaxWidth))
+                {
+                    output.WriteLine(line);
+                }
+            }
+            output.WriteLine();
+        }
     }
 
     internal static List<string> Wrap(string lead, string description, int indent, int width)
@@ -235,7 +290,7 @@ internal sealed partial class SubgroupHelpAction : SynchronousCommandLineAction
     {
         var indent = row.Length - row.TrimStart().Length;
 
-        if (indent >= row.Length || row[indent] != '-')
+        if (indent >= row.Length)
         {
             return 0;
         }

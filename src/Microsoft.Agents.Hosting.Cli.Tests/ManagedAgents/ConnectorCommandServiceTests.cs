@@ -301,7 +301,7 @@ public sealed class ConnectorCommandServiceTests
     }
 
     [Fact]
-    public async Task Reference_ADeclarationThatFailsWarnsTheEnvironmentMayHoldOne()
+    public async Task Reference_ADeclarationThatFailsSaysTheEnvironmentGetsTheRecordOnlyWhenBoundOrDeployed()
     {
         var (workspace, store) = Deployed();
         using var _ = workspace;
@@ -315,7 +315,9 @@ public sealed class ConnectorCommandServiceTests
 
         Assert.Equal("connection-reference-not-declared", failure.ErrorKind);
         Assert.Contains("the workspace file is locked", failure.Message, StringComparison.Ordinal);
-        Assert.Contains("unused reference", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains("only writes it to the workspace", failure.Remediation, StringComparison.Ordinal);
+        Assert.Contains("when the reference is bound or deployed", failure.Remediation, StringComparison.Ordinal);
+        Assert.DoesNotContain("unused reference", failure.Remediation, StringComparison.Ordinal);
     }
 
     [Fact]

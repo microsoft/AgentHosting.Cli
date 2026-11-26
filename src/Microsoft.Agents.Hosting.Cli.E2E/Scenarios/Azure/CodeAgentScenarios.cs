@@ -2,21 +2,21 @@ using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.E2E.Infrastructure;
+using Microsoft.Agents.Hosting.Cli.E2E.Scenarios.Ams;
 
 namespace Microsoft.Agents.Hosting.Cli.E2E.Scenarios.Azure;
 
 /// <summary>CodeAgent routing, the ARM-backed deployment lifecycle, and the validation around it.</summary>
 public static class CodeAgentScenarios
 {
-    private static readonly ScenarioBuilder Builder = new("code-agent");
+    private static readonly ScenarioBuilder Builder = new("code-agent", MsagentFeatures.AzureBotService);
 
     private static readonly Capability[] None = [];
     private static readonly Capability[] AzureCreate = [Capability.Auth, Capability.AzureCreate];
-    private static readonly Capability[] Ams = [Capability.Auth, Capability.Ams];
-    private static readonly Capability[] AmsAndAzure = [Capability.Auth, Capability.Ams, Capability.AzureCreate];
+    private static readonly Capability[] AmsCreate = [Capability.Auth, Capability.AmsCreate];
 
     /// <summary>Every code-agent scenario, in the order the run executes them.</summary>
-    public static IEnumerable<Scenario> All() => [.. Routing(), .. Lifecycle(), .. Validation(), .. BlockedOnAms()];
+    public static IEnumerable<Scenario> All() => [.. Routing(), .. Lifecycle(), .. Validation(), .. OnAms()];
 
     private static IEnumerable<Scenario> Routing()
     {
@@ -24,10 +24,10 @@ public static class CodeAgentScenarios
         {
             var directory = context.Workspaces.EmptyDirectory(context.ScenarioId);
 
-            var result = await context.Msagent.RunAsync(["deployment", "create", "--non-interactive"], directory).ConfigureAwait(false);
+            var result = await context.Msagent.RunAsync(["deployment", "create", "--agent-id", Guid.NewGuid().ToString(), "--deployment-name", "e2e", "--deployment-type", "dev", "--non-interactive"], directory).ConfigureAwait(false);
 
             context.Assert.ExitCode(result, 2, "missing flags are a usage error");
-            context.Assert.Contains(result, "--entra-id", "the failure names CodeAgent's flags, so the default resolved to CodeAgent");
+            context.Assert.Contains(result, "--entra-id", "with every option both types share supplied, the failure names CodeAgent's flags, so the default resolved to CodeAgent");
         });
 
         yield return Builder.Make("CA-02", "an existing record wins over option shape", AzureCreate, SafetyTier.Creating, run: async context =>
@@ -107,7 +107,7 @@ public static class CodeAgentScenarios
             var bot = await BotAsync(context).ConfigureAwait(false);
 
             var again = await context.Msagent.RunAsync(
-                ["deployment", "create", "--agent-id", bot.AgentId!, "--deployment-name", bot.Name,
+                ["deployment", "create", "--agent-id", bot.AgentId!, "--deployment-name", bot.Name, "--deployment-type", "dev",
                  "--entra-id", bot.ApplicationId, "--entra-id-type", "AppReg",
                  "--resource-group", context.Config.Azure.ResourceGroup!, "--json", "--non-interactive"],
                 bot.ProjectDirectory!,
@@ -252,7 +252,7 @@ public static class CodeAgentScenarios
             var directory = context.Workspaces.EmptyDirectory(context.ScenarioId);
 
             var result = await context.Msagent.RunAsync(
-                ["deployment", "create", "--agent-id", Guid.NewGuid().ToString(), "--deployment-name", "ahe2e-blueprint",
+                ["deployment", "create", "--agent-id", Guid.NewGuid().ToString(), "--deployment-name", "ahe2e-blueprint", "--deployment-type", "dev",
                  "--entra-id", Guid.NewGuid().ToString(), "--entra-id-type", "Blueprint", "--non-interactive"],
                 directory).ConfigureAwait(false);
 
@@ -287,37 +287,23 @@ public static class CodeAgentScenarios
         });
     }
 
-    private static IEnumerable<Scenario> BlockedOnAms()
+    private static IEnumerable<Scenario> OnAms()
     {
-        yield return Builder.Make("CA-19", "agent create --agent-type CodeAgent", Ams, SafetyTier.Creating, run: async context =>
+        yield return Builder.Make("CA-19", "agent create --agent-type CodeAgent", AmsCreate, SafetyTier.Creating, run: async context =>
         {
-            var directory = context.Workspaces.EmptyDirectory(context.ScenarioId);
+            var agent = await AmsSteps.CreateAgentAsync(context, "ca19").ConfigureAwait(false);
 
-            var result = await context.Msagent.RunAsync(
-                ["agent", "create", "--agent-type", "CodeAgent", "--agent-name", $"ahe2e-code-{context.RunSuffix}", "--json", "--non-interactive"],
-                directory,
-                timeout: TimeSpan.FromMinutes(10)).ConfigureAwait(false);
-
-            context.Assert.ExitZero(result);
+            context.Assert.True(context.Ledger.Outstanding.Any(entry => entry.Kind == ResourceKind.AmsAgent && AmsSteps.SameId(entry.Id, agent.AgentId)), "the ledger holds the agent for cleanup");
         });
 
-        yield return Builder.Make("CA-20", "agent deploy a CodeAgent", AmsAndAzure, SafetyTier.Creating, run: async context =>
+        yield return Builder.Make("CA-20", "agent deploy a CodeAgent", AmsCreate, SafetyTier.Creating, smoke: true, timeout: TimeSpan.FromMinutes(20), run: async context =>
         {
-            var directory = context.Workspaces.EmptyDirectory(context.ScenarioId);
+            var agent = await AmsSteps.CreateAgentAsync(context, "ca20").ConfigureAwait(false);
 
-            var created = await context.Msagent.RunAsync(
-                ["agent", "create", "--agent-type", "CodeAgent", "--agent-name", $"ahe2e-code-{context.RunSuffix}", "--json", "--non-interactive"],
-                directory,
-                timeout: TimeSpan.FromMinutes(10)).ConfigureAwait(false);
+            var deployed = await AmsSteps.DeployDevAsync(context, agent, "ca20", AmsSteps.Services(context).HomeEnvironmentId).ConfigureAwait(false);
 
-            context.Assert.ExitZero(created, "agent create");
-
-            var deployed = await context.Msagent.RunAsync(
-                ["agent", "deploy", "--project", directory, "--json", "--non-interactive"],
-                directory,
-                timeout: TimeSpan.FromMinutes(15)).ConfigureAwait(false);
-
-            context.Assert.ExitZero(deployed, "agent deploy");
+            context.Assert.Equal("Deployed", deployed.Deployment.State, "the deployment is Deployed");
+            context.Assert.False(string.IsNullOrEmpty(deployed.Deployment.BotName), "with its bot");
         });
     }
 

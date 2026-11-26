@@ -12,9 +12,14 @@ the CLI repository's auto-discovered `.github/skills` or `.github/agents`.
 |---|---|---|
 | Claude Code | Canonical `.claude-plugin/plugin.json` package | Documented format; native execution unverified |
 | GitHub Copilot CLI | Same Claude-compatible package | Documented legacy format; native execution unverified |
+| GitHub Copilot app | Same package; the manifest's legacy `extensions` path adds the chat canvas extension | Documented plugin-extension scope; canvas loading verified locally from an installed plugin |
 | Gemini CLI | Generated native extension, TOML commands and local agents | Documented format plus offline generation checks; native execution unverified |
 | Agency Copilot | Generated self-contained marketplace directory with `agency.json` | Documented format plus offline generation checks; onboarding and execution unverified |
 | M365 Cowork | Deferred | No independently usable subset established under the documented execution constraints |
+
+The `extensions/` directory is Copilot app-specific: generated Gemini and Agency packages omit it
+and drop the manifest field, whose meaning differs in Agent Plugins 1.0. Other hosts
+may report or ignore the field.
 
 No tested minimum host versions or runtime parity are claimed. Node.js >=22 is
 the declared helper prerequisite. MSAGENT is acquired separately through the
@@ -96,6 +101,19 @@ Offline checks cover manifests, copied references/helpers, bundle parity,
 installation-isolated data routing, generated packages and existing lifecycle
 safeguards. Existing repository CI runs these checks; plugin versioning and
 resources do not depend on the .NET package build.
+
+The chat canvas validates the standard Windows `msagent.cmd` layout with a
+numeric `net<major>.<minor>` framework directory,
+resolving its standard launcher to the exact native tool-store apphost without
+a shell. Discovery uses the app's PATH; set `MSAGENT_CANVAS_EXECUTABLE` in the
+app environment to an absolute native executable or standard launcher path for
+a local build. Invalid overrides fail rather than selecting another installation.
+Canvas inputs formerly using `executablePath` must move that setting to the app
+environment and reopen with the current input schema.
+macOS/Linux retain PATH-entry and symlink invocation. Windows installed-package
+acceptance additionally checks canvas discovery and command capabilities in an
+isolated installation; canvas offline tests run on Windows, Linux and macOS.
+These checks do not establish cross-platform live conversation compatibility.
 
 Before any release claim, perform the deferred small manual baseline on exact
 host versions, OSes and execution modes: installation, discovery, supported

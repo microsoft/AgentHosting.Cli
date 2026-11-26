@@ -64,9 +64,9 @@ mean a change partially completed or its result is uncertain.
 
 | Code | Description |
 | --- | --- |
-| [11001](ErrorCodes/11001.md) | No local managed-agent record matches the selection. |
+| [11001](ErrorCodes/11001.md) | No local managed-agent record, or no AMS code agent of the home environment, matches the selection. |
 | [11002](ErrorCodes/11002.md) | The supplied ID differs from this project's single registered agent. |
-| [11003](ErrorCodes/11003.md) | More than one registered agent could match the command. |
+| [11003](ErrorCodes/11003.md) | More than one registered agent, or more than one AMS code agent of the name, could match the command. |
 | [11004](ErrorCodes/11004.md) | The selected agent is not a supported Copilot Studio type for this command. |
 | [11005](ErrorCodes/11005.md) | The command requires an MCSWorkflow record. |
 | [11006](ErrorCodes/11006.md) | The record lacks the valid Dataverse workflow ID needed to address its workflow. |
@@ -94,7 +94,7 @@ mean a change partially completed or its result is uncertain.
 | [11028](ErrorCodes/11028.md) | Removal of the workspace's connection-reference declaration could not be confirmed. |
 | [11029](ErrorCodes/11029.md) | The workspace does not declare the requested logical reference name. |
 | [11030](ErrorCodes/11030.md) | The reference exists, but a later binding step failed. |
-| [11031](ErrorCodes/11031.md) | Declaration failed and may have left a cloud reference absent from the workspace. |
+| [11031](ErrorCodes/11031.md) | The connection reference could not be declared in the workspace. |
 | [11032](ErrorCodes/11032.md) | The service returned an unsuccessful response to the connection deletion request. |
 | [11033](ErrorCodes/11033.md) | The reference is already gone, but connection deletion failed or remains uncertain. |
 | [11034](ErrorCodes/11034.md) | A new connection survived after both sign-in and automatic cleanup failed. |
@@ -103,7 +103,6 @@ mean a change partially completed or its result is uncertain.
 | [11037](ErrorCodes/11037.md) | Saving the clone's deployment failed and its newly added agent record was removed. |
 | [11038](ErrorCodes/11038.md) | Clone materialization failed before registration or writes to Copilot Studio. |
 | [11039](ErrorCodes/11039.md) | Cloud deletion succeeded, but local registry cleanup must be retried. |
-| [11040](ErrorCodes/11040.md) | The AMS endpoint override is not a valid credential-free HTTPS address. |
 | [11041](ErrorCodes/11041.md) | The CLI refused to follow an authenticated create endpoint's redirect. |
 | [11042](ErrorCodes/11042.md) | Creation timed out with an uncertain outcome that must be recovered using the same idempotency key. |
 | [11043](ErrorCodes/11043.md) | Cancellation interrupted the request without proving that service-side creation stopped. |
@@ -111,7 +110,7 @@ mean a change partially completed or its result is uncertain.
 | [11045](ErrorCodes/11045.md) | The service answered, but its response content could not be decoded. |
 | [11046](ErrorCodes/11046.md) | The success response lacked a usable set of required creation fields. |
 | [11047](ErrorCodes/11047.md) | The returned tenant, environment, or display name differs from the request. |
-| [11048](ErrorCodes/11048.md) | A recognized AMS rejection requires the recovery path specified in its message. |
+| [11048](ErrorCodes/11048.md) | A recognized AMS agent-create rejection, such as a name already in use, requires the recovery path specified in its message. |
 | [11049](ErrorCodes/11049.md) | The target environment's catalog does not contain the requested connector. |
 | [11050](ErrorCodes/11050.md) | The supplied connection ID is not among the connector's available candidates. |
 | [11051](ErrorCodes/11051.md) | The selected connector does not serve the connection requested for removal. |
@@ -125,6 +124,7 @@ mean a change partially completed or its result is uncertain.
 | [11059](ErrorCodes/11059.md) | Preparing the copy found blockers, so nothing was written or sent. |
 | [11067](ErrorCodes/11067.md) | Another copy into the same project is running. |
 | [11069](ErrorCodes/11069.md) | The agent was deleted, but some of the resources `--all-resources` deletes were not. |
+| [11070](ErrorCodes/11070.md) | The agent belongs to a managed solution, so it cannot be cloned. |
 
 ## Authentication
 
@@ -155,7 +155,7 @@ mean a change partially completed or its result is uncertain.
 
 | Code | Description |
 | --- | --- |
-| [13001](ErrorCodes/13001.md) | An endpoint or inventory identifier failed destination trust validation. |
+| [13001](ErrorCodes/13001.md) | An endpoint or inventory identifier failed destination trust validation for the selected cloud and API ring. |
 | [13002](ErrorCodes/13002.md) | The active cloud changed after this process created its service clients. |
 | [13003](ErrorCodes/13003.md) | The command requires an environment but no active selection is available. |
 | [13004](ErrorCodes/13004.md) | The requested environment is absent from the active account's inventory. |
@@ -177,8 +177,8 @@ mean a change partially completed or its result is uncertain.
 | [14001](ErrorCodes/14001.md) | The target cloud agent could not be deleted, so its deployment record was retained. |
 | [14002](ErrorCodes/14002.md) | The target agent belongs to a managed solution and cannot accept this push. |
 | [14003](ErrorCodes/14003.md) | An existing agent uses the target schema, but this project cannot prove ownership. |
-| [14004](ErrorCodes/14004.md) | No deployment record matched the selected ID or name in this project and agent scope. |
-| [14005](ErrorCodes/14005.md) | More than one deployment could match the requested destination. |
+| [14004](ErrorCodes/14004.md) | No deployment record in this project and agent scope, or no deployment of the AMS agent, matched the selected ID or name. |
+| [14005](ErrorCodes/14005.md) | More than one deployment, in the project or of the AMS agent, could match the requested destination. |
 | [14006](ErrorCodes/14006.md) | The requested record violates a deployment name or destination uniqueness rule. |
 | [14007](ErrorCodes/14007.md) | The recorded deployment's expected schema no longer resolves to a cloud agent. |
 | [14008](ErrorCodes/14008.md) | The operation needs a cloud agent that has not yet been established. |
@@ -188,25 +188,17 @@ mean a change partially completed or its result is uncertain.
 | [14012](ErrorCodes/14012.md) | A push stage failed after the target agent had been connected, created, or adopted. |
 | [14013](ErrorCodes/14013.md) | The project has no selectable MCS deployment records for the requested deployment route. |
 | [14014](ErrorCodes/14014.md) | Deployment records exist, but no explicit destination selector was provided. |
-| [14015](ErrorCodes/14015.md) | A required AMS data-plane or control-plane endpoint setting is missing. |
-| [14016](ErrorCodes/14016.md) | The configured AMS endpoint is not an acceptable absolute HTTPS service URL. |
+| [14016](ErrorCodes/14016.md) | A test-only AMS endpoint override is not a credential-free absolute HTTPS URL without query or fragment. |
 | [14017](ErrorCodes/14017.md) | The upload command could not open or hash the selected package file. |
 | [14018](ErrorCodes/14018.md) | The selected upload file contains no bytes. |
 | [14019](ErrorCodes/14019.md) | The selected package exceeds the 128 MiB upload bound. |
-| [14020](ErrorCodes/14020.md) | The selected agent is not a fully repository-bound CodeAgent with runtime metadata. |
+| [14020](ErrorCodes/14020.md) | The selected agent is not a CodeAgent, or not a fully repository-bound CodeAgent with runtime metadata for upload or deployment creation. |
 | [14021](ErrorCodes/14021.md) | An agent, upload, or deployment response disagrees with the requested or verified values. |
-| [14022](ErrorCodes/14022.md) | A deployment update read or response identifies a different target or revision. |
 | [14023](ErrorCodes/14023.md) | The upload result lacks the required successful operation and revision identifiers. |
-| [14024](ErrorCodes/14024.md) | A deployment read or update returned information the CLI could not validate. |
 | [14025](ErrorCodes/14025.md) | An AMS request redirected, and the CLI refused to forward delegated credentials. |
-| [14026](ErrorCodes/14026.md) | The deployment read or update redirected instead of returning the expected service response. |
-| [14027](ErrorCodes/14027.md) | An agent read or deployment creation timed out before its response completed. |
-| [14028](ErrorCodes/14028.md) | An agent read or deployment creation lost its transport exchange. |
-| [14029](ErrorCodes/14029.md) | A revision update was attempted, but its outcome was not confirmed before timeout. |
-| [14030](ErrorCodes/14030.md) | The initial deployment read timed out, and no revision update request was sent. |
-| [14031](ErrorCodes/14031.md) | A transport failure left the submitted revision update's outcome uncertain. |
-| [14032](ErrorCodes/14032.md) | The initial deployment read failed in transport before any revision update request. |
-| [14033](ErrorCodes/14033.md) | AMS rejected a request or returned an agent or deployment result that could not be confirmed. |
+| [14027](ErrorCodes/14027.md) | An AMS agent or deployment request timed out before its response completed. |
+| [14028](ErrorCodes/14028.md) | An AMS agent or deployment request lost its transport exchange. |
+| [14033](ErrorCodes/14033.md) | AMS rejected an agent, deployment, deploy, channel, or OAuth request, or returned a result that could not be confirmed, or the deployment is being deleted or was never deployed. |
 | [14034](ErrorCodes/14034.md) | The local deployment or its backing Azure bot could not be found. |
 | [14035](ErrorCodes/14035.md) | Creation could not read the expected bot after its name was reported unavailable. |
 | [14036](ErrorCodes/14036.md) | Deployment metadata does not supply a valid Azure Bot Service resource identifier. |
@@ -229,11 +221,11 @@ mean a change partially completed or its result is uncertain.
 | --- | --- |
 | [15001](ErrorCodes/15001.md) | The package publication target configuration is missing or incomplete. |
 | [15002](ErrorCodes/15002.md) | The configured endpoint cannot be used for a credential-bearing publication request. |
-| [15003](ErrorCodes/15003.md) | The local package selected for publication could not be read. |
+| [15003](ErrorCodes/15003.md) | The local package could not be read before or during upload; correct local file access and report persistent failures with correlation details. An in-flight upload outcome is uncertain. |
 | [15004](ErrorCodes/15004.md) | The package bytes read for publication differ from the recorded build digest. |
 | [15005](ErrorCodes/15005.md) | A publication redirect was not followed to protect delegated credentials. |
-| [15006](ErrorCodes/15006.md) | The upload timed out without confirming whether the package was persisted. |
-| [15007](ErrorCodes/15007.md) | The upload exchange failed without confirming remote package state. |
+| [15006](ErrorCodes/15006.md) | The upload timed out without confirming whether the package was persisted; check connectivity and report persistent failures with correlation details. |
+| [15007](ErrorCodes/15007.md) | The upload exchange failed without confirming remote package state; restore network access and report persistent failures with correlation details. |
 | [15008](ErrorCodes/15008.md) | A durable upload operation exists, but no successful Package Revision was confirmed. |
 | [15009](ErrorCodes/15009.md) | The service response does not satisfy the expected terminal upload operation contract. |
 | [15010](ErrorCodes/15010.md) | The service digest differs from the SHA-256 of the package bytes sent. |
@@ -299,6 +291,7 @@ mean a change partially completed or its result is uncertain.
 | [17032](ErrorCodes/17032.md) | A persistent missing-reference refusal stopped the component push. |
 | [17033](ErrorCodes/17033.md) | A persistent duplicate-component refusal stopped the component push. |
 | [17034](ErrorCodes/17034.md) | The deploy would overwrite shared environment variables the target environment already holds. |
+| [17035](ErrorCodes/17035.md) | The pull stopped because the environment deleted or replaced locally edited knowledge files that it can't keep. |
 
 ## Evaluation
 
@@ -325,7 +318,7 @@ mean a change partially completed or its result is uncertain.
 | Code | Description |
 | --- | --- |
 | [99001](ErrorCodes/99001.md) | An unexpected error occurred without a more specific classification. |
-| [99002](ErrorCodes/99002.md) | The command, arguments, or required context are not valid for this operation, including invalid authentication profile names and application profile creation options when `appusersupport` is disabled. |
+| [99002](ErrorCodes/99002.md) | Invalid command usage, arguments, or required context, including channel/OAuth JSON inputs, authentication profile options, incompatible start-only/query options, or invalid, unreadable, or oversized `test ask` attachments. |
 | [99003](ErrorCodes/99003.md) | This CLI build does not implement the requested operation. |
 | [99004](ErrorCodes/99004.md) | The target did not return a response before the operation timed out. |
 | [99005](ErrorCodes/99005.md) | An internal authentication context is missing or inconsistent, or required token-provider wiring is unavailable. |

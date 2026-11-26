@@ -6,13 +6,8 @@ namespace Microsoft.Agents.Hosting.Cli.Core.Ports;
 /// </summary>
 public sealed record AmsPackagePublicationTransportRequest
 {
-    [System.Text.Json.Serialization.JsonIgnore]
-    public EnvironmentResolutionContext? Context { get; init; }
-
-    public required Uri Endpoint { get; init; }
-    public required string Audience { get; init; }
-    public required string TenantId { get; init; }
-    public required string EnvironmentId { get; init; }
+    /// <summary>The data-plane endpoint of the agent's home environment.</summary>
+    public required AmsServiceTarget ServiceTarget { get; init; }
     public required string AgentId { get; init; }
     public required Stream PackageStream { get; init; }
     public required long PackageLength { get; init; }
@@ -29,6 +24,9 @@ public sealed record AmsPackagePublicationResult
     public required long SizeInBytes { get; init; }
     public required string Status { get; init; }
     public required string? PackageRevisionId { get; init; }
+
+    /// <summary>The commit of a successful upload, or null when AMS records no commits.</summary>
+    public string? CommitId { get; init; }
     public required DateTimeOffset CreatedTime { get; init; }
     public required DateTimeOffset ChangedTime { get; init; }
 }

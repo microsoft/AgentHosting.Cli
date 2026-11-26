@@ -45,12 +45,32 @@ public sealed class CliOutputRenderer
     private readonly TextWriter _stdout;
     private readonly TextWriter _stderr;
     private readonly bool _color;
+    private readonly StringWriter? _resultStdout;
+    private readonly StringWriter? _resultStderr;
 
-    public CliOutputRenderer(TextWriter stdout, TextWriter stderr, bool color)
+    public CliOutputRenderer(TextWriter stdout, TextWriter stderr, bool color, bool deferFinalOutput = false)
     {
         _stdout = stdout;
         _stderr = stderr;
         _color = color;
+        _resultStdout = deferFinalOutput ? new StringWriter() : null;
+        _resultStderr = deferFinalOutput ? new StringWriter() : null;
+    }
+
+    internal void FlushFinalOutput()
+    {
+        FlushBuffer(_resultStderr, _stderr);
+        FlushBuffer(_resultStdout, _stdout);
+    }
+
+    private static void FlushBuffer(StringWriter? buffer, TextWriter output)
+    {
+        if (buffer?.GetStringBuilder() is { Length: > 0 } pending)
+        {
+            output.Write(pending.ToString());
+            output.Flush();
+            pending.Clear();
+        }
     }
 
     internal TextWriter Stdout => _stdout;
@@ -58,15 +78,8 @@ public sealed class CliOutputRenderer
     internal bool Color => _color;
 
     /// <summary>Renders a successful command result as the JSON or human success envelope.</summary>
-    public void RenderSuccess(object payload, bool json, bool debug = false)
+    public void RenderSuccess(object payload, bool json)
     {
-        if (debug && payload is IDeploymentResult { ArmResponse: { } armResponse })
-        {
-            _stderr.WriteLine("ARM response:");
-            _stderr.WriteLine(JsonSerializer.Serialize(armResponse, IndentedJson));
-            _stderr.Flush();
-        }
-
         if (json)
         {
             WriteJsonSuccess(payload);
@@ -119,7 +132,7 @@ public sealed class CliOutputRenderer
             partialReport = AuthPartial(partialState ?? error);
         var message = suppressExceptionDetails && error is not AgentHostingException
             ? "Authentication failed. No credential details were emitted." : Describe(error);
-        WriteFailure(exitCode, errorCode, message, errorKind, remediation, partialReport, json, error is ManagedAgentException { HasMultilineGuidance: true });
+        WriteFailure(exitCode, errorCode, message, errorKind, remediation, partialReport, json, error is ManagedAgentException { HasMultilineGuidance: true }, error as PackagePublicationException);
         return exitCode;
     }
 
@@ -180,7 +193,7 @@ public sealed class CliOutputRenderer
         return ExitCodes.Usage;
     }
 
-    private void WriteFailure(int exitCode, int errorCode, string message, string? errorKind, string? remediation, object? partialReport, bool json, bool multiline = false)
+    private void WriteFailure(int exitCode, int errorCode, string message, string? errorKind, string? remediation, object? partialReport, bool json, bool multiline = false, PackagePublicationException? publicationFailure = null)
     {
         if (json)
         {
@@ -201,6 +214,16 @@ public sealed class CliOutputRenderer
                 envelope["remediation"] = remediation;
             }
 
+            if (publicationFailure?.FailureStage is { } stage)
+            {
+                envelope["failureStage"] = stage;
+                envelope["failureReason"] = publicationFailure.FailureReason;
+                if (publicationFailure.ResponseStatusCode is { } status)
+                {
+                    envelope["httpStatusCode"] = status;
+                }
+            }
+
             if (partialReport is not null)
             {
                 var partialNode = JsonSerializer.SerializeToNode(
@@ -218,7 +241,7 @@ public sealed class CliOutputRenderer
 
             // The JSON envelope (success or failure) is always the single stdout document, so a parser
             // reading the stdout pipe still sees the failure.
-            _stdout.WriteLine(envelope.ToJsonString(IndentedJson));
+            (_resultStdout ?? _stdout).WriteLine(envelope.ToJsonString(IndentedJson));
         }
         else
         {
@@ -232,7 +255,7 @@ public sealed class CliOutputRenderer
             {
                 foreach (var line in DescribeHuman(partialReport))
                 {
-                    WriteLine(_stderr, line);
+                    WriteLine(_resultStderr ?? _stderr, line);
                 }
             }
         }
@@ -242,7 +265,7 @@ public sealed class CliOutputRenderer
     {
         foreach (var line in multiline ? text.Split(Environment.NewLine) : [text])
         {
-            WriteLine(_stderr, line, ansiCode);
+            WriteLine(_resultStderr ?? _stderr, line, ansiCode);
         }
     }
 
@@ -266,7 +289,7 @@ public sealed class CliOutputRenderer
                     ["success"] = true,
                     ["result"] = serializedPayload,
                 };
-                _stdout.WriteLine(resultEnvelope.ToJsonString(IndentedJson));
+                (_resultStdout ?? _stdout).WriteLine(resultEnvelope.ToJsonString(IndentedJson));
                 return;
             }
 
@@ -294,7 +317,7 @@ public sealed class CliOutputRenderer
             envelope[key] = value;
         }
 
-        _stdout.WriteLine(envelope.ToJsonString(IndentedJson));
+        (_resultStdout ?? _stdout).WriteLine(envelope.ToJsonString(IndentedJson));
     }
 
     private void WriteHumanSuccess(object payload)
@@ -302,7 +325,7 @@ public sealed class CliOutputRenderer
         var first = true;
         foreach (var line in DescribeHuman(payload))
         {
-            WriteLine(_stdout, line, first ? Green : null);
+            WriteLine(_resultStdout ?? _stdout, line, first ? Green : null);
             first = false;
         }
     }

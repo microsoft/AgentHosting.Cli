@@ -7,18 +7,25 @@ using DeploymentModel = Microsoft.Agents.Hosting.Cli.Core.Deployments.CodeAgentD
 
 namespace Microsoft.Agents.Hosting.Cli.Commands.Commands.Deployment;
 
-/// <summary><c>msagent deployment show</c>, routed on the resolved agent type.</summary>
+/// <summary><c>msagent deployment show</c>, routed to a deployment of the local project or to AMS.</summary>
 [Command("show", Description = "Get an existing deployment.", ParentGroup = typeof(DeploymentGroup), SortPriority = 30)]
 public sealed class DeploymentShowCommand : CommandBase<AgentDeploymentShowRequest, AgentDeploymentShowResult>
 {
     /// <inheritdoc />
-    public override IReadOnlyList<CommandSymbol> Symbols => DeploymentSelector.Symbols;
+    public override IReadOnlyList<CommandSymbol> Symbols =>
+    [
+        .. DeploymentSelector.Symbols,
+        AmsRoute.EnvironmentOption("AMS agent home environment, which selects the AMS route. Defaults to the active environment."),
+    ];
+
+    private static readonly AmsRouteRules AmsRules = new("deployment show") { LocalOptions = ["--project", "--resource-group", "--subscription", "--tenant"], NeedsDeployment = true };
 
     /// <inheritdoc />
     public override IReadOnlyList<RouteMetadata> Routes =>
     [
         new RouteMetadata(typeof(AgentDeploymentShowRequest), typeof(AgentDeploymentShowResult)),
         new RouteMetadata(typeof(DeploymentShowRequest), typeof(DeploymentResult<DeploymentModel>)),
+        new RouteMetadata(typeof(AgentDeploymentAmsShowRequest), typeof(AgentDeploymentAmsResult)),
     ];
 
     /// <inheritdoc />
@@ -30,6 +37,7 @@ public sealed class DeploymentShowCommand : CommandBase<AgentDeploymentShowReque
             Summary = "Get an Azure Bot Service deployment",
             RequiredFeatures = [FeatureName.AzureBotServiceFeatures],
         },
+        AmsRoute.Usage("Get an AMS deployment", withDeployment: true),
     ];
 
     /// <inheritdoc />
@@ -48,10 +56,10 @@ public sealed class DeploymentShowCommand : CommandBase<AgentDeploymentShowReque
     }
 
     /// <inheritdoc />
-    protected override Task<object> DispatchAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(input);
+    protected override Task<object> DispatchAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken) => AmsRoute.RouteAsync(input, services, AmsRules, () => InvokeAsync<AgentDeploymentAmsShowRequest, AgentDeploymentAmsResult>(services, AmsRoute.Address(input, new AgentDeploymentAmsShowRequest()), cancellationToken), () => DispatchLocalAsync(input, services, cancellationToken));
 
+    private Task<object> DispatchLocalAsync(ICommandInput input, IServiceProvider services, CancellationToken cancellationToken)
+    {
         var resolved = DeploymentSelector.Resolve(services, DeploymentSelector.Query(input));
         DeploymentSelector.RequireAddressable(services, input, resolved);
 

@@ -21,6 +21,9 @@ public sealed record Scenario
     /// <summary>How long the scenario may run, when it needs longer than the runner's default.</summary>
     public TimeSpan? Timeout { get; init; }
 
+    /// <summary>The msagent rollout feature the scenario's commands need, turned on only for its msagent, or null when it needs none.</summary>
+    public string? MsagentFeature { get; init; }
+
     public required Func<ScenarioContext, Task> Run { get; init; }
 }
 
@@ -53,6 +56,9 @@ public sealed class ScenarioContext
     public required CancellationToken CancellationToken { get; init; }
 
     public StandaloneServices? Standalone { get; init; }
+
+    /// <summary>The Agent Management Service the code-agent scenarios drive, present when one of them is scheduled.</summary>
+    public AmsServices? Ams { get; init; }
 
     /// <summary>The dev environment, which every cloud scenario targets unless it says otherwise.</summary>
     public string DevEnvironmentId => Config.Mcs.DevEnvironmentId

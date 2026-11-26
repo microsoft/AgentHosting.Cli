@@ -20,12 +20,12 @@ public sealed class SyncWorkspaceAdapterCloneTests : IDisposable
         }
     }
 
-    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer) =>
+    private static SyncWorkspaceAdapter Create(RecordingWorkspaceSynchronizer synchronizer, CloneSourceClient? client = null) =>
         new(
             synchronizer,
             synchronizer,
             new RecordingRetargetService(),
-            new CloneSourceClient(),
+            client ?? new CloneSourceClient(),
             new StubComponentCollectionClient(),
             new StubOperationContextProvider(),
             new AgentHostDataverseHttpClientAccessor(new StubSyncAuthProvider()),
@@ -192,6 +192,23 @@ public sealed class SyncWorkspaceAdapterCloneTests : IDisposable
     }
 
     [Fact]
+    public async Task Clone_ManagedAgent_FailsWithTheSyncReasonBeforeStagingAnything()
+    {
+        Directory.CreateDirectory(_directory);
+        var synchronizer = new RecordingWorkspaceSynchronizer();
+
+        var failure = await Assert.ThrowsAsync<ManagedAgentException>(
+            () => Create(synchronizer, new CloneSourceClient { IsManaged = true }).CloneAsync(Command(), CancellationToken.None));
+
+        Assert.Equal(ErrorCodes.ManagedAgent.AgentManaged, failure.ErrorCode);
+        Assert.Equal("agent-managed", failure.ErrorKind);
+        Assert.Equal(ExitCodes.Usage, failure.ExitCode);
+        Assert.Contains($"The agent 'Contoso Helpdesk' ({SourceAgentId}) is managed.", failure.Message, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(Path.Combine(_directory, "Contoso Helpdesk")));
+        Assert.Empty(synchronizer.Calls);
+    }
+
+    [Fact]
     public async Task Clone_AppliesTouchupsAfterTheContentArrives()
     {
         WriteRegistry();
@@ -213,11 +230,15 @@ internal sealed class CloneSourceClient : Microsoft.CopilotStudio.Sync.Dataverse
 
     public IReadOnlyList<ComponentCollectionInfo> LinkedCollections { get; init; } = [];
 
+    public bool IsManaged { get; init; }
+
     public override Task<AgentInfo> GetAgentInfoAsync(Guid agentId, CancellationToken cancellationToken) =>
         Task.FromResult(new AgentInfo
         {
+            AgentId = agentId,
             DisplayName = "Contoso Helpdesk",
             SchemaName = "con_contosohelpdesk",
+            IsManaged = IsManaged,
             ComponentCollections = [.. LinkedCollections],
         });
 

@@ -1,3 +1,6 @@
+using System.CommandLine;
+using System.CommandLine.Help;
+using System.Text.RegularExpressions;
 using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Commands.Groups;
 using Microsoft.Agents.Hosting.Cli.Commands.Model;
@@ -47,7 +50,7 @@ public sealed class UsageRouteTests
     }
 
     [Fact]
-    public void DeploymentCreate_RendersBothRoutesWhenAzureIsEnabled()
+    public void DeploymentCreate_RendersTheMcsAzureAndAmsRoutes()
     {
         var usage = UsageLines(Help(TestFeatureFlags.AllProductSurfaces, "deployment", "create"));
 
@@ -57,6 +60,8 @@ public sealed class UsageRouteTests
                 "msagent deployment create (--agent-id <agent-id> | --agent-name <agent-name>) --deployment-name <deployment-name> --deployment-type <deployment-type> [options]",
                 "Provision an Azure Bot Service deployment",
                 "msagent deployment create --agent-id <agent-id> --deployment-name <deployment-name> --deployment-type <deployment-type> --entra-id <entra-id> --entra-id-type <entra-id-type> [options]",
+                "Record an AMS code-agent deployment",
+                "msagent deployment create (--agent-id <agent-id> | --agent-name <agent-name>) --target-environment-id <target-environment-id> --deployment-name <deployment-name> --deployment-type <deployment-type> --entra-id <entra-id> --entra-id-type <entra-id-type> [options]",
             ],
             usage);
     }
@@ -82,8 +87,23 @@ public sealed class UsageRouteTests
                 "msagent deployment update (--deployment-id <deployment-id> | --deployment-name <deployment-name>) --new-name <new-name> [options]",
                 "Change an Azure Bot Service deployment",
                 "msagent deployment update (--deployment-id <deployment-id> | --agent-id <agent-id> --deployment-name <deployment-name>) (--deployment-type <deployment-type> | --sku <sku> | --display-name <display-name> | --description <description> | --endpoint-url <endpoint-url> | --default) [options]",
-                "Point a deployment at a new package revision",
-                "msagent deployment update --agent-id <agent-id> --deployment-id <deployment-id> --package-revision <package-revision> [options]",
+                "Rename an AMS deployment or change its dev endpoint",
+                "msagent deployment update (--agent-id <agent-id> | --agent-name <agent-name>) (--deployment-id <deployment-id> | --deployment-name <deployment-name>) (--new-name <new-name> | --endpoint-url <endpoint-url>) [options]",
+            ],
+            usage);
+    }
+
+    [Fact]
+    public void AgentDeploy_RendersTheMcsRouteAndTheAmsRoute()
+    {
+        var usage = UsageLines(Help(TestFeatureFlags.AllProductSurfaces, "agent", "deploy"));
+
+        Assert.Equal(
+            [
+                "Deploy an MCS project to a deployment",
+                "msagent agent deploy (--deployment-id <deployment-id> | --deployment-name <deployment-name>) [options]",
+                "Deploy an AMS code agent to one of its deployments",
+                "msagent agent deploy (--agent-id <agent-id> | --agent-name <agent-name>) (--deployment-id <deployment-id> | --deployment-name <deployment-name>) [options]",
             ],
             usage);
     }
@@ -104,9 +124,19 @@ public sealed class UsageRouteTests
     }
 
     [Theory]
-    [InlineData("show", "Get")]
-    [InlineData("delete", "Delete")]
-    public void AnAddressingVerb_AdvertisesTheMcsAndAzureFormsSeparately(string verb, string summaryVerb)
+    [InlineData("show", "Show the records of the local project", "Show an AMS code agent with its deployments", "(--agent-id <agent-id> | --agent-name <agent-name>)")]
+    [InlineData("delete", "Delete an MCS agent of the local project", "Delete an AMS code agent with its deployments and bots", "(--agent-id <agent-id> | --agent-name <agent-name>)")]
+    [InlineData("list", "List MCS agents or standalone workflows", "List the code agents of an environment", "--agent-type CodeAgent")]
+    public void AnAgentVerbWithAnAmsRoute_AdvertisesItOnlyWhenAmsIsEnabled(string verb, string localSummary, string amsSummary, string amsOptions)
+    {
+        Assert.Equal([localSummary, $"msagent agent {verb} [options]", amsSummary, $"msagent agent {verb} {amsOptions} [options]"], UsageLines(Help(TestFeatureFlags.AllProductSurfaces, "agent", verb)));
+        Assert.Equal([$"msagent agent {verb} [options]"], UsageLines(Help(new TestFeatureFlags(), "agent", verb)));
+    }
+
+    [Theory]
+    [InlineData("show", "Get", "Get an AMS deployment")]
+    [InlineData("delete", "Delete", "Delete the record of an AMS deployment")]
+    public void AnAddressingVerb_AdvertisesTheMcsAzureAndAmsFormsSeparately(string verb, string summaryVerb, string amsSummary)
     {
         var usage = UsageLines(Help(TestFeatureFlags.AllProductSurfaces, "deployment", verb));
 
@@ -116,6 +146,8 @@ public sealed class UsageRouteTests
                 $"msagent deployment {verb} (--deployment-id <deployment-id> | --deployment-name <deployment-name>) [options]",
                 $"{summaryVerb} an Azure Bot Service deployment",
                 $"msagent deployment {verb} (--deployment-id <deployment-id> | --agent-id <agent-id> --deployment-name <deployment-name>) [options]",
+                amsSummary,
+                $"msagent deployment {verb} (--agent-id <agent-id> | --agent-name <agent-name>) (--deployment-id <deployment-id> | --deployment-name <deployment-name>) [options]",
             ],
             usage);
     }
@@ -123,12 +155,64 @@ public sealed class UsageRouteTests
     [Theory]
     [InlineData("show")]
     [InlineData("delete")]
-    public void AnAddressingVerb_DropsTheAzureFormWhenAzureIsDisabled(string verb)
+    public void AnAddressingVerb_DropsTheAzureAndAmsFormsWhenTheyAreDisabled(string verb)
     {
         var usage = UsageLines(Help(new TestFeatureFlags(), "deployment", verb));
 
         Assert.Equal(
             [$"msagent deployment {verb} (--deployment-id <deployment-id> | --deployment-name <deployment-name>) [options]"],
+            usage);
+    }
+
+    [Theory]
+    [InlineData("channel", "create", " --channel <channel>")]
+    [InlineData("channel", "update", " --channel <channel>")]
+    [InlineData("channel", "delete", " --channel <channel>")]
+    [InlineData("channel", "show", " --channel <channel>")]
+    [InlineData("channel", "list", "")]
+    [InlineData("oauth", "create", " --connection <connection> --provider-name <provider-name>")]
+    [InlineData("oauth", "update", " --connection <connection>")]
+    [InlineData("oauth", "delete", " --connection <connection>")]
+    [InlineData("oauth", "show", " --connection <connection>")]
+    [InlineData("oauth", "list", "")]
+    public void AnAmsRoutedDeploymentVerb_AdvertisesTheProjectAndAmsFormsSeparately(string group, string verb, string requiredOptions)
+    {
+        var usage = UsageLines(Help(TestFeatureFlags.AllProductSurfaces, "deployment", group, verb));
+
+        Assert.Equal(
+            [
+                "Use a deployment recorded in the project",
+                $"msagent deployment {group} {verb} (--deployment-id <deployment-id> | --agent-id <agent-id> --deployment-name <deployment-name>){requiredOptions} [options]",
+                "Use an AMS deployment",
+                $"msagent deployment {group} {verb} (--agent-id <agent-id> | --agent-name <agent-name>) (--deployment-id <deployment-id> | --deployment-name <deployment-name>){requiredOptions} [options]",
+            ],
+            usage);
+    }
+
+    [Theory]
+    [InlineData("channel", "create", " --channel <channel>")]
+    [InlineData("channel", "list", "")]
+    [InlineData("oauth", "create", " --connection <connection> --provider-name <provider-name>")]
+    [InlineData("oauth", "list", "")]
+    public void AnAmsRoutedDeploymentVerb_KeepsOneUnlabelledLineWhenAmsIsDisabled(string group, string verb, string requiredOptions)
+    {
+        var usage = UsageLines(Help(new TestFeatureFlags(FeatureName.AzureBotServiceFeatures), "deployment", group, verb));
+
+        Assert.Equal(
+            [$"msagent deployment {group} {verb} (--deployment-id <deployment-id> | --agent-id <agent-id> --deployment-name <deployment-name>){requiredOptions} [options]"],
+            usage);
+    }
+
+    [Theory]
+    [InlineData("types", "")]
+    [InlineData("token", " --channel <channel>")]
+    [InlineData("webhook", " --channel <channel>")]
+    public void AnAmsOnlyChannelCommand_AdvertisesItsAddress(string verb, string channelOption)
+    {
+        var usage = UsageLines(Help(TestFeatureFlags.AllProductSurfaces, "deployment", "channel", verb));
+
+        Assert.Equal(
+            [$"msagent deployment channel {verb} (--agent-id <agent-id> | --agent-name <agent-name>) (--deployment-id <deployment-id> | --deployment-name <deployment-name>){channelOption} [options]"],
             usage);
     }
 
@@ -154,18 +238,26 @@ public sealed class UsageRouteTests
     [InlineData("msagent deployment connection update (--deployment-id <deployment-id> | --deployment-name <deployment-name>) [options]", "deployment", "connection", "update")]
     [InlineData("msagent agent share show (--agent-id <agent-id> | --agent-name <agent-name>) [options]", "agent", "share", "show")]
     [InlineData("msagent agent unshare (--agent-id <agent-id> | --agent-name <agent-name>) --user <user> [options]", "agent", "unshare")]
+    [InlineData("msagent agent update (--agent-id <agent-id> | --agent-name <agent-name>) (--new-name <new-name> | --description <description>) [options]", "agent", "update")]
+    [InlineData("msagent agent commit list (--agent-id <agent-id> | --agent-name <agent-name>) [options]", "agent", "commit", "list")]
+    [InlineData("msagent agent package upload (--agent-id <agent-id> | --agent-name <agent-name>) --package <package> [options]", "agent", "package", "upload")]
     public void ASelectorEnforcedAtRuntimeIsAdvertisedInUsage(string expected, params string[] path)
     {
         Assert.Equal([expected], UsageLines(Help(TestFeatureFlags.AllProductSurfaces, path)));
     }
 
-    [Theory]
-    [InlineData("msagent deployment oauth list (--deployment-id <deployment-id> | --agent-id <agent-id> --deployment-name <deployment-name>) [options]", "list")]
-    [InlineData("msagent deployment oauth show (--deployment-id <deployment-id> | --agent-id <agent-id> --deployment-name <deployment-name>) --connection <connection> [options]", "show")]
-    [InlineData("msagent deployment oauth create (--deployment-id <deployment-id> | --agent-id <agent-id> --deployment-name <deployment-name>) --connection <connection> --provider-name <provider-name> [options]", "create")]
-    public void AnOAuthVerbAdvertisesTheDeploymentAddressBeforeItsOwnRequiredOptions(string expected, string verb)
+    [Fact]
+    public void OAuthListProviders_AddsTheAmsFormOnlyWhenAmsIsEnabled()
     {
-        Assert.Equal([expected], UsageLines(Help(TestFeatureFlags.AllProductSurfaces, "deployment", "oauth", verb)));
+        Assert.Equal(
+            [
+                "Use the live catalogue of a subscription",
+                "msagent deployment oauth list-providers [options]",
+                "Use the providers AMS offers for an AMS deployment",
+                "msagent deployment oauth list-providers (--agent-id <agent-id> | --agent-name <agent-name>) (--deployment-id <deployment-id> | --deployment-name <deployment-name>) [options]",
+            ],
+            UsageLines(Help(TestFeatureFlags.AllProductSurfaces, "deployment", "oauth", "list-providers")));
+        Assert.Equal(["msagent deployment oauth list-providers [options]"], UsageLines(Help(new TestFeatureFlags(FeatureName.AzureBotServiceFeatures), "deployment", "oauth", "list-providers")));
     }
 
     [Fact]
@@ -236,9 +328,9 @@ public sealed class UsageRouteTests
     [Fact]
     public void ACommandWithNoRequiredOptionKeepsTheDefaultUsageLine()
     {
-        var usage = UsageLines(Help(TestFeatureFlags.AllProductSurfaces, "agent", "show"));
+        var usage = UsageLines(Help(TestFeatureFlags.AllProductSurfaces, "env", "list"));
 
-        Assert.Equal(["msagent agent show [options]"], usage);
+        Assert.Equal(["msagent env list [options]"], usage);
     }
 
     private static IReadOnlyList<string> Sections(string help) =>
@@ -252,7 +344,7 @@ public sealed class UsageRouteTests
     [InlineData("deployment", "connection")]
     public void AGroupWithoutSubgroupsListsCommandsBeforeOptions(params string[] path)
     {
-        Assert.Equal(["Description:", "Usage:", "Commands:", "Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, path)));
+        Assert.Equal(["Description:", "Usage:", "Commands:", "Global Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, path)));
     }
 
     [Theory]
@@ -260,13 +352,13 @@ public sealed class UsageRouteTests
     [InlineData("deployment")]
     public void AGroupWithSubgroupsListsSubgroupsThenCommandsThenOptions(params string[] path)
     {
-        Assert.Equal(["Description:", "Usage:", "Subgroups:", "Commands:", "Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, path)));
+        Assert.Equal(["Description:", "Usage:", "Subgroups:", "Commands:", "Global Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, path)));
     }
 
     [Fact]
     public void ALeafCommandKeepsItsArgumentsBeforeItsOptions()
     {
-        Assert.Equal(["Description:", "Usage:", "Arguments:", "Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, "env", "select")));
+        Assert.Equal(["Description:", "Usage:", "Arguments:", "Global Options:"], Sections(Help(TestFeatureFlags.AllProductSurfaces, "env", "select")));
     }
 
     [Fact]
@@ -280,6 +372,153 @@ public sealed class UsageRouteTests
 
             Assert.All(declared, row => Assert.Equal(declared[0].IndexOf("--", StringComparison.Ordinal), row.IndexOf("--", StringComparison.Ordinal)));
         }
+    }
+
+    [Fact]
+    public void CommandAndGlobalOptionsUseSeparateSectionsWithSharedColumns()
+    {
+        var help = Help(TestFeatureFlags.AllProductSurfaces, "deployment", "channel", "update");
+        var globalStart = help.IndexOf("Global Options:", StringComparison.Ordinal);
+        Assert.True(globalStart > help.IndexOf("Options:", StringComparison.Ordinal));
+        var commandSection = help[..globalStart];
+        var globalSection = help[globalStart..help.IndexOf("Examples:", StringComparison.Ordinal)];
+        Assert.Contains("--parameters", commandSection);
+        Assert.DoesNotContain("--json", commandSection);
+        Assert.Contains("--json", globalSection);
+        Assert.DoesNotContain("--parameters", globalSection);
+        Assert.DoesNotContain("--version", globalSection);
+        var rows = OptionRows(help);
+        var parameters = Assert.Single(rows, row => row.Contains("--parameters", StringComparison.Ordinal));
+        var json = Assert.Single(rows, row => row.Contains("--json", StringComparison.Ordinal));
+        Assert.Equal(parameters.IndexOf("--", StringComparison.Ordinal), json.IndexOf("--", StringComparison.Ordinal));
+        Assert.Equal(parameters.IndexOf("Channel-specific", StringComparison.Ordinal),
+            json.IndexOf("Emit machine-readable", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("directline", "create")]
+    [InlineData("directline", "update")]
+    [InlineData("webchat", "create")]
+    [InlineData("webchat", "update")]
+    [InlineData("facebook", "create")]
+    [InlineData("facebook", "update")]
+    [InlineData("line", "create")]
+    [InlineData("line", "update")]
+    [InlineData("msteams", "create")]
+    public void ParametersShareTheOptionsDescriptionColumnWithoutLosingNesting(string channel, string verb)
+    {
+        var help = Help(TestFeatureFlags.AllProductSurfaces, "deployment", "channel", verb, "--channel", channel);
+        var json = Assert.Single(OptionRows(help), row => row.Contains("--json", StringComparison.Ordinal));
+        var column = json.IndexOf("Emit machine-readable", StringComparison.Ordinal);
+        var start = help.IndexOf("Parameters:", StringComparison.Ordinal);
+        var end = help.IndexOf("Examples:", StringComparison.Ordinal);
+        var parameters = help[start..end].Split('\n')
+            .Select(line => Regex.Match(line, @"^\s+\S+ <[^>]+>(?: \(REQUIRED\))?\s+(?<description>\S)"))
+            .Where(match => match.Success).ToArray();
+
+        Assert.NotEmpty(parameters);
+        Assert.All(parameters, match => Assert.Equal(column, match.Groups["description"].Index));
+        if (channel != "msteams")
+        {
+            Assert.Contains(parameters, match => match.Value.StartsWith("      ", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void RootVersionAppearsOnlyInRootGlobalOptions()
+    {
+        var root = Help(TestFeatureFlags.AllProductSurfaces);
+        Assert.Contains("--version", root[root.IndexOf("Global Options:", StringComparison.Ordinal)..]);
+        Assert.DoesNotContain("--version", Help(TestFeatureFlags.AllProductSurfaces, "auth", "login"));
+    }
+
+    [Theory]
+    [InlineData()]
+    [InlineData("deployment")]
+    [InlineData("env", "select")]
+    [InlineData("deployment", "channel", "update")]
+    [InlineData("deployment", "channel", "update", "--channel", "facebook")]
+    [InlineData("deployment", "channel", "create", "--channel", "directline")]
+    [InlineData("deployment", "oauth", "create")]
+    public void HelpSectionsHaveExactlyOneBlankLineBetweenThem(params string[] path)
+    {
+        var lines = Help(TestFeatureFlags.AllProductSurfaces, path).Split('\n');
+        var headings = lines.Select((line, index) => (line, index))
+            .Where(entry => entry.line.Length > 0 && !char.IsWhiteSpace(entry.line[0]) && entry.line.EndsWith(':'))
+            .Skip(1);
+
+        foreach (var (_, index) in headings)
+        {
+            Assert.True(index >= 2);
+            Assert.Empty(lines[index - 1]);
+            Assert.False(string.IsNullOrWhiteSpace(lines[index - 2]));
+        }
+    }
+
+    [Fact]
+    public void ParameterDescriptionsWrapAtTheSharedColumn()
+    {
+        var layout = new SubgroupHelpAction.TableLayout { DescriptionColumn = 40, MaxWidth = 70 };
+        (string Signature, string Description)[] rows =
+        [
+            ("      siteName <String> (REQUIRED)",
+                "The existing site name used to select the site that should receive the requested changes."),
+        ];
+        layout.PrepareParameters(rows);
+        var output = new StringWriter();
+        layout.WriteParameters(output, rows);
+        var lines = output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+
+        Assert.True(lines.Length > 1);
+        Assert.StartsWith("      siteName <String> (REQUIRED)", lines[0]);
+        Assert.All(lines, line => Assert.True(line.Length <= 70));
+        Assert.All(lines.Skip(1), line => Assert.Equal(40, line.Length - line.TrimStart().Length));
+        Assert.Equal(rows[0].Description, string.Join(" ", lines.Select(line => line[40..])));
+    }
+
+    [Theory]
+    [InlineData("Arguments:", 50)]
+    [InlineData("Arguments:", 80)]
+    [InlineData("Subgroups:", 50)]
+    [InlineData("Subgroups:", 80)]
+    [InlineData("Commands:", 50)]
+    [InlineData("Commands:", 80)]
+    public async Task HelpTableDescriptionsWrapAtTheirExistingColumn(string section, int width)
+    {
+        const string description = "Select the configured target for this operation without changing the other stored targets or their settings.";
+        var root = new RootCommand();
+        if (section == "Arguments:")
+        {
+            root.Arguments.Add(new Argument<string>("target") { Description = description });
+        }
+        else
+        {
+            root.Subcommands.Add(new Command("target", description));
+        }
+
+        var help = root.Options.OfType<HelpOption>().Single();
+        var defaultAction = Assert.IsType<HelpAction>(help.Action);
+        defaultAction.MaxWidth = width;
+        help.Action = new SubgroupHelpAction(defaultAction, _ => section == "Subgroups:",
+            command => command.Name == "target");
+        var output = new StringWriter();
+        var error = new StringWriter();
+
+        var exitCode = await root.Parse("--help").InvokeAsync(new InvocationConfiguration { Output = output, Error = error });
+
+        Assert.Equal(0, exitCode);
+        Assert.Empty(error.ToString());
+        var lines = output.ToString().Replace("\r\n", "\n").Split('\n');
+        var heading = Array.IndexOf(lines, section);
+        Assert.True(heading >= 0);
+        var rows = lines.Skip(heading + 1).TakeWhile(line => !string.IsNullOrWhiteSpace(line)).ToArray();
+        var column = rows[0].IndexOf("Select", StringComparison.Ordinal);
+        Assert.True(column > 0);
+        Assert.True(rows.Length > 1);
+        Assert.All(rows, line => Assert.True(line.Length <= width));
+        Assert.All(rows.Skip(1), line => Assert.Equal(column, line.Length - line.TrimStart().Length));
+        Assert.Equal(description, string.Join(' ', rows.Select(line => line[column..])));
+        Assert.Empty(lines[heading + 1 + rows.Length]);
     }
 
     [Fact]
@@ -332,9 +571,13 @@ public sealed class UsageRouteTests
     private static IReadOnlyList<string> OptionRows(string help)
     {
         var lines = help.Split('\n').Select(line => line.TrimEnd()).ToArray();
-        var heading = Array.FindIndex(lines, line => line.Trim() == "Options:");
+        IEnumerable<string> Rows(string section)
+        {
+            var heading = Array.FindIndex(lines, line => line.Trim() == section);
+            return heading < 0 ? [] : lines.Skip(heading + 1).TakeWhile(line => line.Trim().Length > 0);
+        }
 
-        return [.. lines.Skip(heading + 1).TakeWhile(line => line.Trim().Length > 0)];
+        return [.. Rows("Options:").Concat(Rows("Global Options:"))];
     }
 
     [Fact]
@@ -407,7 +650,7 @@ public sealed class UsageRouteTests
             foreach (var name in route.Options.SelectMany(CommandTreeBuilder.OptionNames))
             {
                 Assert.True(
-                    options[name].RequiredFeatures.All(route.RequiredFeatures.Contains),
+                    options[name].RequiredFeatures.All(route.RequiredFeatures.Contains) && (options[name].AnyOfFeatures.Count == 0 || options[name].AnyOfFeatures.Any(route.RequiredFeatures.Contains)),
                     $"`{command.Name}` names gated option '{name}' in a usage route that does not require the same features.");
             }
         }

@@ -117,12 +117,13 @@ public sealed class CommandSurfaceSnapshotTests
     {
         Assert.Equal(["create", "login", "status", "list", "select", "delete", "name", "logout", "clear", "who"], Children(Help("auth")));
         Assert.Equal(["list", "select"], Children(Help("env")));
-        Assert.Equal(["package", "create", "copy", "init", "list", "show", "pull", "delete", "deploy", "share", "unshare"], Children(Help("agent")));
+        Assert.Equal(["package", "commit", "create", "copy", "init", "list", "show", "update", "pull", "delete", "deploy", "share", "unshare"], Children(Help("agent")));
+        Assert.Equal(["list"], Children(Help("agent", "commit")));
         Assert.Equal(["show"], Children(Help("agent", "share")));
         Assert.Equal(["connection", "channel", "oauth", "create", "list", "show", "update", "delete"], Children(Help("deployment")));
         Assert.Equal(["list", "add", "update", "remove", "connectors"], Children(Help("deployment", "connection")));
         Assert.Equal(["create", "delete", "list", "list-providers", "show", "update"], Children(Help("deployment", "oauth")));
-        Assert.Equal(["create", "update", "delete", "show", "list"], Children(Help("deployment", "channel")));
+        Assert.Equal(["create", "update", "delete", "show", "list", "types", "token", "webhook"], Children(Help("deployment", "channel")));
         Assert.Equal(["preview", "apply"], Children(Help("abs")));
         Assert.Equal(["create"], Children(Help("identity")));
         Assert.Equal(["blueprint", "app"], Children(Help("identity", "create")));
@@ -255,6 +256,7 @@ public sealed class CommandSurfaceSnapshotTests
         ["--by-reference"] = "-bref",
         ["--client-id"] = "-clid",
         ["--client-secret"] = "-clsec",
+        ["--client-secret-stdin"] = "-clsin",
         ["--cloud"] = "-ci",
         ["--commit-id"] = "-cid",
         ["--config-format"] = "-cf",
@@ -324,6 +326,7 @@ public sealed class CommandSurfaceSnapshotTests
         ["--set-registration"] = "-str",
         ["--set-site"] = "-sts",
         ["--share-with-org"] = "-swo",
+        ["--site"] = "-sit",
         ["--scope"] = "-s",
         ["--scopes"] = "-scp",
         ["--subscription"] = "-sub",
@@ -333,6 +336,7 @@ public sealed class CommandSurfaceSnapshotTests
         ["--tenant"] = "-t",
         ["--tenant-wide"] = "-tw",
         ["--user"] = "-u",
+        ["--user-id"] = "-uid",
         ["--version"] = "-v",
     };
 }

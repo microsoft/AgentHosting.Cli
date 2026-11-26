@@ -8,13 +8,16 @@ const { createHash } = require("node:crypto");
 const test = require("node:test");
 const { buildSync } = require("esbuild");
 const yaml = require("js-yaml");
+const { buildCanvasMarkdown } = require("../src/build-canvas-markdown");
 
 const root = path.resolve(__dirname, "..", "..");
 const scripts = path.join(root, "scripts");
 const commands = require("../package.json").scripts;
-const builds = commands.build.split(" && ").map((command) => {
+const buildNames = commands.build.split(" && ").map((command) => {
   assert.match(command, /^npm run build:[\w-]+$/);
-  const name = command.slice("npm run ".length);
+  return command.slice("npm run ".length);
+});
+const builds = buildNames.filter((name) => name !== "build:canvas-markdown").map((name) => {
   const build = commands[name];
   assert.match(build, /^esbuild \S+ --bundle /);
   assert.match(build, /--preserve-symlinks\b/);
@@ -24,6 +27,24 @@ const builds = commands.build.split(" && ").map((command) => {
   const input = build.match(/^esbuild (\S+)/)[1];
   const output = build.match(/--outfile=(\S+)/)[1];
   return { name, build, input, output: path.resolve(scripts, output) };
+});
+
+test("the aggregate build reproduces the self-contained browser Markdown bundle and its licenses", async () => {
+  assert.ok(buildNames.includes("build:canvas-markdown"));
+  assert.equal(commands["build:canvas-markdown"], "node src/build-canvas-markdown.js");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "canvas-markdown-build-"));
+  try {
+    const result = await buildCanvasMarkdown(directory);
+    for (const name of ["markdown-it.bundle.mjs", "markdown-it.NOTICES.txt"]) {
+      assert.equal(fs.readFileSync(path.join(directory, name), "utf8").replace(/\r\n/g, "\n"),
+        fs.readFileSync(path.join(root, "extensions", "copilot-studio-chat", name), "utf8").replace(/\r\n/g, "\n"));
+    }
+    for (const artifact of Object.values(result.metafile.outputs)) {
+      assert.deepEqual(artifact.imports, []);
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 function javascriptFiles(directory) {

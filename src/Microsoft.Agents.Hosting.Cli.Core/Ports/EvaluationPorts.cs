@@ -152,9 +152,6 @@ public sealed record EvaluationRunSummary
     /// <summary>When the run reached a terminal state.</summary>
     public DateTimeOffset? EndTime { get; init; }
 
-    /// <summary>Whether the run targeted the published agent rather than the draft.</summary>
-    public bool RunOnPublishedBot { get; init; }
-
     /// <summary>Whether the run executed single-turn or multi-turn cases.</summary>
     public string? EvaluationSetType { get; init; }
 
@@ -292,9 +289,6 @@ public sealed record EvaluationRunStart
 
     /// <summary>The Copilot Studio connection the agent runs as, omitted for an unauthenticated profile.</summary>
     public string? ConnectionId { get; init; }
-
-    /// <summary>Whether to evaluate the published agent rather than the draft.</summary>
-    public bool RunOnPublishedBot { get; init; }
 }
 
 /// <summary>Reads and writes Copilot Studio maker evaluations for one agent.</summary>

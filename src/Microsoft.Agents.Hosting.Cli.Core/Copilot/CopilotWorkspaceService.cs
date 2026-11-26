@@ -47,7 +47,7 @@ public sealed class CopilotWorkspaceService
         ArgumentNullException.ThrowIfNull(request);
 
         var workspace = BindWorkspace(await _workspaceLocator.RequireAsync(request.ProjectDirectory, cancellationToken).ConfigureAwait(false), environment);
-        var pulled = await _workspaces.PullAsync(workspace, cancellationToken).ConfigureAwait(false);
+        var pulled = await _workspaces.PullAsync(workspace, request.Overwrite, cancellationToken).ConfigureAwait(false);
 
         return new CopilotPullResult
         {

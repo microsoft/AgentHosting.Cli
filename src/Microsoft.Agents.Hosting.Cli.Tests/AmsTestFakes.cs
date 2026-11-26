@@ -1,28 +1,25 @@
 using System.Net;
 using System.Security.Cryptography;
+using Microsoft.Agents.Hosting.Cli.Commands.Features;
 using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
+using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Packaging;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
 
 /// <summary>Builds package/deploy services for facade tests that must never call AMS.</summary>
 internal static class AgentDeployFixtures
 {
-    public static AgentPackageUploadService PendingUploadService(EnvironmentSelectionService environments) =>
-        new(
-            environments,
-            new PendingAmsAgentReadTransport(),
-            new PendingAmsPackagePublicationTransport());
+    public static AgentPackageUploadService PendingUploadService(EnvironmentSelectionService environments) => new(PendingResolver(environments), new PendingAmsAgentReadTransport(), new PendingAmsPackagePublicationTransport());
 
-    public static AgentDeployService PendingService(EnvironmentSelectionService environments) =>
-        new(
-            PowerPlatformApiTargetConfig.Public,
-            environments,
-            new PendingAmsAgentReadTransport(),
-            new PendingAmsDeploymentTransport());
+    public static AgentDeployService PendingService(EnvironmentSelectionService environments) => new(PendingResolver(environments), new PendingAmsDeploymentTransport());
+
+    public static AmsAddressResolver PendingResolver(EnvironmentSelectionService environments) => new(AmsTargetFixtures.Targets(), environments, new PendingAmsAgentReadTransport(), new PendingAmsDeploymentTransport());
 }
 
 /// <summary>Builds an agent-create service for tests that must never call AMS.</summary>
@@ -30,9 +27,20 @@ internal static class AgentCreateFixtures
 {
     public static AgentCreateService PendingService(EnvironmentSelectionService environments) =>
         new(
-            new AgentCreationTarget(),
+            AmsTargetFixtures.Targets(),
             environments,
             new PendingAmsAgentCreationTransport());
+}
+
+internal static class AmsTargetFixtures
+{
+    public static AmsTargets Targets(AmsEndpointProfile? endpoints = null) => new(endpoints ?? new AmsEndpointProfile(), PowerPlatformApiTargetConfig.Public);
+
+    public static void AssertTarget(AmsServiceTarget expected, AmsServiceTarget actual)
+    {
+        Assert.NotNull(actual.Context);
+        Assert.Equal(expected, actual with { Context = null });
+    }
 }
 
 /// <summary>A create transport whose invocation is always a test failure.</summary>
@@ -62,24 +70,23 @@ internal sealed class PendingAmsAgentReadTransport : IAmsAgentReadTransport
         AmsAgentReadTransportRequest request,
         CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Agent read was not expected in this test.");
+
+    public Task<IReadOnlyList<AmsAgentReadResult>> ListAsync(AmsServiceTarget serviceTarget, CancellationToken cancellationToken) => throw new InvalidOperationException("Agent list was not expected in this test.");
 }
 
 internal sealed class PendingAmsDeploymentTransport : IAmsDeploymentTransport
 {
-    public Task<AmsDeploymentCurrentResult> GetAsync(
-        AmsDeploymentReadTransportRequest request,
-        CancellationToken cancellationToken) =>
-        throw new InvalidOperationException("Deployment read was not expected in this test.");
+    public Task<AmsDeploymentResult> ReadAsync(AmsDeploymentReadTransportRequest request, CancellationToken cancellationToken) => throw new InvalidOperationException("Deployment read was not expected in this test.");
 
-    public Task<AmsDeploymentCreateResult> CreateAsync(
-        AmsDeploymentCreateTransportRequest request,
-        CancellationToken cancellationToken) =>
-        throw new InvalidOperationException("Deployment creation was not expected in this test.");
+    public Task<AmsDeploymentListResult> ListAsync(AmsAgentReadTransportRequest request, CancellationToken cancellationToken) => throw new InvalidOperationException("Deployment list was not expected in this test.");
 
-    public Task<AmsDeploymentCreateResult> UpdateAsync(
-        AmsDeploymentUpdateTransportRequest request,
-        CancellationToken cancellationToken) =>
-        throw new InvalidOperationException("Deployment update was not expected in this test.");
+    public Task<AmsDeploymentResult> CreateAsync(AmsDeploymentCreateTransportRequest request, CancellationToken cancellationToken) => throw new InvalidOperationException("Deployment creation was not expected in this test.");
+
+    public Task<AmsDeploymentResult> UpdateAsync(AmsDeploymentUpdateTransportRequest request, CancellationToken cancellationToken) => throw new InvalidOperationException("Deployment update was not expected in this test.");
+
+    public Task<AmsDeploymentResult> DeployAsync(AmsDeploymentDeployTransportRequest request, CancellationToken cancellationToken) => throw new InvalidOperationException("Deploy was not expected in this test.");
+
+    public Task DeleteAsync(AmsDeploymentDeleteTransportRequest request, CancellationToken cancellationToken) => throw new InvalidOperationException("Deployment deletion was not expected in this test.");
 }
 
 /// <summary>
@@ -115,6 +122,7 @@ internal sealed class CapturingPackageHandler(Func<HttpRequestMessage, HttpRespo
                 out var idempotencyKeys)
                 ? idempotencyKeys.Single()
                 : null,
+            IfMatch = request.Headers.TryGetValues("If-Match", out var entityTags) ? entityTags.Single() : null,
             HeaderNames = [.. request.Headers.Select(h => h.Key)],
             ContentType = request.Content?.Headers.ContentType?.MediaType,
             ContentLength = request.Content?.Headers.ContentLength,
@@ -156,6 +164,7 @@ internal sealed record CapturedPackageRequest
     public bool HasAuthorization { get; init; }
     public string? ClientRequestId { get; init; }
     public string? IdempotencyKey { get; init; }
+    public string? IfMatch { get; init; }
     public required IReadOnlyList<string> HeaderNames { get; init; }
     public string? ContentType { get; init; }
     public long? ContentLength { get; init; }
@@ -196,6 +205,89 @@ internal sealed class FakePpapiTokenProvider : ITokenProvider
         string? targetTenantId,
         CancellationToken cancellationToken) =>
         AcquireTokenSilentAsync(string.Join(' ', scopes), targetTenantId, cancellationToken);
+}
+
+internal sealed class FakeStandardInput(string text = "", bool isRedirected = true) : IStandardInput
+{
+    public int Reads { get; private set; }
+
+    public int? MaximumBytes { get; private set; }
+
+    public bool IsRedirected => isRedirected;
+
+    public Task<string> ReadToEndAsync(int maximumBytes, CancellationToken cancellationToken)
+    {
+        Reads++;
+        MaximumBytes = maximumBytes;
+        return Task.FromResult(text);
+    }
+}
+
+internal static class AmsCommandHost
+{
+    public static (int ExitCode, string Stdout, string Stderr) Run(FakeOperations operations, object handlers, IFeatureFlags featureFlags, params string[] args)
+    {
+        var services = new ServiceCollection();
+        foreach (var contract in handlers.GetType().GetInterfaces())
+        {
+            services.AddSingleton(contract, handlers);
+        }
+
+        using var container = services.BuildServiceProvider();
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+        var cli = new AgentHostCli(operations, new CompositeHandlerProvider(new FacadeHandlerProvider(operations), container), featureFlags);
+        var exitCode = cli.InvokeAsync(args, stdout, stderr, color: false).GetAwaiter().GetResult();
+        return (exitCode, stdout.ToString(), stderr.ToString());
+    }
+}
+
+internal sealed class RecordingAmsHandlers :
+    ICommandHandler<AgentDeploymentAmsCreateRequest, AgentDeploymentAmsResult>,
+    ICommandHandler<AgentDeploymentAmsListRequest, AgentDeploymentAmsListResult>,
+    ICommandHandler<AgentDeploymentAmsShowRequest, AgentDeploymentAmsResult>,
+    ICommandHandler<AgentDeploymentAmsUpdateRequest, AgentDeploymentAmsResult>,
+    ICommandHandler<AgentDeploymentAmsDeleteRequest, AgentDeploymentAmsDeleteResult>,
+    ICommandHandler<AgentAmsListRequest, AgentAmsListResult>,
+    ICommandHandler<AgentAmsShowRequest, AgentAmsShowResult>,
+    ICommandHandler<AgentAmsUpdateRequest, AgentAmsUpdateResult>,
+    ICommandHandler<AgentAmsDeleteRequest, AgentAmsDeleteResult>,
+    ICommandHandler<AgentCommitListRequest, AgentCommitListResult>
+{
+    public static readonly AgentAmsRecord Agent = new() { AgentId = "44444444-4444-4444-4444-444444444444", DisplayName = "Contoso Agent", AgentType = "CodeAgent", State = "Active", TenantId = "11111111-1111-1111-1111-111111111111", EnvironmentId = "22222222-2222-2222-2222-222222222222", Language = "DotNet", LanguageVersion = "10" };
+
+    public List<object> Requests { get; } = [];
+    public Exception? Failure { get; init; }
+    public AgentDeploymentAmsRecord Deployment { get; init; } = FakeOperations.CreateStubDeploymentRecord();
+    public string? DeleteStatus { get; init; }
+
+    public T Single<T>() => Assert.IsType<T>(Assert.Single(Requests));
+
+    public Task<AgentDeploymentAmsResult> HandleAsync(AgentDeploymentAmsCreateRequest request, CancellationToken cancellationToken) => Answer(request, new AgentDeploymentAmsResult { Status = AgentDeploymentAmsResult.CreatedStatus, Deployment = Deployment with { State = "NotDeployed", PackageRevisionId = null, CommitId = null, PackageDigest = null, PackageSizeInBytes = null, Endpoint = null, BotService = null } });
+
+    public Task<AgentDeploymentAmsListResult> HandleAsync(AgentDeploymentAmsListRequest request, CancellationToken cancellationToken) => Answer(request, new AgentDeploymentAmsListResult { AgentId = Deployment.AgentId, HomeEnvironmentId = Deployment.HomeEnvironmentId, Deployments = [Deployment], KeptBots = [new AgentAmsKeptBot { DeploymentId = "78787878-7878-7878-7878-787878787878", DeploymentName = "old", BotName = "ams-old" }] });
+
+    public Task<AgentDeploymentAmsResult> HandleAsync(AgentDeploymentAmsShowRequest request, CancellationToken cancellationToken) => Answer(request, new AgentDeploymentAmsResult { Status = AgentDeploymentAmsResult.ReadStatus, Deployment = Deployment });
+
+    public Task<AgentDeploymentAmsResult> HandleAsync(AgentDeploymentAmsUpdateRequest request, CancellationToken cancellationToken) => Answer(request, new AgentDeploymentAmsResult { Status = AgentDeploymentAmsResult.UpdatedStatus, Deployment = Deployment with { DeploymentName = request.NewName ?? Deployment.DeploymentName } });
+
+    public Task<AgentDeploymentAmsDeleteResult> HandleAsync(AgentDeploymentAmsDeleteRequest request, CancellationToken cancellationToken) => Answer(request, new AgentDeploymentAmsDeleteResult { Status = DeleteStatus ?? AgentDeploymentAmsDeleteResult.DeletedStatus, Deployment = Deployment, WasLive = true });
+
+    public Task<AgentAmsListResult> HandleAsync(AgentAmsListRequest request, CancellationToken cancellationToken) => Answer(request, new AgentAmsListResult { EnvironmentId = request.EnvironmentId ?? Agent.EnvironmentId, Agents = [Agent] });
+
+    public Task<AgentAmsShowResult> HandleAsync(AgentAmsShowRequest request, CancellationToken cancellationToken) => Answer(request, new AgentAmsShowResult { Agent = Agent, DeploymentsAvailable = true, Deployments = [Deployment], KeptBots = [] });
+
+    public Task<AgentAmsUpdateResult> HandleAsync(AgentAmsUpdateRequest request, CancellationToken cancellationToken) => Answer(request, new AgentAmsUpdateResult { Status = AgentAmsUpdateResult.UpdatedStatus, Agent = Agent with { DisplayName = request.NewName ?? Agent.DisplayName, Description = request.Description } });
+
+    public Task<AgentAmsDeleteResult> HandleAsync(AgentAmsDeleteRequest request, CancellationToken cancellationToken) => Answer(request, new AgentAmsDeleteResult { Status = DeleteStatus ?? AgentAmsDeleteResult.DeletedStatus, AgentId = Agent.AgentId, DisplayName = Agent.DisplayName, Deployments = [new AgentAmsRemovedDeployment { DeploymentId = Deployment.DeploymentId, DeploymentName = Deployment.DeploymentName, EnvironmentId = Deployment.TargetEnvironmentId,     DeploymentType = "Dev", BotName = "ams-bot-1", BotDeleted = true }] });
+
+    public Task<AgentCommitListResult> HandleAsync(AgentCommitListRequest request, CancellationToken cancellationToken) => Answer(request, new AgentCommitListResult { AgentId = Agent.AgentId, DeploymentsAvailable = true, Commits = [new AgentCommitRecord { CommitId = Deployment.CommitId, PackageRevisionId = Deployment.PackageRevisionId!, SizeInBytes = 1024, CreatedTime = new DateTimeOffset(2026, 11, 3, 10, 0, 0, TimeSpan.Zero), Deployments = [Deployment.DeploymentName] }] });
+
+    private Task<TResult> Answer<TResult>(object request, TResult result)
+    {
+        Requests.Add(request);
+        return Failure is null ? Task.FromResult(result) : Task.FromException<TResult>(Failure);
+    }
 }
 
 /// <summary>

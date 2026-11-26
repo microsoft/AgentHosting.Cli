@@ -72,7 +72,9 @@ internal static class DeploymentParameterValidator
             (emptyValuePolicy == DeploymentParameterEmptyValuePolicy.Reject && parameterValue.Length == 0))
         {
             throw new UsageException(
-                $"Invalid {optionName} value at position {index + 1}. " +
+                $"Invalid {optionName} value" +
+                (parameterName.Length == 0 ? string.Empty : $" for key '{parameterName}'") +
+                $" at position {index + 1}. " +
                 (emptyValuePolicy == DeploymentParameterEmptyValuePolicy.Allow
                     ? "Key is required; use Key= to clear an optional value."
                     : "Both Key and Value are required."));
@@ -92,7 +94,7 @@ internal static class DeploymentParameterValidator
         if (parsedParameters.ContainsKey(parameterName))
         {
             throw new UsageException(
-                $"{optionName} contains a duplicate key at position {index + 1}.");
+                $"{optionName} contains a duplicate key '{parameterName}' at position {index + 1}.");
         }
     }
 

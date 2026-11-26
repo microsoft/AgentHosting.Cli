@@ -277,7 +277,7 @@ public sealed class ManagedAgentDeployService
             return (pushed.ComponentCount, pushed.UploadedFileCount, pushed.AuxiliaryChangeCount, pushed.Warnings);
         }
         catch (CopilotStudioException failure) when (
-            failure.ErrorKind is CopilotErrorKinds.PushConflictsRequirePull or CopilotErrorKinds.SharedEnvironmentVariablesRequireOverwrite or CopilotErrorKinds.WorkspaceFilesUnreadable or CopilotErrorKinds.WorkflowToolIdEmpty or CopilotErrorKinds.MissingConnectionReference)
+            failure.ErrorKind is CopilotErrorKinds.PushConflictsRequirePull or CopilotErrorKinds.RemoteChangedDuringPush or CopilotErrorKinds.SharedEnvironmentVariablesRequireOverwrite or CopilotErrorKinds.WorkspaceFilesUnreadable or CopilotErrorKinds.WorkflowToolIdEmpty or CopilotErrorKinds.MissingConnectionReference)
         {
             throw;
         }

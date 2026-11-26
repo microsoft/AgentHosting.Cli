@@ -186,12 +186,9 @@ public sealed class SyncConnectionAdapter : ICopilotConnectionPort, IConnectorCa
         ArgumentNullException.ThrowIfNull(environment);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectorInternalId);
 
-        using var lease = await DataverseTargeting.EnterAsync(_dataverseClient, cancellationToken).ConfigureAwait(false);
-        using var scope = DataverseTargeting.Connect(_dataverseClient, _httpClientAccessor, environment);
-
         var (workspaceFolder, definition) = await ReadWorkspaceAsync(projectDirectory, cancellationToken).ConfigureAwait(false);
 
-        return await _connections.CreateConnectionReferenceForConnectorAsync(workspaceFolder, definition, connectorInternalId, _dataverseClient, cancellationToken).ConfigureAwait(false);
+        return await _connections.CreateConnectionReferenceForConnectorAsync(workspaceFolder, definition, connectorInternalId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

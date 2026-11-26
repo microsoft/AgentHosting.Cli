@@ -201,7 +201,6 @@ public sealed class DeploymentAdapter : DeploymentArmClient, IDeploymentTranspor
             Endpoint = GetString(properties, "endpoint"),
             TenantId = GetString(properties, "msaAppTenantId") ?? GetString(properties, "tenantId")!,
             Sku = sku is { } value ? GetString(value, "name")! : string.Empty,
-            RawArmResponse = BotServiceResponseRedactor.RedactBot(root),
         };
     }
 }

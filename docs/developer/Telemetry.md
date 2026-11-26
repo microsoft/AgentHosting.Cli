@@ -24,6 +24,14 @@ attempt, false means no failure has been reported, not that execution completed.
 Failure events can include `errorCode` as the string form of the numeric CLI
 error code in the same dimensions.
 
+Package-upload command output additionally distinguishes transport failures with
+allowlisted `failureStage` and `failureReason` values, and `httpStatusCode` when
+response headers were received. These fields do not contain exception messages,
+response bodies, paths, or credentials and are not added to command telemetry.
+Existing numeric error codes and error kinds remain unchanged, except that an
+unexplained transport cancellation is no longer misclassified as deadline expiry,
+and a local read failure during upload uses the package-read failure code.
+
 ## Identity and privacy
 
 After collection policy enables an invocation, normal command authentication may
@@ -80,7 +88,9 @@ as `ProductionKey` and `NonProductionKey`. These are routing identifiers, not
 authentication credentials.
 
 The host resolves the Power Platform ring from the active profile before
-composition. `auth login --cloud` and `auth switch --cloud` select that ring;
+composition. Use `msagent auth create --cloud <cloud>` to create and activate
+a profile for the intended cloud/ring, or `msagent auth select --name <name>`
+to activate an existing profile. Selection does not change a profile's cloud/ring;
 there is no need to change `Program.cs` or rebuild for nonproduction.
 Public production and nonproduction rings select their corresponding routing
 value and metadata. A missing or unreadable ring cannot activate collection.

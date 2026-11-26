@@ -88,9 +88,6 @@ public sealed record EvaluationRunRequest : EvaluationSelector
     /// <summary>The Copilot Studio connection the agent runs as.</summary>
     public string? Connection { get; init; }
 
-    /// <summary>Whether to evaluate the published agent rather than the draft.</summary>
-    public bool Published { get; init; }
-
     /// <summary>Whether to poll until the run reaches a terminal state.</summary>
     public bool Watch { get; init; }
 

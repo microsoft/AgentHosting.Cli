@@ -16,9 +16,6 @@ public sealed class AgentDeployException : AgentHostingException
     {
     }
 
-    public static AgentDeployException TargetNotConfigured(string detail, string remediation) =>
-        new(ErrorCodes.Deployment.AgentDeployTargetNotConfigured, detail, ExitCodes.Failure, "service-target-not-configured", remediation);
-
     public static AgentDeployException EndpointNotUsable(string detail, string remediation) =>
         new(ErrorCodes.Deployment.AgentDeployEndpointNotUsable, detail, ExitCodes.Failure, "endpoint-untrusted", remediation);
 
@@ -70,23 +67,6 @@ public sealed class AgentDeployException : AgentHostingException
             "ams-response-identity-mismatch",
             "Do not treat the operation as successful. Use the service correlation to inspect the mismatched response before retrying.");
 
-    public static AgentDeployException DeploymentUpdateResponseMismatch(
-        string field,
-        bool mutationAttempted,
-        string? clientRequestId = null,
-        string? serviceRequestId = null) =>
-        new(
-            ErrorCodes.Deployment.AgentDeployDeploymentUpdateResponseMismatch,
-            AddCorrelation(
-                $"The deployment update response field '{field}' did not match the requested or freshly read deployment identity. {DeploymentUpdateOutcome(mutationAttempted)}",
-                clientRequestId,
-                serviceRequestId),
-            ExitCodes.Failure,
-            "ams-response-identity-mismatch",
-            mutationAttempted
-                ? "Do not treat the update as successful. Inspect authoritative deployment state before retrying."
-                : "Verify the selected environment, agent, and deployment before retrying.");
-
     internal static string AddCorrelation(string message, string? clientRequestId, string? serviceRequestId) =>
         new ServiceCorrelation(clientRequestId, serviceRequestId).Annotate(message);
 
@@ -104,24 +84,6 @@ public sealed class AgentDeployException : AgentHostingException
             "invalid-ams-response",
             "Do not treat the operation as successful. Confirm that the target implements the concrete v1 contract.");
 
-    public static AgentDeployException DeploymentUpdateInvalidResponse(
-        bool mutationAttempted,
-        string? clientRequestId = null,
-        string? serviceRequestId = null,
-        Exception? innerException = null) =>
-        new(
-            ErrorCodes.Deployment.AgentDeployDeploymentUpdateInvalidResponse,
-            AddCorrelation(
-                $"The Agent Management Service returned a success status without the required deployment fields. {DeploymentUpdateOutcome(mutationAttempted)}",
-                clientRequestId,
-                serviceRequestId),
-            ExitCodes.Failure,
-            "invalid-ams-response",
-            mutationAttempted
-                ? "Do not treat the update as successful. Inspect authoritative deployment state before retrying."
-                : "Verify the deployed AMS contract before retrying the update.",
-            innerException);
-
     public static AgentDeployException RedirectRejected(string phase, int status, string configuredHost) =>
         new(
             ErrorCodes.Deployment.AgentDeployRedirectRejected,
@@ -129,25 +91,6 @@ public sealed class AgentDeployException : AgentHostingException
             ExitCodes.Failure,
             "redirect-rejected",
             "Verify the configured endpoint. A credential-bearing request cannot follow redirects.");
-
-    public static AgentDeployException DeploymentUpdateRedirectRejected(
-        string phase,
-        int status,
-        string configuredHost,
-        bool mutationAttempted,
-        string? clientRequestId,
-        string? serviceRequestId) =>
-        new(
-            ErrorCodes.Deployment.AgentDeployDeploymentUpdateRedirectRejected,
-            AddCorrelation(
-                $"The {phase} answered HTTP {status} with a redirect, which this command does not follow. The delegated authorization header was sent only to '{configuredHost}'. {DeploymentUpdateOutcome(mutationAttempted)}",
-                clientRequestId,
-                serviceRequestId),
-            ExitCodes.Failure,
-            "redirect-rejected",
-            mutationAttempted
-                ? "Inspect authoritative deployment state before retrying against the configured endpoint."
-                : "Verify the configured endpoint before retrying the update.");
 
     public static AgentDeployException TimedOut(
         string phase,
@@ -181,44 +124,6 @@ public sealed class AgentDeployException : AgentHostingException
                 : "Confirm that the configured target is reachable, then retry.",
             innerException);
 
-    public static AgentDeployException DeploymentUpdateTimedOut(
-        string phase,
-        string clientRequestId,
-        bool mutationAttempted,
-        Exception innerException,
-        string? serviceRequestId = null) =>
-        new(
-            mutationAttempted ? ErrorCodes.Deployment.UpdateTimedOut : ErrorCodes.Deployment.UpdateReadTimedOut,
-            AddCorrelation(
-                $"The {phase} timed out before its response was fully received. {DeploymentUpdateOutcome(mutationAttempted)}",
-                clientRequestId,
-                serviceRequestId),
-            ExitCodes.Failure,
-            mutationAttempted ? "agent-deployment-timeout" : "agent-deployment-read-timeout",
-            mutationAttempted
-                ? "Do not retry blindly. Inspect authoritative deployment state using the correlation identifiers."
-                : "Retry the update when the service is reachable.",
-            innerException);
-
-    public static AgentDeployException DeploymentUpdateTransportFailed(
-        string phase,
-        string clientRequestId,
-        bool mutationAttempted,
-        Exception innerException,
-        string? serviceRequestId = null) =>
-        new(
-            mutationAttempted ? ErrorCodes.Deployment.UpdateTransportFailed : ErrorCodes.Deployment.UpdateReadFailed,
-            AddCorrelation(
-                $"The {phase} failed before its response was fully received. {DeploymentUpdateOutcome(mutationAttempted)}",
-                clientRequestId,
-                serviceRequestId),
-            ExitCodes.Failure,
-            mutationAttempted ? "agent-deployment-transport-failed" : "agent-deployment-read-failed",
-            mutationAttempted
-                ? "Do not retry blindly. Inspect authoritative deployment state using the correlation identifiers."
-                : "Retry the update when the service is reachable.",
-            innerException);
-
     public static AgentDeployException ServiceRejected(
         string message,
         int exitCode,
@@ -227,8 +132,15 @@ public sealed class AgentDeployException : AgentHostingException
         Exception? innerException = null) =>
         new(ErrorCodes.Deployment.AgentDeployServiceRejected, message, exitCode, errorKind, remediation, innerException);
 
-    private static string DeploymentUpdateOutcome(bool mutationAttempted) =>
-        mutationAttempted
-            ? "The deployment outcome may be indeterminate."
-            : "No update request was sent.";
+    public static AgentDeployException DeploymentDeleting(string? deploymentId, string? clientRequestId, string? serviceRequestId) =>
+        ServiceRejected(
+            AddCorrelation(
+                deploymentId is null
+                    ? "This agent's deployment in the target environment is being deleted, so it cannot be created, changed or deployed."
+                    : $"This agent's deployment {deploymentId} in the target environment is being deleted, so it cannot be created, changed or deployed.",
+                clientRequestId,
+                serviceRequestId),
+            ExitCodes.Failure,
+            "deployment-deleting",
+            $"Finish the deletion with `msagent deployment delete --agent-id <agent-id> --deployment-id {deploymentId ?? "<deployment-id>"}`, or with `msagent agent delete` when the whole agent is being deleted. The hosting runtime keeps a deleted deployment for now, so use a deployment in another target environment afterwards.");
 }

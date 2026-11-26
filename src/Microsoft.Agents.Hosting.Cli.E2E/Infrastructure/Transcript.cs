@@ -51,6 +51,17 @@ public sealed class Transcript
     /// <summary>Writes a free-form note, used for assertions and cleanup steps.</summary>
     public void Note(string message) => Write($"# {Redaction.Apply(message)}{Environment.NewLine}");
 
+    /// <summary>Whether the run log or the active scenario log holds a value, for the checks that a secret never reaches a transcript.</summary>
+    public bool Mentions(string value)
+    {
+        lock (_gate)
+        {
+            return Holds(_runLogPath, value) || (_scenarioLogPath is { } scenarioLog && Holds(scenarioLog, value));
+        }
+    }
+
+    private static bool Holds(string path, string value) => File.Exists(path) && File.ReadAllText(path).Contains(value, StringComparison.Ordinal);
+
     private static void AppendStream(StringBuilder entry, string label, string content)
     {
         if (string.IsNullOrWhiteSpace(content))

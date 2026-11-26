@@ -73,9 +73,10 @@ function packageHost({ target, output, root = ROOT }) {
     const provenance = JSON.parse(fs.readFileSync(path.join(stage, "source.json"), "utf8"));
     const adapter = fs.readFileSync(path.join(stage, "adapters", "README.md"), "utf8");
     if (target === "agency") {
+      const { extensions, ...portable } = manifest;
       writeJson(path.join(stage, "plugin.json"), {
         $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-        ...manifest,
+        ...portable,
       });
       fs.rmSync(path.join(stage, ".claude-plugin"), { recursive: true });
       const copilot = path.join(stage, "com.github.copilot");

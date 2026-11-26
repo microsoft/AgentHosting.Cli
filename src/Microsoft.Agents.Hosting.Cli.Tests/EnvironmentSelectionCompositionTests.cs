@@ -1,4 +1,5 @@
 using Microsoft.Agents.Hosting.Cli.Auth;
+using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Environments;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 using Microsoft.Extensions.DependencyInjection;
@@ -64,6 +65,21 @@ public sealed class EnvironmentSelectionCompositionTests : IDisposable
         Assert.False(discarded);
         Assert.NotNull(await production.GetActiveAsync(CancellationToken.None));
         Assert.NotNull(await test.GetActiveAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public void AmsTargets_ResolveThroughTheHostEndpointProfileAndTheSignedInRing()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(new AmsEndpointProfile { DataPlaneEndpoint = "https://amsdp-alias.example/" });
+        services.AddAgentHostAuthentication(new AgentHostAuthOptions { ClientId = "c47b0a43-21ff-45f7-9280-6561e31342a5", ConfigDirectory = _configDirectory }, PowerPlatformApiRingSelection.TargetFor(PowerPlatformApiRing.Test));
+        using var provider = services.BuildServiceProvider();
+        var home = EnvironmentFixtures.Environment("env-1");
+
+        var targets = provider.GetRequiredService<AmsTargets>();
+
+        Assert.Equal((new Uri("https://amsdp-alias.example/"), AmsRouteForm.Direct), (targets.DataPlane(home).Endpoint, targets.DataPlane(home).RouteForm));
+        Assert.Equal((new Uri("https://api.test.powerplatform.com/"), AmsRouteForm.TenantHost), (targets.ControlPlane(home).Endpoint, targets.ControlPlane(home).RouteForm));
     }
 
     private FileEnvironmentSelectionStore RingStore(PowerPlatformApiRing ring) =>

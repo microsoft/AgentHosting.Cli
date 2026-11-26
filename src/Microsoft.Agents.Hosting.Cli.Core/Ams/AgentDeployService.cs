@@ -1,439 +1,48 @@
-using Microsoft.Agents.Hosting.Cli.Core.Environments;
-using Microsoft.Agents.Hosting.Cli.Core.Auth;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Ams;
 
-/// <summary>
-/// Creates desired Deployment state selecting an existing Package Revision through AMS-CMP and
-/// awaits the current PPRP handler's target-routed AHRG projection.
-/// </summary>
+/// <summary>Puts an existing AMS deployment live as its record says, never creating a deployment.</summary>
 public sealed class AgentDeployService
 {
-    private readonly Uri _controlPlaneEndpoint;
-    private readonly EnvironmentSelectionService _environments;
-    private readonly IAmsAgentReadTransport _agents;
+    private readonly AmsAddressResolver _addresses;
     private readonly IAmsDeploymentTransport _deployments;
 
-    public AgentDeployService(
-        PowerPlatformApiTargetConfig target,
-        EnvironmentSelectionService environments,
-        IAmsAgentReadTransport agents,
-        IAmsDeploymentTransport deployments)
+    /// <summary>Creates the service over the AMS deployment transport.</summary>
+    public AgentDeployService(AmsAddressResolver addresses, IAmsDeploymentTransport deployments)
     {
-        ArgumentNullException.ThrowIfNull(target);
-        _controlPlaneEndpoint = PowerPlatformCloudMap.ForTarget(target)
-            .RequireTrusted(target.GlobalEndpoint, "Agent Management Service control plane");
-        _environments = environments ?? throw new ArgumentNullException(nameof(environments));
-        _agents = agents ?? throw new ArgumentNullException(nameof(agents));
+        _addresses = addresses ?? throw new ArgumentNullException(nameof(addresses));
         _deployments = deployments ?? throw new ArgumentNullException(nameof(deployments));
     }
 
-    public async Task<AgentDeployResult> DeployAsync(
-        AgentDeployRequest request,
-        CancellationToken cancellationToken)
+    /// <summary>Reads the deployment, checks the stage rule, and deploys it with the entity tag of that read.</summary>
+    public async Task<AgentDeployResult> DeployAsync(AgentDeployRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var agentId = RequireGuid(request.AgentId, "--agent");
-        var packageRevisionId = RequireGuid(request.PackageRevisionId, "--package-revision");
-        var targetEnvironmentId = Require(request.TargetEnvironmentId, "--target-environment-id");
-        var deploymentName = RequireDeploymentName(request.DeploymentName);
-        var deploymentType = ParseDeploymentType(request.DeploymentType);
-        var entraId = RequireGuid(request.EntraId, "--entra-id");
-        var entraIdType = ParseEntraIdType(request.EntraIdType);
-        var homeEnvironment = await _environments
-            .ResolveForCommandAsync(request.EnvironmentId, cancellationToken)
-            .ConfigureAwait(false);
-        var targetEnvironment = await _environments
-            .ResolveForProfileAsync(ResourceTokenContext.Require(homeEnvironment.Context).Profile, targetEnvironmentId, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (!string.Equals(
-                homeEnvironment.TenantId,
-                targetEnvironment.TenantId,
-                StringComparison.OrdinalIgnoreCase))
+        var commitId = AmsCommitId.ParseOption(request.CommitId);
+        var address = await _addresses.ResolveDeploymentAsync(request, "agent deploy", cancellationToken).ConfigureAwait(false);
+        var current = await _addresses.ReadDeploymentAsync(address, cancellationToken).ConfigureAwait(false);
+        AmsDeploymentView.RequireNotDeleting(current);
+        RequireCommitStage(commitId, current.DeploymentType);
+        var deployed = AmsDeploymentView.RequireAddressed(address.Reference, await _deployments.DeployAsync(new AmsDeploymentDeployTransportRequest { ServiceTarget = address.Reference.ServiceTarget, AgentId = address.Reference.AgentId, DeploymentId = address.Reference.DeploymentId, ETag = current.ETag, CommitId = commitId }, cancellationToken).ConfigureAwait(false), "Deployment deploy");
+        return new AgentDeployResult
         {
-            throw new UsageException(
-                "--target-environment must belong to the same tenant as the home environment.");
-        }
-
-        var agent = await _agents
-            .GetAsync(
-                new AmsAgentReadTransportRequest
-                {
-                    Endpoint = homeEnvironment.ApiEndpoint,
-                    Context = homeEnvironment.Context,
-                    Audience = homeEnvironment.ApiAudience,
-                    TenantId = homeEnvironment.TenantId,
-                    EnvironmentId = homeEnvironment.EnvironmentId,
-                    AgentId = agentId,
-                },
-                cancellationToken)
-            .ConfigureAwait(false);
-        AmsAgentResponseValidator.ValidateBoundCodeAgent(agent, homeEnvironment, agentId);
-
-        var deployment = await _deployments
-            .CreateAsync(
-                new AmsDeploymentCreateTransportRequest
-                {
-                    Endpoint = ControlPlane(homeEnvironment),
-                    Context = homeEnvironment.Context,
-                    Audience = homeEnvironment.ApiAudience,
-                    TenantId = homeEnvironment.TenantId,
-                    HomeEnvironmentId = homeEnvironment.EnvironmentId,
-                    TargetEnvironmentId = targetEnvironment.EnvironmentId,
-                    AgentId = agentId,
-                    PackageRevisionId = packageRevisionId,
-                    DeploymentName = deploymentName,
-                    DeploymentType = deploymentType,
-                    EntraId = entraId,
-                    EntraIdType = entraIdType,
-                    Language = agent.Language,
-                    LanguageVersion = agent.LanguageVersion,
-                },
-                cancellationToken)
-            .ConfigureAwait(false);
-
-        ValidateDeployment(
-            deployment,
-            homeEnvironment,
-            targetEnvironment,
-            agentId,
-            packageRevisionId,
-            deploymentName,
-            deploymentType,
-            entraId,
-            entraIdType,
-            agent);
-
-        return ToResult(deployment, "deployment-projection-acknowledged");
-    }
-
-    private Uri ControlPlane(PowerPlatformEnvironment environment) =>
-        environment.Context is { } context
-            ? PowerPlatformCloudMap.ForTarget(context.Target).RequireTrusted(context.Target.GlobalEndpoint, "AMS control plane")
-            : _controlPlaneEndpoint;
-
-    public async Task<AgentDeployResult> UpdateAsync(
-        AgentDeploymentPackageUpdateRequest request,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var agentId = RequireGuid(request.AgentId, "--agent-id", "deployment update");
-        var deploymentId = RequireGuid(request.DeploymentId, "--deployment-id", "deployment update");
-        var packageRevisionId = RequireGuid(
-            request.PackageRevisionId,
-            "--package-revision",
-            "deployment update");
-        var homeEnvironment = await _environments
-            .ResolveForCommandAsync(request.EnvironmentId, cancellationToken)
-            .ConfigureAwait(false);
-        var reference = new AmsDeploymentReadTransportRequest
-        {
-            Endpoint = ControlPlane(homeEnvironment),
-            Context = homeEnvironment.Context,
-            Audience = homeEnvironment.ApiAudience,
-            TenantId = homeEnvironment.TenantId,
-            HomeEnvironmentId = homeEnvironment.EnvironmentId,
-            AgentId = agentId,
-            DeploymentId = deploymentId,
+            Status = AgentDeployResult.DeployedStatus,
+            Deployment = AmsDeploymentView.ToRecord(deployed),
+            Bot = deployed.BotService is null ? AgentDeployResult.BotNone : current.BotService is null ? AgentDeployResult.BotCreated : AgentDeployResult.BotKept,
+            PreviousEndpoint = current.RuntimeEndpoint is { } previous && !string.Equals(previous, deployed.RuntimeEndpoint, StringComparison.Ordinal) ? previous : null,
+            KindSwitched = current.IsCustomEndpoint != deployed.IsCustomEndpoint,
         };
-
-        AmsDeploymentCreateResult updated;
-        var mutationAttempted = false;
-        try
-        {
-            var current = await _deployments
-                .GetAsync(reference, cancellationToken)
-                .ConfigureAwait(false);
-            ValidateCurrentDeployment(reference, current);
-            if (!TryParseNonEmptyGuid(current.PackageRevisionId))
-            {
-                throw AgentDeployException.DeploymentUpdateInvalidResponse(
-                    mutationAttempted: false,
-                    clientRequestId: current.ClientRequestId,
-                    serviceRequestId: current.ServiceRequestId);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            mutationAttempted = true;
-            updated = await _deployments
-                .UpdateAsync(
-                    new AmsDeploymentUpdateTransportRequest
-                    {
-                        Endpoint = reference.Endpoint,
-                        Context = reference.Context,
-                        Audience = reference.Audience,
-                        TenantId = reference.TenantId,
-                        HomeEnvironmentId = reference.HomeEnvironmentId,
-                        AgentId = reference.AgentId,
-                        DeploymentId = reference.DeploymentId,
-                        PackageRevisionId = packageRevisionId,
-                        ExpectedPackageRevisionId = Guid.Parse(current.PackageRevisionId).ToString("D"),
-                    },
-                    cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (HttpRequestException ex)
-        {
-            throw AgentDeployException.DeploymentUpdateTransportFailed(
-                mutationAttempted ? "Deployment update" : "Deployment read before update",
-                clientRequestId: string.Empty,
-                mutationAttempted: mutationAttempted,
-                innerException: ex);
-        }
-
-        ValidateUpdatedDeployment(
-            updated,
-            homeEnvironment,
-            agentId,
-            deploymentId,
-            packageRevisionId);
-        return ToResult(updated, "agent-deployment-updated");
     }
 
-    private static void ValidateDeployment(
-        AmsDeploymentCreateResult deployment,
-        PowerPlatformEnvironment homeEnvironment,
-        PowerPlatformEnvironment targetEnvironment,
-        string agentId,
-        string packageRevisionId,
-        string deploymentName,
-        string deploymentType,
-        string entraId,
-        string entraIdType,
-        AmsAgentReadResult agent)
+    private static void RequireCommitStage(string? commitId, string deploymentType)
     {
-        if (!TryParseNonEmptyGuid(deployment.DeploymentId) ||
-            !EqualsId(deployment.AgentId, agentId) ||
-            !EqualsId(deployment.TenantId, homeEnvironment.TenantId) ||
-            !EqualsId(deployment.HomeEnvironmentId, homeEnvironment.EnvironmentId) ||
-            !EqualsId(deployment.TargetEnvironmentId, targetEnvironment.EnvironmentId) ||
-            !EqualsId(deployment.PackageRevisionId, packageRevisionId) ||
-            deployment.PackageSha256.Length != 64 ||
-            !deployment.PackageSha256.All(Uri.IsHexDigit) ||
-            deployment.PackageSizeInBytes <= 0 ||
-            !string.Equals(deployment.AgentType, "CodeAgent", StringComparison.Ordinal) ||
-            !string.Equals(deployment.DeploymentName, deploymentName, StringComparison.Ordinal) ||
-            !string.Equals(deployment.DeploymentType, deploymentType, StringComparison.Ordinal) ||
-            !EqualsId(deployment.EntraId, entraId) ||
-            !string.Equals(deployment.EntraIdType, entraIdType, StringComparison.Ordinal) ||
-            !string.Equals(deployment.Language, agent.Language, StringComparison.Ordinal) ||
-            !string.Equals(deployment.LanguageVersion, agent.LanguageVersion, StringComparison.OrdinalIgnoreCase) ||
-            !IsSafeRuntimeEndpoint(deployment.RuntimeEndpoint) ||
-            deployment.IsCustomEndpoint ||
-            deployment.IsQuarantined)
+        if (commitId is not null && string.Equals(deploymentType, "Prod", StringComparison.Ordinal))
         {
-            throw AgentDeployException.ResponseMismatch(
-                "Deployment create and target-routed projection",
-                "persisted deployment",
-                deployment.ClientRequestId,
-                deployment.ServiceRequestId);
+            throw new UsageException("--commit-id cannot be used with a Prod deployment: AMS deploys the newest upload to Prod once a Test deployment of the agent runs it. Remove --commit-id.");
         }
     }
-
-    private static void ValidateCurrentDeployment(
-        AmsDeploymentReadTransportRequest request,
-        AmsDeploymentCurrentResult current)
-    {
-        RequireUpdateMatch("tenantId", request.TenantId, current.TenantId, current, mutationAttempted: false);
-        RequireUpdateMatch(
-            "homeEnvironmentId",
-            request.HomeEnvironmentId,
-            current.HomeEnvironmentId,
-            current,
-            mutationAttempted: false);
-        RequireUpdateMatch("agentId", request.AgentId, current.AgentId, current, mutationAttempted: false);
-        RequireUpdateMatch(
-            "deploymentId",
-            request.DeploymentId,
-            current.DeploymentId,
-            current,
-            mutationAttempted: false);
-    }
-
-    private static void ValidateUpdatedDeployment(
-        AmsDeploymentCreateResult deployment,
-        PowerPlatformEnvironment homeEnvironment,
-        string agentId,
-        string deploymentId,
-        string packageRevisionId)
-    {
-        if (!TryParseNonEmptyGuid(deployment.DeploymentId))
-        {
-            throw AgentDeployException.DeploymentUpdateInvalidResponse(
-                mutationAttempted: true,
-                clientRequestId: deployment.ClientRequestId,
-                serviceRequestId: deployment.ServiceRequestId);
-        }
-
-        RequireUpdateMatch(
-            "tenantId",
-            homeEnvironment.TenantId,
-            deployment.TenantId,
-            deployment,
-            mutationAttempted: true);
-        RequireUpdateMatch(
-            "homeEnvironmentId",
-            homeEnvironment.EnvironmentId,
-            deployment.HomeEnvironmentId,
-            deployment,
-            mutationAttempted: true);
-        RequireUpdateMatch("agentId", agentId, deployment.AgentId, deployment, mutationAttempted: true);
-        RequireUpdateMatch(
-            "deploymentId",
-            deploymentId,
-            deployment.DeploymentId,
-            deployment,
-            mutationAttempted: true);
-        RequireUpdateMatch(
-            "packageRevisionId",
-            packageRevisionId,
-            deployment.PackageRevisionId,
-            deployment,
-            mutationAttempted: true);
-
-        if (deployment.PackageSha256.Length != 64 ||
-            !deployment.PackageSha256.All(Uri.IsHexDigit) ||
-            deployment.PackageSizeInBytes <= 0 ||
-            !string.Equals(deployment.AgentType, "CodeAgent", StringComparison.Ordinal) ||
-            !IsSafeRuntimeEndpoint(deployment.RuntimeEndpoint) ||
-            deployment.IsCustomEndpoint ||
-            deployment.IsQuarantined)
-        {
-            throw AgentDeployException.DeploymentUpdateInvalidResponse(
-                mutationAttempted: true,
-                clientRequestId: deployment.ClientRequestId,
-                serviceRequestId: deployment.ServiceRequestId);
-        }
-    }
-
-    private static void RequireUpdateMatch(
-        string field,
-        string expected,
-        string actual,
-        object response,
-        bool mutationAttempted)
-    {
-        if (string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        var correlation = response switch
-        {
-            AmsDeploymentCurrentResult current => (current.ClientRequestId, current.ServiceRequestId),
-            AmsDeploymentCreateResult deployment => (deployment.ClientRequestId, deployment.ServiceRequestId),
-            _ => (null, null),
-        };
-        throw AgentDeployException.DeploymentUpdateResponseMismatch(
-            field,
-            mutationAttempted,
-            correlation.Item1,
-            correlation.Item2);
-    }
-
-    private static AgentDeployResult ToResult(AmsDeploymentCreateResult deployment, string status) =>
-        new()
-        {
-            Status = status,
-            TenantId = deployment.TenantId,
-            HomeEnvironmentId = deployment.HomeEnvironmentId,
-            TargetEnvironmentId = deployment.TargetEnvironmentId,
-            AgentId = deployment.AgentId,
-            PackageRevisionId = deployment.PackageRevisionId,
-            PackageDigest = deployment.PackageSha256,
-            PackageSizeInBytes = deployment.PackageSizeInBytes,
-            DeploymentId = deployment.DeploymentId,
-            DeploymentName = deployment.DeploymentName,
-            DeploymentType = deployment.DeploymentType,
-            EntraId = deployment.EntraId,
-            EntraIdType = deployment.EntraIdType,
-            RuntimeEndpoint = deployment.RuntimeEndpoint,
-            PackageSource = "current-grs",
-            ProjectionAcknowledged = true,
-            PublicDeployOperationCreated = false,
-            TargetLocalPackageStagingPerformed = false,
-            RuntimeReadinessProven = false,
-            CrossIslandDemonstrated = false,
-        };
-
-    private static string Require(string? value, string option)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new UsageException($"{option} is required for `msagent agent deploy`.");
-        }
-
-        return value.Trim();
-    }
-
-    private static string RequireGuid(string? value, string option, string operation = "agent deploy")
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new UsageException($"{option} is required for `msagent {operation}`.");
-        }
-
-        var result = value.Trim();
-        if (!Guid.TryParse(result, out var parsed) || parsed == Guid.Empty)
-        {
-            throw new UsageException($"{option} must be a non-empty GUID.");
-        }
-
-        return parsed.ToString("D");
-    }
-
-    private static string RequireDeploymentName(string? value)
-    {
-        var result = Require(value, "--deployment-name");
-        if (result.Length > AgentDeployRequest.DeploymentNameMaxLength)
-        {
-            throw new UsageException(
-                $"--deployment-name must not exceed {AgentDeployRequest.DeploymentNameMaxLength} characters.");
-        }
-
-        return result;
-    }
-
-    private static string ParseDeploymentType(string? value) =>
-        Require(value, "--deployment-type").ToLowerInvariant() switch
-        {
-            "dev" => "Dev",
-            "test" => "Test",
-            "prod" => "Prod",
-            _ => throw new UsageException("--deployment-type must be dev, test, or prod."),
-        };
-
-    private static string ParseEntraIdType(string? value) =>
-        Require(value, "--entra-id-type").ToLowerInvariant() switch
-        {
-            "app-reg" or "appreg" => "AppReg",
-            "blueprint" => "Blueprint",
-            "default" => "Default",
-            _ => throw new UsageException(
-                "--entra-id-type must be app-reg, blueprint, or default."),
-        };
-
-    private static bool EqualsId(string left, string right) =>
-        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
-
-    private static bool TryParseNonEmptyGuid(string value) =>
-        Guid.TryParse(value, out var parsed) && parsed != Guid.Empty;
-
-    private static bool IsSafeRuntimeEndpoint(string value) =>
-        Uri.TryCreate(value, UriKind.Absolute, out var endpoint) &&
-        string.Equals(endpoint.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
-        !string.IsNullOrWhiteSpace(endpoint.Host) &&
-        string.IsNullOrEmpty(endpoint.UserInfo) &&
-        string.IsNullOrEmpty(endpoint.Query) &&
-        string.IsNullOrEmpty(endpoint.Fragment);
 }

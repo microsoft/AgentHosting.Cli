@@ -68,7 +68,7 @@ public sealed class HarnessEnvironment
         var azure = new AzureCli(transcript);
         var cloud = new CloudProbe(msagent, azure);
 
-        var (signedIn, signedInDetail) = await ReadSignInAsync(msagent, cancellationToken).ConfigureAwait(false);
+        var (signedIn, signedInDetail, signInStatus) = await ReadSignInAsync(msagent, cancellationToken).ConfigureAwait(false);
         var azureCliPresent = AzureCli.IsPresent();
         var capabilities = Capabilities.Resolve(config, Path.Combine(ProjectDirectory, "fixtures"), signedIn, signedInDetail, azureCliPresent);
 
@@ -96,6 +96,14 @@ public sealed class HarnessEnvironment
             capabilities = await standalone.ProbeAsync(capabilities, cancellationToken).ConfigureAwait(false);
         }
 
+        AmsServices? ams = null;
+
+        if (scheduled.Any(AmsServices.Serves))
+        {
+            ams = new AmsServices(config, msagent);
+            capabilities = await ams.ProbeAsync(capabilities, signInStatus, azure, cancellationToken).ConfigureAwait(false);
+        }
+
         var run = new RunContext
         {
             RunId = runId,
@@ -114,6 +122,7 @@ public sealed class HarnessEnvironment
             Transcript = transcript,
             Reporter = new Reporter(!options.NoColour),
             Standalone = standalone,
+            Ams = ams,
             CorpusSnapshot = capabilities.Has(Capability.CopyCorpus) && scheduled.Any(scenario => scenario.Requires.Contains(Capability.CopyCorpus)) ? TreeSnapshot.Take(config.Mcs.Copy.CorpusRoot!) : null,
         };
 
@@ -150,7 +159,25 @@ public sealed class HarnessEnvironment
             return false;
         }
 
+        if (AmsEnvironmentProblem(config) is { } amsProblem)
+        {
+            Console.Error.WriteLine(amsProblem);
+            return false;
+        }
+
         return ValidateWorkspaces(config);
+    }
+
+    /// <summary>Why the Agent Management Service environments cannot be used, or null when they can.</summary>
+    public static string? AmsEnvironmentProblem(E2EConfig config)
+    {
+        var environments = new (string Setting, string? Id)[] { ("ams.devEnvironmentId", config.Ams.DevEnvironmentId), ("ams.testEnvironmentId", config.Ams.TestEnvironmentId), ("ams.prodEnvironmentId", config.Ams.ProdEnvironmentId) }.Where(environment => !string.IsNullOrWhiteSpace(environment.Id)).Select(environment => (environment.Setting, Id: environment.Id!.Trim())).ToArray();
+        var forbidden = environments.FirstOrDefault(environment => config.Mcs.ForbiddenEnvironmentIds.Contains(environment.Id, StringComparer.OrdinalIgnoreCase));
+        var shared = environments.GroupBy(environment => environment.Id, StringComparer.OrdinalIgnoreCase).FirstOrDefault(group => group.Count() > 1);
+
+        return forbidden.Setting is not null ? $"{forbidden.Setting} is listed in mcs.forbiddenEnvironmentIds, so no scenario may target it."
+            : shared is not null ? $"{string.Join(" and ", shared.Select(environment => environment.Setting))} name the same environment; the stage scenarios need a different environment for each."
+            : null;
     }
 
     /// <summary>Refuses a custom workspace override, which the suite cannot yet rebrand safely.</summary>
@@ -175,30 +202,20 @@ public sealed class HarnessEnvironment
         return false;
     }
 
-    private static async Task<(bool SignedIn, string Detail)> ReadSignInAsync(MsagentCli msagent, CancellationToken cancellationToken)
+    private static async Task<(bool SignedIn, string Detail, MsagentResult Status)> ReadSignInAsync(MsagentCli msagent, CancellationToken cancellationToken)
     {
-        var result = await msagent.RunAsync(["auth", "status", "--json", "--non-interactive"], cancellationToken: cancellationToken).ConfigureAwait(false);
+        var result = await msagent.AuthStatusAsync(cancellationToken).ConfigureAwait(false);
 
         return result.ExitCode == 0
-            ? (true, "signed in")
-            : (false, result.StdErr.Trim() is { Length: > 0 } error ? Summarize(error) : $"msagent auth status exited {result.ExitCode}");
+            ? (true, "signed in", result)
+            : (false, result.StdErr.Trim() is { Length: > 0 } error ? Summarize(error) : $"msagent auth status exited {result.ExitCode}", result);
     }
 
-    /// <summary>
-    /// Checks Azure Resource Manager consent with a read-only probe.
-    ///
-    /// <para>This is not an e2e-specific requirement. ARM access goes through a separate
-    /// consent-capable public client, because the CLI's Power Platform first-party app can only be
-    /// preauthorized for ARM, never consented. A real operator consents once, in a browser, the first
-    /// time they run any <c>abs</c> command — after which every later run, interactive or not, works
-    /// silently. The suite runs everything with <c>--non-interactive</c> so no scenario can hang on a
-    /// browser, which means it cannot perform that one-time consent itself. It is a precondition, in
-    /// exactly the way a signed-in session is.</para>
-    /// </summary>
-    private static async Task<bool> ArmConsentGrantedAsync(MsagentCli msagent, E2EConfig config, CancellationToken cancellationToken)
+    /// <summary>Whether the account has granted the Azure Resource Manager consent every Azure scenario needs and a non-interactive run cannot grant, checked with a read-only <c>abs preview</c>.</summary>
+    public static async Task<bool> ArmConsentGrantedAsync(MsagentCli msagent, E2EConfig config, CancellationToken cancellationToken)
     {
         var probe = ConsentProbeArguments(config);
-        var result = await msagent.RunAsync([.. probe, "--non-interactive"], timeout: TimeSpan.FromMinutes(2), cancellationToken: cancellationToken).ConfigureAwait(false);
+        var result = await msagent.With(MsagentFeatures.Only(MsagentFeatures.AzureBotService)).RunAsync([.. probe, "--non-interactive"], timeout: TimeSpan.FromMinutes(2), cancellationToken: cancellationToken).ConfigureAwait(false);
 
         if (result.ExitCode != ExitNotSignedIn)
         {
@@ -208,7 +225,7 @@ public sealed class HarnessEnvironment
         Console.WriteLine();
         Console.WriteLine("Azure Resource Manager consent has not been granted for this account, so every Azure");
         Console.WriteLine("scenario will be skipped. Grant it the same way a normal user does — run one `abs`");
-        Console.WriteLine("command interactively and complete the browser prompt, once:");
+        Console.WriteLine($"command interactively with {MsagentFeatures.Variable}={MsagentFeatures.AzureBotService} set, and complete the browser prompt, once:");
         Console.WriteLine();
         Console.WriteLine("    msagent " + string.Join(' ', probe.Select(CommandLineArgument.Quote)));
         Console.WriteLine();

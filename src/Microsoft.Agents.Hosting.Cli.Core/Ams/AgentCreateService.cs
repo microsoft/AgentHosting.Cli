@@ -11,16 +11,16 @@ public sealed class AgentCreateService
     private const int CodeAgentType = 0;
     private const string Origin = "AgentHostCLI";
 
-    private readonly AgentCreationTarget _target;
+    private readonly AmsTargets _targets;
     private readonly EnvironmentSelectionService _environments;
     private readonly IAmsAgentCreationTransport _transport;
 
     public AgentCreateService(
-        AgentCreationTarget target,
+        AmsTargets targets,
         EnvironmentSelectionService environments,
         IAmsAgentCreationTransport transport)
     {
-        _target = target ?? throw new ArgumentNullException(nameof(target));
+        _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _environments = environments ?? throw new ArgumentNullException(nameof(environments));
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
     }
@@ -40,7 +40,7 @@ public sealed class AgentCreateService
         var environment = await _environments
             .ResolveForCommandAsync(request.EnvironmentId, cancellationToken)
             .ConfigureAwait(false);
-        var target = _target.Resolve(environment.ApiEndpoint);
+        var serviceTarget = _targets.DataPlane(environment);
 
         AmsAgentCreationResult created;
         try
@@ -48,12 +48,7 @@ public sealed class AgentCreateService
             created = await _transport.CreateAsync(
                 new AmsAgentCreationTransportRequest
                 {
-                    Endpoint = target.Endpoint,
-                    Context = environment.Context,
-                    RouteMode = target.RouteMode,
-                    Audience = environment.ApiAudience,
-                    TenantId = environment.TenantId,
-                    EnvironmentId = environment.EnvironmentId,
+                    ServiceTarget = serviceTarget,
                     IdempotencyKey = idempotencyKey,
                     DisplayName = displayName,
                     Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description,

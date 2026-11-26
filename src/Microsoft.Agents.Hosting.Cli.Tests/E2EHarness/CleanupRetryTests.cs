@@ -235,4 +235,160 @@ public sealed class CleanupRetryTests : IDisposable
         Assert.Equal(ResourceState.Created, ledger.Entries.Single(entry => entry.Kind == ResourceKind.McsAgent).State);
         Assert.Equal(ResourceState.Deleted, ledger.Entries.Single(entry => entry.Kind == ResourceKind.StandaloneWorkflow).State);
     }
+
+    [Fact]
+    public async Task AnAmsAgentIsDeletedOnceItsDeployDrainsAndIsConfirmedGoneThroughTheEndpointsItWasCreatedWith()
+    {
+        var ledger = AmsLedger(resolved: true);
+        var fake = ScriptedMsagent((SignedIn, 0), (DeployInProgress, 1), (DeployInProgress, 1), (AgentDeleted, 0), (AgentNotFound, 1));
+
+        var orphans = await AmsCleanupDriving(fake, TimeSpan.FromMinutes(1)).RunAsync(ledger);
+
+        Assert.Empty(orphans);
+        Assert.Equal(ResourceState.Deleted, Assert.Single(ledger.Entries).State);
+        Assert.Equal(["auth status --json --non-interactive", AmsDelete, AmsDelete, AmsDelete, $"agent show --agent-id {AmsAgentId} --environment-id {AmsHome} --json --non-interactive"], fake.Invocations);
+        Assert.All(fake.Environments, environment => Assert.Equal($"{MsagentFeatures.Ams}|{AmsControlPlane}|{AmsDataPlane}", environment));
+    }
+
+    [Fact]
+    public async Task AnAmsAgentIntentThatNeverBecameAnAgentIsDoneWithoutADelete()
+    {
+        var ledger = AmsLedger(resolved: false);
+        var fake = ScriptedMsagent((SignedIn, 0), (AgentNotFound, 1));
+
+        var orphans = await AmsCleanupDriving(fake, TimeSpan.FromMinutes(1)).RunAsync(ledger);
+
+        Assert.Empty(orphans);
+        Assert.Equal(ResourceState.Deleted, Assert.Single(ledger.Entries).State);
+        Assert.Equal(["auth status --json --non-interactive", $"agent show --agent-name {AmsAgentName} --environment-id {AmsHome} --json --non-interactive"], fake.Invocations);
+    }
+
+    [Fact]
+    public async Task AnAmsAgentIntentFoundByItsNameIsResolvedThenDeleted()
+    {
+        var ledger = AmsLedger(resolved: false);
+        var fake = ScriptedMsagent((SignedIn, 0), (AgentShown, 0), (AgentDeleted, 0), (AgentNotFound, 1));
+
+        var orphans = await AmsCleanupDriving(fake, TimeSpan.FromMinutes(1)).RunAsync(ledger);
+
+        Assert.Empty(orphans);
+        var entry = Assert.Single(ledger.Entries);
+        Assert.Equal(AmsAgentId, entry.Id);
+        Assert.True(entry.Resolved);
+        Assert.Equal(ResourceState.Deleted, entry.State);
+        Assert.Equal(AmsDelete, fake.Invocations[2]);
+    }
+
+    [Fact]
+    public async Task AnAmsAgentDeleteAnsweringNotFoundCountsAsDone()
+    {
+        var ledger = AmsLedger(resolved: true);
+        var fake = ScriptedMsagent((SignedIn, 0), (AgentNotFound, 1), (AgentNotFound, 1));
+
+        var orphans = await AmsCleanupDriving(fake, TimeSpan.FromMinutes(1)).RunAsync(ledger);
+
+        Assert.Empty(orphans);
+        Assert.Equal(ResourceState.Deleted, Assert.Single(ledger.Entries).State);
+    }
+
+    [Theory]
+    [InlineData("""{"success":true,"signedIn":true,"cloud":"test","tenantId":"0f0e0d0c-0b0a-0908-0706-050403020100"}""", "tenant 0f0e0d0c-0b0a-0908-0706-050403020100")]
+    [InlineData("""{"success":true,"signedIn":true,"cloud":"prod","tenantId":"5cae182f-63ff-49f9-9f35-3acc2724e738"}""", "the prod cloud")]
+    [InlineData("""{"success":true,"signedIn":false}""", "no sign-in")]
+    public async Task AnAmsAgentUnderAnotherSignInIsLeftForTheSignInItWasCreatedUnder(string status, string reason)
+    {
+        var ledger = AmsLedger(resolved: true);
+        var fake = ScriptedMsagent((status, 0));
+
+        var orphan = Assert.Single(await AmsCleanupDriving(fake, TimeSpan.FromMinutes(1)).RunAsync(ledger));
+
+        Assert.Equal(ResourceState.Orphaned, orphan.State);
+        Assert.Contains(reason, orphan.Failure, StringComparison.Ordinal);
+        Assert.Equal(["auth status --json --non-interactive"], fake.Invocations);
+    }
+
+    [Fact]
+    public async Task AnAmsAgentDeleteThatFailsIsReportedWithItsCause()
+    {
+        var ledger = AmsLedger(resolved: true);
+        var fake = ScriptedMsagent((SignedIn, 0), ("""{"success":false,"exitCode":1,"errorKind":"request-failed","errorMessage":"the service answered 500"}""", 1));
+
+        var orphan = Assert.Single(await AmsCleanupDriving(fake, TimeSpan.FromMinutes(1)).RunAsync(ledger));
+
+        Assert.Contains("agent delete exited 1", orphan.Failure, StringComparison.Ordinal);
+        Assert.Contains("the service answered 500", orphan.Failure, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnAmsAgentStillShownAfterItsDeleteIsReported()
+    {
+        var ledger = AmsLedger(resolved: true);
+        var fake = ScriptedMsagent((SignedIn, 0), (AgentDeleted, 0), (AgentShown, 0));
+
+        var orphan = Assert.Single(await AmsCleanupDriving(fake, TimeSpan.FromMinutes(1)).RunAsync(ledger));
+
+        Assert.Contains("still finds the agent", orphan.Failure, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnAmsAgentWhoseDeployNeverDrainsIsReportedOnceTheWaitRunsOut()
+    {
+        var ledger = AmsLedger(resolved: true);
+        var fake = ScriptedMsagent((SignedIn, 0), (DeployInProgress, 1));
+
+        var orphan = Assert.Single(await AmsCleanupDriving(fake, TimeSpan.Zero).RunAsync(ledger));
+
+        Assert.Contains("agent-deploy-in-progress", orphan.Failure, StringComparison.Ordinal);
+        Assert.Equal(2, fake.Invocations.Count);
+    }
+
+    [Theory]
+    [InlineData(true, $"--agent-id {AmsAgentId}")]
+    [InlineData(false, $"--agent-name {AmsAgentName}")]
+    public void TheManualCommandForAnAmsAgentNamesTheEndpointsTheSignInAndTheAgent(bool resolved, string selector)
+    {
+        var command = Cleanup.ManualCommand(Assert.Single(AmsLedger(resolved).Entries));
+
+        Assert.Contains($"AH_CLI_AMS_ENDPOINT={AmsControlPlane}", command, StringComparison.Ordinal);
+        Assert.Contains($"AH_CLI_AMSDP_ENDPOINT={AmsDataPlane}", command, StringComparison.Ordinal);
+        Assert.Contains($"tenant {AmsTenant}", command, StringComparison.Ordinal);
+        Assert.Contains($"msagent agent delete {selector} --environment-id {AmsHome}", command, StringComparison.Ordinal);
+    }
+
+    private const string AmsAgentName = "ahe2e-beef-ac01";
+    private const string AmsAgentId = "e27dcdf7-ecfa-4732-b5aa-b38bb5a3c66c";
+    private const string AmsHome = "245ed99c-a1cc-eae7-9ab5-367e3d921f1d";
+    private const string AmsTenant = "5cae182f-63ff-49f9-9f35-3acc2724e738";
+    private const string AmsControlPlane = "https://ams.example.test";
+    private const string AmsDataPlane = "https://amsdp.example.test";
+    private const string AmsDelete = $"agent delete --agent-id {AmsAgentId} --environment-id {AmsHome} --json --non-interactive";
+    private const string SignedIn = $$"""{"success":true,"signedIn":true,"cloud":"test","tenantId":"{{AmsTenant}}"}""";
+    private const string DeployInProgress = """{"success":false,"exitCode":1,"errorKind":"agent-deploy-in-progress","errorMessage":"a deploy may still run"}""";
+    private const string AgentDeleted = $$"""{"success":true,"status":"agent-deleted","agentId":"{{AmsAgentId}}","deployments":[],"keptBots":[]}""";
+    private const string AgentNotFound = """{"success":false,"exitCode":1,"errorKind":"agent-not-found","errorMessage":"no such agent"}""";
+    private const string AgentShown = $$$"""{"success":true,"agent":{"agentId":"{{{AmsAgentId}}}","displayName":"{{{AmsAgentName}}}"}}""";
+
+    private Ledger AmsLedger(bool resolved)
+    {
+        var ledger = NewLedger();
+        ledger.RecordIntendedAmsAgent(AmsAgentName, new AmsCleanupContext { ControlPlaneEndpoint = AmsControlPlane, DataPlaneEndpoint = AmsDataPlane, Cloud = "test", TenantId = AmsTenant, HomeEnvironmentId = AmsHome }, "AC-01");
+
+        if (resolved)
+        {
+            ledger.ResolveAmsAgent(AmsAgentName, AmsAgentId);
+        }
+
+        return ledger;
+    }
+
+    private FakeMsagent ScriptedMsagent(params (string StandardOutput, int ExitCode)[] responses) => new(Path.Combine(_runDirectory, "msagent"), responses);
+
+    private Cleanup AmsCleanupDriving(FakeMsagent fake, TimeSpan drainLimit)
+    {
+        var transcript = new Transcript(_runDirectory);
+        var msagent = Msagent(fake, transcript);
+        var azure = new AzureCli(transcript);
+
+        return new Cleanup(msagent, azure, new CloudProbe(msagent, azure), transcript, amsTiming: new AmsCleanupTiming(TimeSpan.Zero, drainLimit));
+    }
 }

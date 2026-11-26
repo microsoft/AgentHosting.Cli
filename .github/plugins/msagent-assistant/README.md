@@ -22,6 +22,10 @@ publication. `/chat` is a thin workflow around `msagent test ask`; the CLI owns 
 exact target resolution, transport and output. It requires the publisher-approved live-testing
 capability. The plugin does not enable that capability or retain its retired runtime client.
 
+In the GitHub Copilot app, the plugin also contributes the
+[Copilot Studio chat canvas](extensions/copilot-studio-chat/README.md) extension, an in-app chat
+pane backed by the same CLI. Hosts without app extension canvases, including Copilot CLI, ignore it.
+
 ## Disclaimer
 
 This plugin work in progress and supported by Github Issues only at this time, we are working to improve this feature set. The Copilot Studio YAML schema may change without notice. Always review and validate generated YAML before pushing to your environment - AI-generated output may contain errors or unsupported patterns.

@@ -40,7 +40,8 @@ public static class InstalledToolChecks
         start.CreateNoWindow = true;
     }
 
-    public static async Task RunAsync(string packageDirectory, string rid, Func<string, Task>? nativeLibraryCheck = null)
+    public static async Task RunAsync(string packageDirectory, string rid, Func<string, Task>? nativeLibraryCheck = null,
+        string? canvasSmokeScript = null)
     {
         var family = PackageChecks.CheckFamily(packageDirectory);
         Console.WriteLine("tier=package check=family status=PASS rids=7 packages=8 frameworks=net10+aspnet10");
@@ -112,6 +113,28 @@ public static class InstalledToolChecks
                 Require(who.RootElement.GetProperty("status").GetString() == "signed-out", "isolated-who");
             using (var telemetry = await Json(["telemetry", "status", "--json"], 0))
                 Require(!telemetry.RootElement.GetProperty("effectiveCollectionEnabled").GetBoolean(), "telemetry-optout");
+            var sitesFile = Path.Combine(root, "sites.json");
+            await File.WriteAllTextAsync(sitesFile, """[{"isEnabled":"true"}]""");
+            using (var failure = await Json(
+                ["deployment", "channel", "update", "--deployment-id", "11111111-1111-1111-1111-111111111111",
+                    "--channel", "directline", "--parameters", $"sites=@{sitesFile}",
+                    "--non-interactive", "--json"], 2, features: "AzureBotServiceFeatures"))
+            {
+                var message = failure.RootElement.GetProperty("errorMessage").GetString();
+                Require(failure.RootElement.GetProperty("errorCode").GetInt32() == 99002 &&
+                    message is not null && message.Contains("'sites[].isEnabled'", StringComparison.Ordinal) &&
+                    message.Contains("Boolean", StringComparison.Ordinal), "file-json-field-validation");
+            }
+            using (var failure = await Json(
+                ["deployment", "channel", "update", "--deployment-id", "11111111-1111-1111-1111-111111111111",
+                    "--channel", "directline", "--parameters", """sites=[{"isEnabled":"SYNTHETIC_SECRET"}""",
+                    "--non-interactive", "--json"], 2, features: "AzureBotServiceFeatures"))
+            {
+                var message = failure.RootElement.GetProperty("errorMessage").GetString();
+                Require(failure.RootElement.GetProperty("errorCode").GetInt32() == 99002 &&
+                    message is not null && message.Contains("'sites'", StringComparison.Ordinal) &&
+                    !message.Contains("SYNTHETIC_SECRET", StringComparison.Ordinal), "invalid-inline-json-privacy");
+            }
             // Accepted fake-host tests prove these gates precede cache/native/source construction.
             using (var failure = await Json(["auth", "create", "-dc", "--non-interactive", "--json"], 3))
                 Require(failure.RootElement.GetProperty("errorCode").GetInt32() == 12007, "early-interaction-gate");
@@ -121,6 +144,14 @@ public static class InstalledToolChecks
                 .Any(f => Path.GetFileName(f).EndsWith(".bin", StringComparison.Ordinal) ||
                     Path.GetFileName(f).Contains("msal", StringComparison.OrdinalIgnoreCase)), "no-native-cache-artifacts");
             Console.WriteLine("tier=package check=installed-contracts status=PASS help=8-default+2-legacy-auth-verbs aliases=PASS defaults=PASS json=PASS NI12007=exit3 telemetry=off");
+            if (canvasSmokeScript is not null)
+            {
+                Require(OperatingSystem.IsWindows(), "windows-canvas-platform");
+                var nativeExecutable = Path.Combine(Path.GetDirectoryName(runtimeFiles[0])!, PackageChecks.PackageId + ".exe");
+                var smoke = await RunChild("node", [canvasSmokeScript, installed, nativeExecutable], root, dotnetRoot);
+                Require(smoke.Exit == 0, "windows-canvas-launcher");
+                Console.WriteLine(smoke.Output.Trim());
+            }
             if (nativeLibraryCheck is not null) await nativeLibraryCheck(Path.GetDirectoryName(runtimeFiles[0])!);
 
             async Task Help(string[] args, string[] required, string? features = null, string[]? forbidden = null)

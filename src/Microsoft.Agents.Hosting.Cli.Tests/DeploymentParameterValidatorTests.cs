@@ -59,7 +59,7 @@ public sealed class DeploymentParameterValidatorTests
 
         Assert.Contains("position 1", ex.Message);
         Assert.Contains("Both Key and Value are required", ex.Message);
-        Assert.DoesNotContain("TenantId", ex.Message);
+        Assert.Contains("key 'TenantId'", ex.Message);
     }
 
     [Fact]
@@ -74,16 +74,17 @@ public sealed class DeploymentParameterValidatorTests
     }
 
     [Fact]
-    public void Parse_RejectsCaseInsensitiveDuplicateWithoutEchoingKey()
+    public void Parse_RejectsCaseInsensitiveDuplicateNamingKeyWithoutEchoingValues()
     {
         var ex = Assert.Throws<UsageException>(() =>
             DeploymentParameterValidator.ParseParameterAssignments(
                 "--parameters",
-                ["TenantId=one", "tenantid=two"],
+                ["TenantId=SYNTHETIC_FIRST_VALUE", " tenantid = SYNTHETIC_SECOND_VALUE"],
                 DeploymentParameterEmptyValuePolicy.Reject));
 
-        Assert.Contains("duplicate key at position 2", ex.Message);
-        Assert.DoesNotContain("TenantId", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("duplicate key 'tenantid' at position 2", ex.Message);
+        Assert.DoesNotContain("SYNTHETIC_FIRST_VALUE", ex.Message);
+        Assert.DoesNotContain("SYNTHETIC_SECOND_VALUE", ex.Message);
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Errors;
@@ -28,6 +29,12 @@ public sealed class PackagePublicationException : AgentHostingException
     }
 
     public AgentPackageUploadPartialResult? PartialResult { get; }
+
+    public string? FailureStage { get; private init; }
+
+    public string? FailureReason { get; private init; }
+
+    public int? ResponseStatusCode { get; private init; }
 
     /// <summary>
     /// The publication target is not configured, so there is no endpoint or agent to publish to. This
@@ -84,25 +91,104 @@ public sealed class PackagePublicationException : AgentHostingException
     public static PackagePublicationException RequestTimedOut(
         string agentId,
         string clientRequestId,
-        Exception innerException) =>
+        Exception innerException,
+        int? responseStatusCode = null) =>
         new(
             ErrorCodes.Package.PublicationRequestTimedOut,
-            $"The Agent Management Service package upload for Agent '{agentId}' timed out before a response was received (clientRequestId={clientRequestId}). The upload outcome may be indeterminate.",
+            $"The Agent Management Service package upload for Agent '{agentId}' exceeded its configured deadline {DescribeStage(responseStatusCode)} (clientRequestId={clientRequestId}). The upload outcome may be indeterminate.",
             ExitCodes.Failure,
             "publication-timeout",
-            "Do not retry blindly. Check AMS package state or service-side correlation for this client request before deciding whether another upload is required.",
-            innerException);
+            "Check network connectivity. Avoid repeated uploads while the outcome is uncertain. Report persistent failures in microsoft/AgentHosting.Cli with the error output, agent ID, client request ID, and time of failure, without including tokens or credentials.",
+            innerException)
+        {
+            FailureStage = responseStatusCode.HasValue ? "response-body" : "request",
+            FailureReason = "deadline-expired",
+            ResponseStatusCode = responseStatusCode,
+        };
 
     public static PackagePublicationException RequestFailed(
         string clientRequestId,
-        Exception innerException) =>
+        Exception innerException,
+        int? responseStatusCode = null) =>
         new(
             ErrorCodes.Package.PublicationRequestFailed,
-            $"The Agent Management Service package upload failed before a response was received (clientRequestId={clientRequestId}). The upload outcome may be indeterminate.",
+            $"The Agent Management Service package upload failed {DescribeStage(responseStatusCode)} (failureReason={ClassifyTransportFailure(innerException)}, clientRequestId={clientRequestId}). The upload outcome may be indeterminate.",
             ExitCodes.Failure,
             "publication-transport-failed",
-            "Do not retry blindly. Check AMS package state or service-side correlation for this client request before deciding whether another upload is required.",
-            innerException);
+            "Check network connectivity. Avoid repeated uploads while the outcome is uncertain. Report persistent failures in microsoft/AgentHosting.Cli with the error output, agent ID, client request ID, and time of failure, without including tokens or credentials.",
+            innerException)
+        {
+            FailureStage = responseStatusCode.HasValue ? "response-body" : "request",
+            FailureReason = ClassifyTransportFailure(innerException),
+            ResponseStatusCode = responseStatusCode,
+        };
+
+    public static PackagePublicationException RequestBodyReadFailed(
+        string clientRequestId,
+        Exception innerException) =>
+        new(
+            ErrorCodes.Package.PublicationPackageReadFailed,
+            $"The local package could not be read while uploading (clientRequestId={clientRequestId}). The upload outcome may be indeterminate.",
+            ExitCodes.Failure,
+            "package-read-failed",
+            "Check that the package remains readable and is not being changed concurrently. Avoid repeated uploads while the outcome is uncertain. Report persistent failures in microsoft/AgentHosting.Cli with the error output, agent ID, client request ID, and time of failure, without including tokens or credentials.",
+            innerException)
+        {
+            FailureStage = "request-body",
+            FailureReason = "local-package-read-failed",
+        };
+
+    private static string DescribeStage(int? responseStatusCode) =>
+        responseStatusCode.HasValue
+            ? $"while reading the response body after HTTP {responseStatusCode.Value}"
+            : "before response headers were received";
+
+    private static string ClassifyTransportFailure(Exception exception)
+    {
+        string? httpFailure = null;
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            var requestError = current switch
+            {
+                HttpRequestException http => http.HttpRequestError,
+                HttpIOException httpIo => httpIo.HttpRequestError,
+                _ => HttpRequestError.Unknown,
+            };
+            httpFailure ??= requestError switch
+            {
+                HttpRequestError.NameResolutionError => "name-resolution",
+                HttpRequestError.ConnectionError => "connection",
+                HttpRequestError.SecureConnectionError => "secure-connection",
+                HttpRequestError.HttpProtocolError => "http-protocol",
+                HttpRequestError.ExtendedConnectNotSupported => "extended-connect-not-supported",
+                HttpRequestError.VersionNegotiationError => "http-version-negotiation",
+                HttpRequestError.UserAuthenticationError => "transport-authentication",
+                HttpRequestError.ProxyTunnelError => "proxy-tunnel",
+                HttpRequestError.InvalidResponse => "invalid-http-response",
+                HttpRequestError.ResponseEnded => "response-ended",
+                HttpRequestError.ConfigurationLimitExceeded => "configuration-limit",
+                _ => null,
+            };
+
+            if (current is SocketException socket)
+            {
+                return socket.SocketErrorCode switch
+                {
+                    SocketError.ConnectionReset => "connection-reset",
+                    SocketError.ConnectionAborted => "connection-aborted",
+                    SocketError.ConnectionRefused => "connection-refused",
+                    SocketError.TimedOut => "socket-timeout",
+                    _ => httpFailure ?? "socket-error",
+                };
+            }
+        }
+
+        return httpFailure ?? (exception switch
+        {
+            OperationCanceledException => "transport-cancelled",
+            _ => "unknown",
+        });
+    }
 
     /// <summary>
     /// The response identifies a durably recorded upload operation that did not confirm success.

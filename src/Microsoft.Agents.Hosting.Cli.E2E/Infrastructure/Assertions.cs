@@ -165,6 +165,19 @@ public sealed partial class Assertions
         Clean(result, check);
     }
 
+    /// <summary>Asserts an Agent Management Service command was refused cleanly with the given error kind.</summary>
+    public void RefusedWith(MsagentResult result, string errorKind, string check)
+    {
+        FailedCleanly(result, check);
+
+        if (!AmsOutput.IsRefused(result, errorKind))
+        {
+            throw new AssertionException($"{check}: error kind", errorKind, AmsOutput.ErrorKind(result) ?? "none", Tail(result), result);
+        }
+
+        Pass($"{check}: {errorKind}");
+    }
+
     private void Clean(MsagentResult result, string check)
     {
         NoStackTrace(result, $"{check}: no stack trace");

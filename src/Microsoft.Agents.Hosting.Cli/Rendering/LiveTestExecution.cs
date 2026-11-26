@@ -67,22 +67,17 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
         string? conversationId = _request.ConversationId;
         string conversationSource = conversationId is null ? "none" : "supplied";
         string delivery = "not-attempted";
-        string status = "completed";
-        string? errorKind = null;
-        string? errorMessage = null;
-        string? remediation = null;
-        bool sdkStarted = false;
-        int exitCode = 0;
+        TurnError? turnError = null;
         try
         {
             Validate(_request);
+            var attachments = await ReadAttachmentsAsync(_request.Files, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             var target = _resolve(_request);
             targetSource = target.TargetSource;
             var token = await _acquireToken(target, _request.NonInteractive, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             await using var session = _createSession(target, token, cancellationToken);
-            sdkStarted = true;
             if (conversationId is null)
             {
                 await foreach (var activity in session.StartAsync(cancellationToken).WithCancellation(cancellationToken))
@@ -98,14 +93,20 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
                         "Check that the published agent supports authenticated conversations.");
             }
 
-            delivery = "attempted";
-            await foreach (var activity in session.QueryAsync(_request.Query!, conversationId, cancellationToken).WithCancellation(cancellationToken))
+            if (!_request.StartConversation)
             {
+                delivery = "attempted";
+                var replies = attachments.Count == 0
+                    ? session.QueryAsync(_request.Query!, conversationId, cancellationToken)
+                    : session.QueryAsync(_request.Query!, conversationId, attachments, cancellationToken);
+                await foreach (var activity in replies.WithCancellation(cancellationToken))
+                {
+                    ConfirmId(session.ServiceConversationId, ref conversationId, ref conversationSource);
+                    ConfirmId(ActivityId(activity), ref conversationId, ref conversationSource);
+                    await WriteActivity(activity);
+                }
                 ConfirmId(session.ServiceConversationId, ref conversationId, ref conversationSource);
-                ConfirmId(ActivityId(activity), ref conversationId, ref conversationSource);
-                await WriteActivity(activity);
             }
-            ConfirmId(session.ServiceConversationId, ref conversationId, ref conversationSource);
         }
         catch (Exception failure)
         {
@@ -117,21 +118,22 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
                 OperationCanceledException => ErrorCodes.General.TransportTimeout,
                 _ => ErrorCodes.General.Unknown,
             };
-            (status, exitCode, errorKind, errorMessage, remediation) = Classify(failure, cancellationToken);
+            turnError = Classify(failure, cancellationToken);
         }
 
         try
         {
             if (json is not null)
-                await json.FinishAsync(new LiveTestResult(status, exitCode, targetSource,
-                    conversationId, conversationSource, delivery, errorKind, errorMessage, remediation));
+                await json.FinishAsync(new LiveTestResult(turnError?.Status ?? "completed", turnError?.ExitCode ?? 0,
+                    targetSource, conversationId, conversationSource, delivery,
+                    turnError?.Kind, turnError?.Message, turnError?.Remediation));
             else
             {
                 if (conversationId is not null)
                     human!.WriteConversationId(conversationId);
-                if (status != "completed")
-                    human!.WriteError($"{errorMessage} {remediation}");
-                human!.Finish(status == "completed", sdkStarted);
+                if (turnError is not null)
+                    human!.WriteError($"{turnError.Message} {turnError.Remediation}");
+                human!.Finish(sdkCompleted: turnError is null);
             }
         }
         catch (Exception failure)
@@ -143,7 +145,7 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
                 : "The live test could not finalize its result.");
             return 1;
         }
-        return exitCode;
+        return turnError?.ExitCode ?? 0;
 
         async Task WriteActivity(JsonElement activity)
         {
@@ -170,7 +172,13 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
 
     private static void Validate(LiveTestRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Query))
+        if (request.Files.Count > 5 || (request.StartConversation && request.Files.Count > 0))
+            throw new LiveTestFailure("invalid-input", 2, "Attach at most five files to a query, not to --start-conversation.",
+                "Send a query with up to five --file options, at most 10 MiB total.");
+        if (request.StartConversation && (request.Query is not null || request.ConversationId is not null))
+            throw new LiveTestFailure("invalid-input", 2, "--start-conversation cannot be combined with --query or --conversation-id.",
+                "Start a new conversation without a query, or supply --query to send a message.");
+        if (!request.StartConversation && string.IsNullOrWhiteSpace(request.Query))
             throw new LiveTestFailure("invalid-input", 2, "A nonblank --query is required.",
                 "Supply one literal query with --query.");
         if (request.Json && request.Plain)
@@ -192,6 +200,53 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
                 char.IsControl(character) || character is '/' or '\\' or '?' or '#' or '%')))
             throw new LiveTestFailure("invalid-input", 2, "The --conversation-id is not a safe identifier.",
                 "Supply the conversation ID returned by the selected agent.");
+    }
+
+    private static async Task<IReadOnlyList<LiveTestAttachment>> ReadAttachmentsAsync(
+        IReadOnlyList<string> files, CancellationToken cancellationToken)
+    {
+        var attachments = new List<LiveTestAttachment>();
+        long remaining = 10 * 1024 * 1024;
+        try
+        {
+            foreach (var path in files)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+                    4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                if (stream.Length > remaining)
+                    throw new LiveTestFailure("invalid-input", 2, "Attachments exceed the 10 MiB total limit.",
+                        "Select smaller files.");
+                var bytes = new byte[(int)stream.Length];
+                await stream.ReadExactlyAsync(bytes, cancellationToken);
+                if (stream.ReadByte() != -1)
+                    throw new LiveTestFailure("invalid-input", 2, "An attachment changed while being read.",
+                        "Finish editing the file before sending it.");
+                remaining -= bytes.Length;
+                var contentType = Path.GetExtension(path).ToLowerInvariant() switch
+                {
+                    ".pdf" => "application/pdf",
+                    ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    ".txt" => "text/plain",
+                    ".md" => "text/markdown",
+                    ".csv" => "text/csv",
+                    ".json" => "application/json",
+                    ".png" => "image/png",
+                    ".jpg" or ".jpeg" => "image/jpeg",
+                    ".webp" => "image/webp",
+                    _ => "application/octet-stream",
+                };
+                attachments.Add(new(Path.GetFileName(path), contentType, bytes));
+            }
+        }
+        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new LiveTestFailure("invalid-input", 2, "An attachment could not be read.",
+                "Select readable local files, at most 10 MiB total.");
+        }
+        return attachments;
     }
 
     private static string? ActivityId(JsonElement activity)
@@ -217,43 +272,50 @@ public sealed class LiveTestExecution : ILiveTestStreamingResult, IStreamingFail
         source = "service";
     }
 
-    private static (string Status, int ExitCode, string Kind, string Message, string Remediation) Classify(
-        Exception failure, CancellationToken cancellationToken)
+    private sealed record TurnError(string Status, int ExitCode, string Kind, string Message, string Remediation);
+
+    private static TurnError Classify(Exception failure, CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)
-            return ("cancelled", 1, "cancelled", "Local testing was cancelled.",
+            return new("cancelled", 1, "cancelled", "Local testing was cancelled.",
                 "Remote effects may continue if the query was already sent.");
         if (failure is LiveTestFailure typed)
-            return ("failed", typed.ExitCode, typed.Kind, typed.Message, typed.Remediation);
+            return new("failed", typed.ExitCode, typed.Kind, typed.Message, typed.Remediation);
+        if (failure is LiveTestAttachmentsNotSupportedException unsupportedAttachments)
+            return new("failed", 1, "unsupported-attachments", unsupportedAttachments.Message,
+                "Use a session that supports attachments. Verify remote effects before retrying; a session wrapper may already have dispatched the query.");
         if (failure is LiveTestTargetResolutionException targetFailure)
-            return ("failed", targetFailure.ExitCode, targetFailure.ErrorKind ?? "invalid-configuration",
+            return new("failed", targetFailure.ExitCode, targetFailure.ErrorKind ?? "invalid-configuration",
                 targetFailure.Message,
                 targetFailure.Remediation ?? "Check the agent, deployment, schema, environment, and tenant options.");
         if (failure is ManagedAgentException)
-            return ("failed", 2, "invalid-configuration", "The local agent configuration could not be read.",
+            return new("failed", 2, "invalid-configuration", "The local agent configuration could not be read.",
                 "Check --project and the managed-agent configuration.");
         if (failure is ActiveAccountMismatchException or TokenClaimException)
-            return ("failed", 2, "identity-mismatch", "The authenticated identity does not match the selected destination.",
+            return new("failed", 2, "identity-mismatch", "The authenticated identity does not match the selected destination.",
                 "Select the intended account and tenant, then invoke the command again.");
         if (failure is NotSignedInException or InteractionRequiredException)
-            return ("failed", 3, "authentication-required", "A selected signed-in user is required.",
+            return new("failed", 3, "authentication-required", "A selected signed-in user is required.",
                 "Run `msagent auth create` for the intended account and cloud; allow consent or remove --non-interactive.");
+        if (failure is CacheProtectionUnavailableException storage)
+            return new("failed", 1, "credential-storage-unavailable", storage.Message,
+                storage.Remediation ?? "Restore access to the platform credential storage; see error 12006.");
         if (failure is AuthenticationException)
-            return ("failed", 1, "authentication-failed", "Delegated authentication failed.",
+            return new("failed", 1, "authentication-failed", "Delegated authentication failed.",
                 "Check the selected account, public-client registration, and delegated consent.");
         if (failure is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden })
-            return ("failed", 1, "authorization-failed", "The service rejected delegated access.",
+            return new("failed", 1, "authorization-failed", "The service rejected delegated access.",
                 "Check agent sharing and delegated Copilot Studio permissions before retrying.");
         if (failure is JsonException or FormatException or McsLiveTestProtocolException)
-            return ("failed", 1, "protocol-error", "The service returned an invalid response.",
+            return new("failed", 1, "protocol-error", "The service returned an invalid response.",
                 "Check the published agent response.");
         if (failure is McsLiveTestTokenException)
-            return ("failed", 1, "authentication-failed", "Delegated authentication failed.",
+            return new("failed", 1, "authentication-failed", "Delegated authentication failed.",
                 "Check the selected account and delegated consent.");
         if (failure is HttpRequestException or IOException or OperationCanceledException)
-            return ("failed", 1, "transport-error", "The service connection failed.",
+            return new("failed", 1, "transport-error", "The service connection failed.",
                 "Check the destination before retrying; a delivered query may have caused remote actions.");
-        return ("failed", 1, "internal-error", "The live test could not complete.",
+        return new("failed", 1, "internal-error", "The live test could not complete.",
             "Check the CLI configuration and try again; verify remote effects first if the query was sent.");
     }
 }

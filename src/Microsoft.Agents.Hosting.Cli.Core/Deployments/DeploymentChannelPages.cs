@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -21,7 +22,7 @@ internal static class DeploymentChannelPages
             selected.OptionName, selected.Assignments, DeploymentParameterEmptyValuePolicy.Reject);
         var fields = DeploymentChannelPlan.ItemFields(channel, "pages");
         var item = NormalizeItem(JsonSerializer.SerializeToElement(assignments), fields, "update");
-        DeploymentChannelPlan.ValidateSelectorOperation(selected.Operation, item, selected.OptionName, "id");
+        DeploymentChannelPlan.ValidateSelectorOperation(selected.Operation, item, selected.OptionName, "pages", "id");
         if (selected.Operation == ChannelCollectionOperation.Add)
         {
             RequireToken(item);
@@ -89,7 +90,7 @@ internal static class DeploymentChannelPages
             {
                 if (pageIndex >= 0)
                 {
-                    throw DeploymentException.ChannelItemAlreadyExists("facebook", "id");
+                    throw DeploymentException.ChannelItemAlreadyExists("facebook", "pages[].id");
                 }
 
                 pages = [.. pages, change.Item];
@@ -98,7 +99,7 @@ internal static class DeploymentChannelPages
             {
                 if (pageIndex < 0)
                 {
-                    throw DeploymentException.ChannelItemNotFound("facebook", "id");
+                    throw DeploymentException.ChannelItemNotFound("facebook", "pages[].id");
                 }
 
                 if (change.Operation == ChannelCollectionOperation.Remove)
@@ -126,7 +127,7 @@ internal static class DeploymentChannelPages
 
         if (!result.ContainsKey(selector.Name))
         {
-            throw new UsageException("Each Facebook page requires an id selector.");
+            throw new UsageException($"Parameter 'pages[].{selector.Name}' is required for each page.");
         }
 
         return JsonSerializer.SerializeToElement(result);
@@ -139,10 +140,10 @@ internal static class DeploymentChannelPages
         var pages = new List<JsonElement>();
         foreach (var page in array.EnumerateArray())
         {
-            var pageId = DeploymentChannelPlan.ReadSelector(page, "id").Trim();
+            var pageId = DeploymentChannelPlan.ReadSelector(page, "pages", "id").Trim();
             var fields = new Dictionary<string, JsonElement> { ["id"] = JsonSerializer.SerializeToElement(pageId) };
             if (page.TryGetProperty("accessToken", out var token) && token.ValueKind == JsonValueKind.String &&
-                !string.IsNullOrWhiteSpace(token.GetString()) && token.GetString() != BotServiceResponseRedactor.Mask)
+                !string.IsNullOrWhiteSpace(token.GetString()) && !SecretRedaction.IsMasked(token.GetString()))
             {
                 fields["accessToken"] = token.Clone();
             }
@@ -152,7 +153,7 @@ internal static class DeploymentChannelPages
 
         if (pages.Select(PageId).Distinct(StringComparer.Ordinal).Count() != pages.Count)
         {
-            throw DeploymentException.ChannelConfigurationUnavailable();
+            throw DeploymentException.ChannelConfigurationUnavailable("pages[].id");
         }
 
         return pages.ToArray();
@@ -177,7 +178,7 @@ internal static class DeploymentChannelPages
     {
         if (!page.TryGetProperty("accessToken", out _))
         {
-            throw new UsageException("New Facebook pages require 'accessToken'.");
+            throw new UsageException("Parameter 'pages[].accessToken' is required for each new page.");
         }
     }
 }

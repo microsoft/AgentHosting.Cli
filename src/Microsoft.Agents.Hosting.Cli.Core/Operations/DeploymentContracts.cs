@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 
@@ -125,8 +124,6 @@ public interface IDeploymentResult
 {
     DeploymentOperationStatus Status { get; }
     object? Payload { get; }
-    JsonElement? ArmResponse { get; }
-
     string TargetName { get; }
     string? TargetInstanceName { get; }
     IReadOnlyList<string> Warnings { get; }
@@ -136,35 +133,11 @@ public interface IDeploymentResult
 /// <summary>Result shared by deployment CRUD and deployment sub-resources such as OAuth connections and channels.</summary>
 public sealed record DeploymentResult<TPayload> : IDeploymentResult
 {
-    private readonly JsonElement? _armResponse;
-
     public required DeploymentOperationStatus Status { get; init; }
     public TPayload? Payload { get; init; }
     public IReadOnlyList<string> Warnings { get; init; } = [];
     public Uri? AuthorizationUrl { get; init; }
     object? IDeploymentResult.Payload => Payload;
-    public JsonElement? ArmResponse
-    {
-        get => _armResponse ?? (Payload switch
-        {
-            CodeAgentDeployment deployment => deployment.Bot.RawArmResponse,
-            DeploymentOAuthConnection connection => connection.RawArmResponse,
-            DeploymentOAuthConnection[] connections => JsonSerializer.SerializeToElement(
-                connections
-                    .Where(connection => connection.RawArmResponse is not null)
-                    .Select(connection => connection.RawArmResponse!.Value)
-                    .ToArray()),
-            DeploymentChannelRecord channel => channel.RawArmResponse,
-            DeploymentChannelRecord[] channels => JsonSerializer.SerializeToElement(
-                channels
-                    .Where(channel => channel.RawArmResponse is not null)
-                    .Select(channel => channel.RawArmResponse!.Value)
-                    .ToArray()),
-            _ => null,
-        });
-        init => _armResponse = value;
-    }
-
     [JsonIgnore]
     public string TargetName { get; init; } = string.Empty;
     [JsonIgnore]
@@ -190,6 +163,9 @@ public record DeploymentOAuthUpdateRequest : DeploymentOAuthRequest
 
     /// <summary>The write-only application secret supplied through <c>--client-secret</c>.</summary>
     public string? ClientSecret { get; init; }
+
+    /// <summary>Whether the application secret is read from standard input (from <c>--client-secret-stdin</c>) once every other check has passed.</summary>
+    public bool ClientSecretFromStandardInput { get; init; }
 
     /// <summary>The space-separated scopes supplied through <c>--scopes</c>.</summary>
     public string? Scopes { get; init; }

@@ -8,6 +8,15 @@ To use this file with GitHub Copilot or Claude, attach it or explicitly say:
 "Read agent.md and follow it for this task." Do not assume this filename is
 automatically loaded by every assistant.
 
+## Optional coding-assistant plugin
+
+`msagent-assistant` provides guided Copilot Studio authoring and lifecycle
+workflows. See the [coding-assistant setup guide](Using%20msagents%20CLI%20with%20GitHub%20Copilot.md#msagent-assistant-plugin)
+for installation. When the plugin is available and a skill matches the task,
+invoke that skill and follow its required references. If it is unavailable or
+does not cover the task, continue using this guide and the installed CLI's help.
+Do not install or upgrade the plugin or its dependencies implicitly.
+
 ## Start here
 
 You need access to Copilot Studio and a suitable Power Platform environment.
@@ -135,6 +144,10 @@ Authenticate interactively first when needed; non-interactive mode cannot bypass
 sign-in, authorization, or connector consent. Inspect the structured result and
 actual answer, not just the exit code. Use `--conversation-id <id>` to continue a
 conversation; otherwise each call starts a new one. Do not put secrets in queries.
+Use `--start-conversation` without `--query` or `--conversation-id` to receive
+opening activities and a conversation ID before sending a user message.
+Conversation-start topics can have live effects even though `queryDelivery`
+is `not-attempted`.
 Prefer `test ask` over Playground for unattended use: Playground is interactive,
 does not support JSON in this release, and its DirectEngine sign-in may still need
 user action even with `--non-interactive`.

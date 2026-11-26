@@ -54,6 +54,180 @@ public class CommandHostTests
         Assert.Empty(stderr);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task DebugFinalResultsFollowTeardownDiagnosticsWithoutChangingTheirStreams(bool json, bool failure)
+    {
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        var operations = new FakeOperations
+        {
+            OnStatus = () =>
+            {
+                stderr.WriteLine("command debug");
+                if (failure)
+                {
+                    throw new InvalidOperationException("command failed");
+                }
+
+                return new AuthStatusReport { Status = "signed-out", SignedIn = false };
+            },
+        };
+        var cli = new AgentHostCli(operations, featureFlags: TestFeatureFlags.AllProductSurfaces);
+        string[] args = json ? ["auth", "status", "--debug", "--json"] : ["auth", "status", "--debug"];
+        var exitCode = await cli.InvokeAsync(args, stdout, stderr, color: false,
+            beforeFinalOutput: () =>
+            {
+                Assert.Equal("", stdout.ToString());
+                Assert.Equal("command debug" + Environment.NewLine, stderr.ToString());
+                stderr.WriteLine("teardown debug");
+                return ValueTask.CompletedTask;
+            });
+
+        Assert.Equal(failure ? ExitCodes.Failure : ExitCodes.Success, exitCode);
+        var diagnostics = "command debug" + Environment.NewLine + "teardown debug" + Environment.NewLine;
+        if (failure && !json)
+        {
+            Assert.Equal("", stdout.ToString());
+            Assert.StartsWith(diagnostics, stderr.ToString());
+            Assert.EndsWith("InvalidOperationException: command failed" + Environment.NewLine, stderr.ToString());
+        }
+        else
+        {
+            Assert.Equal(diagnostics, stderr.ToString());
+            Assert.NotEmpty(stdout.ToString());
+            if (json)
+            {
+                using var document = JsonDocument.Parse(stdout.ToString());
+                Assert.Equal(!failure, document.RootElement.GetProperty("success").GetBoolean());
+            }
+        }
+    }
+
+    [Fact]
+    public async Task NormalResultsRemainImmediateAndDoNotInvokeDebugTeardown()
+    {
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        var cli = new AgentHostCli(new FakeOperations(), featureFlags: TestFeatureFlags.AllProductSurfaces);
+
+        var code = await cli.InvokeAsync(["auth", "status"], stdout, stderr, color: false,
+            beforeFinalOutput: () => throw new InvalidOperationException("debug-only callback"));
+
+        Assert.Equal(ExitCodes.Success, code);
+        Assert.NotEmpty(stdout.ToString());
+        Assert.Empty(stderr.ToString());
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task DebugStdoutResultsDoNotWriteToAnEmptyStderrBuffer(bool json, bool failure)
+    {
+        using var stdout = new StringWriter();
+        using var stderr = new UnavailableErrorWriter();
+        var operations = new FakeOperations
+        {
+            OnStatus = () => failure
+                ? throw new InvalidOperationException("command failed")
+                : new AuthStatusReport { Status = "signed-out", SignedIn = false },
+        };
+        var cli = new AgentHostCli(operations, featureFlags: TestFeatureFlags.AllProductSurfaces);
+        string[] args = json ? ["auth", "status", "--debug", "--json"] : ["auth", "status", "--debug"];
+
+        var code = await cli.InvokeAsync(args, stdout, stderr, color: false);
+
+        Assert.Equal(failure ? ExitCodes.Failure : ExitCodes.Success, code);
+        Assert.NotEmpty(stdout.ToString());
+        if (json)
+        {
+            using var document = JsonDocument.Parse(stdout.ToString());
+            Assert.Equal(!failure, document.RootElement.GetProperty("success").GetBoolean());
+        }
+    }
+
+    private sealed class UnavailableErrorWriter : StringWriter
+    {
+        public override void Write(string? value) => throw new IOException("stderr unavailable");
+        public override void Flush() => throw new IOException("stderr unavailable");
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task HumanStdoutFailureReturnsFailureWithoutRetryingTheResult(bool debug, bool partialWrite)
+    {
+        using var stdout = new FailingResultWriter(partialWrite);
+        using var stderr = new StringWriter();
+        var cli = new AgentHostCli(new FakeOperations(), featureFlags: TestFeatureFlags.AllProductSurfaces);
+        string[] args = debug ? ["auth", "status", "--debug"] : ["auth", "status"];
+
+        var code = await cli.InvokeAsync(args, stdout, stderr, color: false);
+
+        Assert.Equal(ExitCodes.Failure, code);
+        Assert.NotEmpty(stderr.ToString());
+        Assert.Equal(1, stdout.WriteAttempts);
+        Assert.Equal(partialWrite, stdout.ToString().Length > 0);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeferredJsonStdoutFailureDoesNotAppendAnotherEnvelope(bool partialWrite)
+    {
+        using var stdout = new FailingResultWriter(partialWrite);
+        using var stderr = new StringWriter();
+        var cli = new AgentHostCli(new FakeOperations(), featureFlags: TestFeatureFlags.AllProductSurfaces);
+
+        var code = await cli.InvokeAsync(["auth", "status", "--debug", "--json"], stdout, stderr, color: false);
+
+        Assert.Equal(ExitCodes.Failure, code);
+        Assert.Contains("stdout unavailable", stderr.ToString());
+        Assert.Equal(1, stdout.WriteAttempts);
+        Assert.DoesNotContain("\"success\": false", stdout.ToString());
+    }
+
+    private sealed class FailingResultWriter(bool partialWrite) : StringWriter
+    {
+        public int WriteAttempts { get; private set; }
+
+        public override void Write(string? value)
+        {
+            WriteAttempts++;
+            if (partialWrite && value is not null)
+            {
+                base.Write(value[..Math.Min(8, value.Length)]);
+            }
+            throw new IOException("stdout unavailable");
+        }
+
+        public override void WriteLine(string? value) => Write(value);
+    }
+
+    [Fact]
+    public void DeferredFinalRenderingLeavesStreamingWritersAvailableImmediately()
+    {
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        var renderer = new CliOutputRenderer(stdout, stderr, color: false, deferFinalOutput: true);
+
+        renderer.Stdout.WriteLine("live activity");
+        renderer.Stderr.WriteLine("live diagnostic");
+        Assert.Equal("live activity" + Environment.NewLine, stdout.ToString());
+        renderer.RenderSuccess(new AuthStatusReport { Status = "signed-out", SignedIn = false }, json: true);
+        Assert.Equal("live activity" + Environment.NewLine, stdout.ToString());
+
+        renderer.FlushFinalOutput();
+        Assert.StartsWith("live activity" + Environment.NewLine + "{", stdout.ToString());
+        Assert.Equal("live diagnostic" + Environment.NewLine, stderr.ToString());
+    }
+
     [Fact]
     public void NestedHelp_UsesPackagedCommandName()
     {
@@ -67,6 +241,7 @@ public class CommandHostTests
         Assert.Equal(ExitCodes.Success, exitCode);
         Assert.Contains("msagent auth login [options]", stdout);
         Assert.DoesNotContain("Microsoft.Agents.Hosting.Cli auth login", stdout);
+        Assert.DoesNotContain("Examples:", stdout);
         Assert.Empty(stderr);
     }
 
@@ -170,7 +345,7 @@ public class CommandHostTests
     [InlineData("slack", true)]
     [InlineData("webchat", false)]
     [InlineData("webchat", true)]
-    public void DebugSuccess_WritesArmResponseBeforeNormalMessagesWarningsAndActions(string channel, bool json)
+    public void Success_PreservesNormalMessagesWarningsAndActionsWithoutAnArmDump(string channel, bool json)
     {
         const string warning = "Review the requested configuration.";
         var result = new DeploymentResult<DeploymentChannelRecord>
@@ -184,19 +359,17 @@ public class CommandHostTests
             {
                 ChannelName = channel,
                 ResourceId = $"/channels/{channel}",
-                RawArmResponse = JsonSerializer.SerializeToElement(new { lastDiagnostic = "ARM_END" }),
             },
         };
         var output = new StringWriter();
         var renderer = new CliOutputRenderer(output, output, color: false);
 
-        renderer.RenderSuccess(result, json, debug: true);
+        renderer.RenderSuccess(result, json);
 
         var text = output.ToString();
-        Assert.StartsWith("ARM response:", text);
-        var diagnosticEnd = text.IndexOf("ARM_END", StringComparison.Ordinal);
+        Assert.DoesNotContain("ARM response:", text);
         var normalStart = text.IndexOf(json ? "\"success\": true" : $"Channel '{channel}'", StringComparison.Ordinal);
-        Assert.True(normalStart > diagnosticEnd, "Normal output must follow the ARM diagnostics.");
+        Assert.True(normalStart >= 0);
         Assert.True(text.IndexOf(warning, StringComparison.Ordinal) > normalStart);
         if (channel == "slack")
         {

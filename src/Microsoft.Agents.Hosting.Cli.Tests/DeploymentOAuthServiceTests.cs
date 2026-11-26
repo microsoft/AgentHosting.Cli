@@ -1,6 +1,9 @@
 using Microsoft.Agents.Hosting.Cli.Core.Deployments;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
+using Microsoft.Agents.Hosting.Cli.Core.Ports;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
+using System.Net;
 using System.Text.Json;
 
 namespace Microsoft.Agents.Hosting.Cli.Tests;
@@ -10,17 +13,12 @@ public sealed class DeploymentOAuthServiceTests
     private const string DeploymentId = "11111111-1111-1111-1111-111111111111";
     private const string AgentId = "44444444-4444-4444-4444-444444444444";
 
-    private static DeploymentOAuthService Service(FakeStore store, FakeOAuthPort port) =>
+    private static DeploymentOAuthService Service(FakeStore store, FakeOAuthPort port, IStandardInput? standardInput = null) =>
         new(
             store,
             port,
-            new CompositeDeploymentTransport(subscriptionResolver: new FakeSubscriptionResolver()));
-
-    private static JsonElement Arm(string json)
-    {
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.Clone();
-    }
+            new CompositeDeploymentTransport(subscriptionResolver: new FakeSubscriptionResolver()),
+            standardInput ?? new FakeStandardInput());
 
     private static CodeAgentDeployment ProvisionedRecord(string id = DeploymentId, string name = "dev1") =>
         new()
@@ -61,6 +59,44 @@ public sealed class DeploymentOAuthServiceTests
             Parameters = parameters,
         };
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadDiagnostics_RedactByNameBeforeProviderDiscovery(bool list)
+    {
+        const string connection = """{"name":"aad-conn","properties":{"serviceProviderId":"provider-id","serviceProviderDisplayName":"Provider","parameters":[{"key":"TenantId","value":"common"},{"key":"ApiKey","value":"provider-canary"}]}}""";
+        var handler = new StubHttpMessageHandler(request => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                request.RequestUri!.AbsolutePath.EndsWith("listAuthServiceProviders", StringComparison.Ordinal)
+                    ? """{"value":[{"properties":{"id":"provider-id","serviceProviderName":"Provider","displayName":"Provider","parameters":[{"name":"TenantId","displayName":"Tenant","type":"string"},{"name":"ProviderPrivateValue","displayName":"Private","type":"securestring"}]}}]}"""
+                    : list ? "{\"value\":[" + connection + "]}" : connection,
+                System.Text.Encoding.UTF8, "application/json"),
+        });
+        using var output = new StringWriter();
+        using var client = new HttpClient(new HttpDiagnosticHandler(new TextWriterHttpDiagnosticSink(output), handler));
+        var service = new DeploymentOAuthService(
+            new FakeStore(ProvisionedRecord()),
+            new DeploymentOAuthAdapter(client, new StubTokenProvider { AccessToken = "arm-token" }),
+            new CompositeDeploymentTransport(subscriptionResolver: new FakeSubscriptionResolver()),
+            new FakeStandardInput());
+
+        if (list)
+        {
+            await service.ListAsync(new() { DeploymentId = DeploymentId }, default);
+        }
+        else
+        {
+            await service.GetAsync(new() { DeploymentId = DeploymentId, ConnectionName = "aad-conn" }, default);
+        }
+
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.DoesNotContain("listAuthServiceProviders", handler.Requests[0].Uri.AbsolutePath);
+        Assert.Contains("common", output.ToString());
+        Assert.Contains("ApiKey", output.ToString());
+        Assert.DoesNotContain("provider-canary", output.ToString());
+    }
+
     [Fact]
     public async Task CreateAsync_UnknownDeployment_ThrowsNotFound()
     {
@@ -91,8 +127,9 @@ public sealed class DeploymentOAuthServiceTests
         var port = new FakeOAuthPort { Providers = [] };
         var service = Service(store, port);
 
-        await Assert.ThrowsAsync<DeploymentException>(() =>
+        var error = await Assert.ThrowsAsync<DeploymentException>(() =>
             service.CreateAsync(CreateRequest(), CancellationToken.None));
+        Assert.Contains("'Aadv2'", error.Message);
     }
 
     [Fact]
@@ -183,7 +220,7 @@ public sealed class DeploymentOAuthServiceTests
         var ex = await Assert.ThrowsAsync<UsageException>(() =>
             service.CreateAsync(CreateRequest(clientId: null), CancellationToken.None));
 
-        Assert.Contains("--client-id", ex.Message);
+        Assert.Contains("'--client-id'", ex.Message);
         Assert.Empty(port.Upserts);
         Assert.Equal(0, port.GetCallCount);
     }
@@ -198,7 +235,10 @@ public sealed class DeploymentOAuthServiceTests
         var ex = await Assert.ThrowsAsync<UsageException>(() =>
             service.CreateAsync(CreateRequest(parameters: ["DoesNotExist=value"]), CancellationToken.None));
 
-        Assert.Contains("DoesNotExist", ex.Message);
+        Assert.Contains("--parameters DoesNotExist=...", ex.Message);
+        Assert.Contains("--provider-name Aadv2`", ex.Message);
+        Assert.DoesNotContain("--parameters 'DoesNotExist'", ex.Message);
+        Assert.DoesNotContain("--provider-name 'Aadv2'", ex.Message);
         Assert.Empty(port.Upserts);
         Assert.Equal(0, port.GetCallCount);
     }
@@ -218,7 +258,9 @@ public sealed class DeploymentOAuthServiceTests
                     parameters: ["UniqueIdentifier=uid-1"]),
                 CancellationToken.None));
 
-        Assert.Contains("--client-secret", ex.Message);
+        Assert.Contains("'--client-secret'", ex.Message);
+        Assert.Contains("--provider-name Aadv2WithFic`", ex.Message);
+        Assert.DoesNotContain("--provider-name 'Aadv2WithFic'", ex.Message);
         Assert.Empty(port.Upserts);
         Assert.Equal(0, port.GetCallCount);
     }
@@ -256,7 +298,7 @@ public sealed class DeploymentOAuthServiceTests
     }
 
     [Fact]
-    public async Task CreateAsync_SecureTypedParameter_IsMaskedInResultStoreAndRawArmResponse()
+    public async Task CreateAsync_SecureTypedParameter_IsMaskedInResultAndStore()
     {
         var store = new FakeStore(ProvisionedRecord());
         var port = new FakeOAuthPort
@@ -275,16 +317,6 @@ public sealed class DeploymentOAuthServiceTests
                     ],
                 },
             ],
-            UpsertRawArmResponse = Arm(
-                """
-                {
-                  "properties": {
-                    "parameters": [
-                      { "key": "Certificate", "value": "must-not-render" }
-                    ]
-                  }
-                }
-                """),
         };
 
         var report = await Service(store, port).CreateAsync(
@@ -294,14 +326,11 @@ public sealed class DeploymentOAuthServiceTests
                 parameters: ["Certificate=must-not-persist"]),
             CancellationToken.None);
 
-        Assert.Equal("***", report.Payload!.Parameters["Certificate"]);
+        Assert.Equal("*****", report.Payload!.Parameters["Certificate"]);
         Assert.Equal(
-            "***",
+            "*****",
             Assert.Single(Assert.Single(store.Records).OAuthConnections).Parameters["Certificate"]);
-        var rawParameter = Assert.Single(
-            report.ArmResponse!.Value.GetProperty("properties").GetProperty("parameters").EnumerateArray());
-        Assert.Equal("Certificate", rawParameter.GetProperty("key").GetString());
-        Assert.Equal("***", rawParameter.GetProperty("value").GetString());
+        Assert.DoesNotContain("must-not-persist", JsonSerializer.Serialize(report));
     }
 
     [Fact]
@@ -340,10 +369,11 @@ public sealed class DeploymentOAuthServiceTests
         var port = new FakeOAuthPort();
         var service = Service(store, port);
 
-        await Assert.ThrowsAsync<DeploymentException>(() =>
+        var error = await Assert.ThrowsAsync<DeploymentException>(() =>
             service.GetAsync(
                 new DeploymentOAuthShowRequest { DeploymentId = DeploymentId, ConnectionName = "aad-conn" },
                 CancellationToken.None));
+        Assert.Contains("'aad-conn'", error.Message);
     }
 
     [Fact]
@@ -663,6 +693,59 @@ public sealed class DeploymentOAuthServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_SecretFromStandardInput_IsSentExactlyAsPiped()
+    {
+        var port = new FakeOAuthPort();
+        var standardInput = new FakeStandardInput(" piped secret \r\n");
+
+        var report = await Service(new FakeStore(ProvisionedRecord()), port, standardInput).CreateAsync(CreateRequest(clientSecret: null) with { ClientSecretFromStandardInput = true }, CancellationToken.None);
+
+        Assert.Equal(DeploymentOperationStatus.Created, report.Status);
+        Assert.Equal(1, standardInput.Reads);
+        Assert.Equal(1, port.ProviderListCallCount);
+        Assert.Equal(" piped secret ", Assert.Single(port.Upserts).ClientSecret);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ProviderNotInCatalogue_ReadsNoStandardInput()
+    {
+        var standardInput = new FakeStandardInput("piped-secret\n");
+
+        await Assert.ThrowsAsync<DeploymentException>(() => Service(new FakeStore(ProvisionedRecord()), new FakeOAuthPort { Providers = [] }, standardInput).CreateAsync(CreateRequest(clientSecret: null) with { ClientSecretFromStandardInput = true }, CancellationToken.None));
+
+        Assert.Equal(0, standardInput.Reads);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_SecretFromStandardInput_IsSentWithTheChangedSettings()
+    {
+        var port = new FakeOAuthPort { Existing = new FakeOAuthConnectionResponse { ConnectionName = "aad-conn", ServiceProviderId = "provider-id-Aadv2", ClientId = "client-1" } };
+        var standardInput = new FakeStandardInput("rotated-secret\n");
+
+        var report = await Service(new FakeStore(ProvisionedRecord()), port, standardInput).UpdateAsync(new DeploymentOAuthUpdateRequest { DeploymentId = DeploymentId, ConnectionName = "aad-conn", ClientSecretFromStandardInput = true }, CancellationToken.None);
+
+        Assert.Equal(DeploymentOperationStatus.Updated, report.Status);
+        Assert.Equal(1, standardInput.Reads);
+        Assert.Equal("rotated-secret", Assert.Single(port.Upserts).ClientSecret);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_MissingConnection_ReadsNoStandardInput()
+    {
+        var standardInput = new FakeStandardInput("rotated-secret\n");
+
+        await Assert.ThrowsAsync<DeploymentException>(() => Service(new FakeStore(ProvisionedRecord()), new FakeOAuthPort(), standardInput).UpdateAsync(new DeploymentOAuthUpdateRequest { DeploymentId = DeploymentId, ConnectionName = "missing", ClientSecretFromStandardInput = true }, CancellationToken.None));
+
+        Assert.Equal(0, standardInput.Reads);
+    }
+
+    [Fact]
+    public void Constructor_RequiresStandardInput()
+    {
+        Assert.Throws<ArgumentNullException>(() => new DeploymentOAuthService(new FakeStore(), new FakeOAuthPort(), new CompositeDeploymentTransport(subscriptionResolver: new FakeSubscriptionResolver()), null!));
+    }
+
+    [Fact]
     public async Task UpdateAsync_UnknownLiveProviderId_DoesNotChangeProvider()
     {
         var store = new FakeStore(ProvisionedRecord() with
@@ -756,13 +839,12 @@ public sealed class DeploymentOAuthServiceTests
         Assert.Equal("client-1", persisted.ClientId);
         Assert.Equal("common", persisted.Parameters!["TenantId"]);
         Assert.DoesNotContain("ClientId", persisted.Parameters.Keys);
-        Assert.Equal("***", persisted.Parameters["ClientSecret"]);
+        Assert.Equal("*****", persisted.Parameters["ClientSecret"]);
         Assert.DoesNotContain("Scopes", persisted.Parameters.Keys);
-        Assert.Null(persisted.RawArmResponse);
     }
 
     [Fact]
-    public async Task ShowAsync_RedactsSecretsFromRawArmResponse()
+    public async Task ShowAsync_MasksSecretParametersInTheCanonicalResult()
     {
         var store = new FakeStore(ProvisionedRecord());
         var port = new FakeOAuthPort
@@ -771,19 +853,11 @@ public sealed class DeploymentOAuthServiceTests
             {
                 ConnectionName = "aad-conn",
                 ServiceProviderId = "provider-id-Aadv2",
-                RawArmResponse = Arm(
-                    """
-                    {
-                      "name": "aad-conn",
-                      "properties": {
-                        "clientSecret": "must-not-render",
-                        "parameters": [
-                          { "key": "ClientSecret", "value": "must-not-render" },
-                          { "key": "TenantId", "value": "common" }
-                        ]
-                      }
-                    }
-                    """),
+                Parameters = new Dictionary<string, string?>
+                {
+                    ["ClientSecret"] = "must-not-render",
+                    ["TenantId"] = "common",
+                },
             },
         };
         var service = Service(store, port);
@@ -792,13 +866,9 @@ public sealed class DeploymentOAuthServiceTests
             new DeploymentOAuthShowRequest { DeploymentId = DeploymentId, ConnectionName = "aad-conn" },
             CancellationToken.None);
 
-        var properties = report.ArmResponse!.Value.GetProperty("properties");
-        Assert.Equal("***", properties.GetProperty("clientSecret").GetString());
-        var parameters = properties.GetProperty("parameters").EnumerateArray().ToArray();
-        Assert.Equal(2, parameters.Length);
-        Assert.Equal("***", parameters[0].GetProperty("value").GetString());
-        Assert.Equal("TenantId", parameters[1].GetProperty("key").GetString());
-        Assert.Equal("common", parameters[1].GetProperty("value").GetString());
+        Assert.Equal("*****", report.Payload!.Parameters["ClientSecret"]);
+        Assert.Equal("common", report.Payload.Parameters["TenantId"]);
+        Assert.DoesNotContain("must-not-render", JsonSerializer.Serialize(report));
     }
 
     [Fact]
@@ -826,7 +896,7 @@ public sealed class DeploymentOAuthServiceTests
             CancellationToken.None);
 
         var parameters = Assert.Single(Assert.Single(store.Records).OAuthConnections).Parameters;
-        Assert.Equal("***", parameters["UnknownSecret"]);
+        Assert.Equal("*****", parameters["UnknownSecret"]);
         Assert.Equal("safe-value", parameters["UnknownValue"]);
     }
 
@@ -941,7 +1011,8 @@ public sealed class DeploymentOAuthServiceTests
         var service = new DeploymentOAuthService(
             new FakeStore(),
             new FakeOAuthPort(),
-            new CompositeDeploymentTransport(subscriptionResolver: resolver));
+            new CompositeDeploymentTransport(subscriptionResolver: resolver),
+            new FakeStandardInput());
 
         await service.ListProvidersAsync(
             new DeploymentOAuthProviderListRequest
@@ -1039,7 +1110,6 @@ public sealed class DeploymentOAuthServiceTests
         public bool IsDeleteSuccessful { get; set; } = true;
         public int ProviderListCallCount { get; private set; }
         public int GetCallCount { get; private set; }
-        public JsonElement? UpsertRawArmResponse { get; set; }
 
         public Task<IReadOnlyList<OAuthProviderDefinition>> ListServiceProvidersAsync(
             string subscriptionId,
@@ -1069,7 +1139,6 @@ public sealed class DeploymentOAuthServiceTests
                     parameter => parameter.Value,
                     StringComparer.Ordinal),
                 ServiceProviderId = upsert.ServiceProviderId,
-                RawArmResponse = Redact(UpsertRawArmResponse),
             });
         }
 
@@ -1121,7 +1190,6 @@ public sealed class DeploymentOAuthServiceTests
                     parameter => parameter.Value,
                     StringComparer.Ordinal),
                 ResourceId = response.ResourceId ?? string.Empty,
-                RawArmResponse = Redact(response.RawArmResponse),
             };
         }
 
@@ -1132,8 +1200,6 @@ public sealed class DeploymentOAuthServiceTests
                     [' ', ','],
                     StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        private static JsonElement? Redact(JsonElement? response)
-            => BotServiceResponseRedactor.RedactOAuth(response);
 
     }
 
@@ -1147,6 +1213,5 @@ public sealed class DeploymentOAuthServiceTests
         public IReadOnlyDictionary<string, string?> Parameters { get; init; } =
             new Dictionary<string, string?>(StringComparer.Ordinal);
         public string? ResourceId { get; init; }
-        public JsonElement? RawArmResponse { get; init; }
     }
 }

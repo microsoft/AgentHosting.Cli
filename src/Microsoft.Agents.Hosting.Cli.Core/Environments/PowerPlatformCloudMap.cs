@@ -10,6 +10,9 @@ public static partial class DataverseHostPatterns
     /// <summary>Commercial organizations, whose regional hosts are <c>crm</c> followed by an optional number.</summary>
     public static readonly Regex CommercialDynamics = CommercialDynamicsPattern();
 
+    /// <summary>Test-ring organizations, including commercial regional hosts and <c>crmtest</c> hosts.</summary>
+    public static readonly Regex TestDynamics = TestDynamicsPattern();
+
     /// <summary>United States government organizations.</summary>
     public static readonly Regex UnitedStatesGovernment = UnitedStatesGovernmentPattern();
 
@@ -24,6 +27,9 @@ public static partial class DataverseHostPatterns
 
     [GeneratedRegex(@"^[a-z0-9-]+\.crm[0-9]*\.dynamics\.com$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CommercialDynamicsPattern();
+
+    [GeneratedRegex(@"^[a-z0-9-]+\.(?:crm[0-9]*|crmtest)\.dynamics\.com$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TestDynamicsPattern();
 
     [GeneratedRegex(@"^[a-z0-9-]+\.crm[0-9]*\.(microsoftdynamics|appsplatform|dynamics\.microsoft)\.us$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UnitedStatesGovernmentPattern();
@@ -60,7 +66,7 @@ public sealed class PowerPlatformCloudMap
         new(CloudInstance.Public, ["api.powerplatform.com"], ["island.powerapps.com"], DataverseHostPatterns.CommercialDynamics);
 
     private static readonly PowerPlatformCloudMap TestCloud =
-        new(CloudInstance.Public, ["api.test.powerplatform.com"], ["island.powerapps.com"], DataverseHostPatterns.CommercialDynamics);
+        new(CloudInstance.Public, ["api.test.powerplatform.com"], ["island.powerapps.com"], DataverseHostPatterns.TestDynamics);
 
     private static readonly PowerPlatformCloudMap PreprodCloud =
         new(CloudInstance.Public, ["api.preprod.powerplatform.com"], ["island.powerapps.com"], DataverseHostPatterns.CommercialDynamics);

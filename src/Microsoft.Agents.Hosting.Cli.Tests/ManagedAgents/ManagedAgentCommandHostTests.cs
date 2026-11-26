@@ -459,6 +459,7 @@ public sealed class ManagedAgentCommandHostTests
     {
         var operations = new FakeOperations
         {
+            OnResolveDeploymentAgentType = _ => new DeploymentAgentTypeResult { AgentType = AgentTypes.McsAgent, Source = DeploymentAgentTypeSource.DeploymentRecord },
             OnManagedAgentDeploy = _ => new ManagedAgentDeployResult
             {
                 AgentId = "agent-1",
@@ -637,7 +638,7 @@ public sealed class ManagedAgentCommandHostTests
     [Fact]
     public void Delete_PassesNonInteractiveThrough()
     {
-        var operations = new FakeOperations();
+        var operations = McsOperations();
 
         var (exitCode, _, _) = Run(operations, "agent", "delete", "--agent-id", "agent-1", "--non-interactive");
 
@@ -955,5 +956,32 @@ public sealed class ManagedAgentCommandHostTests
         using var document = JsonDocument.Parse(stdout);
         Assert.False(document.RootElement.GetProperty("success").GetBoolean());
         Assert.Equal("config-not-found", document.RootElement.GetProperty("errorKind").GetString());
+    }
+
+    [Theory]
+    [InlineData("create", "--mcs-clone-environment-id")]
+    [InlineData("copy", "--environment-id")]
+    public void ManagedCloneSource_RemediationNamesTheEnvironmentOptionTheCommandAccepts(string command, string environmentOption)
+    {
+        var failing = new FakeOperations
+        {
+            OnManagedAgentCreate = _ => throw ManagedAgentException.AgentManaged("The agent 'Contoso Helpdesk' is managed."),
+            OnManagedAgentCopy = _ => throw ManagedAgentException.AgentManaged("The agent 'Contoso Helpdesk' is managed."),
+        };
+
+        var (failedExitCode, failedStdout, _) = Run(failing, "agent", command, "--agent-name", "Copy", "--mcs-clone-agent-id", "9a1b", "--json");
+
+        Assert.Equal(ExitCodes.Usage, failedExitCode);
+        using var failure = JsonDocument.Parse(failedStdout);
+        Assert.Equal("agent-managed", failure.RootElement.GetProperty("errorKind").GetString());
+        Assert.Contains($"{environmentOption} to `msagent agent {command}`", failure.RootElement.GetProperty("remediation").GetString(), StringComparison.Ordinal);
+
+        var retried = new FakeOperations();
+
+        var (retriedExitCode, _, retriedStderr) = Run(retried, "agent", command, "--agent-name", "Copy", "--mcs-clone-agent-id", "9a1b", environmentOption, "env-unmanaged");
+
+        Assert.Equal(ExitCodes.Success, retriedExitCode);
+        Assert.Empty(retriedStderr);
+        Assert.Equal("env-unmanaged", retried.LastManagedAgentCreateRequest?.CloneEnvironmentId ?? retried.LastManagedAgentCopyRequest?.EnvironmentId);
     }
 }

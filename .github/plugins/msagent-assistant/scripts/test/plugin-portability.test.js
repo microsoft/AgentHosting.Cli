@@ -648,6 +648,7 @@ for (const target of ["gemini", "agency"]) {
       }
       assert.ok(!fs.existsSync(path.join(output, "scripts", "node_modules")));
       assert.ok(!fs.existsSync(path.join(output, "scripts", "chat-with-agent.bundle.js")));
+      assert.ok(!fs.existsSync(path.join(output, "extensions")));
       const other = path.join(directory, "two", "msagent-assistant");
       packageHost({ target, output: other });
       const metadata = fs.readFileSync(path.join(output, "distribution.json"), "utf8");
@@ -662,6 +663,7 @@ for (const target of ["gemini", "agency"]) {
         const manifest = JSON.parse(fs.readFileSync(path.join(output, "plugin.json")));
         assert.equal(manifest.name, "msagent-assistant");
         assert.equal(manifest.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
+        assert.equal(manifest.extensions, undefined);
         const copilot = path.join(output, "com.github.copilot");
         for (const component of ["commands", "agents"]) {
           assert.ok(!fs.existsSync(path.join(output, component)));

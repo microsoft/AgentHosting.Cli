@@ -32,7 +32,8 @@ or enable shipped-off features without the relevant approval.
 
 `LiveTestFeatures` ships on, so `test ask` and `test playground` are available
 by default. No feature override is needed; availability does not replace the
-required approval. Select the intended account with `msagent auth login`. When
+required approval. Sign in as the intended account with `msagent auth create`,
+or select its existing profile with `msagent auth select --name <name>`. When
 testing a custom client configuration,
 configure `AH_CLI_CLIENT_ID` for
 an authorized public/native client with public-client redirect flow and
@@ -139,7 +140,7 @@ Wait for Connected and an enabled composer; process start is insufficient.
 #### Playground installation and options
 
 The command uses `agentsplayground` on `PATH`, backed by the global
-`@microsoft/m365agentsplayground` package, version `0.2.29` or newer.
+`@microsoft/m365agentsplayground` package, version `0.2.30` or newer.
 A working installed tool does not trigger an npm probe. For a missing or old
 tool, interactive use offers
 `npm install -g @microsoft/m365agentsplayground@latest`. This runs lifecycle scripts

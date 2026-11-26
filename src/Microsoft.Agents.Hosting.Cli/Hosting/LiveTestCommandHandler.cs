@@ -1,5 +1,6 @@
 using Microsoft.Agents.Hosting.Cli.Auth;
 using Microsoft.Agents.Hosting.Cli.CopilotStudio.AskClient;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.ManagedAgents;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 using Microsoft.Agents.Hosting.Cli.Core.Ports;
@@ -11,7 +12,8 @@ namespace Microsoft.Agents.Hosting.Cli.Hosting;
 public sealed class LiveTestCommandHandler(
     LiveTestTargetResolver resolver,
     MsalLiveTestTokenProvider tokens,
-    ITokenProvider tokenProvider) : ICommandHandler<LiveTestRequest, ILiveTestStreamingResult>
+    ITokenProvider tokenProvider,
+    HttpDiagnostics? httpDiagnostics = null) : ICommandHandler<LiveTestRequest, ILiveTestStreamingResult>
 {
     public Task<ILiveTestStreamingResult> HandleAsync(LiveTestRequest request, CancellationToken cancellationToken) =>
         Task.FromResult<ILiveTestStreamingResult>(
@@ -26,5 +28,7 @@ public sealed class LiveTestCommandHandler(
                         target.TenantId,
                         target.SchemaName),
                     tokenProvider,
-                    cancellationToken: token)));
+                    transport: null,
+                    cancellationToken: token,
+                    httpDiagnostics: httpDiagnostics ?? HttpDiagnostics.Disabled)));
 }

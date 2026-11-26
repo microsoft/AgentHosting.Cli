@@ -8,6 +8,7 @@ public sealed class ServiceCorrelationTests
     [InlineData("x-ms-request-id")]
     [InlineData("x-ms-correlation-request-id")]
     [InlineData("request-id")]
+    [InlineData("x-ms-service-request-id")]
     public void ReadServiceRequestId_AcceptsEveryHeaderTheServicesUse(string headerName)
     {
         using var response = new HttpResponseMessage();

@@ -25,6 +25,7 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
     private readonly ITokenProvider _tokenProvider;
     private readonly CancellationToken _cancellationToken;
     private readonly HttpClient _httpClient;
+    private readonly HttpClient _discoveryHttpClient;
     private readonly CopilotClient _copilotClient;
     private readonly McsLiveEndpointDiscovery _discovery;
     private bool _started;
@@ -58,6 +59,17 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
         ITokenProvider tokenProvider,
         HttpMessageHandler? transport = null,
         CancellationToken cancellationToken = default)
+        : this(target, tokenProvider, transport, HttpDiagnostics.Disabled, cancellationToken)
+    {
+    }
+
+    /// <summary>Creates a session tracing repository-issued endpoint discovery, but not SDK requests.</summary>
+    public McsLiveTestSession(
+        McsLiveTestTarget target,
+        ITokenProvider tokenProvider,
+        HttpMessageHandler? transport,
+        HttpDiagnostics httpDiagnostics,
+        CancellationToken cancellationToken = default)
     {
         ValidateTarget(target);
         _target = target;
@@ -66,10 +78,17 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
         _cancellationToken = cancellationToken;
         McsLiveActivityCodec.Initialize();
 
+        ArgumentNullException.ThrowIfNull(httpDiagnostics);
         var inner = transport ?? CreateTransport();
         _httpClient = new HttpClient(
             new McsResponseBridgeHandler(inner, _discovery, SetServiceConversationId, error => _responseError = error),
             disposeHandler: true)
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+        _discoveryHttpClient = new HttpClient(
+            new McsResponseBridgeHandler(httpDiagnostics.Wrap(new SharedTransportHandler(inner)),
+                _discovery, SetServiceConversationId, error => _responseError = error))
         {
             Timeout = Timeout.InfiniteTimeSpan,
         };
@@ -108,7 +127,7 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
         request.Headers.Accept.ParseAdd("application/json");
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
             "Bearer", await GetTokenAsync(_discovery.DiscoveryUri.AbsoluteUri).ConfigureAwait(false));
-        using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await _discoveryHttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         return _discovery.CreateConversationUri
             ?? throw new McsLiveTestProtocolException("The service did not return a conversation endpoint.");
     }
@@ -145,9 +164,17 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
     /// Continues a supplied or service-confirmed conversation without starting a replacement.
     /// The query is sent exactly once and is not retried after an uncertain response.
     /// </summary>
-    public async IAsyncEnumerable<JsonElement> QueryAsync(
+    public IAsyncEnumerable<JsonElement> QueryAsync(
         string query,
         string? conversationId = null,
+        CancellationToken cancellationToken = default) =>
+        QueryAsync(query, conversationId, [], cancellationToken);
+
+    /// <summary>Sends one query with explicitly supplied file attachments, without retrying.</summary>
+    public async IAsyncEnumerable<JsonElement> QueryAsync(
+        string query,
+        string? conversationId,
+        IReadOnlyList<LiveTestAttachment> attachments,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -180,7 +207,19 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
         _responseError = null;
         _queryStarted = true;
         await foreach (var activity in ConvertActivitiesAsync(
-            _copilotClient.AskQuestionAsync(query, id, cancellationToken),
+            attachments.Count == 0 ? _copilotClient.AskQuestionAsync(query, id, cancellationToken)
+                : _copilotClient.SendActivityAsync(new Activity
+                {
+                    Type = "message",
+                    Text = query,
+                    Conversation = new ConversationAccount { Id = id },
+                    Attachments = attachments.Select(file => new Attachment
+                    {
+                        Name = file.Name,
+                        ContentType = file.ContentType,
+                        ContentUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(file.Content)}",
+                    }).ToList(),
+                }, cancellationToken),
             cancellationToken)
             .WithCancellation(cancellationToken)
             .ConfigureAwait(false))
@@ -197,6 +236,7 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
         if (!_disposed)
         {
             _disposed = true;
+            _discoveryHttpClient.Dispose();
             _httpClient.Dispose();
         }
     }
@@ -206,6 +246,25 @@ public sealed class McsLiveTestSession : IDisposable, IAsyncDisposable, ILiveTes
     {
         Dispose();
         return ValueTask.CompletedTask;
+    }
+
+    // Both paths share the injected transport; only the SDK client owns its disposal.
+    private sealed class SharedTransportHandler(HttpMessageHandler transport) : HttpMessageHandler
+    {
+        private readonly HttpMessageInvoker _invoker = new(transport, disposeHandler: false);
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            _invoker.SendAsync(request, cancellationToken);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _invoker.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
     }
 
     private async Task<string> GetTokenAsync(string resource)

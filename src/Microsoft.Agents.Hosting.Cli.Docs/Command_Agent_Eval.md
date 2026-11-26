@@ -104,7 +104,6 @@ msagent agent eval run --generate 10 --turns 3 --name <test-set-name> --watch
 | `--name` | `-n` | String | Conditional | None | Names the test set created from `--from-csv` or `--generate`. Required with either. |
 | `--update-testset` | `-uts` | Boolean flag | No | `false` | Replace the conversations in an existing test set of the same name instead of failing. |
 | `--connection` | `-con` | String | No | None | The Copilot Studio connection ID the agent runs as. Passed to the evaluation service without a name lookup. Omit to evaluate without an authenticated profile. |
-| `--published` | `-pubd` | Boolean flag | No | `false` | Evaluate the published agent instead of the draft. |
 | `--watch` | `-w` | Boolean flag | No | `false` | Poll until the run finishes and print the results. |
 | `--timeout-minutes` | `-tmo` | Whole number | No | `60` | How long `--watch` polls before giving up. Must be positive. |
 | `--output` | `-o` | File path | No | None | Write the finished run to this file as JSON. Requires `--watch`. |
@@ -113,6 +112,7 @@ Supplying neither `--testset` nor a conversation source is a usage error, as is 
 `--name` and `--update-testset` are used only when creating a test set from a conversation source;
 they do not change a set selected by `--testset`. `--turns` is used only for generation, not CSV import.
 New test sets use the service's general-quality grader; this command has no grader-selection option.
+Runs evaluate the agent's draft, not its published version.
 
 The test set created by `--from-csv` or `--generate` is durable and remains after the run. Reusing
 its name fails unless `--update-testset` is supplied, which uses the same replacement safeguards as

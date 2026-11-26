@@ -42,11 +42,6 @@ public sealed class ManagedAgentPullService
             throw new UsageException("--deployment-id and --deployment-name apply to a workflow only. `msagent agent pull` reads an agent from the environment its workspace is connected to, so naming a deployment here would be ignored.");
         }
 
-        if (request.Overwrite)
-        {
-            throw new UsageException("--overwrite applies to a workflow only. `msagent agent pull` merges remote content into the workspace instead of replacing it, so there is nothing to overwrite.");
-        }
-
         var projectDirectory = _resolver.ResolveProjectDirectory(request.Project);
 
         if (!Directory.Exists(projectDirectory))
@@ -59,11 +54,11 @@ public sealed class ManagedAgentPullService
         var workspace = await _workspaceLocator.FindAsync(workspaceDirectory, cancellationToken).ConfigureAwait(false);
 
         return workspace is not null
-            ? await PullConnectedAsync(projectDirectory, workspaceDirectory, agent, workspace, cancellationToken).ConfigureAwait(false)
+            ? await PullConnectedAsync(projectDirectory, workspaceDirectory, agent, workspace, request.Overwrite, cancellationToken).ConfigureAwait(false)
             : throw ManagedAgentException.WorkspaceDisconnected(projectDirectory);
     }
 
-    private async Task<ManagedAgentPullResult> PullConnectedAsync(string projectDirectory, string workspaceDirectory, ManagedAgentRecord agent, CopilotWorkspaceInfo workspace, CancellationToken cancellationToken)
+    private async Task<ManagedAgentPullResult> PullConnectedAsync(string projectDirectory, string workspaceDirectory, ManagedAgentRecord agent, CopilotWorkspaceInfo workspace, bool overwrite, CancellationToken cancellationToken)
     {
         var environment = await _environmentResolver.ResolveAsync(workspace.EnvironmentId, cancellationToken).ConfigureAwait(false);
         WorkspaceConnectionVerifier.RequireOriginMatches(workspace, environment);
@@ -77,13 +72,13 @@ public sealed class ManagedAgentPullService
 
             if (collectionWorkspace is not null && string.Equals(collectionWorkspace.EnvironmentId, environment.EnvironmentId, StringComparison.OrdinalIgnoreCase))
             {
-                var pulledCollection = await _workspaces.PullForEnvironmentAsync(new CopilotPullRequest { ProjectDirectory = collection }, environment, cancellationToken).ConfigureAwait(false);
+                var pulledCollection = await _workspaces.PullForEnvironmentAsync(new CopilotPullRequest { ProjectDirectory = collection, Overwrite = overwrite }, environment, cancellationToken).ConfigureAwait(false);
                 changes.AddRange(pulledCollection.Changes);
                 warnings.AddRange(pulledCollection.Warnings);
             }
         }
 
-        var pulled = await _workspaces.PullForEnvironmentAsync(new CopilotPullRequest { ProjectDirectory = workspaceDirectory }, environment, cancellationToken).ConfigureAwait(false);
+        var pulled = await _workspaces.PullForEnvironmentAsync(new CopilotPullRequest { ProjectDirectory = workspaceDirectory, Overwrite = overwrite }, environment, cancellationToken).ConfigureAwait(false);
         changes.AddRange(pulled.Changes);
         warnings.AddRange(pulled.Warnings);
 

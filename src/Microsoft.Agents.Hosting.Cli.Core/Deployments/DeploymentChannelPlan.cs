@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Agents.Hosting.Cli.Core.Errors;
+using Microsoft.Agents.Hosting.Cli.Core.Http;
 using Microsoft.Agents.Hosting.Cli.Core.Operations;
 
 namespace Microsoft.Agents.Hosting.Cli.Core.Deployments;
@@ -26,21 +27,15 @@ internal sealed record DeploymentChannelOperationPlan<TRequest>
 /// </summary>
 public static class DeploymentChannelPlan
 {
-    internal static DeploymentChannelRequest Validate(DeploymentChannelRequest request)
+    /// <summary>Validates the local deployment address and the channel name of a request.</summary>
+    internal static DeploymentChannelRequest Validate(DeploymentChannelRequest request) => ValidateChannelName((DeploymentChannelRequest)ValidateAddress(request));
+
+    internal static DeploymentChannelShowRequest ValidateShow(DeploymentChannelShowRequest request) => ValidateShowContent((DeploymentChannelShowRequest)ValidateAddress(request));
+
+    /// <summary>Validates the channel of a show request whose deployment is addressed elsewhere, such as through AMS.</summary>
+    internal static DeploymentChannelShowRequest ValidateShowContent(DeploymentChannelShowRequest request)
     {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var validatedRequest = (DeploymentChannelRequest)DeploymentRequestValidator.Validate(request);
-
-        return validatedRequest with
-        {
-            ChannelName = DeploymentChannelCatalog.ValidateChannelName(request.ChannelName),
-        };
-    }
-
-    internal static DeploymentChannelShowRequest ValidateShow(DeploymentChannelShowRequest request)
-    {
-        var validatedRequest = (DeploymentChannelShowRequest)Validate(request);
+        var validatedRequest = (DeploymentChannelShowRequest)ValidateChannelName(request);
         var channelDefinition = DeploymentChannelCatalog.FindChannelDefinition(validatedRequest.ChannelName, ChannelKeyType.Name);
         if (!DeploymentChannelCatalog.SupportsOperation(channelDefinition, "show"))
         {
@@ -52,9 +47,12 @@ public static class DeploymentChannelPlan
 
     /// <summary>Validates create inputs before deployment resolution or Azure writes.</summary>
     internal static DeploymentChannelOperationPlan<DeploymentChannelCreateRequest> ValidateCreate(
-        DeploymentChannelCreateRequest request)
+        DeploymentChannelCreateRequest request) => ValidateCreateContent((DeploymentChannelCreateRequest)ValidateAddress(request));
+
+    /// <summary>Validates the channel content of a create request whose deployment is addressed elsewhere, such as through AMS.</summary>
+    internal static DeploymentChannelOperationPlan<DeploymentChannelCreateRequest> ValidateCreateContent(DeploymentChannelCreateRequest request)
     {
-        var validatedRequest = (DeploymentChannelCreateRequest)Validate(request);
+        var validatedRequest = (DeploymentChannelCreateRequest)ValidateChannelName(request);
 
         var channelDefinition = DeploymentChannelCatalog.FindChannelDefinition(validatedRequest.ChannelName, ChannelKeyType.Name);
         ValidateCollectionOperations(validatedRequest, channelDefinition, isCreate: true);
@@ -80,9 +78,12 @@ public static class DeploymentChannelPlan
 
     /// <summary>Validates assignments or one collection operation before reading existing state.</summary>
     internal static DeploymentChannelOperationPlan<DeploymentChannelUpdateRequest> ValidateUpdate(
-        DeploymentChannelUpdateRequest request)
+        DeploymentChannelUpdateRequest request) => ValidateUpdateContent((DeploymentChannelUpdateRequest)ValidateAddress(request));
+
+    /// <summary>Validates the channel content of an update request whose deployment is addressed elsewhere, such as through AMS.</summary>
+    internal static DeploymentChannelOperationPlan<DeploymentChannelUpdateRequest> ValidateUpdateContent(DeploymentChannelUpdateRequest request)
     {
-        var validatedRequest = (DeploymentChannelUpdateRequest)Validate(request);
+        var validatedRequest = (DeploymentChannelUpdateRequest)ValidateChannelName(request);
         var channelDefinition = DeploymentChannelCatalog.FindChannelDefinition(
             validatedRequest.ChannelName,
             ChannelKeyType.Name);
@@ -124,9 +125,12 @@ public static class DeploymentChannelPlan
         };
     }
 
-    internal static DeploymentChannelDeleteRequest ValidateDelete(DeploymentChannelDeleteRequest request)
+    internal static DeploymentChannelDeleteRequest ValidateDelete(DeploymentChannelDeleteRequest request) => ValidateDeleteContent((DeploymentChannelDeleteRequest)ValidateAddress(request));
+
+    /// <summary>Validates the channel of a delete request whose deployment is addressed elsewhere, such as through AMS.</summary>
+    internal static DeploymentChannelDeleteRequest ValidateDeleteContent(DeploymentChannelDeleteRequest request)
     {
-        var validatedRequest = (DeploymentChannelDeleteRequest)Validate(request);
+        var validatedRequest = (DeploymentChannelDeleteRequest)ValidateChannelName(request);
         var channelDefinition = DeploymentChannelCatalog.FindChannelDefinition(validatedRequest.ChannelName, ChannelKeyType.Name);
         if (!DeploymentChannelCatalog.SupportsOperation(channelDefinition, "delete"))
         {
@@ -138,10 +142,18 @@ public static class DeploymentChannelPlan
         return validatedRequest;
     }
 
-    internal static DeploymentChannelListRequest ValidateList(DeploymentChannelListRequest request)
+    internal static DeploymentChannelListRequest ValidateList(DeploymentChannelListRequest request) => (DeploymentChannelListRequest)ValidateAddress(request);
+
+    private static DeploymentRequest ValidateAddress(DeploymentRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return (DeploymentChannelListRequest)DeploymentRequestValidator.Validate(request);
+        return DeploymentRequestValidator.Validate(request);
+    }
+
+    private static DeploymentChannelRequest ValidateChannelName(DeploymentChannelRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return request with { ChannelName = DeploymentChannelCatalog.ValidateChannelName(request.ChannelName) };
     }
 
     /// <summary>Builds a create PUT payload from a validated plan.</summary>
@@ -178,7 +190,7 @@ public static class DeploymentChannelPlan
             existingChannel.Parameters.TryGetValue("acceptedTerms", out var existingTerms) &&
             existingTerms.ValueKind == JsonValueKind.True)
         {
-            throw new UsageException("Microsoft Teams terms acceptance cannot be revoked.");
+            throw new UsageException("Parameter 'acceptedTerms' for 'msteams' cannot be revoked once accepted.");
         }
 
         var parameters = plan.SiteMutation is { } mutation
@@ -236,7 +248,7 @@ public static class DeploymentChannelPlan
         if (!isCreateRequest && request.Parameters.Count == 0)
         {
             throw new UsageException(
-                $"At least one --parameters Key=Value assignment is required to update the {channelDefinition.Name} channel.");
+                $"At least one --parameters Key=Value assignment is required to update the '{channelDefinition.Name}' channel.");
         }
 
         if (isCreateRequest)
@@ -439,7 +451,7 @@ public static class DeploymentChannelPlan
         }
         catch (JsonException)
         {
-            throw InvalidArray(parameterName, itemName);
+            throw new UsageException($"Parameter '{parameterName}' contains invalid JSON.");
         }
     }
 
@@ -461,7 +473,7 @@ public static class DeploymentChannelPlan
     {
         if (item.ValueKind != JsonValueKind.Object)
         {
-            throw new UsageException($"Each '{collectionName}' item must be a JSON object.");
+            throw new UsageException($"Parameter '{collectionName}' must be an array of JSON objects.");
         }
 
         var normalizedFields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -472,7 +484,7 @@ public static class DeploymentChannelPlan
                 (!field.IsReadOnly || allowReadOnlySelector && field.IsSelector));
             if (field is null)
             {
-                throw DeploymentException.InvalidChannelParameter(property.Name, channelName, operation);
+                throw DeploymentException.InvalidChannelParameter($"{collectionName}[].{property.Name}", channelName, operation);
             }
 
             var parameterName = $"{collectionName}[].{field.Name}";
@@ -500,17 +512,21 @@ public static class DeploymentChannelPlan
 
     /// <summary>Rejects extra fields on remove or selector-only set operations after item normalization.</summary>
     internal static void ValidateSelectorOperation(
-        ChannelCollectionOperation operation, JsonElement item, string optionName, string selectorName)
+        ChannelCollectionOperation operation, JsonElement item, string optionName, string collectionName, string selectorName)
     {
-        var fieldCount = item.EnumerateObject().Count();
-        if (operation == ChannelCollectionOperation.Remove && fieldCount != 1)
+        var selectorPath = $"{collectionName}[].{selectorName}";
+        var fieldNames = item.EnumerateObject().Select(property => property.Name).ToArray();
+        if (operation == ChannelCollectionOperation.Remove && fieldNames.Length != 1)
         {
-            throw new UsageException($"{optionName} accepts only the {selectorName} selector.");
+            var unexpected = fieldNames.Where(name => name != selectorName).ToArray();
+            throw new UsageException($"{optionName} accepts only parameter '{selectorPath}'." +
+                (unexpected.Length == 0 ? string.Empty :
+                    $" Unexpected parameters: {string.Join(", ", unexpected.Select(name => $"'{collectionName}[].{name}'"))}."));
         }
 
-        if (operation == ChannelCollectionOperation.Set && fieldCount == 1)
+        if (operation == ChannelCollectionOperation.Set && fieldNames.Length == 1)
         {
-            throw new UsageException($"{optionName} requires at least one writable change in addition to its {selectorName} selector.");
+            throw new UsageException($"{optionName} requires at least one writable parameter in addition to parameter '{selectorPath}'.");
         }
     }
 
@@ -527,22 +543,22 @@ public static class DeploymentChannelPlan
         var seen = new HashSet<string>(comparer);
         if (selectors.Any(selector => !seen.Add(selector)))
         {
-            throw new UsageException($"Values for '{parameterName}' must be unique.");
+            throw new UsageException($"Parameter '{parameterName}' must have unique values.");
         }
     }
 
     internal static JsonElement ReadCollection(DeploymentChannelRecord channel, string parameterName) =>
         channel.Parameters.TryGetValue(parameterName, out var array) && array.ValueKind == JsonValueKind.Array
-            ? array : throw DeploymentException.ChannelConfigurationUnavailable();
+            ? array : throw DeploymentException.ChannelConfigurationUnavailable(parameterName);
 
     /// <summary>Reads reusable identities without echoing their values or changing the original service text.</summary>
-    internal static string ReadSelector(JsonElement item, string selectorName)
+    internal static string ReadSelector(JsonElement item, string collectionName, string selectorName)
     {
         if (item.ValueKind != JsonValueKind.Object ||
             !item.TryGetProperty(selectorName, out var selector) || selector.ValueKind != JsonValueKind.String ||
             string.IsNullOrWhiteSpace(selector.GetString()))
         {
-            throw DeploymentException.ChannelConfigurationUnavailable();
+            throw DeploymentException.ChannelConfigurationUnavailable($"{collectionName}[].{selectorName}");
         }
 
         return selector.GetString()!;
@@ -588,7 +604,7 @@ public static class DeploymentChannelPlan
         definition.Type switch
         {
             DeploymentParameterType.String when value.ValueKind == JsonValueKind.String &&
-                                                (!definition.IsSecret || value.GetString() != BotServiceResponseRedactor.Mask) => value.Clone(),
+                                                (!definition.IsSecret || !SecretRedaction.IsMasked(value.GetString())) => value.Clone(),
             DeploymentParameterType.Boolean when value.ValueKind is JsonValueKind.True or JsonValueKind.False =>
                 value.Clone(),
             DeploymentParameterType.Integer when value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out _) =>

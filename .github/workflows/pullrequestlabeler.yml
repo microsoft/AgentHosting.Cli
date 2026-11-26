@@ -1,30 +1,69 @@
 name: Pull request Labeler
 on:
-  pull_request_target:
+  workflow_run:
+    workflows: ["Receive pull request for labeling"]
+    types: [completed]
 
 permissions:
   contents: read
   pull-requests: write
   issues: write
 
-defaults:
-  run:
-    shell: pwsh
-
 jobs:
   Label:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'microsoft'
+    if: >-
+      github.repository_owner == 'microsoft' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.repository.id == github.event.repository.id
     steps:
+      - name: Resolve pull request
+        id: pr
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              ...context.repo,
+              state: 'open',
+              per_page: 100
+            });
+            const matches = pulls.filter(pr =>
+              pr.base.repo.id === context.payload.repository.id &&
+              pr.head.sha === run.head_sha &&
+              pr.head.ref === run.head_branch &&
+              (run.pull_requests.length === 0 ||
+                run.pull_requests.some(associated => associated.number === pr.number))
+            );
+            if (matches.length === 0) {
+              core.notice('No matching open pull request; it may have changed or closed.');
+              return;
+            }
+            if (matches.length !== 1) {
+              throw new Error('Multiple pull requests match the workflow run; refusing to label.');
+            }
+            const pr = matches[0];
+            core.setOutput('number', pr.number);
+            core.setOutput('from-fork', pr.head.repo?.id !== pr.base.repo.id);
+
       - name: Label pull request
+        if: steps.pr.outputs.number != ''
         uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
         with:
             repo-token: '${{ secrets.GITHUB_TOKEN }}'
             sync-labels: true
+            pr-number: ${{ steps.pr.outputs.number }}
 
       - name: Label community contribution
-        if: github.event.pull_request.head.repo.full_name != github.repository
+        if: steps.pr.outputs.number != '' && steps.pr.outputs.from-fork == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api /repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels  -f "labels[]=From Fork" -H "Accept: application/vnd.github.v3+json" -H "X-GitHub-Api-Version: 2022-11-28"
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: Number(process.env.PR_NUMBER),
+              labels: ['From Fork']
+            });

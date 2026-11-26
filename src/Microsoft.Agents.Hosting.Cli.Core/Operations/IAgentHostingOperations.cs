@@ -52,17 +52,8 @@ public interface IAgentHostingOperations
         AgentPackageUploadRequest request,
         CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Creates desired Deployment state selecting an existing Package Revision through the current
-    /// target-routed projection path. It never opens identity UI and does not prove cross-island
-    /// execution or a durable public Deploy Operation.
-    /// </summary>
+    /// <summary>Puts an existing AMS deployment live as its record says, never creating a deployment.</summary>
     Task<AgentDeployResult> DeployAgentAsync(AgentDeployRequest request, CancellationToken cancellationToken);
-
-    /// <summary>Conditionally replaces the package selected by an existing AMS deployment.</summary>
-    Task<AgentDeployResult> UpdateAgentDeploymentPackageAsync(
-        AgentDeploymentPackageUpdateRequest request,
-        CancellationToken cancellationToken);
 
     /// <summary>Produces a deterministic, read-only Azure Bot Service plan; never mutates Azure.</summary>
     Task<AbsProvisioningReport> PreviewAzureBotAsync(AbsProvisioningRequest request, CancellationToken cancellationToken);

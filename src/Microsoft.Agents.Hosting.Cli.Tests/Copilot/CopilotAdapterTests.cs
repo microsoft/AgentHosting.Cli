@@ -131,14 +131,39 @@ public sealed class AgentHostSyncAuthProviderTests
 public sealed class StandardErrorSyncProgressTests
 {
     [Fact]
+    public void Report_ColorsOnlyTheDebugTimestamp()
+    {
+        var standardError = new StringWriter();
+
+        new StandardErrorSyncProgress(standardError, timeProvider: new ManualTimeProvider(), color: true)
+            .Report("Failed to download workflows.\n  details");
+
+        Assert.Equal("\u001b[90m1970-01-01 00:00:00.000\u001b[0m [SYNC] Failed to download workflows.\n  details" + Environment.NewLine,
+            standardError.ToString());
+    }
+
+    [Fact]
     public void Report_WritesToStandardError()
     {
         var standardError = new StringWriter();
-        var progress = new StandardErrorSyncProgress(standardError);
+        var time = new ManualTimeProvider();
+        time.Advance(TimeSpan.FromMilliseconds(123));
+        var progress = new StandardErrorSyncProgress(standardError, timeProvider: time);
 
         progress.Report("cloning components");
 
-        Assert.Contains("cloning components", standardError.ToString(), StringComparison.Ordinal);
+        Assert.Equal("1970-01-01 00:00:00.123 [SYNC] cloning components" + Environment.NewLine, standardError.ToString());
+    }
+
+    [Fact]
+    public void Report_AddsReceiptTimeWithoutChangingMultilineContent()
+    {
+        const string message = "Failed to download workflows.\r\nException: failed\n  details\n";
+        var standardError = new StringWriter();
+
+        new StandardErrorSyncProgress(standardError, timeProvider: new ManualTimeProvider()).Report(message);
+
+        Assert.Equal("1970-01-01 00:00:00.000 [SYNC] " + message + Environment.NewLine, standardError.ToString());
     }
 
     [Fact]
@@ -194,15 +219,18 @@ public sealed class StandardErrorSyncProgressTests
         Assert.Contains("Could not list connections", standardError.ToString(), StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void Report_WhenNotVerbose_StillWritesAFailureTheLibrarySwallowed()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Report_WhenNotVerbose_StillWritesAFailureTheLibrarySwallowed(bool color)
     {
         var standardError = new StringWriter();
 
-        new StandardErrorSyncProgress(standardError, verbose: false)
+        new StandardErrorSyncProgress(standardError, verbose: false, color: color)
             .Report("Failed to push custom connector 'shared_contoso': Connector request failed (409).");
 
-        Assert.Contains("Failed to push custom connector", standardError.ToString(), StringComparison.Ordinal);
+        Assert.Equal("Failed to push custom connector 'shared_contoso': Connector request failed (409)." + Environment.NewLine,
+            standardError.ToString());
     }
 
     [Fact]

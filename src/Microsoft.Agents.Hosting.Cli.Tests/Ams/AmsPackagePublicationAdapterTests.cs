@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json.Nodes;
 using Microsoft.Agents.Hosting.Cli.Core.Ams;
 using Microsoft.Agents.Hosting.Cli.Core.Auth;
@@ -77,6 +78,18 @@ public sealed class AmsPackagePublicationAdapterTests
         Assert.Equal("Succeeded", result.Status);
         Assert.Equal(PackageBytes.Length, result.SizeInBytes);
         Assert.True(packageStream.CanRead);
+    }
+
+    [Fact]
+    public async Task Publish_ToADirectTarget_UsesTheTenantAndEnvironmentScopedRoute()
+    {
+        var handler = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.OK, SuccessBody));
+        using var packageStream = new MemoryStream(PackageBytes, writable: false);
+        var request = Request(packageStream);
+
+        await Adapter(handler, new FakePpapiTokenProvider()).PublishAsync(request with { ServiceTarget = request.ServiceTarget with { Endpoint = new Uri("https://amsdp-alias.example/"), RouteForm = AmsRouteForm.Direct } }, default);
+
+        Assert.Equal($"https://amsdp-alias.example/agenthosting/tenants/{Tenant}/environments/env%2Fblue/agents/{Agent}/packages?api-version=1", Assert.Single(handler.Requests).Uri.AbsoluteUri);
     }
 
     [Fact]
@@ -408,12 +421,17 @@ public sealed class AmsPackagePublicationAdapterTests
         Assert.True(packageStream.CanRead);
     }
 
-    [Fact]
-    public async Task Publish_ResponseBodyConnectionFailure_IsIndeterminateAndDoesNotLeakDetails()
+    [Theory]
+    [InlineData(HttpStatusCode.OK)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task Publish_ResponseBodyConnectionFailure_PreservesStatusWithoutLeakingDetails(HttpStatusCode status)
     {
-        var handler = new CapturingPackageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        var handler = new CapturingPackageHandler(_ => new HttpResponseMessage(status)
         {
-            Content = new ThrowingReadContent(new HttpRequestException("private-response-detail")),
+            Content = new ThrowingReadContent(new HttpRequestException(
+                HttpRequestError.Unknown,
+                "private-response-detail",
+                new HttpIOException(HttpRequestError.ResponseEnded, "private-inner-response-detail"))),
         });
         using var packageStream = new MemoryStream(PackageBytes, writable: false);
 
@@ -421,18 +439,30 @@ public sealed class AmsPackagePublicationAdapterTests
             Adapter(handler, new FakePpapiTokenProvider()).PublishAsync(Request(packageStream), default));
 
         Assert.Equal("publication-transport-failed", exception.ErrorKind);
+        Assert.Equal("response-body", exception.FailureStage);
+        Assert.Equal("response-ended", exception.FailureReason);
+        Assert.Equal((int)status, exception.ResponseStatusCode);
+        Assert.Contains($"after HTTP {(int)status}", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("before response", exception.Message, StringComparison.Ordinal);
         Assert.Contains("outcome may be indeterminate", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("private-response-detail", exception.Message, StringComparison.Ordinal);
         Assert.Null(exception.PartialResult);
         Assert.Single(handler.Requests);
     }
 
-    [Fact]
-    public async Task Publish_Timeout_IsStructuredAndWarnsThatTheOutcomeIsIndeterminate()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Publish_UnexplainedCancellation_IsNotReportedAsDeadlineExpiry(bool readingResponse)
     {
         var handler = new AsyncPackageHandler(_ =>
-            Task.FromException<HttpResponseMessage>(
-                new TaskCanceledException("transport-internal-detail")));
+            readingResponse
+                ? Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ThrowingReadContent(new TaskCanceledException("transport-internal-detail")),
+                })
+                : Task.FromException<HttpResponseMessage>(
+                    new TaskCanceledException("transport-internal-detail")));
         using var packageStream = new MemoryStream(PackageBytes, writable: false);
         using var httpClient = new HttpClient(handler);
         var adapter = new AmsPackagePublicationAdapter(httpClient, new FakePpapiTokenProvider());
@@ -440,10 +470,122 @@ public sealed class AmsPackagePublicationAdapterTests
         var exception = await Assert.ThrowsAsync<PackagePublicationException>(() =>
             adapter.PublishAsync(Request(packageStream), CancellationToken.None));
 
-        Assert.Equal("publication-timeout", exception.ErrorKind);
+        Assert.Equal(ErrorCodes.Package.PublicationRequestFailed, exception.ErrorCode);
+        Assert.Equal("publication-transport-failed", exception.ErrorKind);
+        Assert.Equal(readingResponse ? "response-body" : "request", exception.FailureStage);
+        Assert.Equal("transport-cancelled", exception.FailureReason);
         Assert.Contains("outcome may be indeterminate", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("clientRequestId=", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("transport-internal-detail", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Publish_DeadlineExpiry_IsRecognizedInEitherPhase(bool readingResponse)
+    {
+        var clock = new ManualTimeProvider();
+        var handler = new AsyncPackageHandler(token =>
+        {
+            if (readingResponse)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new CallbackReadContent(readToken =>
+                    {
+                        clock.Advance(TimeSpan.FromMinutes(10));
+                        return Task.FromCanceled(readToken);
+                    }),
+                });
+            }
+
+            clock.Advance(TimeSpan.FromMinutes(10));
+            return Task.FromCanceled<HttpResponseMessage>(token);
+        });
+        using var packageStream = new MemoryStream(PackageBytes, writable: false);
+        using var httpClient = new HttpClient(handler);
+        var adapter = new AmsPackagePublicationAdapter(httpClient, new FakePpapiTokenProvider(), timeProvider: clock);
+
+        var exception = await Assert.ThrowsAsync<PackagePublicationException>(() =>
+            adapter.PublishAsync(Request(packageStream), CancellationToken.None));
+
+        Assert.Equal(ErrorCodes.Package.PublicationRequestTimedOut, exception.ErrorCode);
+        Assert.Equal("publication-timeout", exception.ErrorKind);
+        Assert.Equal("deadline-expired", exception.FailureReason);
+        Assert.Equal(readingResponse ? "response-body" : "request", exception.FailureStage);
+        Assert.Equal(readingResponse ? (int?)HttpStatusCode.OK : null, exception.ResponseStatusCode);
+        Assert.Contains("outcome may be indeterminate", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(HttpRequestError.NameResolutionError, "name-resolution")]
+    [InlineData(HttpRequestError.SecureConnectionError, "secure-connection")]
+    [InlineData(HttpRequestError.ProxyTunnelError, "proxy-tunnel")]
+    [InlineData(HttpRequestError.ConnectionError, "connection")]
+    [InlineData(HttpRequestError.HttpProtocolError, "http-protocol")]
+    [InlineData(HttpRequestError.ResponseEnded, "response-ended")]
+    [InlineData((HttpRequestError)999, "unknown")]
+    public async Task Publish_TransportFailure_ClassifiesOnlyAllowlistedValues(
+        HttpRequestError error,
+        string expectedReason)
+    {
+        var handler = new CapturingPackageHandler(_ =>
+            throw new HttpRequestException(error, "private-token https://host/?sig=private-secret"));
+        using var packageStream = new MemoryStream(PackageBytes, writable: false);
+
+        var exception = await Assert.ThrowsAsync<PackagePublicationException>(() =>
+            Adapter(handler, new FakePpapiTokenProvider()).PublishAsync(Request(packageStream), default));
+
+        Assert.Equal(ErrorCodes.Package.PublicationRequestFailed, exception.ErrorCode);
+        Assert.Equal("request", exception.FailureStage);
+        Assert.Equal(expectedReason, exception.FailureReason);
+        Assert.Contains($"failureReason={expectedReason}", exception.Message, StringComparison.Ordinal);
+        Assert.Null(exception.ResponseStatusCode);
+        Assert.DoesNotContain("private-", exception.Message, StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(HttpRequestError.ConnectionError, SocketError.ConnectionReset, "connection-reset")]
+    [InlineData(HttpRequestError.ConnectionError, SocketError.ConnectionAborted, "connection-aborted")]
+    [InlineData(HttpRequestError.ConnectionError, SocketError.ConnectionRefused, "connection-refused")]
+    [InlineData(HttpRequestError.NameResolutionError, SocketError.HostNotFound, "name-resolution")]
+    [InlineData(HttpRequestError.NameResolutionError, SocketError.TryAgain, "name-resolution")]
+    [InlineData(HttpRequestError.Unknown, SocketError.SocketError, "socket-error")]
+    public async Task Publish_NestedSocketFailure_PreservesTheStructuredReason(
+        HttpRequestError requestError,
+        SocketError error,
+        string expectedReason)
+    {
+        var handler = new CapturingPackageHandler(_ => throw new HttpRequestException(
+            requestError,
+            "private-transport-detail",
+            new IOException("private-io-detail", new SocketException((int)error))));
+        using var packageStream = new MemoryStream(PackageBytes, writable: false);
+
+        var exception = await Assert.ThrowsAsync<PackagePublicationException>(() =>
+            Adapter(handler, new FakePpapiTokenProvider()).PublishAsync(Request(packageStream), default));
+
+        Assert.Equal(expectedReason, exception.FailureReason);
+        Assert.DoesNotContain("private-", exception.Message, StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Publish_LocalReadFailure_IsNotMisreportedAsNetworkFailure()
+    {
+        var handler = new CapturingPackageHandler(_ => FakeHttpResponse.Json(HttpStatusCode.OK, SuccessBody));
+        using var packageStream = new FailingPackageStream();
+
+        var exception = await Assert.ThrowsAsync<PackagePublicationException>(() =>
+            Adapter(handler, new FakePpapiTokenProvider()).PublishAsync(Request(packageStream), default));
+
+        Assert.Equal(ErrorCodes.Package.PublicationPackageReadFailed, exception.ErrorCode);
+        Assert.Equal("package-read-failed", exception.ErrorKind);
+        Assert.Equal("request-body", exception.FailureStage);
+        Assert.Equal("local-package-read-failed", exception.FailureReason);
+        Assert.DoesNotContain("private-", exception.Message, StringComparison.Ordinal);
+        Assert.True(packageStream.CanRead);
     }
 
     [Fact]
@@ -460,6 +602,60 @@ public sealed class AmsPackagePublicationAdapterTests
             adapter.PublishAsync(Request(packageStream), cancellation.Token));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Publish_InFlightCallerCancellation_IsNotWrappedAsTransportFailure(bool readingResponse)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var handler = new AsyncPackageHandler(token =>
+        {
+            if (readingResponse)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new CallbackReadContent(readToken =>
+                    {
+                        cancellation.Cancel();
+                        return Task.FromCanceled(readToken);
+                    }),
+                });
+            }
+
+            cancellation.Cancel();
+            return Task.FromCanceled<HttpResponseMessage>(token);
+        });
+        using var packageStream = new MemoryStream(PackageBytes, writable: false);
+        using var httpClient = new HttpClient(handler);
+        var adapter = new AmsPackagePublicationAdapter(httpClient, new FakePpapiTokenProvider());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            adapter.PublishAsync(Request(packageStream), cancellation.Token));
+    }
+
+    private sealed class CallbackReadContent(Func<CancellationToken, Task> read) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => read(default);
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken) =>
+            read(cancellationToken);
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
+    private sealed class FailingPackageStream() : MemoryStream(PackageBytes, writable: false)
+    {
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new IOException("private-package-path");
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<int>(new IOException("private-package-path"));
+    }
+
     private static AmsPackagePublicationAdapter Adapter(
         CapturingPackageHandler handler,
         FakePpapiTokenProvider tokenProvider) =>
@@ -472,10 +668,14 @@ public sealed class AmsPackagePublicationAdapterTests
 
     private static AmsPackagePublicationTransportRequest Request(Stream packageStream) => new()
     {
-        Endpoint = new Uri(Endpoint),
-        Audience = Audience,
-        TenantId = Tenant,
-        EnvironmentId = "env/blue",
+        ServiceTarget = new AmsServiceTarget
+        {
+            Endpoint = new Uri(Endpoint),
+            Audience = Audience,
+            RouteForm = AmsRouteForm.EnvironmentHost,
+            TenantId = Tenant,
+            EnvironmentId = "env/blue",
+        },
         AgentId = Agent,
         PackageStream = packageStream,
         PackageLength = packageStream.Length,

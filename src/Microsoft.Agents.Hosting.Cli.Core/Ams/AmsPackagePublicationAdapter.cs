@@ -22,18 +22,21 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
     private readonly ITokenProvider _tokens;
     private readonly PpapiTokenClaimsValidator _claimsValidator;
     private readonly IProfileResourceTokenProvider? _profileTokens;
+    private readonly TimeProvider _timeProvider;
 
     public AmsPackagePublicationAdapter(
         HttpClient httpClient,
         ITokenProvider tokens,
         PpapiTokenClaimsValidator? claimsValidator = null,
-        IProfileResourceTokenProvider? profileTokens = null)
+        IProfileResourceTokenProvider? profileTokens = null,
+        TimeProvider? timeProvider = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _httpClient.Timeout = Timeout.InfiniteTimeSpan;
         _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens));
         _claimsValidator = claimsValidator ?? new PpapiTokenClaimsValidator();
         _profileTokens = profileTokens;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<AmsPackagePublicationResult> PublishAsync(
@@ -48,34 +51,23 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
             throw new ArgumentException("A non-empty readable package stream is required.", nameof(request));
         }
 
-        var relativePath =
-            $"agenthosting/agents/{Uri.EscapeDataString(request.AgentId)}/packages?api-version=1";
-        var targetUri = new Uri(EnsureTrailingSlash(request.Endpoint), relativePath);
+        var targetUri = AmsRoutes.Packages(request.ServiceTarget, request.AgentId);
         var clientRequestId = Guid.NewGuid().ToString("D");
-        if (_profileTokens is null) ResourceTokenContext.RequireBinding(_tokens, request.Context);
-        var token = _profileTokens is not null
-            ? (await _profileTokens.AcquireAsync(ResourceTokenContext.Require(request.Context), request.Audience,
-                request.TenantId, [PowerPlatformApiPermissions.AppsUpdate], cancellationToken).ConfigureAwait(false)).Token
-            : await _tokens
-            .AcquireTokenSilentAsync(request.Audience, request.TenantId, cancellationToken)
-            .ConfigureAwait(false);
-        if (_profileTokens is null) ResourceTokenContext.ValidateLegacy(_claimsValidator, _tokens, request.Context,
-            token.AccessToken,
-            request.Audience,
-            request.TenantId,
-            [PowerPlatformApiPermissions.AppsUpdate]);
+        var token = await ResourceTokenContext.AcquireAsync(_tokens, _profileTokens, _claimsValidator, request.ServiceTarget.Context, request.ServiceTarget.Audience, request.ServiceTarget.TenantId, [PowerPlatformApiPermissions.AppsUpdate], cancellationToken).ConfigureAwait(false);
 
         using var message = new HttpRequestMessage(HttpMethod.Post, targetUri);
+        message.Options.Set(HttpDiagnostics.CallerCancellationToken, cancellationToken);
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
         message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         message.Headers.TryAddWithoutValidation(ClientRequestIdHeaderName, clientRequestId);
-        var content = new StreamContent(new BorrowedStream(request.PackageStream));
+        var packageStream = new BorrowedStream(request.PackageStream);
+        var content = new StreamContent(packageStream);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
         content.Headers.ContentLength = request.PackageLength;
         message.Content = content;
 
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(RequestTimeout);
+        using var deadlineCts = new CancellationTokenSource(RequestTimeout, _timeProvider);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadlineCts.Token);
 
         HttpResponseMessage response;
         try
@@ -86,14 +78,15 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
-            throw PackagePublicationException.RequestTimedOut(
-                request.AgentId,
-                clientRequestId,
-                ex);
+            throw deadlineCts.IsCancellationRequested
+                ? PackagePublicationException.RequestTimedOut(request.AgentId, clientRequestId, ex)
+                : PackagePublicationException.RequestFailed(clientRequestId, ex);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException)
         {
-            throw PackagePublicationException.RequestFailed(clientRequestId, ex);
+            throw packageStream.ReadFailure is { } readFailure
+                ? PackagePublicationException.RequestBodyReadFailed(clientRequestId, readFailure)
+                : PackagePublicationException.RequestFailed(clientRequestId, ex);
         }
 
         using (response)
@@ -103,7 +96,7 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
                 throw AgentDeployException.RedirectRejected(
                     "package upload",
                     (int)response.StatusCode,
-                    request.Endpoint.Host);
+                    request.ServiceTarget.Endpoint.Host);
             }
 
             string responseBody;
@@ -115,18 +108,13 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
             }
             catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
             {
-                throw PackagePublicationException.RequestTimedOut(
-                    request.AgentId,
-                    clientRequestId,
-                    ex);
+                throw deadlineCts.IsCancellationRequested
+                    ? PackagePublicationException.RequestTimedOut(request.AgentId, clientRequestId, ex, (int)response.StatusCode)
+                    : PackagePublicationException.RequestFailed(clientRequestId, ex, (int)response.StatusCode);
             }
-            catch (InvalidOperationException ex)
+            catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException or IOException)
             {
-                throw PackagePublicationException.RequestFailed(clientRequestId, ex);
-            }
-            catch (HttpRequestException ex)
-            {
-                throw PackagePublicationException.RequestFailed(clientRequestId, ex);
+                throw PackagePublicationException.RequestFailed(clientRequestId, ex, (int)response.StatusCode);
             }
             if (!response.IsSuccessStatusCode)
             {
@@ -216,6 +204,7 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
         var size = GetRequiredInt64(root, "sizeInBytes");
         var status = GetUploadStatus(root);
         var revisionId = GetOptionalString(root, "packageRevisionId");
+        var commitId = GetOptionalString(root, "commitId");
         var createdTime = GetRequiredDate(root, "createdTime");
         var changedTime = GetRequiredDate(root, "changedTime");
 
@@ -227,7 +216,8 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
             changedTime < createdTime ||
             status is not ("Accepted" or "Succeeded" or "Failed") ||
             (status == "Succeeded" && !TryParseNonEmptyGuid(revisionId)) ||
-            (status != "Succeeded" && revisionId != null))
+            (status != "Succeeded" && revisionId != null) ||
+            (commitId is not null && !AmsCommitId.IsValid(commitId)))
         {
             throw new FormatException("Required operation identity is malformed.");
         }
@@ -240,6 +230,7 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
             SizeInBytes = size,
             Status = status,
             PackageRevisionId = revisionId,
+            CommitId = commitId?.ToLowerInvariant(),
             CreatedTime = createdTime,
             ChangedTime = changedTime,
         };
@@ -354,11 +345,6 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
     private static string AddCorrelation(string message, string clientRequestId, string? serviceRequestId) =>
         new ServiceCorrelation(clientRequestId, serviceRequestId).Annotate(message);
 
-    private static Uri EnsureTrailingSlash(Uri endpoint) =>
-        endpoint.AbsoluteUri.EndsWith('/')
-            ? endpoint
-            : new Uri(endpoint.AbsoluteUri + "/", UriKind.Absolute);
-
     private static bool TryParseNonEmptyGuid(string? value) =>
         Guid.TryParse(value, out var parsed) && parsed != Guid.Empty;
 
@@ -368,19 +354,42 @@ public sealed class AmsPackagePublicationAdapter : IAmsPackagePublicationTranspo
     /// </summary>
     private sealed class BorrowedStream(Stream inner) : Stream
     {
+        public Exception? ReadFailure { get; private set; }
+
         public override bool CanRead => inner.CanRead;
         public override bool CanSeek => inner.CanSeek;
         public override bool CanWrite => false;
         public override long Length => inner.Length;
         public override long Position { get => inner.Position; set => inner.Position = value; }
         public override void Flush() => inner.Flush();
-        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            try
+            {
+                return inner.Read(buffer, offset, count);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                ReadFailure = ex;
+                throw;
+            }
+        }
         public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override ValueTask<int> ReadAsync(
+        public override async ValueTask<int> ReadAsync(
             Memory<byte> buffer,
-            CancellationToken cancellationToken = default) =>
-            inner.ReadAsync(buffer, cancellationToken);
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                return await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                ReadFailure = ex;
+                throw;
+            }
+        }
     }
 }
